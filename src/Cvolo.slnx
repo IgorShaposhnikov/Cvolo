@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/.build/">
+    <File Path="../.gitignore" />
+    <File Path="Directory.Build.props" />
+    <File Path="Directory.Packages.props" />
+  </Folder>
+  <Project Path="Cvolo.Analysis/Cvolo.Analysis.csproj" />
+  <Project Path="Cvolo.Core/Cvolo.Core.csproj" />
+  <Project Path="Cvolo.Emitter.LLVM/Cvolo.Emitter.LLVM.csproj" />
+  <Project Path="Cvolo.Syntax/Cvolo.Syntax.csproj" />
+  <Project Path="Cvolo/Cvolo.csproj" />
+</Solution>

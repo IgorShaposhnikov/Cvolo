@@ -1,0 +1,13 @@
+<Project>
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageVersion Include="Antlr4.Runtime.Standard" Version="4.13.1" />
+    <PackageVersion Include="Antlr4BuildTasks" Version="12.8.0" />
+    <PackageVersion Include="libLLVM.runtime.win-x64" Version="21.1.8" />
+    <PackageVersion Include="libLLVM.runtime.linux-x64" Version="21.1.8" />
+    <PackageVersion Include="LLVMSharp" Version="20.1.2" />
+    <PackageVersion Include="Microsoft.Build.Utilities.Core" Version="18.7.1" />
+  </ItemGroup>
+</Project>

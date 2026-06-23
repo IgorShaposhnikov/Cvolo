@@ -1,0 +1,25 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Cvolo.Core\Cvolo.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Antlr4.Runtime.Standard" />
+    <PackageReference Include="Antlr4BuildTasks">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.Build.Utilities.Core" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Antlr4 Include="Grammar\CvoloLexer.g4">
+      <Lexer>true</Lexer>
+    </Antlr4>
+    <Antlr4 Include="Grammar\CvoloParser.g4">
+      <Lexer>false</Lexer>
+    </Antlr4>
+  </ItemGroup>
+
+</Project>

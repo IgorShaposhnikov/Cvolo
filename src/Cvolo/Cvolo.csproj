@@ -1,0 +1,20 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Antlr4.Runtime.Standard" />
+    <PackageReference Include="libLLVM.runtime.win-x64" />
+    <PackageReference Include="LLVMSharp" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Cvolo.Core\Cvolo.Core.csproj" />
+    <ProjectReference Include="..\Cvolo.Syntax\Cvolo.Syntax.csproj" />
+    <ProjectReference Include="..\Cvolo.Analysis\Cvolo.Analysis.csproj" />
+    <ProjectReference Include="..\Cvolo.Emitter.LLVM\Cvolo.Emitter.LLVM.csproj" />
+  </ItemGroup>
+
+</Project>
