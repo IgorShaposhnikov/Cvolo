@@ -4,16 +4,20 @@ using Cvolo.Syntax;
 
 if (args.Length < 1)
 {
-    Console.Error.WriteLine("Usage: cvolo <file.cv> [--emit-ir] [--emit-native]");
-    Console.Error.WriteLine("  Default: generates .ll file");
-    Console.Error.WriteLine("  --emit-ir   also print IR to stdout");
-    Console.Error.WriteLine("  --emit-native  use native LLVM library (requires libLLVM)");
+    Console.Error.WriteLine("Usage: cvolo <file.cv> [options]");
+    Console.Error.WriteLine("  Options:");
+    Console.Error.WriteLine("    --llvm         generate .ll LLVM IR only (no linking)");
+    Console.Error.WriteLine("    --shared       build a shared library (.dll/.so)");
+    Console.Error.WriteLine("    --emit-ir      print IR to stdout");
+    Console.Error.WriteLine("    --emit-native  use native LLVM library (requires libLLVM)");
     return 1;
 }
 
 var filePath = args[0];
 var emitIr = args.Contains("--emit-ir");
 var useNative = args.Contains("--emit-native");
+var emitLlvmOnly = args.Contains("--llvm");
+var isShared = args.Contains("--shared");
 
 if (!File.Exists(filePath))
 {
@@ -58,11 +62,21 @@ if (useNative)
     var outputPath = Path.ChangeExtension(filePath, ".o");
     codeGen.WriteObjectFile(outputPath);
 
-    var binaryPath = Path.ChangeExtension(filePath, null);
-    if (OperatingSystem.IsWindows())
-        binaryPath += ".exe";
+    if (emitLlvmOnly)
+    {
+        if (emitIr)
+            Console.WriteLine(codeGen.PrintIR());
+        Console.WriteLine($"Generated: {outputPath}");
+        return 0;
+    }
 
-    var linkerArgs = $"-o {binaryPath} {outputPath}";
+    var binaryExt = isShared
+        ? (OperatingSystem.IsWindows() ? ".dll" : ".so")
+        : (OperatingSystem.IsWindows() ? ".exe" : "");
+    var binaryPath = Path.ChangeExtension(filePath, null) + binaryExt;
+
+    var typeFlag = isShared ? " -shared" : "";
+    var linkerArgs = $"-o {binaryPath} {outputPath}{typeFlag}";
     var linkResult = System.Diagnostics.Process.Start("clang", linkerArgs);
     linkResult?.WaitForExit();
 
@@ -84,16 +98,24 @@ else
     if (emitIr)
         Console.WriteLine(ir);
 
-    // Try to link with clang if available
+    if (emitLlvmOnly)
+    {
+        Console.WriteLine($"Generated: {llPath}");
+        return 0;
+    }
+
+    // Try to link with clang
     var clangPath = FindTool("clang");
     if (clangPath is not null)
     {
-        var binaryPath = Path.ChangeExtension(filePath, null);
-        if (OperatingSystem.IsWindows())
-            binaryPath += ".exe";
+        var binaryExt = isShared
+            ? (OperatingSystem.IsWindows() ? ".dll" : ".so")
+            : (OperatingSystem.IsWindows() ? ".exe" : "");
+        var binaryPath = Path.ChangeExtension(filePath, null) + binaryExt;
 
-        var linkerFlags = OperatingSystem.IsWindows() ? " -Xlinker /subsystem:console" : "";
-        var linkResult = System.Diagnostics.Process.Start(clangPath, $"-o {binaryPath} {llPath}{linkerFlags}");
+        var typeFlag = isShared ? " -shared" : "";
+        var subsystemFlag = OperatingSystem.IsWindows() && !isShared ? " -Xlinker /subsystem:console" : "";
+        var linkResult = System.Diagnostics.Process.Start(clangPath, $"-o {binaryPath} {llPath}{typeFlag}{subsystemFlag}");
         linkResult?.WaitForExit();
 
         if (linkResult?.ExitCode == 0)
@@ -103,14 +125,10 @@ else
         }
 
         Console.Error.WriteLine($"Linking failed (exit code {linkResult?.ExitCode})");
+        return 1;
     }
 
-    Console.Error.WriteLine($"Generated: {llPath}");
-    var compileCmd = OperatingSystem.IsWindows()
-        ? $"  clang {llPath} -o {Path.ChangeExtension(llPath, null)}.exe -Xlinker /subsystem:console"
-        : $"  clang {llPath} -o {Path.ChangeExtension(llPath, null)}";
-    Console.Error.WriteLine("Install LLVM tools to compile:");
-    Console.Error.WriteLine(compileCmd);
+    Console.Error.WriteLine("Error: clang not found. Install LLVM tools to compile.");
     return 1;
 }
 
@@ -118,11 +136,12 @@ return 0;
 
 static string? FindTool(string name)
 {
+    var which = OperatingSystem.IsWindows() ? "where" : "which";
     try
     {
         var proc = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
         {
-            FileName = "which",
+            FileName = which,
             Arguments = name,
             RedirectStandardOutput = true,
         });
