@@ -19,7 +19,6 @@ val int count = 10; // Explicitly typed
 To allow a variable's value to change, use the `var` keyword.
 ```csharp
 var score = 0;
-score = 10; // Allowed
 
 var double temperature = 36.6; // Explicitly typed
 ```
