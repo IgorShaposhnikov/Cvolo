@@ -61,6 +61,7 @@ public sealed class IrEmitter
         var parms = string.Join(", ", func.Parameters.Select(p => $"{Type(p.Type)} %{p.Name}"));
         fw.Write($"define {ret} @{func.Name}({parms})");
         fw.WriteLine(" {");
+        fw.WriteLine("  entry:");
 
         foreach (var p in func.Parameters)
         {
@@ -141,10 +142,19 @@ public sealed class IrEmitter
         fw.WriteLine($"    br {c}, label %{t}, label %{e}");
         fw.WriteLine($"  {t}:");
         EmitStmt(node.ThenStatement, fw);
-        fw.WriteLine($"    br label %{d}");
+        if (!EndsWithReturn(node.ThenStatement))
+            fw.WriteLine($"    br label %{d}");
         fw.WriteLine($"  {e}:");
-        if (node.ElseClause is not null) EmitStmt(node.ElseClause.Body, fw);
-        fw.WriteLine($"    br label %{d}");
+        if (node.ElseClause is not null)
+        {
+            EmitStmt(node.ElseClause.Body, fw);
+            if (!EndsWithReturn(node.ElseClause.Body))
+                fw.WriteLine($"    br label %{d}");
+        }
+        else
+        {
+            fw.WriteLine($"    br label %{d}");
+        }
         fw.WriteLine($"  {d}:");
     }
 
@@ -211,7 +221,7 @@ public sealed class IrEmitter
         var r = NewLocal();
         var args = string.Join(", ", call.Arguments.Select(a => Eval(a, fw).val));
         fw.WriteLine($"    %{r} = call i32 @{call.FunctionName}({args})");
-        return ($"%{r}", "i32");
+        return ($"i32 %{r}", "i32");
     }
 
     private (string val, string ty) EmitBin(BinaryExpressionSyntax bin, StringWriter fw)
@@ -235,7 +245,7 @@ public sealed class IrEmitter
             _ => throw new InvalidOperationException($"Unknown binop '{bin.Operator}'"),
         };
         fw.WriteLine($"    %{reg} = {op}");
-        return ($"%{reg}", resultTy);
+        return ($"{resultTy} %{reg}", resultTy);
     }
 
     private (string val, string ty) EmitUnary(UnaryExpressionSyntax u, StringWriter fw)
@@ -249,7 +259,7 @@ public sealed class IrEmitter
             _ => throw new InvalidOperationException($"Unknown unary op '{u.Operator}'"),
         };
         fw.WriteLine($"    %{r} = {op}");
-        return ($"%{r}", resultTy);
+        return ($"{resultTy} %{r}", resultTy);
     }
 
     private void EmitStore(BinaryExpressionSyntax assign, StringWriter fw)
@@ -278,7 +288,7 @@ public sealed class IrEmitter
             throw new InvalidOperationException($"Undefined variable '{name}'");
         var reg = NewLocal();
         fw.WriteLine($"    %{reg} = load i32, ptr %{ptr}");
-        return ($"%{reg}", "i32");
+        return ($"i32 %{reg}", "i32");
     }
 
     private string AddString(string value)
@@ -313,5 +323,10 @@ public sealed class IrEmitter
     };
 
     private static string V(string typed) => typed.Split(' ')[^1];
-    private static bool EndsWithReturn(BlockStatementSyntax b) => b.Statements.Count > 0 && b.Statements[^1] is ReturnStatementSyntax;
+    private static bool EndsWithReturn(SyntaxNode s) => s switch
+    {
+        BlockStatementSyntax b => b.Statements.Count > 0 && b.Statements[^1] is ReturnStatementSyntax,
+        ReturnStatementSyntax => true,
+        _ => false,
+    };
 }
