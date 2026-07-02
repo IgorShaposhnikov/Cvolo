@@ -81,6 +81,8 @@ public sealed class IrEmitter
         {
             var ptr = NewLocal();
             _locals[p.Name] = ptr;
+            // Track parameter types dynamically
+            _variableTypes[p.Name] = p.Type; 
             fw.WriteLine($"    %{ptr} = alloca {Type(p.Type)}");
             fw.WriteLine($"    store {Type(p.Type)} %{p.Name}, ptr %{ptr}");
         }
@@ -323,9 +325,13 @@ public sealed class IrEmitter
     {
         if (!_locals.TryGetValue(name, out var ptr))
             throw new InvalidOperationException($"Undefined variable '{name}'");
+
+        var typeName = _variableTypes[name];
+        var ty = Type(typeName);
+
         var reg = NewLocal();
-        fw.WriteLine($"    %{reg} = load i32, ptr %{ptr}");
-        return ($"i32 %{reg}", "i32");
+        fw.WriteLine($"    %{reg} = load {ty}, ptr %{ptr}");
+        return ($"{ty} %{reg}", ty);
     }
 
     private string AddString(string value)
