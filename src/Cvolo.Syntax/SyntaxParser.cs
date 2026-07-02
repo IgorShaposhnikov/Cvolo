@@ -36,6 +36,7 @@ public sealed class SyntaxParser
             if (node is not null)
                 members.Add(node);
         }
+
         var span = SpanOf(context);
         return new CompilationUnitSyntax(span, members);
     }
@@ -61,6 +62,7 @@ public sealed class SyntaxParser
             foreach (var param in paramList.parameter())
                 parameters.Add(BuildParameter(param));
         }
+
         var body = BuildBlockStatement(context.blockStatement());
         return new FunctionDeclarationSyntax(SpanOf(context), returnType, name, parameters, body);
     }
@@ -81,6 +83,7 @@ public sealed class SyntaxParser
                     parameters.Add(new ParameterSyntax(SpanOf(param), param.type().GetText(), param.Identifier().GetText()));
             }
         }
+
         return new ExternDeclarationSyntax(SpanOf(context), returnType, name, parameters, isVariadic);
     }
 
@@ -109,6 +112,7 @@ public sealed class SyntaxParser
             if (node is not null)
                 statements.Add(node);
         }
+
         return new BlockStatementSyntax(SpanOf(context), statements);
     }
 
@@ -151,7 +155,15 @@ public sealed class SyntaxParser
         {
             case CvoloParser.StringLiteralExpressionContext strCtx:
                 {
-                    var raw = strCtx.StringLiteral().GetText()[1..^1];
+                    var raw = strCtx.StringLiteral().GetText();
+
+                    // Safely strip quotes only if they are present
+                    if (raw.StartsWith("\\\"") && raw.EndsWith("\\\""))
+                    {
+                        // Slice off the first 2 characters and the last 2 characters
+                        raw = raw[2..^2];
+                    }
+
                     var value = DecodeString(raw);
                     return new StringLiteralExpressionSyntax(SpanOf(strCtx), value);
                 }
@@ -175,6 +187,7 @@ public sealed class SyntaxParser
                         foreach (var arg in argList.expression())
                             args.Add(BuildExpression(arg));
                     }
+
                     return new CallExpressionSyntax(SpanOf(callCtx), funcName, args);
                 }
 
@@ -246,6 +259,7 @@ public sealed class SyntaxParser
             var elseBlock = elseStmt as BlockStatementSyntax ?? new BlockStatementSyntax(SpanOf(elseBody), [elseStmt]);
             elseClause = new ElseClauseSyntax(SpanOf(elseBody), elseBlock);
         }
+
         return new IfStatementSyntax(SpanOf(context), condition, thenStmt, elseClause);
     }
 
