@@ -214,6 +214,21 @@ public sealed class SyntaxParser
                 return new BinaryExpressionSyntax(SpanOf(orCtx), BuildExpression(orCtx.expression(0)), "||", BuildExpression(orCtx.expression(1)));
             case CvoloParser.AssignmentExpressionContext assignCtx:
                 return new BinaryExpressionSyntax(SpanOf(assignCtx), BuildExpression(assignCtx.expression(0)), "=", BuildExpression(assignCtx.expression(1)));
+            case CvoloParser.CompoundAssignmentExpressionContext compoundCtx:
+                {
+                    var left = BuildExpression(compoundCtx.expression(0));
+                    var opAssign = compoundCtx.GetChild(1).GetText(); // e.g. "+="
+                    var right = BuildExpression(compoundCtx.expression(1));
+
+                    // Desugar: extract the math operator (remove the '=')
+                    var op = opAssign[..^1]; // e.g., "+=" -> "+"
+
+                    // Create the math sub-expression: left + right
+                    var mathExpr = new BinaryExpressionSyntax(SpanOf(compoundCtx), left, op, right);
+
+                    // Return the assignment: left = (left + right)
+                    return new BinaryExpressionSyntax(SpanOf(compoundCtx), left, "=", mathExpr);
+                }
             case CvoloParser.MemberAccessExpressionContext memberCtx:
                 {
                     var left = BuildExpression(memberCtx.expression());
