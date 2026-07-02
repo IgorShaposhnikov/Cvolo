@@ -190,14 +190,14 @@ public sealed class Binder
                 CheckStatement(whileStmt.Body, scope, currentFunc);
                 break;
             case ForStatementSyntax forStmt:
-            {
-                var forScope = new SymbolTable(scope);
-                CheckVariableDeclaration(forStmt.Initializer, forScope);
-                CheckExpression(forStmt.Condition, forScope);
-                CheckExpression(forStmt.Increment, forScope);
-                CheckStatement(forStmt.Body, forScope, currentFunc);
-                break;
-            }
+                {
+                    var forScope = new SymbolTable(scope);
+                    CheckVariableDeclaration(forStmt.Initializer, forScope);
+                    CheckExpression(forStmt.Condition, forScope);
+                    CheckExpression(forStmt.Increment, forScope);
+                    CheckStatement(forStmt.Body, forScope, currentFunc);
+                    break;
+                }
         }
     }
 
@@ -211,7 +211,19 @@ public sealed class Binder
         }
 
         if (varDecl.Initializer is not null)
+        {
             CheckExpression(varDecl.Initializer, scope);
+
+            // If we initialize a new struct variable using an existing struct variable:
+            if (varDecl.Initializer is IdentifierExpressionSyntax id)
+            {
+                var symbol = scope.Lookup(id.Name) as VariableSymbol;
+                if (symbol is not null && symbol.Type is StructTypeSymbol)
+                {
+                    symbol.IsMoved = true; // Ownership of 'p1' is moved to 'p2'
+                }
+            }
+        }
 
         var resolvedType = varDecl.Type is not null ? ResolveType(varDecl.Type) : TypeSymbol.Int;
         if (resolvedType is null)
@@ -228,12 +240,20 @@ public sealed class Binder
         switch (expr)
         {
             case IdentifierExpressionSyntax id:
-            {
-                var symbol = scope.Lookup(id.Name);
-                if (symbol is null)
-                    _diagnostics.Report(id.Span, $"Undefined variable '{id.Name}'");
-                break;
-            }
+                {
+                    var symbol = scope.Lookup(id.Name);
+                    if (symbol is null)
+                    {
+                        _diagnostics.Report(id.Span, $"Undefined variable '{id.Name}'");
+                    }
+                    else if (symbol is VariableSymbol varSymbol && varSymbol.IsMoved)
+                    {
+                        // <-- Report use-after-move error here!
+                        _diagnostics.Report(id.Span, $"Use of moved variable '{id.Name}'");
+                    }
+
+                    break;
+                }
             case MemberAccessExpressionSyntax memberAccess:
                 CheckMemberAccessExpression(memberAccess, scope);
                 break;
@@ -244,44 +264,95 @@ public sealed class Binder
                 CheckStructInitializationExpression(structInit, scope);
                 break;
             case CallExpressionSyntax call:
-            {
-                var symbol = scope.Lookup(call.FunctionName);
-                if (symbol is null)
                 {
-                    _diagnostics.Report(call.Span, $"Undefined function '{call.FunctionName}'");
-                    return;
+                    var symbol = scope.Lookup(call.FunctionName);
+                    if (symbol is null)
+                    {
+                        _diagnostics.Report(call.Span, $"Undefined function '{call.FunctionName}'");
+                        return;
+                    }
+
+                    if (symbol is not FunctionSymbol func)
+                    {
+                        _diagnostics.Report(call.Span, $"'{call.FunctionName}' is not a function");
+                        return;
+                    }
+
+                    var argCount = call.Arguments.Count;
+                    var paramCount = func.Parameters.Count;
+                    var isVariadic = func.IsVariadic;
+
+                    if (!isVariadic && argCount != paramCount)
+                    {
+                        _diagnostics.Report(call.Span, $"Function '{call.FunctionName}' expects {paramCount} arguments but received {argCount}");
+                        return;
+                    }
+
+                    if (isVariadic && argCount < paramCount)
+                    {
+                        _diagnostics.Report(call.Span, $"Function '{call.FunctionName}' expects at least {paramCount} arguments but received {argCount}");
+                        return;
+                    }
+
+                    for (var i = 0; i < call.Arguments.Count; i++)
+                    {
+                        var arg = call.Arguments[i];
+                        CheckExpression(arg, scope);
+
+                        // If the argument is a variable identifier
+                        if (arg is IdentifierExpressionSyntax id)
+                        {
+                            var argSymbol = scope.Lookup(id.Name) as VariableSymbol;
+                            if (argSymbol is not null)
+                            {
+                                // Safely check parameter type, accounting for variadic arguments (like in printf)
+                                var isPointerParam = i < func.Parameters.Count && func.Parameters[i].Type is PointerTypeSymbol;
+
+                                // If the parameter is NOT a pointer (is passed by value) and it's a struct, it is a MOVE!
+                                if (!isPointerParam && argSymbol.Type is StructTypeSymbol)
+                                {
+                                    argSymbol.IsMoved = true;
+                                }
+                            }
+                        }
+                    }
+
+                    break;
                 }
-
-                if (symbol is not FunctionSymbol func)
-                {
-                    _diagnostics.Report(call.Span, $"'{call.FunctionName}' is not a function");
-                    return;
-                }
-
-                var argCount = call.Arguments.Count;
-                var paramCount = func.Parameters.Count;
-                var isVariadic = func.IsVariadic;
-
-                if (!isVariadic && argCount != paramCount)
-                {
-                    _diagnostics.Report(call.Span, $"Function '{call.FunctionName}' expects {paramCount} arguments but received {argCount}");
-                    return;
-                }
-
-                if (isVariadic && argCount < paramCount)
-                {
-                    _diagnostics.Report(call.Span, $"Function '{call.FunctionName}' expects at least {paramCount} arguments but received {argCount}");
-                    return;
-                }
-
-                foreach (var arg in call.Arguments)
-                    CheckExpression(arg, scope);
-                break;
-            }
             case BinaryExpressionSyntax bin:
-                CheckExpression(bin.Left, scope);
-                CheckExpression(bin.Right, scope);
-                break;
+                {
+                    if (bin.Operator == "=")
+                    {
+                        // 1. Evaluate the right-hand side first (reads and moves happen here)
+                        CheckExpression(bin.Right, scope);
+
+                        // 2. Evaluate the left-hand side second (re-initialization happens here)
+                        if (bin.Left is IdentifierExpressionSyntax id)
+                        {
+                            var varSymbol = scope.Lookup(id.Name) as VariableSymbol;
+                            if (varSymbol is not null)
+                            {
+                                if (!varSymbol.IsMutable)
+                                {
+                                    _diagnostics.Report(id.Span, $"Cannot assign to immutable variable '{id.Name}'");
+                                }
+
+                                // Re-initialize: myPoint is now active again!
+                                varSymbol.IsMoved = false;
+                            }
+                            else
+                            {
+                                _diagnostics.Report(id.Span, $"Undefined variable '{id.Name}'");
+                            }
+                        }
+                        else
+                        {
+                            CheckExpression(bin.Left, scope);
+                        }
+                    }
+
+                    break;
+                }
             case UnaryExpressionSyntax unary:
                 CheckExpression(unary.Operand, scope);
                 break;

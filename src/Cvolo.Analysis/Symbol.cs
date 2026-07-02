@@ -36,14 +36,9 @@ public sealed class ParameterSymbol : Symbol
     }
 }
 
-public sealed class VariableSymbol : Symbol
+public sealed class VariableSymbol(string name, TypeSymbol type, bool isMutable) : Symbol(name)
 {
-    public TypeSymbol Type { get; }
-    public bool IsMutable { get; }
-
-    public VariableSymbol(string name, TypeSymbol type, bool isMutable) : base(name)
-    {
-        Type = type;
-        IsMutable = isMutable;
-    }
+    public TypeSymbol Type { get; } = type;
+    public bool IsMutable { get; } = isMutable;
+    public bool IsMoved { get; set; } = false; // Track ownership state
 }
