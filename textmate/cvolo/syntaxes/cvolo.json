@@ -1,0 +1,183 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Cvolo",
+  "scopeName": "source.cvolo",
+  "fileTypes": [
+    "cvolo",
+    "cv",
+    "cvl"
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "include": "#block_comment"
+        },
+        {
+          "include": "#line_comment"
+        }
+      ]
+    },
+    "block_comment": {
+      "comment": "Block comment",
+      "name": "comment.block.cvolo",
+      "begin": "/\\*",
+      "end": "\\*/"
+    },
+    "line_comment": {
+      "comment": "Single-line comment",
+      "name": "comment.line.double-slash.cvolo",
+      "begin": "//",
+      "end": "$"
+    },
+    "string_literal": {
+      "comment": "Double-quote string literal",
+      "name": "string.quoted.double.cvolo",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "include": "#escaped_character"
+        }
+      ]
+    },
+    "escaped_character": {
+      "name": "constant.character.escape.cvolo",
+      "match": "\\\\([0nrt\"\\\\])"
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "comment": "Double (floating point) literal",
+          "name": "constant.numeric.float.cvolo",
+          "match": "\\b[0-9]+\\.[0-9]+\\b"
+        },
+        {
+          "comment": "Integer literal",
+          "name": "constant.numeric.integer.cvolo",
+          "match": "\\b[0-9]+\\b"
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "comment": "Control flow keywords",
+          "name": "keyword.control.cvolo",
+          "match": "\\b(return|if|else|while|for)\\b"
+        },
+        {
+          "comment": "Declaration and other modifier keywords",
+          "name": "keyword.other.cvolo",
+          "match": "\\b(val|var|ref|extern|unsafe|panic)\\b"
+        }
+      ]
+    },
+    "constants": {
+      "comment": "Boolean constants",
+      "name": "constant.language.boolean.cvolo",
+      "match": "\\b(true|false)\\b"
+    },
+    "types": {
+      "patterns": [
+        {
+          "comment": "Primitive storage types",
+          "name": "storage.type.primitive.cvolo",
+          "match": "\\b(void|int|double|bool|string|char)\\b"
+        },
+        {
+          "comment": "Custom types (matching TitleCase identifiers)",
+          "name": "storage.type.cvolo",
+          "match": "\\b[A-Z][a-zA-Z0-9_]*\\b"
+        }
+      ]
+    }
+  },
+  "patterns": [
+    {
+      "include": "#comments"
+    },
+    {
+      "comment": "Struct declaration",
+      "begin": "\\b(struct)\\s+([a-zA-Z_][a-zA-Z0-9_]*)",
+      "end": "(?=\\{)",
+      "beginCaptures": {
+        "1": {
+          "name": "storage.type.struct.cvolo"
+        },
+        "2": {
+          "name": "entity.name.type.struct.cvolo"
+        }
+      }
+    },
+    {
+      "comment": "Function definition",
+      "begin": "\\b(void|int|double|bool|string|char|[A-Z_][A-Za-z0-9_]*)\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\s*(?=\\()",
+      "end": "(?<=\\))",
+      "beginCaptures": {
+        "1": {
+          "name": "storage.type.cvolo"
+        },
+        "2": {
+          "name": "entity.name.function.cvolo"
+        }
+      },
+      "patterns": [
+        {
+          "begin": "\\(",
+          "end": "\\)",
+          "patterns": [
+            {
+              "include": "#comments"
+            },
+            {
+              "include": "#types"
+            },
+            {
+              "match": "\\b[a-zA-Z_][a-zA-Z0-9_]*\\b",
+              "name": "variable.parameter.cvolo"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "include": "#string_literal"
+    },
+    {
+      "include": "#numbers"
+    },
+    {
+      "comment": "Function invocation",
+      "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*\\(",
+      "captures": {
+        "1": {
+          "name": "entity.name.function.cvolo"
+        }
+      }
+    },
+    {
+      "comment": "Member access field",
+      "match": "\\.([a-zA-Z_][a-zA-Z0-9_]*)\\b",
+      "captures": {
+        "1": {
+          "name": "variable.other.member.cvolo"
+        }
+      }
+    },
+    {
+      "include": "#keywords"
+    },
+    {
+      "include": "#constants"
+    },
+    {
+      "include": "#types"
+    },
+    {
+      "comment": "Operators",
+      "name": "keyword.operator.cvolo",
+      "match": "(\\+|\\-|\\*|/|%|&|\\||\\^|~|!|=|==|!=|<=|>=|&&|\\|\\||\\+=|\\-=|\\*=|/=|->|\\.\\.\\.)"
+    }
+  ]
+}
