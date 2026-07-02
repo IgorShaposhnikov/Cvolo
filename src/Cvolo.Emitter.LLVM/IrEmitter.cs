@@ -292,28 +292,9 @@ public sealed class IrEmitter
         }
         else if (assign.Left is MemberAccessExpressionSyntax m)
         {
-            if (m.Expression is IdentifierExpressionSyntax structId && _locals.TryGetValue(structId.Name, out var structPtr))
-            {
-                var structTypeName = _variableTypes[structId.Name];
-                var structDecl = _astStructs[structTypeName];
-                var fieldIndex = -1;
-
-                for (var i = 0; i < structDecl.Fields.Count; i++)
-                {
-                    if (structDecl.Fields[i].Name == m.MemberName)
-                    {
-                        fieldIndex = i;
-                        break;
-                    }
-                }
-
-                var fieldPtrReg = NewLocal();
-                var structTy = $"%struct.{structTypeName}";
-                fw.WriteLine($"    %{fieldPtrReg} = getelementptr inbounds {structTy}, ptr %{structPtr}, i32 0, i32 {fieldIndex}");
-
-                var (r, _) = Eval(assign.Right, fw);
-                fw.WriteLine($"    store {r}, ptr %{fieldPtrReg}");
-            }
+            var (fieldPtr, _) = GetFieldPointer(m, fw);
+            var (r, _) = Eval(assign.Right, fw);
+            fw.WriteLine($"    store {r}, ptr %{fieldPtr}");
         }
     }
 
@@ -325,6 +306,7 @@ public sealed class IrEmitter
             fw.WriteLine($"    store {r}, ptr %{ptr}");
             return (r, "i32");
         }
+
         throw new InvalidOperationException($"Cannot assign to non-variable");
     }
 
@@ -342,12 +324,12 @@ public sealed class IrEmitter
         var idx = _stringIndex++;
         var escaped = string.Concat(value.Select(c => c switch
         {
-            '\n' => "\\0A",
-            '\r' => "\\0D",
+            '\n' => "\\0a", // Lowercase 'a'
+            '\r' => "\\0d", // Lowercase 'd'
             '\t' => "\\09",
             '"' => "\\22",
-            '\\' => "\\5C",
-            _ when c < 32 || c > 126 => $"\\{c:X02}",
+            '\\' => "\\5c", // Lowercase 'c'
+            _ when c < 32 || c > 126 => $"\\{c:x02}", // Lowercase 'x02'
             _ => c.ToString(),
         }));
         _stringDefs.Add($"@str{idx} = private unnamed_addr constant [{value.Length + 1} x i8] c\"{escaped}\\00\"");
@@ -378,10 +360,25 @@ public sealed class IrEmitter
 
     private (string val, string ty) EmitMemberAccess(MemberAccessExpressionSyntax m, StringWriter fw)
     {
-        if (m.Expression is IdentifierExpressionSyntax id && _locals.TryGetValue(id.Name, out var structPtr))
+        var (fieldPtr, fieldTypeName) = GetFieldPointer(m, fw);
+        var loadedReg = NewLocal();
+        var fTy = Type(fieldTypeName);
+        fw.WriteLine($"    %{loadedReg} = load {fTy}, ptr %{fieldPtr}");
+        return ($"{fTy} %{loadedReg}", fTy);
+    }
+
+    private (string ptr, string typeName) GetFieldPointer(ExpressionSyntax expr, StringWriter fw)
+    {
+        if (expr is IdentifierExpressionSyntax id)
         {
-            var structTypeName = _variableTypes[id.Name];
-            var structDecl = _astStructs[structTypeName];
+            if (!_locals.TryGetValue(id.Name, out var structPtr))
+                throw new InvalidOperationException($"Undefined variable '{id.Name}'");
+            return (structPtr, _variableTypes[id.Name]);
+        }
+        else if (expr is MemberAccessExpressionSyntax m)
+        {
+            var (parentPtr, parentTypeName) = GetFieldPointer(m.Expression, fw);
+            var structDecl = _astStructs[parentTypeName];
             var fieldIndex = -1;
             var fieldType = "int";
 
@@ -396,16 +393,12 @@ public sealed class IrEmitter
             }
 
             var fieldPtrReg = NewLocal();
-            var structTy = $"%struct.{structTypeName}";
-            fw.WriteLine($"    %{fieldPtrReg} = getelementptr inbounds {structTy}, ptr %{structPtr}, i32 0, i32 {fieldIndex}");
+            var structTy = $"%struct.{parentTypeName}";
+            fw.WriteLine($"    %{fieldPtrReg} = getelementptr inbounds {structTy}, ptr %{parentPtr}, i32 0, i32 {fieldIndex}");
 
-            var loadedReg = NewLocal();
-            var fTy = Type(fieldType);
-            fw.WriteLine($"    %{loadedReg} = load {fTy}, ptr %{fieldPtrReg}");
-
-            return ($"{fTy} %{loadedReg}", fTy);
+            return (fieldPtrReg, fieldType);
         }
 
-        throw new InvalidOperationException("Member access is only supported on direct variables");
+        throw new InvalidOperationException("Unsupported field pointer expression");
     }
 }
