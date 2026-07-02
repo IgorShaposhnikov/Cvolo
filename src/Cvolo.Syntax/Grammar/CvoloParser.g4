@@ -115,6 +115,7 @@ expression
     | expression OR expression                            # logicalOrExpression
     | expression ASSIGN expression                        # assignmentExpression
     | Identifier LPAREN argumentList? RPAREN              # callExpression
+    | Identifier LBRACE structInitializerList? RBRACE   # structInitializationExpression
     | Identifier                                          # identifierExpression
     | IntegerLiteral                                      # integerLiteralExpression
     | DoubleLiteral                                       # doubleLiteralExpression
@@ -126,4 +127,12 @@ expression
 
 argumentList
     : expression (COMMA expression)*
+    ;
+
+structInitializerList
+    : structMemberInitializer (COMMA structMemberInitializer)*
+    ;
+
+structMemberInitializer
+    : Identifier COLON expression
     ;

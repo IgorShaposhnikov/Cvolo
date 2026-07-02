@@ -221,6 +221,22 @@ public sealed class SyntaxParser
                     var memberName = memberCtx.Identifier().GetText();
                     return new MemberAccessExpressionSyntax(SpanOf(memberCtx), left, memberName);
                 }
+            case CvoloParser.StructInitializationExpressionContext structInitCtx:
+                {
+                    var structName = structInitCtx.Identifier().GetText();
+                    var initializers = new List<MemberInitializerSyntax>();
+                    if (structInitCtx.structInitializerList() is { } listCtx)
+                    {
+                        foreach (var memberInit in listCtx.structMemberInitializer())
+                        {
+                            var memberName = memberInit.Identifier().GetText();
+                            var expr = BuildExpression(memberInit.expression());
+                            initializers.Add(new MemberInitializerSyntax(SpanOf(memberInit), memberName, expr));
+                        }
+                    }
+
+                    return new StructInitializationExpressionSyntax(SpanOf(structInitCtx), structName, initializers);
+                }
             default:
                 return new IdentifierExpressionSyntax(SpanOf(context), context.GetText());
         }

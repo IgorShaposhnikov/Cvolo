@@ -94,6 +94,7 @@ public sealed class Binder
                 _diagnostics.Report(param.Span, $"Unknown parameter type '{param.Type}'");
                 continue;
             }
+
             parameters.Add(new ParameterSymbol(param.Name, paramType));
         }
 
@@ -236,6 +237,9 @@ public sealed class Binder
             case MemberAccessExpressionSyntax memberAccess:
                 CheckMemberAccessExpression(memberAccess, scope);
                 break;
+            case StructInitializationExpressionSyntax structInit:
+                CheckStructInitializationExpression(structInit, scope);
+                break;
             case CallExpressionSyntax call:
             {
                 var symbol = scope.Lookup(call.FunctionName);
@@ -244,6 +248,7 @@ public sealed class Binder
                     _diagnostics.Report(call.Span, $"Undefined function '{call.FunctionName}'");
                     return;
                 }
+
                 if (symbol is not FunctionSymbol func)
                 {
                     _diagnostics.Report(call.Span, $"'{call.FunctionName}' is not a function");
@@ -259,6 +264,7 @@ public sealed class Binder
                     _diagnostics.Report(call.Span, $"Function '{call.FunctionName}' expects {paramCount} arguments but received {argCount}");
                     return;
                 }
+
                 if (isVariadic && argCount < paramCount)
                 {
                     _diagnostics.Report(call.Span, $"Function '{call.FunctionName}' expects at least {paramCount} arguments but received {argCount}");
@@ -311,6 +317,7 @@ public sealed class Binder
             BooleanLiteralExpressionSyntax => TypeSymbol.Bool,
             StringLiteralExpressionSyntax => TypeSymbol.String,
             MemberAccessExpressionSyntax m => CheckMemberAccessExpression(m, scope),
+            StructInitializationExpressionSyntax s => CheckStructInitializationExpression(s, scope),
             _ => null
         };
     }
@@ -324,5 +331,55 @@ public sealed class Binder
             return structType;
 
         return null;
+    }
+
+    private TypeSymbol? CheckStructInitializationExpression(StructInitializationExpressionSyntax expr, SymbolTable scope)
+    {
+        var type = ResolveType(expr.StructTypeName);
+        if (type is null)
+        {
+            _diagnostics.Report(expr.Span, $"Unknown type '{expr.StructTypeName}'");
+            return null;
+        }
+
+        if (type is not StructTypeSymbol structType)
+        {
+            _diagnostics.Report(expr.Span, $"Type '{expr.StructTypeName}' is not a struct type");
+            return null;
+        }
+
+        var initializedFields = new HashSet<string>();
+        foreach (var init in expr.Initializers)
+        {
+            if (!initializedFields.Add(init.MemberName))
+            {
+                _diagnostics.Report(init.Span, $"Duplicate initializer for field '{init.MemberName}'");
+                continue;
+            }
+
+            var field = structType.FindField(init.MemberName);
+            if (field is null)
+            {
+                _diagnostics.Report(init.Span, $"Struct '{structType.Name}' does not contain field '{init.MemberName}'");
+                continue;
+            }
+
+            CheckExpression(init.Expression, scope);
+            var initType = GetExpressionType(init.Expression, scope);
+            if (initType is not null && !initType.Equals(field.Type))
+            {
+                _diagnostics.Report(init.Span, $"Cannot initialize field '{init.MemberName}' of type '{field.Type.Name}' with value of type '{initType.Name}'");
+            }
+        }
+
+        foreach (var field in structType.Fields)
+        {
+            if (!initializedFields.Contains(field.Name))
+            {
+                _diagnostics.Report(expr.Span, $"Missing initializer for field '{field.Name}' of struct '{structType.Name}'");
+            }
+        }
+
+        return structType;
     }
 }

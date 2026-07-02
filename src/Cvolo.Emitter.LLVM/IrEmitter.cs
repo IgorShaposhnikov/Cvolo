@@ -144,8 +144,15 @@ public sealed class IrEmitter
         fw.WriteLine($"    %{ptr} = alloca {ty}");
         if (v.Initializer is not null)
         {
-            var (val, _) = Eval(v.Initializer, fw);
-            fw.WriteLine($"    store {val}, ptr %{ptr}");
+            if (v.Initializer is StructInitializationExpressionSyntax structInit)
+            {
+                EmitStructInitializationInPlace(structInit, ptr, fw);
+            }
+            else
+            {
+                var (val, _) = Eval(v.Initializer, fw);
+                fw.WriteLine($"    store {val}, ptr %{ptr}");
+            }
         }
     }
 
@@ -171,6 +178,7 @@ public sealed class IrEmitter
         {
             fw.WriteLine($"    br label %{d}");
         }
+
         fw.WriteLine($"  {d}:");
     }
 
@@ -219,6 +227,7 @@ public sealed class IrEmitter
             StringLiteralExpressionSyntax s => (AddString(s.Value), "ptr"),
             IdentifierExpressionSyntax id => Load(id.Name, fw),
             MemberAccessExpressionSyntax m => EmitMemberAccess(m, fw),
+            StructInitializationExpressionSyntax s => EmitStructInitialization(s, fw),
             CallExpressionSyntax call => EmitCallExpr(call, fw),
             BinaryExpressionSyntax { Operator: "=" } assign => EmitLoadStore(assign, fw),
             BinaryExpressionSyntax bin => EmitBin(bin, fw),
@@ -400,5 +409,48 @@ public sealed class IrEmitter
         }
 
         throw new InvalidOperationException("Unsupported field pointer expression");
+    }
+
+    private (string val, string ty) EmitStructInitialization(StructInitializationExpressionSyntax expr, StringWriter fw)
+    {
+        var tempPtrReg = NewLocal();
+        var structTy = $"%struct.{expr.StructTypeName}";
+        fw.WriteLine($"    %{tempPtrReg} = alloca {structTy}");
+        EmitStructInitializationInPlace(expr, tempPtrReg, fw);
+        return ($"ptr %{tempPtrReg}", expr.StructTypeName);
+    }
+
+    private void EmitStructInitializationInPlace(StructInitializationExpressionSyntax expr, string destPtr, StringWriter fw)
+    {
+        var structTy = $"%struct.{expr.StructTypeName}";
+        foreach (var init in expr.Initializers)
+        {
+            var structDecl = _astStructs[expr.StructTypeName];
+            var fieldIndex = -1;
+            var fieldType = "int";
+
+            for (var i = 0; i < structDecl.Fields.Count; i++)
+            {
+                if (structDecl.Fields[i].Name == init.MemberName)
+                {
+                    fieldIndex = i;
+                    fieldType = structDecl.Fields[i].Type;
+                    break;
+                }
+            }
+
+            var fieldPtrReg = NewLocal();
+            fw.WriteLine($"    %{fieldPtrReg} = getelementptr inbounds {structTy}, ptr %{destPtr}, i32 0, i32 {fieldIndex}");
+
+            if (init.Expression is StructInitializationExpressionSyntax nestedInit)
+            {
+                EmitStructInitializationInPlace(nestedInit, fieldPtrReg, fw);
+            }
+            else
+            {
+                var (val, _) = Eval(init.Expression, fw);
+                fw.WriteLine($"    store {val}, ptr %{fieldPtrReg}");
+            }
+        }
     }
 }
