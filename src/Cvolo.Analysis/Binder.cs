@@ -405,13 +405,19 @@ public sealed class Binder
 
     private TypeSymbol? ResolveType(string name)
     {
+        if (name.StartsWith("refvar "))
+        {
+            var innerName = name.Substring(7); // "refvar " is 7 characters
+            var innerType = ResolveType(innerName);
+            if (innerType is null) return null;
+            return new PointerTypeSymbol(innerType, isMutable: true); // Writable
+        }
         if (name.StartsWith("ref "))
         {
-            var parts = name.Split(' ', 3);
-            var isMutable = parts[1] == "var";
-            var innerType = ResolveType(parts[2]);
+            var innerName = name.Substring(4); // "ref " is 4 characters
+            var innerType = ResolveType(innerName);
             if (innerType is null) return null;
-            return new PointerTypeSymbol(innerType, isMutable);
+            return new PointerTypeSymbol(innerType, isMutable: false); // Read-only
         }
 
         var primitive = TypeSymbol.FromName(name);

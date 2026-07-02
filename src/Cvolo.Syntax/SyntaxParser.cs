@@ -310,11 +310,16 @@ public sealed class SyntaxParser
 
     private string GetTypeName(CvoloParser.TypeContext context)
     {
-        if (context is CvoloParser.ReferenceTypeContext refCtx)
+        if (context is CvoloParser.RefVarTypeContext refVarCtx)
         {
-            var mutability = refCtx.VAR() is not null ? "var" : "val";
-            return $"ref {mutability} {GetTypeName(refCtx.type())}";
+            return $"refvar {GetTypeName(refVarCtx.type())}";
         }
+
+        if (context is CvoloParser.ReadOnlyRefTypeContext refCtx)
+        {
+            return $"ref {GetTypeName(refCtx.type())}";
+        }
+
         return context.GetText();
     }
 

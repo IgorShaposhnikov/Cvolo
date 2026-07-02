@@ -36,7 +36,8 @@ returnType
 type
     : primitiveType                                     # baseType
     | Identifier                                        # identifierType
-    | REF (VAR | VAL) type                              # referenceType
+    | REFVAR type                                       # refVarType
+    | REF type                                          # readOnlyRefType
     ;
 
 primitiveType

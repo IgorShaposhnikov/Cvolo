@@ -366,6 +366,21 @@ public sealed class IrEmitter
 
         var reg = NewLocal();
         fw.WriteLine($"    %{reg} = load {ty}, ptr %{ptr}");
+
+        // If the variable is a pointer/reference, we perform a second load 
+        // to retrieve the actual primitive value (int, double, bool, char)
+        if (typeName.StartsWith("ref ") || typeName.StartsWith("refvar "))
+        {
+            var resolvedType = typeName.StartsWith("refvar ") ? typeName.Substring(7) : typeName.Substring(4);
+            if (resolvedType == "int" || resolvedType == "double" || resolvedType == "bool" || resolvedType == "char")
+            {
+                var valReg = NewLocal();
+                var innerTy = Type(resolvedType);
+                fw.WriteLine($"    %{valReg} = load {innerTy}, ptr %{reg}");
+                return ($"{innerTy} %{valReg}", resolvedType);
+            }
+        }
+
         return ($"{ty} %{reg}", ty);
     }
 
@@ -391,7 +406,7 @@ public sealed class IrEmitter
 
     private string Type(string t)
     {
-        if (t.StartsWith("ref ")) 
+        if (t.StartsWith("ref ") || t.StartsWith("refvar ")) 
             return "ptr";
 
         return t switch
@@ -431,11 +446,11 @@ public sealed class IrEmitter
                 throw new InvalidOperationException($"Undefined variable '{id.Name}'");
 
             var typeName = _variableTypes[id.Name];
-            if (typeName.StartsWith("ref "))
+            if (typeName.StartsWith("ref ") || typeName.StartsWith("refvar "))
             {
                 var actualPtr = NewLocal();
                 fw.WriteLine($"    %{actualPtr} = load ptr, ptr %{structPtr}");
-                var innerType = typeName.Split(' ', 3)[2];
+                var innerType = typeName.StartsWith("refvar ") ? typeName.Substring(7) : typeName.Substring(4);
                 return (actualPtr, innerType);
             }
 

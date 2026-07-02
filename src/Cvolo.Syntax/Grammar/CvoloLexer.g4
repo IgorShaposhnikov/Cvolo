@@ -6,6 +6,7 @@ channels { COMMENTS }
 VAL: 'val';
 VAR: 'var';
 REF: 'ref';
+REFVAR: 'refvar';
 EXTERN: 'extern';
 RETURN: 'return';
 IF: 'if';
