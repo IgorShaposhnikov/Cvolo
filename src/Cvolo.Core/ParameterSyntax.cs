@@ -1,17 +1,11 @@
 namespace Cvolo.Core;
 
-public sealed class ParameterSyntax : SyntaxNode
+public sealed class ParameterSyntax(TextSpan span, string type, string name) : SyntaxNode(span)
 {
-    public override SyntaxKind Kind => SyntaxKind.Parameter;
+	public override SyntaxKind Kind => SyntaxKind.Parameter;
 
-    public string Type { get; }
-    public string Name { get; }
+	public string Type { get; } = type;
+	public string Name { get; } = name;
 
-    public ParameterSyntax(TextSpan span, string type, string name) : base(span)
-    {
-        Type = type;
-        Name = name;
-    }
-
-    public override IEnumerable<SyntaxNode> GetChildren() => [];
+	public override IEnumerable<SyntaxNode> GetChildren() => [];
 }

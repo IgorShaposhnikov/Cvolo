@@ -1,21 +1,15 @@
 namespace Cvolo.Core;
 
-public sealed class WhileStatementSyntax : SyntaxNode
+public sealed class WhileStatementSyntax(TextSpan span, ExpressionSyntax condition, SyntaxNode body) : SyntaxNode(span)
 {
-    public override SyntaxKind Kind => SyntaxKind.WhileStatement;
+	public override SyntaxKind Kind => SyntaxKind.WhileStatement;
 
-    public ExpressionSyntax Condition { get; }
-    public SyntaxNode Body { get; }
+	public ExpressionSyntax Condition { get; } = condition;
+	public SyntaxNode Body { get; } = body;
 
-    public WhileStatementSyntax(TextSpan span, ExpressionSyntax condition, SyntaxNode body) : base(span)
-    {
-        Condition = condition;
-        Body = body;
-    }
-
-    public override IEnumerable<SyntaxNode> GetChildren()
-    {
-        yield return Condition;
-        yield return Body;
-    }
+	public override IEnumerable<SyntaxNode> GetChildren()
+	{
+		yield return Condition;
+		yield return Body;
+	}
 }

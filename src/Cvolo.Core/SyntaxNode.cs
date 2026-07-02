@@ -1,15 +1,10 @@
 namespace Cvolo.Core;
 
-public abstract class SyntaxNode
+public abstract class SyntaxNode(TextSpan span)
 {
-    public abstract SyntaxKind Kind { get; }
+	public abstract SyntaxKind Kind { get; }
 
-    public TextSpan Span { get; }
+	public TextSpan Span { get; } = span;
 
-    protected SyntaxNode(TextSpan span)
-    {
-        Span = span;
-    }
-
-    public abstract IEnumerable<SyntaxNode> GetChildren();
+	public abstract IEnumerable<SyntaxNode> GetChildren();
 }

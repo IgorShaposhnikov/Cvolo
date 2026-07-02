@@ -1,0 +1,110 @@
+# Top-most EditorConfig file
+root = true
+
+# All files
+[*]
+indent_style = tab
+indent_size = 4
+insert_final_newline = true
+trim_trailing_whitespace = true
+charset = utf-8
+end_of_line = lf
+
+
+# C# files
+[*.cs]
+
+#### Tabs & Indentation ####
+indent_style = tab
+indent_size = 4
+tab_width = 4
+
+#### Modern C# Preferences ####
+csharp_style_namespace_declarations = file_scoped:warning
+csharp_style_prefer_primary_constructors = true:warning
+
+#### Core Dotnet Coding Conventions ####
+dotnet_separate_import_directive_groups = errors
+dotnet_sort_system_directives_first = true
+dotnet_style_qualification_for_field = false:suggestion
+dotnet_style_qualification_for_property = false:suggestion
+dotnet_style_qualification_for_method = false:suggestion
+dotnet_style_qualification_for_event = false:suggestion
+dotnet_style_require_accessibility_modifiers = always:suggestion
+dotnet_style_readonly_field = true:suggestion
+
+#### C# Formatting Rules ####
+csharp_new_line_before_open_brace = all
+csharp_new_line_before_else = true
+csharp_new_line_before_catch = true
+csharp_new_line_before_finally = true
+csharp_indent_case_contents = true
+csharp_indent_switch_labels = true
+csharp_indent_labels = flush_left
+
+#### Custom Naming Conventions ####
+
+# 1. Interfaces must start with 'I' (e.g., IInterface)
+dotnet_naming_rule.interfaces_must_have_i.severity = warning
+dotnet_naming_rule.interfaces_must_have_i.symbols = interface_symbols
+dotnet_naming_rule.interfaces_must_have_i.style = prefix_i
+
+dotnet_naming_symbols.interface_symbols.applicable_kinds = interface
+dotnet_naming_symbols.interface_symbols.applicable_accessibilities = *
+dotnet_naming_style.prefix_i.required_prefix = I
+dotnet_naming_style.prefix_i.capitalization = pascal_case
+
+# 2. Abstract Classes must end with 'Base' (e.g., AbstractClassBase)
+dotnet_naming_rule.abstract_classes_must_end_with_base.severity = warning
+dotnet_naming_rule.abstract_classes_must_end_with_base.symbols = abstract_class_symbols
+dotnet_naming_rule.abstract_classes_must_end_with_base.style = suffix_base
+
+dotnet_naming_symbols.abstract_class_symbols.applicable_kinds = class
+dotnet_naming_symbols.abstract_class_symbols.applicable_accessibilities = *
+dotnet_naming_symbols.abstract_class_symbols.required_modifiers = abstract
+dotnet_naming_style.suffix_base.required_suffix = Base
+dotnet_naming_style.suffix_base.capitalization = pascal_case
+
+# 3. Standard Classes must be PascalCase (e.g., ClassName)
+dotnet_naming_rule.classes_must_be_pascal_case.severity = warning
+dotnet_naming_rule.classes_must_be_pascal_case.symbols = class_symbols
+dotnet_naming_rule.classes_must_be_pascal_case.style = pascal_case_style
+
+dotnet_naming_symbols.class_symbols.applicable_kinds = class
+dotnet_naming_symbols.class_symbols.applicable_accessibilities = *
+dotnet_naming_style.pascal_case_style.capitalization = pascal_case
+
+# 4. Methods must be PascalCase (e.g., MethodName)
+dotnet_naming_rule.methods_must_be_pascal_case.severity = warning
+dotnet_naming_rule.methods_must_be_pascal_case.symbols = method_symbols
+dotnet_naming_rule.methods_must_be_pascal_case.style = pascal_case_style
+
+dotnet_naming_symbols.method_symbols.applicable_kinds = method
+dotnet_naming_symbols.method_symbols.applicable_accessibilities = *
+
+# 5. Public/Protected/Internal Fields must be PascalCase (e.g., FieldName)
+dotnet_naming_rule.public_fields_must_be_pascal_case.severity = warning
+dotnet_naming_rule.public_fields_must_be_pascal_case.symbols = public_field_symbols
+dotnet_naming_rule.public_fields_must_be_pascal_case.style = pascal_case_style
+
+dotnet_naming_symbols.public_field_symbols.applicable_kinds = field
+dotnet_naming_symbols.public_field_symbols.applicable_accessibilities = public, protected, internal, friend
+
+# 6. Primary Constructor Parameters must be camelCase (e.g., privateField)
+# Note: In C#, primary constructor parameters function as private fields but are governed by parameter rules.
+dotnet_naming_rule.primary_ctor_parameters_must_be_camel_case.severity = warning
+dotnet_naming_rule.primary_ctor_parameters_must_be_camel_case.symbols = parameter_symbols
+dotnet_naming_rule.primary_ctor_parameters_must_be_camel_case.style = camel_case_style
+
+dotnet_naming_symbols.parameter_symbols.applicable_kinds = parameter
+dotnet_naming_style.camel_case_style.capitalization = camel_case
+
+# 7. Standard Private Fields must start with an underscore (e.g., _privateField)
+dotnet_naming_rule.private_fields_must_have_underscore.severity = warning
+dotnet_naming_rule.private_fields_must_have_underscore.symbols = private_field_symbols
+dotnet_naming_rule.private_fields_must_have_underscore.style = prefix_underscore
+
+dotnet_naming_symbols.private_field_symbols.applicable_kinds = field
+dotnet_naming_symbols.private_field_symbols.applicable_accessibilities = private
+dotnet_naming_style.prefix_underscore.required_prefix = _
+dotnet_naming_style.prefix_underscore.capitalization = camel_case

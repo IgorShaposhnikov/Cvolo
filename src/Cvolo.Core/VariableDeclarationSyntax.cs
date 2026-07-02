@@ -1,29 +1,21 @@
 namespace Cvolo.Core;
 
-public sealed class VariableDeclarationSyntax : SyntaxNode
+public sealed class VariableDeclarationSyntax(
+	TextSpan span,
+	bool isMutable,
+	string? type,
+	string name,
+	ExpressionSyntax? initializer) : SyntaxNode(span)
 {
-    public override SyntaxKind Kind => SyntaxKind.VariableDeclaration;
+	public override SyntaxKind Kind => SyntaxKind.VariableDeclaration;
 
-    public bool IsMutable { get; }
-    public string? Type { get; }
-    public string Name { get; }
-    public ExpressionSyntax? Initializer { get; }
+	public bool IsMutable { get; } = isMutable;
+	public string? Type { get; } = type;
+	public string Name { get; } = name;
+	public ExpressionSyntax? Initializer { get; } = initializer;
 
-    public VariableDeclarationSyntax(
-        TextSpan span,
-        bool isMutable,
-        string? type,
-        string name,
-        ExpressionSyntax? initializer) : base(span)
-    {
-        IsMutable = isMutable;
-        Type = type;
-        Name = name;
-        Initializer = initializer;
-    }
-
-    public override IEnumerable<SyntaxNode> GetChildren()
-    {
-        if (Initializer is not null) yield return Initializer;
-    }
+	public override IEnumerable<SyntaxNode> GetChildren()
+	{
+		if (Initializer is not null) yield return Initializer;
+	}
 }

@@ -1,6 +1,5 @@
 namespace Cvolo.Core;
 
-public abstract class ExpressionSyntax : SyntaxNode
+public abstract class ExpressionSyntax(TextSpan span) : SyntaxNode(span)
 {
-    protected ExpressionSyntax(TextSpan span) : base(span) { }
 }

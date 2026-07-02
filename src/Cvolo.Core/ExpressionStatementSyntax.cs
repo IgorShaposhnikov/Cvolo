@@ -1,18 +1,13 @@
 namespace Cvolo.Core;
 
-public sealed class ExpressionStatementSyntax : SyntaxNode
+public sealed class ExpressionStatementSyntax(TextSpan span, ExpressionSyntax expression) : SyntaxNode(span)
 {
-    public override SyntaxKind Kind => SyntaxKind.ExpressionStatement;
+	public override SyntaxKind Kind => SyntaxKind.ExpressionStatement;
 
-    public ExpressionSyntax Expression { get; }
+	public ExpressionSyntax Expression { get; } = expression;
 
-    public ExpressionStatementSyntax(TextSpan span, ExpressionSyntax expression) : base(span)
-    {
-        Expression = expression;
-    }
-
-    public override IEnumerable<SyntaxNode> GetChildren()
-    {
-        yield return Expression;
-    }
+	public override IEnumerable<SyntaxNode> GetChildren()
+	{
+		yield return Expression;
+	}
 }

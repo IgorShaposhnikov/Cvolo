@@ -1,33 +1,21 @@
 namespace Cvolo.Core;
 
-public sealed class StructDeclarationSyntax : SyntaxNode
+public sealed class StructDeclarationSyntax(TextSpan span, string name, IReadOnlyList<StructFieldSyntax> fields) : SyntaxNode(span)
 {
-    public override SyntaxKind Kind => SyntaxKind.StructDeclaration;
+	public override SyntaxKind Kind => SyntaxKind.StructDeclaration;
 
-    public string Name { get; }
-    public IReadOnlyList<StructFieldSyntax> Fields { get; }
+	public string Name { get; } = name;
+	public IReadOnlyList<StructFieldSyntax> Fields { get; } = fields;
 
-    public StructDeclarationSyntax(TextSpan span, string name, IReadOnlyList<StructFieldSyntax> fields) : base(span)
-    {
-        Name = name;
-        Fields = fields;
-    }
-
-    public override IEnumerable<SyntaxNode> GetChildren() => Fields;
+	public override IEnumerable<SyntaxNode> GetChildren() => Fields;
 }
 
-public sealed class StructFieldSyntax : SyntaxNode
+public sealed class StructFieldSyntax(TextSpan span, string type, string name) : SyntaxNode(span)
 {
-    public override SyntaxKind Kind => SyntaxKind.Parameter;
+	public override SyntaxKind Kind => SyntaxKind.Parameter;
 
-    public string Type { get; }
-    public string Name { get; }
+	public string Type { get; } = type;
+	public string Name { get; } = name;
 
-    public StructFieldSyntax(TextSpan span, string type, string name) : base(span)
-    {
-        Type = type;
-        Name = name;
-    }
-
-    public override IEnumerable<SyntaxNode> GetChildren() => [];
+	public override IEnumerable<SyntaxNode> GetChildren() => [];
 }

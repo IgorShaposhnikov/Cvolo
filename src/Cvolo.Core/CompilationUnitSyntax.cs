@@ -1,15 +1,10 @@
 namespace Cvolo.Core;
 
-public sealed class CompilationUnitSyntax : SyntaxNode
+public sealed class CompilationUnitSyntax(TextSpan span, IReadOnlyList<SyntaxNode> members) : SyntaxNode(span)
 {
-    public override SyntaxKind Kind => SyntaxKind.CompilationUnit;
+	public override SyntaxKind Kind => SyntaxKind.CompilationUnit;
 
-    public IReadOnlyList<SyntaxNode> Members { get; }
+	public IReadOnlyList<SyntaxNode> Members { get; } = members;
 
-    public CompilationUnitSyntax(TextSpan span, IReadOnlyList<SyntaxNode> members) : base(span)
-    {
-        Members = members;
-    }
-
-    public override IEnumerable<SyntaxNode> GetChildren() => Members;
+	public override IEnumerable<SyntaxNode> GetChildren() => Members;
 }

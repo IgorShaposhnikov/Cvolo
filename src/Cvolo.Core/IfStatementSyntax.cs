@@ -1,46 +1,34 @@
 namespace Cvolo.Core;
 
-public sealed class IfStatementSyntax : SyntaxNode
+public sealed class IfStatementSyntax(
+	TextSpan span,
+	ExpressionSyntax condition,
+	SyntaxNode thenStatement,
+	ElseClauseSyntax? elseClause) : SyntaxNode(span)
 {
-    public override SyntaxKind Kind => SyntaxKind.IfStatement;
+	public override SyntaxKind Kind => SyntaxKind.IfStatement;
 
-    public ExpressionSyntax Condition { get; }
-    public SyntaxNode ThenStatement { get; }
-    public ElseClauseSyntax? ElseClause { get; }
+	public ExpressionSyntax Condition { get; } = condition;
+	public SyntaxNode ThenStatement { get; } = thenStatement;
+	public ElseClauseSyntax? ElseClause { get; } = elseClause;
 
-    public IfStatementSyntax(
-        TextSpan span,
-        ExpressionSyntax condition,
-        SyntaxNode thenStatement,
-        ElseClauseSyntax? elseClause) : base(span)
-    {
-        Condition = condition;
-        ThenStatement = thenStatement;
-        ElseClause = elseClause;
-    }
-
-    public override IEnumerable<SyntaxNode> GetChildren()
-    {
-        yield return Condition;
-        yield return ThenStatement;
-        if (ElseClause is not null)
-            yield return ElseClause;
-    }
+	public override IEnumerable<SyntaxNode> GetChildren()
+	{
+		yield return Condition;
+		yield return ThenStatement;
+		if (ElseClause is not null)
+			yield return ElseClause;
+	}
 }
 
-public sealed class ElseClauseSyntax : SyntaxNode
+public sealed class ElseClauseSyntax(TextSpan span, BlockStatementSyntax body) : SyntaxNode(span)
 {
-    public override SyntaxKind Kind => SyntaxKind.BlockStatement;
+	public override SyntaxKind Kind => SyntaxKind.BlockStatement;
 
-    public BlockStatementSyntax Body { get; }
+	public BlockStatementSyntax Body { get; } = body;
 
-    public ElseClauseSyntax(TextSpan span, BlockStatementSyntax body) : base(span)
-    {
-        Body = body;
-    }
-
-    public override IEnumerable<SyntaxNode> GetChildren()
-    {
-        yield return Body;
-    }
+	public override IEnumerable<SyntaxNode> GetChildren()
+	{
+		yield return Body;
+	}
 }

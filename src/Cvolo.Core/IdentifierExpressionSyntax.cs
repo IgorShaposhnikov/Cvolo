@@ -1,15 +1,10 @@
 namespace Cvolo.Core;
 
-public sealed class IdentifierExpressionSyntax : ExpressionSyntax
+public sealed class IdentifierExpressionSyntax(TextSpan span, string name) : ExpressionSyntax(span)
 {
-    public override SyntaxKind Kind => SyntaxKind.IdentifierExpression;
+	public override SyntaxKind Kind => SyntaxKind.IdentifierExpression;
 
-    public string Name { get; }
+	public string Name { get; } = name;
 
-    public IdentifierExpressionSyntax(TextSpan span, string name) : base(span)
-    {
-        Name = name;
-    }
-
-    public override IEnumerable<SyntaxNode> GetChildren() => [];
+	public override IEnumerable<SyntaxNode> GetChildren() => [];
 }

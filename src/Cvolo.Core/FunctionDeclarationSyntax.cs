@@ -1,30 +1,22 @@
 namespace Cvolo.Core;
 
-public sealed class FunctionDeclarationSyntax : SyntaxNode
+public sealed class FunctionDeclarationSyntax(
+	TextSpan span,
+	string returnType,
+	string name,
+	IReadOnlyList<ParameterSyntax> parameters,
+	BlockStatementSyntax body) : SyntaxNode(span)
 {
-    public override SyntaxKind Kind => SyntaxKind.FunctionDeclaration;
+	public override SyntaxKind Kind => SyntaxKind.FunctionDeclaration;
 
-    public string ReturnType { get; }
-    public string Name { get; }
-    public IReadOnlyList<ParameterSyntax> Parameters { get; }
-    public BlockStatementSyntax Body { get; }
+	public string ReturnType { get; } = returnType;
+	public string Name { get; } = name;
+	public IReadOnlyList<ParameterSyntax> Parameters { get; } = parameters;
+	public BlockStatementSyntax Body { get; } = body;
 
-    public FunctionDeclarationSyntax(
-        TextSpan span,
-        string returnType,
-        string name,
-        IReadOnlyList<ParameterSyntax> parameters,
-        BlockStatementSyntax body) : base(span)
-    {
-        ReturnType = returnType;
-        Name = name;
-        Parameters = parameters;
-        Body = body;
-    }
-
-    public override IEnumerable<SyntaxNode> GetChildren()
-    {
-        foreach (var p in Parameters) yield return p;
-        yield return Body;
-    }
+	public override IEnumerable<SyntaxNode> GetChildren()
+	{
+		foreach (var p in Parameters) yield return p;
+		yield return Body;
+	}
 }

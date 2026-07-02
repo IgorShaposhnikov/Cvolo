@@ -2,43 +2,30 @@ namespace Cvolo.Analysis;
 
 public abstract class Symbol(string name)
 {
-    public string Name { get; } = name;
+	public string Name { get; } = name;
 }
 
-public sealed class FunctionSymbol : Symbol
+public sealed class FunctionSymbol(
+	string name,
+	TypeSymbol returnType,
+	IReadOnlyList<ParameterSymbol> parameters,
+	bool isExtern = false,
+	bool isVariadic = false) : Symbol(name)
 {
-    public TypeSymbol ReturnType { get; }
-    public IReadOnlyList<ParameterSymbol> Parameters { get; }
-    public bool IsExtern { get; }
-    public bool IsVariadic { get; }
-
-    public FunctionSymbol(
-        string name,
-        TypeSymbol returnType,
-        IReadOnlyList<ParameterSymbol> parameters,
-        bool isExtern = false,
-        bool isVariadic = false) : base(name)
-    {
-        ReturnType = returnType;
-        Parameters = parameters;
-        IsExtern = isExtern;
-        IsVariadic = isVariadic;
-    }
+	public TypeSymbol ReturnType { get; } = returnType;
+	public IReadOnlyList<ParameterSymbol> Parameters { get; } = parameters;
+	public bool IsExtern { get; } = isExtern;
+	public bool IsVariadic { get; } = isVariadic;
 }
 
-public sealed class ParameterSymbol : Symbol
+public sealed class ParameterSymbol(string name, TypeSymbol type) : Symbol(name)
 {
-    public TypeSymbol Type { get; }
-
-    public ParameterSymbol(string name, TypeSymbol type) : base(name)
-    {
-        Type = type;
-    }
+	public TypeSymbol Type { get; } = type;
 }
 
 public sealed class VariableSymbol(string name, TypeSymbol type, bool isMutable) : Symbol(name)
 {
-    public TypeSymbol Type { get; } = type;
-    public bool IsMutable { get; } = isMutable;
-    public bool IsMoved { get; set; } = false; // Track ownership state
+	public TypeSymbol Type { get; } = type;
+	public bool IsMutable { get; } = isMutable;
+	public bool IsMoved { get; set; } = false; // Track ownership state
 }

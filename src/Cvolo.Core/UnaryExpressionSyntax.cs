@@ -1,20 +1,14 @@
 namespace Cvolo.Core;
 
-public sealed class UnaryExpressionSyntax : ExpressionSyntax
+public sealed class UnaryExpressionSyntax(TextSpan span, string op, ExpressionSyntax operand) : ExpressionSyntax(span)
 {
-    public override SyntaxKind Kind => SyntaxKind.UnaryExpression;
+	public override SyntaxKind Kind => SyntaxKind.UnaryExpression;
 
-    public string Operator { get; }
-    public ExpressionSyntax Operand { get; }
+	public string Operator { get; } = op;
+	public ExpressionSyntax Operand { get; } = operand;
 
-    public UnaryExpressionSyntax(TextSpan span, string op, ExpressionSyntax operand) : base(span)
-    {
-        Operator = op;
-        Operand = operand;
-    }
-
-    public override IEnumerable<SyntaxNode> GetChildren()
-    {
-        yield return Operand;
-    }
+	public override IEnumerable<SyntaxNode> GetChildren()
+	{
+		yield return Operand;
+	}
 }
