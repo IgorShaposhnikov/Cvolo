@@ -4,6 +4,11 @@
     <File Path="Directory.Build.props" />
     <File Path="Directory.Packages.props" />
   </Folder>
+  <Folder Name="/docs/">
+    <File Path="../docs/active_plan.md" />
+    <File Path="../docs/COMPILATION.md" />
+    <File Path="../docs/GRAMMAR.md" />
+  </Folder>
   <Project Path="Cvolo.Analysis/Cvolo.Analysis.csproj" />
   <Project Path="Cvolo.Core/Cvolo.Core.csproj" />
   <Project Path="Cvolo.Emitter.LLVM/Cvolo.Emitter.LLVM.csproj" />

@@ -10,12 +10,26 @@ public sealed class IrEmitter
     private int _stringIndex;
     private readonly Dictionary<string, string> _locals = [];
     private readonly List<string> _stringDefs = [];
+    private readonly Dictionary<string, StructDeclarationSyntax> _astStructs = [];
+    private readonly Dictionary<string, string> _variableTypes = [];
 
     public string Emit(CompilationUnitSyntax unit)
     {
         _writer.WriteLine("; ModuleID = 'cvolo_module'");
         _writer.WriteLine("source_filename = \"cvolo_module\"");
-        _writer.WriteLine();
+
+        foreach (var member in unit.Members)
+        {
+            if (member is StructDeclarationSyntax structDecl)
+            {
+                _astStructs[structDecl.Name] = structDecl;
+                var fieldTypes = string.Join(", ", structDecl.Fields.Select(f => Type(f.Type)));
+                _writer.WriteLine($"%struct.{structDecl.Name} = type {{ {fieldTypes} }}");
+            }
+        }
+
+        if (_astStructs.Count > 0) 
+            _writer.WriteLine();
 
         foreach (var member in unit.Members)
             if (member is ExternDeclarationSyntax ext) EmitExtern(ext);
@@ -124,7 +138,9 @@ public sealed class IrEmitter
     {
         var ptr = NewLocal();
         _locals[v.Name] = ptr;
-        var ty = Type(v.Type ?? "int");
+        var typeName = v.Type ?? "int";
+        _variableTypes[v.Name] = typeName;
+        var ty = Type(typeName);
         fw.WriteLine($"    %{ptr} = alloca {ty}");
         if (v.Initializer is not null)
         {
@@ -202,6 +218,7 @@ public sealed class IrEmitter
             BooleanLiteralExpressionSyntax b => ($"i1 {(b.Value ? "1" : "0")}", "i1"),
             StringLiteralExpressionSyntax s => (AddString(s.Value), "ptr"),
             IdentifierExpressionSyntax id => Load(id.Name, fw),
+            MemberAccessExpressionSyntax m => EmitMemberAccess(m, fw),
             CallExpressionSyntax call => EmitCallExpr(call, fw),
             BinaryExpressionSyntax { Operator: "=" } assign => EmitLoadStore(assign, fw),
             BinaryExpressionSyntax bin => EmitBin(bin, fw),
@@ -273,6 +290,31 @@ public sealed class IrEmitter
             var (r, _) = Eval(assign.Right, fw);
             fw.WriteLine($"    store {r}, ptr %{ptr}");
         }
+        else if (assign.Left is MemberAccessExpressionSyntax m)
+        {
+            if (m.Expression is IdentifierExpressionSyntax structId && _locals.TryGetValue(structId.Name, out var structPtr))
+            {
+                var structTypeName = _variableTypes[structId.Name];
+                var structDecl = _astStructs[structTypeName];
+                var fieldIndex = -1;
+
+                for (var i = 0; i < structDecl.Fields.Count; i++)
+                {
+                    if (structDecl.Fields[i].Name == m.MemberName)
+                    {
+                        fieldIndex = i;
+                        break;
+                    }
+                }
+
+                var fieldPtrReg = NewLocal();
+                var structTy = $"%struct.{structTypeName}";
+                fw.WriteLine($"    %{fieldPtrReg} = getelementptr inbounds {structTy}, ptr %{structPtr}, i32 0, i32 {fieldIndex}");
+
+                var (r, _) = Eval(assign.Right, fw);
+                fw.WriteLine($"    store {r}, ptr %{fieldPtrReg}");
+            }
+        }
     }
 
     private (string val, string ty) EmitLoadStore(BinaryExpressionSyntax assign, StringWriter fw)
@@ -315,7 +357,7 @@ public sealed class IrEmitter
     private string NextLabel() => $"L{_labelCounter++}";
     private string NewLocal() => (_localCounter++).ToString();
 
-    private static string Type(string t) => t switch
+    private string Type(string t) => t switch
     {
         "void" => "void",
         "int" or "Int32" => "i32",
@@ -323,7 +365,7 @@ public sealed class IrEmitter
         "bool" or "Boolean" => "i1",
         "string" or "String" => "ptr",
         "char" or "Char" => "i8",
-        _ => "i32",
+        _ => _astStructs.ContainsKey(t) ? $"%struct.{t}" : "i32",
     };
 
     private static string V(string typed) => typed.Split(' ')[^1];
@@ -333,4 +375,37 @@ public sealed class IrEmitter
         ReturnStatementSyntax => true,
         _ => false,
     };
+
+    private (string val, string ty) EmitMemberAccess(MemberAccessExpressionSyntax m, StringWriter fw)
+    {
+        if (m.Expression is IdentifierExpressionSyntax id && _locals.TryGetValue(id.Name, out var structPtr))
+        {
+            var structTypeName = _variableTypes[id.Name];
+            var structDecl = _astStructs[structTypeName];
+            var fieldIndex = -1;
+            var fieldType = "int";
+
+            for (var i = 0; i < structDecl.Fields.Count; i++)
+            {
+                if (structDecl.Fields[i].Name == m.MemberName)
+                {
+                    fieldIndex = i;
+                    fieldType = structDecl.Fields[i].Type;
+                    break;
+                }
+            }
+
+            var fieldPtrReg = NewLocal();
+            var structTy = $"%struct.{structTypeName}";
+            fw.WriteLine($"    %{fieldPtrReg} = getelementptr inbounds {structTy}, ptr %{structPtr}, i32 0, i32 {fieldIndex}");
+
+            var loadedReg = NewLocal();
+            var fTy = Type(fieldType);
+            fw.WriteLine($"    %{loadedReg} = load {fTy}, ptr %{fieldPtrReg}");
+
+            return ($"{fTy} %{loadedReg}", fTy);
+        }
+
+        throw new InvalidOperationException("Member access is only supported on direct variables");
+    }
 }

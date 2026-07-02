@@ -147,63 +147,81 @@ public sealed class SyntaxParser
 
     private ExpressionSyntax BuildExpression(CvoloParser.ExpressionContext context)
     {
-        if (context is CvoloParser.StringLiteralExpressionContext strCtx)
+        switch (context)
         {
-            var raw = strCtx.StringLiteral().GetText()[1..^1];
-            var value = raw.Replace("\\n", "\n")
+            case CvoloParser.StringLiteralExpressionContext strCtx:
+                {
+                    var raw = strCtx.StringLiteral().GetText()[1..^1];
+                    var value = DecodeString(raw);
+                    return new StringLiteralExpressionSyntax(SpanOf(strCtx), value);
+                }
+
+            case CvoloParser.IntegerLiteralExpressionContext intCtx:
+                return new IntegerLiteralExpressionSyntax(SpanOf(intCtx), int.Parse(intCtx.IntegerLiteral().GetText(), CultureInfo.InvariantCulture));
+            case CvoloParser.DoubleLiteralExpressionContext dblCtx:
+                return new DoubleLiteralExpressionSyntax(SpanOf(dblCtx), double.Parse(dblCtx.DoubleLiteral().GetText(), CultureInfo.InvariantCulture));
+            case CvoloParser.BooleanLiteralExpressionContext boolCtx:
+                return new BooleanLiteralExpressionSyntax(SpanOf(boolCtx), boolCtx.TRUE() is not null);
+            case CvoloParser.IdentifierExpressionContext idCtx:
+                return new IdentifierExpressionSyntax(SpanOf(idCtx), idCtx.Identifier().GetText());
+            case CvoloParser.ParenthesizedExpressionContext parenCtx:
+                return BuildExpression(parenCtx.expression());
+            case CvoloParser.CallExpressionContext callCtx:
+                {
+                    var funcName = callCtx.Identifier().GetText();
+                    var args = new List<ExpressionSyntax>();
+                    if (callCtx.argumentList() is { } argList)
+                    {
+                        foreach (var arg in argList.expression())
+                            args.Add(BuildExpression(arg));
+                    }
+                    return new CallExpressionSyntax(SpanOf(callCtx), funcName, args);
+                }
+
+            case CvoloParser.UnaryMinusExpressionContext unaryMinus:
+                return new UnaryExpressionSyntax(SpanOf(unaryMinus), "-", BuildExpression(unaryMinus.expression()));
+            case CvoloParser.LogicalNotExpressionContext notCtx:
+                return new UnaryExpressionSyntax(SpanOf(notCtx), "!", BuildExpression(notCtx.expression()));
+            case CvoloParser.CastExpressionContext castCtx:
+                {
+                    var inner = BuildExpression(castCtx.expression());
+                    return new UnaryExpressionSyntax(SpanOf(castCtx), $"({castCtx.type().GetText()})", inner);
+                }
+
+            case CvoloParser.MultiplicativeExpressionContext multCtx:
+                return new BinaryExpressionSyntax(SpanOf(multCtx), BuildExpression(multCtx.expression(0)), multCtx.GetChild(1).GetText(), BuildExpression(multCtx.expression(1)));
+            case CvoloParser.AdditiveExpressionContext addCtx:
+                return new BinaryExpressionSyntax(SpanOf(addCtx), BuildExpression(addCtx.expression(0)), addCtx.GetChild(1).GetText(), BuildExpression(addCtx.expression(1)));
+            case CvoloParser.RelationalExpressionContext relCtx:
+                return new BinaryExpressionSyntax(SpanOf(relCtx), BuildExpression(relCtx.expression(0)), relCtx.GetChild(1).GetText(), BuildExpression(relCtx.expression(1)));
+            case CvoloParser.EqualityExpressionContext eqCtx:
+                return new BinaryExpressionSyntax(SpanOf(eqCtx), BuildExpression(eqCtx.expression(0)), eqCtx.GetChild(1).GetText(), BuildExpression(eqCtx.expression(1)));
+            case CvoloParser.LogicalAndExpressionContext andCtx:
+                return new BinaryExpressionSyntax(SpanOf(andCtx), BuildExpression(andCtx.expression(0)), "&&", BuildExpression(andCtx.expression(1)));
+            case CvoloParser.LogicalOrExpressionContext orCtx:
+                return new BinaryExpressionSyntax(SpanOf(orCtx), BuildExpression(orCtx.expression(0)), "||", BuildExpression(orCtx.expression(1)));
+            case CvoloParser.AssignmentExpressionContext assignCtx:
+                return new BinaryExpressionSyntax(SpanOf(assignCtx), BuildExpression(assignCtx.expression(0)), "=", BuildExpression(assignCtx.expression(1)));
+            case CvoloParser.MemberAccessExpressionContext memberCtx:
+                {
+                    var left = BuildExpression(memberCtx.expression());
+                    var memberName = memberCtx.Identifier().GetText();
+                    return new MemberAccessExpressionSyntax(SpanOf(memberCtx), left, memberName);
+                }
+            default:
+                return new IdentifierExpressionSyntax(SpanOf(context), context.GetText());
+        }
+
+        string DecodeString(string literal)
+        {
+            return literal[1..^1]
+                .Replace("\\n", "\n")
                 .Replace("\\t", "\t")
                 .Replace("\\r", "\r")
                 .Replace("\\\"", "\"")
                 .Replace("\\\\", "\\")
                 .Replace("\\0", "\0");
-            return new StringLiteralExpressionSyntax(SpanOf(strCtx), value);
         }
-        if (context is CvoloParser.IntegerLiteralExpressionContext intCtx)
-            return new IntegerLiteralExpressionSyntax(SpanOf(intCtx), int.Parse(intCtx.IntegerLiteral().GetText(), CultureInfo.InvariantCulture));
-        if (context is CvoloParser.DoubleLiteralExpressionContext dblCtx)
-            return new DoubleLiteralExpressionSyntax(SpanOf(dblCtx), double.Parse(dblCtx.DoubleLiteral().GetText(), CultureInfo.InvariantCulture));
-        if (context is CvoloParser.BooleanLiteralExpressionContext boolCtx)
-            return new BooleanLiteralExpressionSyntax(SpanOf(boolCtx), boolCtx.TRUE() is not null);
-        if (context is CvoloParser.IdentifierExpressionContext idCtx)
-            return new IdentifierExpressionSyntax(SpanOf(idCtx), idCtx.Identifier().GetText());
-        if (context is CvoloParser.ParenthesizedExpressionContext parenCtx)
-            return BuildExpression(parenCtx.expression());
-        if (context is CvoloParser.CallExpressionContext callCtx)
-        {
-            var funcName = callCtx.Identifier().GetText();
-            var args = new List<ExpressionSyntax>();
-            if (callCtx.argumentList() is { } argList)
-            {
-                foreach (var arg in argList.expression())
-                    args.Add(BuildExpression(arg));
-            }
-            return new CallExpressionSyntax(SpanOf(callCtx), funcName, args);
-        }
-        if (context is CvoloParser.UnaryMinusExpressionContext unaryMinus)
-            return new UnaryExpressionSyntax(SpanOf(unaryMinus), "-", BuildExpression(unaryMinus.expression()));
-        if (context is CvoloParser.LogicalNotExpressionContext notCtx)
-            return new UnaryExpressionSyntax(SpanOf(notCtx), "!", BuildExpression(notCtx.expression()));
-        if (context is CvoloParser.CastExpressionContext castCtx)
-        {
-            var inner = BuildExpression(castCtx.expression());
-            return new UnaryExpressionSyntax(SpanOf(castCtx), $"({castCtx.type().GetText()})", inner);
-        }
-        if (context is CvoloParser.MultiplicativeExpressionContext multCtx)
-            return new BinaryExpressionSyntax(SpanOf(multCtx), BuildExpression(multCtx.expression(0)), multCtx.GetChild(1).GetText(), BuildExpression(multCtx.expression(1)));
-        if (context is CvoloParser.AdditiveExpressionContext addCtx)
-            return new BinaryExpressionSyntax(SpanOf(addCtx), BuildExpression(addCtx.expression(0)), addCtx.GetChild(1).GetText(), BuildExpression(addCtx.expression(1)));
-        if (context is CvoloParser.RelationalExpressionContext relCtx)
-            return new BinaryExpressionSyntax(SpanOf(relCtx), BuildExpression(relCtx.expression(0)), relCtx.GetChild(1).GetText(), BuildExpression(relCtx.expression(1)));
-        if (context is CvoloParser.EqualityExpressionContext eqCtx)
-            return new BinaryExpressionSyntax(SpanOf(eqCtx), BuildExpression(eqCtx.expression(0)), eqCtx.GetChild(1).GetText(), BuildExpression(eqCtx.expression(1)));
-        if (context is CvoloParser.LogicalAndExpressionContext andCtx)
-            return new BinaryExpressionSyntax(SpanOf(andCtx), BuildExpression(andCtx.expression(0)), "&&", BuildExpression(andCtx.expression(1)));
-        if (context is CvoloParser.LogicalOrExpressionContext orCtx)
-            return new BinaryExpressionSyntax(SpanOf(orCtx), BuildExpression(orCtx.expression(0)), "||", BuildExpression(orCtx.expression(1)));
-        if (context is CvoloParser.AssignmentExpressionContext assignCtx)
-            return new BinaryExpressionSyntax(SpanOf(assignCtx), BuildExpression(assignCtx.expression(0)), "=", BuildExpression(assignCtx.expression(1)));
-
-        return new IdentifierExpressionSyntax(SpanOf(context), context.GetText());
     }
 
     private VariableDeclarationSyntax BuildVariableDeclaration(CvoloParser.VariableDeclarationContext context)

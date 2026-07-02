@@ -1,6 +1,6 @@
 namespace Cvolo.Analysis;
 
-public sealed class TypeSymbol(string name) : IEquatable<TypeSymbol>
+public class TypeSymbol(string name) : IEquatable<TypeSymbol>
 {
     public string Name { get; } = name;
 

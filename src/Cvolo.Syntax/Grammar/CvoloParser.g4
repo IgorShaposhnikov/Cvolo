@@ -103,7 +103,8 @@ forStatement
     ;
 
 expression
-    : LPAREN type RPAREN expression                     # castExpression
+    : expression DOT Identifier                         # memberAccessExpression
+    | LPAREN type RPAREN expression                     # castExpression
     | MINUS expression                                   # unaryMinusExpression
     | EXCLAMATION expression                             # logicalNotExpression
     | expression (STAR | DIV | PERCENT) expression       # multiplicativeExpression

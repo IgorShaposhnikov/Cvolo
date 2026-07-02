@@ -10,6 +10,17 @@
 
   <ItemGroup>
     <PackageReference Include="Antlr4.Runtime.Standard" />
+    <PackageReference Include="Antlr4BuildTasks" PrivateAssets="all" IncludeAssets="build" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Explicitly exclude anything that accidentally escaped into the directory -->
+    <Compile Remove="Generated\**" />
+    <None Remove="Generated\**" />
+
+    <!-- Compile the grammar cleanly using the exact paths -->
+    <Antlr4 Include="Grammar\CvoloLexer.g4" Lexer="true" Parser="false" Visibility="public" TargetLanguage="CSharp" ForceAtBuild="true" />
+    <Antlr4 Include="Grammar\CvoloParser.g4" Lexer="false" Parser="true" Visibility="public" TargetLanguage="CSharp" ForceAtBuild="true" />
   </ItemGroup>
 
 </Project>

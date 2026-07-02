@@ -1,3 +1,4 @@
+using Cvolo.Analysis.@struct;
 using Cvolo.Core;
 
 namespace Cvolo.Analysis;
@@ -6,11 +7,20 @@ public sealed class Binder
 {
     private readonly DiagnosticBag _diagnostics = new();
     private readonly SymbolTable _globals = new();
+    private readonly Dictionary<string, StructTypeSymbol> _structTypes = [];
 
     public DiagnosticBag Diagnostics => _diagnostics;
 
     public void Bind(CompilationUnitSyntax unit)
     {
+        foreach (var member in unit.Members)
+        {
+            if (member is StructDeclarationSyntax structDecl)
+            {
+                DeclareStruct(structDecl);
+            }
+        }
+
         // First pass: collect all declarations
         foreach (var member in unit.Members)
         {
@@ -31,6 +41,39 @@ public sealed class Binder
             if (member is FunctionDeclarationSyntax func)
                 CheckFunctionBody(func);
         }
+    }
+
+    private void DeclareStruct(StructDeclarationSyntax structDecl)
+    {
+        if (_structTypes.ContainsKey(structDecl.Name) || TypeSymbol.FromName(structDecl.Name) is not null)
+        {
+            _diagnostics.Report(structDecl.Span, $"Duplicate definition of type '{structDecl.Name}'");
+            return;
+        }
+
+        var fields = new List<StructFieldSymbol>();
+        var fieldNames = new HashSet<string>();
+
+        foreach (var field in structDecl.Fields)
+        {
+            if (!fieldNames.Add(field.Name))
+            {
+                _diagnostics.Report(field.Span, $"Duplicate field '{field.Name}' in struct '{structDecl.Name}'");
+                continue;
+            }
+
+            var fieldType = ResolveType(field.Type);
+            if (fieldType is null)
+            {
+                _diagnostics.Report(field.Span, $"Unknown type '{field.Type}' of field '{field.Name}'");
+                continue;
+            }
+
+            fields.Add(new StructFieldSymbol(field.Name, fieldType));
+        }
+
+        var structSymbol = new StructTypeSymbol(structDecl.Name, fields);
+        _structTypes[structDecl.Name] = structSymbol;
     }
 
     private void DeclareFunction(FunctionDeclarationSyntax func)
@@ -190,6 +233,9 @@ public sealed class Binder
                     _diagnostics.Report(id.Span, $"Undefined variable '{id.Name}'");
                 break;
             }
+            case MemberAccessExpressionSyntax memberAccess:
+                CheckMemberAccessExpression(memberAccess, scope);
+                break;
             case CallExpressionSyntax call:
             {
                 var symbol = scope.Lookup(call.FunctionName);
@@ -233,8 +279,50 @@ public sealed class Binder
         }
     }
 
-    private static TypeSymbol? ResolveType(string name)
+    private TypeSymbol? CheckMemberAccessExpression(MemberAccessExpressionSyntax expr, SymbolTable scope)
     {
-        return TypeSymbol.FromName(name);
+        CheckExpression(expr.Expression, scope);
+        var leftType = GetExpressionType(expr.Expression, scope);
+        if (leftType is null) return null;
+
+        if (leftType is not StructTypeSymbol structType)
+        {
+            _diagnostics.Report(expr.Span, $"Type '{leftType.Name}' is not a struct; cannot access member '{expr.MemberName}'");
+            return null;
+        }
+
+        var field = structType.FindField(expr.MemberName);
+        if (field is null)
+        {
+            _diagnostics.Report(expr.Span, $"Struct '{structType.Name}' does not contain field '{expr.MemberName}'");
+            return null;
+        }
+
+        return field.Type;
+    }
+
+    private TypeSymbol? GetExpressionType(ExpressionSyntax expr, SymbolTable scope)
+    {
+        return expr switch
+        {
+            IdentifierExpressionSyntax id => (scope.Lookup(id.Name) as VariableSymbol)?.Type,
+            IntegerLiteralExpressionSyntax => TypeSymbol.Int,
+            DoubleLiteralExpressionSyntax => TypeSymbol.Double,
+            BooleanLiteralExpressionSyntax => TypeSymbol.Bool,
+            StringLiteralExpressionSyntax => TypeSymbol.String,
+            MemberAccessExpressionSyntax m => CheckMemberAccessExpression(m, scope),
+            _ => null
+        };
+    }
+
+    private TypeSymbol? ResolveType(string name)
+    {
+        var primitive = TypeSymbol.FromName(name);
+        if (primitive is not null) return primitive;
+
+        if (_structTypes.TryGetValue(name, out var structType))
+            return structType;
+
+        return null;
     }
 }

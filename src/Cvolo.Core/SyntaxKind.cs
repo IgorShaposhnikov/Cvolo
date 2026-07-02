@@ -23,4 +23,5 @@ public enum SyntaxKind
     StructDeclaration,
     DoubleLiteralExpression,
     BooleanLiteralExpression,
+    MemberAccessExpression
 }
