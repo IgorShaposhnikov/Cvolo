@@ -24,5 +24,6 @@ public enum SyntaxKind
     DoubleLiteralExpression,
     BooleanLiteralExpression,
     MemberAccessExpression,
-    StructInitializationExpression
+    StructInitializationExpression,
+    BorrowExpression,
 }

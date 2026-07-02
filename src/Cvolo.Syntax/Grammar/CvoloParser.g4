@@ -34,8 +34,9 @@ returnType
     ;
 
 type
-    : primitiveType
-    | Identifier
+    : primitiveType                                     # baseType
+    | Identifier                                        # identifierType
+    | REF (VAR | VAL) type                              # referenceType
     ;
 
 primitiveType
@@ -103,26 +104,27 @@ forStatement
     ;
 
 expression
-    : expression DOT Identifier                         # memberAccessExpression
-    | LPAREN type RPAREN expression                     # castExpression
-    | MINUS expression                                   # unaryMinusExpression
-    | EXCLAMATION expression                             # logicalNotExpression
-    | expression (STAR | DIV | PERCENT) expression       # multiplicativeExpression
-    | expression (PLUS | MINUS) expression               # additiveExpression
-    | expression (LT | GT | LTE | GTE) expression         # relationalExpression
-    | expression (EQ | NEQ) expression                    # equalityExpression
-    | expression AND expression                           # logicalAndExpression
-    | expression OR expression                            # logicalOrExpression
-    | expression ASSIGN expression                        # assignmentExpression
-    | Identifier LPAREN argumentList? RPAREN              # callExpression
-    | Identifier LBRACE structInitializerList? RBRACE   # structInitializationExpression
-    | Identifier                                          # identifierExpression
-    | IntegerLiteral                                      # integerLiteralExpression
-    | DoubleLiteral                                       # doubleLiteralExpression
-    | StringLiteral                                       # stringLiteralExpression
-    | TRUE                                                # booleanLiteralExpression
-    | FALSE                                               # booleanLiteralExpression
-    | LPAREN expression RPAREN                            # parenthesizedExpression
+    : REF expression                                        # borrowExpression
+    | expression DOT Identifier                             # memberAccessExpression
+    | LPAREN type RPAREN expression                         # castExpression
+    | MINUS expression                                      # unaryMinusExpression
+    | EXCLAMATION expression                                # logicalNotExpression
+    | expression (STAR | DIV | PERCENT) expression          # multiplicativeExpression
+    | expression (PLUS | MINUS) expression                  # additiveExpression
+    | expression (LT | GT | LTE | GTE) expression           # relationalExpression
+    | expression (EQ | NEQ) expression                      # equalityExpression
+    | expression AND expression                             # logicalAndExpression
+    | expression OR expression                              # logicalOrExpression
+    | expression ASSIGN expression                          # assignmentExpression
+    | Identifier LPAREN argumentList? RPAREN                # callExpression
+    | Identifier LBRACE structInitializerList? RBRACE       # structInitializationExpression
+    | Identifier                                            # identifierExpression
+    | IntegerLiteral                                        # integerLiteralExpression
+    | DoubleLiteral                                         # doubleLiteralExpression
+    | StringLiteral                                         # stringLiteralExpression
+    | TRUE                                                  # booleanLiteralExpression
+    | FALSE                                                 # booleanLiteralExpression
+    | LPAREN expression RPAREN                              # parenthesizedExpression
     ;
 
 argumentList

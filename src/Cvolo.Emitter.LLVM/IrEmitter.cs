@@ -12,6 +12,7 @@ public sealed class IrEmitter
     private readonly List<string> _stringDefs = [];
     private readonly Dictionary<string, StructDeclarationSyntax> _astStructs = [];
     private readonly Dictionary<string, string> _variableTypes = [];
+    private readonly Dictionary<string, string> _functionReturnTypes = [];
 
     public string Emit(CompilationUnitSyntax unit)
     {
@@ -28,15 +29,36 @@ public sealed class IrEmitter
             }
         }
 
-        if (_astStructs.Count > 0) 
+        if (_astStructs.Count > 0)
             _writer.WriteLine();
 
+        // Register return types of all functions and externs
         foreach (var member in unit.Members)
-            if (member is ExternDeclarationSyntax ext) EmitExtern(ext);
+        {
+            if (member is FunctionDeclarationSyntax func)
+                _functionReturnTypes[func.Name] = func.ReturnType;
+            else if (member is ExternDeclarationSyntax ext)
+                _functionReturnTypes[ext.Name] = ext.ReturnType;
+        }
 
+        // Emit external functions
+        foreach (var member in unit.Members)
+        {
+            if (member is ExternDeclarationSyntax ext)
+            {
+                EmitExtern(ext);
+            }
+        }
+
+        // Collect and emit user-defined functions
         var funcs = new List<FunctionDeclarationSyntax>();
         foreach (var member in unit.Members)
-            if (member is FunctionDeclarationSyntax func) funcs.Add(func);
+        {
+            if (member is FunctionDeclarationSyntax func)
+            {
+                funcs.Add(func);
+            }
+        }
 
         foreach (var f in funcs)
         {
@@ -121,8 +143,20 @@ public sealed class IrEmitter
             fw.WriteLine("    ret void");
         else
         {
-            var (v, _) = Eval(r.Expression, fw);
-            fw.WriteLine($"    ret {v}");
+            var (v, ty) = Eval(r.Expression, fw);
+
+            // If we are returning a struct pointer as a struct value, load it first
+            if (v.StartsWith("ptr ") && _astStructs.ContainsKey(ty))
+            {
+                var valReg = NewLocal();
+                var rawPtrReg = v.Split(' ')[^1]; // Gets the register name (e.g., %2)
+                fw.WriteLine($"    %{valReg} = load %struct.{ty}, ptr {rawPtrReg}");
+                fw.WriteLine($"    ret %struct.{ty} %{valReg}");
+            }
+            else
+            {
+                fw.WriteLine($"    ret {v}");
+            }
         }
     }
 
@@ -229,6 +263,7 @@ public sealed class IrEmitter
             StringLiteralExpressionSyntax s => (AddString(s.Value), "ptr"),
             IdentifierExpressionSyntax id => Load(id.Name, fw),
             MemberAccessExpressionSyntax m => EmitMemberAccess(m, fw),
+            BorrowExpressionSyntax b => EmitBorrowExpression(b, fw),
             StructInitializationExpressionSyntax s => EmitStructInitialization(s, fw),
             CallExpressionSyntax call => EmitCallExpr(call, fw),
             BinaryExpressionSyntax { Operator: "=" } assign => EmitLoadStore(assign, fw),
@@ -246,14 +281,14 @@ public sealed class IrEmitter
 
     private (string val, string ty) EmitCallExpr(CallExpressionSyntax call, StringWriter fw)
     {
-        // 1. Evaluate arguments first so their registers are generated and printed sequentially
         var args = string.Join(", ", call.Arguments.Select(a => Eval(a, fw).val));
-
-        // 2. Allocate the return register only after arguments are fully resolved
         var r = NewLocal();
 
-        fw.WriteLine($"    %{r} = call i32 @{call.FunctionName}({args})");
-        return ($"i32 %{r}", "i32");
+        var retTypeName = _functionReturnTypes.TryGetValue(call.FunctionName, out var ret) ? ret : "int";
+        var ty = Type(retTypeName);
+
+        fw.WriteLine($"    %{r} = call {ty} @{call.FunctionName}({args})");
+        return ($"{ty} %{r}", retTypeName);
     }
 
     private (string val, string ty) EmitBin(BinaryExpressionSyntax bin, StringWriter fw)
@@ -354,16 +389,22 @@ public sealed class IrEmitter
     private string NextLabel() => $"L{_labelCounter++}";
     private string NewLocal() => (_localCounter++).ToString();
 
-    private string Type(string t) => t switch
+    private string Type(string t)
     {
-        "void" => "void",
-        "int" or "Int32" => "i32",
-        "double" or "Double" => "double",
-        "bool" or "Boolean" => "i1",
-        "string" or "String" => "ptr",
-        "char" or "Char" => "i8",
-        _ => _astStructs.ContainsKey(t) ? $"%struct.{t}" : "i32",
-    };
+        if (t.StartsWith("ref ")) 
+            return "ptr";
+
+        return t switch
+        {
+            "void" => "void",
+            "int" or "Int32" => "i32",
+            "double" or "Double" => "double",
+            "bool" or "Boolean" => "i1",
+            "string" or "String" => "ptr",
+            "char" or "Char" => "i8",
+            _ => _astStructs.ContainsKey(t) ? $"%struct.{t}" : "i32",
+        };
+    }
 
     private static string V(string typed) => typed.Split(' ')[^1];
     private static bool EndsWithReturn(SyntaxNode s) => s switch
@@ -388,7 +429,17 @@ public sealed class IrEmitter
         {
             if (!_locals.TryGetValue(id.Name, out var structPtr))
                 throw new InvalidOperationException($"Undefined variable '{id.Name}'");
-            return (structPtr, _variableTypes[id.Name]);
+
+            var typeName = _variableTypes[id.Name];
+            if (typeName.StartsWith("ref "))
+            {
+                var actualPtr = NewLocal();
+                fw.WriteLine($"    %{actualPtr} = load ptr, ptr %{structPtr}");
+                var innerType = typeName.Split(' ', 3)[2];
+                return (actualPtr, innerType);
+            }
+
+            return (structPtr, typeName);
         }
         else if (expr is MemberAccessExpressionSyntax m)
         {
@@ -458,5 +509,21 @@ public sealed class IrEmitter
                 fw.WriteLine($"    store {val}, ptr %{fieldPtrReg}");
             }
         }
+    }
+
+    private (string val, string ty) EmitBorrowExpression(BorrowExpressionSyntax expr, StringWriter fw)
+    {
+        if (expr.Expression is IdentifierExpressionSyntax id && _locals.TryGetValue(id.Name, out var ptr))
+        {
+            var typeName = _variableTypes[id.Name];
+            return ($"ptr %{ptr}", $"ref var {typeName}");
+        }
+        else if (expr.Expression is MemberAccessExpressionSyntax m)
+        {
+            var (fieldPtr, fieldTypeName) = GetFieldPointer(m, fw);
+            return ($"ptr %{fieldPtr}", $"ref var {fieldTypeName}");
+        }
+
+        throw new InvalidOperationException("Can only borrow variables or member fields");
     }
 }

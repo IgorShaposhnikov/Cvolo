@@ -237,6 +237,9 @@ public sealed class Binder
             case MemberAccessExpressionSyntax memberAccess:
                 CheckMemberAccessExpression(memberAccess, scope);
                 break;
+            case BorrowExpressionSyntax borrow:
+                CheckBorrowExpression(borrow, scope);
+                break;
             case StructInitializationExpressionSyntax structInit:
                 CheckStructInitializationExpression(structInit, scope);
                 break;
@@ -291,6 +294,12 @@ public sealed class Binder
         var leftType = GetExpressionType(expr.Expression, scope);
         if (leftType is null) return null;
 
+        // Automatically dereference references to access underlying struct fields
+        if (leftType is PointerTypeSymbol pointerType)
+        {
+            leftType = pointerType.ReferencedType;
+        }
+
         if (leftType is not StructTypeSymbol structType)
         {
             _diagnostics.Report(expr.Span, $"Type '{leftType.Name}' is not a struct; cannot access member '{expr.MemberName}'");
@@ -317,6 +326,7 @@ public sealed class Binder
             BooleanLiteralExpressionSyntax => TypeSymbol.Bool,
             StringLiteralExpressionSyntax => TypeSymbol.String,
             MemberAccessExpressionSyntax m => CheckMemberAccessExpression(m, scope),
+            BorrowExpressionSyntax b => CheckBorrowExpression(b, scope),
             StructInitializationExpressionSyntax s => CheckStructInitializationExpression(s, scope),
             _ => null
         };
@@ -324,6 +334,15 @@ public sealed class Binder
 
     private TypeSymbol? ResolveType(string name)
     {
+        if (name.StartsWith("ref "))
+        {
+            var parts = name.Split(' ', 3);
+            var isMutable = parts[1] == "var";
+            var innerType = ResolveType(parts[2]);
+            if (innerType is null) return null;
+            return new PointerTypeSymbol(innerType, isMutable);
+        }
+
         var primitive = TypeSymbol.FromName(name);
         if (primitive is not null) return primitive;
 
@@ -381,5 +400,21 @@ public sealed class Binder
         }
 
         return structType;
+    }
+
+    private TypeSymbol? CheckBorrowExpression(BorrowExpressionSyntax expr, SymbolTable scope)
+    {
+        CheckExpression(expr.Expression, scope);
+        var innerType = GetExpressionType(expr.Expression, scope);
+        if (innerType is null) return null;
+
+        var isMutable = false;
+        if (expr.Expression is IdentifierExpressionSyntax id)
+        {
+            var symbol = scope.Lookup(id.Name) as VariableSymbol;
+            if (symbol is not null) isMutable = symbol.IsMutable;
+        }
+
+        return new PointerTypeSymbol(innerType, isMutable);
     }
 }

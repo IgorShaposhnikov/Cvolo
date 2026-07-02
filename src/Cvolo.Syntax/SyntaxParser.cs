@@ -54,7 +54,7 @@ public sealed class SyntaxParser
 
     private FunctionDeclarationSyntax BuildFunctionDeclaration(CvoloParser.FunctionDeclarationContext context)
     {
-        var returnType = context.returnType().GetText();
+        var returnType = GetReturnTypeName(context.returnType());
         var name = context.Identifier().GetText();
         var parameters = new List<ParameterSyntax>();
         if (context.parameterList() is { } paramList)
@@ -69,7 +69,7 @@ public sealed class SyntaxParser
 
     private ExternDeclarationSyntax BuildExternDeclaration(CvoloParser.ExternDeclarationContext context)
     {
-        var returnType = context.returnType().GetText();
+        var returnType = GetReturnTypeName(context.returnType());
         var name = context.Identifier().GetText();
         var parameters = new List<ParameterSyntax>();
         var isVariadic = false;
@@ -92,13 +92,13 @@ public sealed class SyntaxParser
         var name = context.Identifier().GetText();
         var fields = new List<StructFieldSyntax>();
         foreach (var field in context.structField())
-            fields.Add(new StructFieldSyntax(SpanOf(field), field.type().GetText(), field.Identifier().GetText()));
+            fields.Add(new StructFieldSyntax(SpanOf(field), GetTypeName(field.type()), field.Identifier().GetText()));
         return new StructDeclarationSyntax(SpanOf(context), name, fields);
     }
 
     private ParameterSyntax BuildParameter(CvoloParser.ParameterContext context)
     {
-        var type = context.type().GetText();
+        var type = GetTypeName(context.type());
         var name = context.Identifier().GetText();
         return new ParameterSyntax(SpanOf(context), type, name);
     }
@@ -198,9 +198,8 @@ public sealed class SyntaxParser
             case CvoloParser.CastExpressionContext castCtx:
                 {
                     var inner = BuildExpression(castCtx.expression());
-                    return new UnaryExpressionSyntax(SpanOf(castCtx), $"({castCtx.type().GetText()})", inner);
+                    return new UnaryExpressionSyntax(SpanOf(castCtx), $"({GetTypeName(castCtx.type())})", inner);
                 }
-
             case CvoloParser.MultiplicativeExpressionContext multCtx:
                 return new BinaryExpressionSyntax(SpanOf(multCtx), BuildExpression(multCtx.expression(0)), multCtx.GetChild(1).GetText(), BuildExpression(multCtx.expression(1)));
             case CvoloParser.AdditiveExpressionContext addCtx:
@@ -220,6 +219,11 @@ public sealed class SyntaxParser
                     var left = BuildExpression(memberCtx.expression());
                     var memberName = memberCtx.Identifier().GetText();
                     return new MemberAccessExpressionSyntax(SpanOf(memberCtx), left, memberName);
+                }
+            case CvoloParser.BorrowExpressionContext borrowCtx:
+                {
+                    var expr = BuildExpression(borrowCtx.expression());
+                    return new BorrowExpressionSyntax(SpanOf(borrowCtx), expr);
                 }
             case CvoloParser.StructInitializationExpressionContext structInitCtx:
                 {
@@ -256,7 +260,7 @@ public sealed class SyntaxParser
     private VariableDeclarationSyntax BuildVariableDeclaration(CvoloParser.VariableDeclarationContext context)
     {
         var isMutable = context.VAL() is null;
-        var type = context.type()?.GetText();
+        var type = GetTypeName(context.type());
         var name = context.Identifier().GetText();
         ExpressionSyntax? initializer = null;
         if (context.expression() is { } expr)
@@ -302,6 +306,22 @@ public sealed class SyntaxParser
         var start = context.Start.StartIndex;
         var end = context.Stop?.StopIndex + 1 ?? start;
         return TextSpan.FromBounds(start, end);
+    }
+
+    private string GetTypeName(CvoloParser.TypeContext context)
+    {
+        if (context is CvoloParser.ReferenceTypeContext refCtx)
+        {
+            var mutability = refCtx.VAR() is not null ? "var" : "val";
+            return $"ref {mutability} {GetTypeName(refCtx.type())}";
+        }
+        return context.GetText();
+    }
+
+    private string GetReturnTypeName(CvoloParser.ReturnTypeContext context)
+    {
+        if (context.VOID() is not null) return "void";
+        return GetTypeName(context.type());
     }
 
     private sealed class SyntaxErrorListener(DiagnosticBag diagnostics) : BaseErrorListener
