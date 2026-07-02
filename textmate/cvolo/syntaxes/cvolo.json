@@ -3,9 +3,7 @@
   "name": "Cvolo",
   "scopeName": "source.cvolo",
   "fileTypes": [
-    "cvolo",
-    "cv",
-    "cvl"
+    "cvolo"
   ],
   "repository": {
     "comments": {
@@ -81,6 +79,18 @@
     "types": {
       "patterns": [
         {
+          "comment": "Reference type pattern: ref (var|val) type",
+          "match": "\\b(ref)\\s+(var|val)\\b",
+          "captures": {
+            "1": {
+              "name": "storage.modifier.ref.cvolo"
+            },
+            "2": {
+              "name": "storage.modifier.cvolo"
+            }
+          }
+        },
+        {
           "comment": "Primitive storage types",
           "name": "storage.type.primitive.cvolo",
           "match": "\\b(void|int|double|bool|string|char)\\b"
@@ -111,14 +121,47 @@
       }
     },
     {
+      "comment": "Struct initialization expression",
+      "begin": "\\b([A-Z][a-zA-Z0-9_]*)\\s*\\{",
+      "beginCaptures": {
+        "1": {
+          "name": "entity.name.type.struct.cvolo"
+        }
+      },
+      "end": "\\}",
+      "patterns": [
+        {
+          "include": "#comments"
+        },
+        {
+          "comment": "Struct member initializer key",
+          "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*:",
+          "captures": {
+            "1": {
+              "name": "variable.other.member.cvolo"
+            }
+          }
+        },
+        {
+          "include": "$self"
+        }
+      ]
+    },
+    {
       "comment": "Function definition",
-      "begin": "\\b(void|int|double|bool|string|char|[A-Z_][A-Za-z0-9_]*)\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\s*(?=\\()",
+      "begin": "\\b(?:(ref)\\s+(var|val)\\s+)?(void|int|double|bool|string|char|[a-zA-Z_][a-zA-Z0-9_]*)\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\s*(?=\\()",
       "end": "(?<=\\))",
       "beginCaptures": {
         "1": {
-          "name": "storage.type.cvolo"
+          "name": "storage.modifier.ref.cvolo"
         },
         "2": {
+          "name": "storage.modifier.cvolo"
+        },
+        "3": {
+          "name": "storage.type.cvolo"
+        },
+        "4": {
           "name": "entity.name.function.cvolo"
         }
       },
@@ -177,7 +220,7 @@
     {
       "comment": "Operators",
       "name": "keyword.operator.cvolo",
-      "match": "(\\+|\\-|\\*|/|%|&|\\||\\^|~|!|=|==|!=|<=|>=|&&|\\|\\||\\+=|\\-=|\\*=|/=|->|\\.\\.\\.)"
+      "match": "(\\+|\\-|\\*|/|%|&|\\||\\^|~|!|=|==|!=|<=|>=|&&|\\|\\||\\+=|\\-=|\\*=|/=|->|\\.\\.\\.|:)"
     }
   ]
 }
