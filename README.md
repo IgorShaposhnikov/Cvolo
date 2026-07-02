@@ -132,29 +132,29 @@ The Cvolo compiler is structured as a pipeline, leveraging established tools for
 The development of Cvolo is divided into progressive phases, moving from basic system capability to advanced safety guarantees.
 
 ### Phase 1: "Hello World" & Toolchain 🛠️
-- [ ] Configure C# compiler host project with **LLVMSharp**.
-- [ ] Implement external system calls (linking and calling system `printf`).
-- [ ] Generate the first working native executable binary.
+- [x] Configure C# compiler host project with **LLVMSharp**.
+- [x] Implement external system calls (linking and calling system `printf`).
+- [x] Generate the first working native executable binary.
 
-### Phase 2: Language Basics (In Progress 🚧)
-- [ ] Establish ANTLR grammar for variables and basic operations.
-- [ ] Core variables: Implement `val` and `var` syntax definitions.
-- [ ] Implement primitive types (`int`, `double`, `bool`) and arithmetic operations.
-- [ ] Build the initial Symbol Table to keep track of variables in scopes.
+### Phase 2: Language Basics
+- [x] Establish ANTLR grammar for variables and basic operations.
+- [x] Core variables: Implement `val` and `var` syntax definitions.
+- [x] Implement primitive types (`int`, `double`, `bool`) and arithmetic operations.
+- [x] Build the initial Symbol Table to keep track of variables in scopes.
 
 ### Phase 3: Control Flow
-- [ ] Add support for conditional statements (`if` / `else`).
-- [ ] Add support for loops (`while` and C#-style `for` loops) via LLVM basic blocks.
-- [ ] Implement nested scopes and lexical scoping rules in the Symbol Table.
+- [x] Add support for conditional statements (`if` / `else`).
+- [x] Add support for loops (`while` and C#-style `for` loops) via LLVM basic blocks.
+- [x] Implement nested scopes and lexical scoping rules in the Symbol Table.
 
-### Phase 4: Ownership & Borrow System
-- [ ] Implement Move semantics (forbidding the use of a variable after its value has been moved).
-- [ ] Implement reference syntax (`ref val` and `ref var`).
+### Phase 4: Ownership & Borrow System (In Progress 🚧)
+- [x] Implement Move semantics (forbidding the use of a variable after its value has been moved).
+- [x] Implement reference syntax (`ref val` and `ref var`).
 - [ ] Build the compile-time Borrow Checker to validate reference lifetimes and prevent multiple mutable borrows.
 
-### Phase 5: Complex Types & Structures
-- [ ] Support custom user-defined structures (`struct`).
-- [ ] Support member access and struct initialization syntax.
+### Phase 5: Complex Types & Structures (In Progress 🚧)
+- [x] Support custom user-defined structures (`struct`).
+- [x] Support member access and struct initialization syntax.
 - [ ] Implement basic memory allocation on the stack and heap (`malloc`-based heap allocation for complex objects).
 
 ---
