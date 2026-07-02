@@ -218,8 +218,12 @@ public sealed class IrEmitter
 
     private (string val, string ty) EmitCallExpr(CallExpressionSyntax call, StringWriter fw)
     {
-        var r = NewLocal();
+        // 1. Evaluate arguments first so their registers are generated and printed sequentially
         var args = string.Join(", ", call.Arguments.Select(a => Eval(a, fw).val));
+
+        // 2. Allocate the return register only after arguments are fully resolved
+        var r = NewLocal();
+
         fw.WriteLine($"    %{r} = call i32 @{call.FunctionName}({args})");
         return ($"i32 %{r}", "i32");
     }
