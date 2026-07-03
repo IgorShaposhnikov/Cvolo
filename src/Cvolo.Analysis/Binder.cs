@@ -5,6 +5,7 @@ namespace Cvolo.Analysis;
 
 public sealed class Binder
 {
+	private readonly List<BorrowSymbol> _activeBorrows = [];
 	private readonly DiagnosticBag _diagnostics = new();
 	private readonly SymbolTable _globals = new();
 	private readonly Dictionary<string, StructTypeSymbol> _structTypes = [];
@@ -156,9 +157,17 @@ public sealed class Binder
 
 	private void CheckBlock(BlockStatementSyntax block, SymbolTable scope, FunctionDeclarationSyntax currentFunc)
 	{
+		var borrowCountBefore = _activeBorrows.Count;
+
 		foreach (var stmt in block.Statements)
 		{
 			CheckStatement(stmt, scope, currentFunc);
+		}
+
+		// Automatic Lifetime Release: End borrows of variables whose lifetimes expire with this block
+		if (_activeBorrows.Count > borrowCountBefore)
+		{
+			_activeBorrows.RemoveRange(borrowCountBefore, _activeBorrows.Count - borrowCountBefore);
 		}
 	}
 
@@ -225,6 +234,34 @@ public sealed class Binder
 			}
 
 			var isMutable = varDecl.Type == "refvar";
+
+			// Enforce Borrow Checker Rules (Aliasing XOR Mutability)
+			if (varDecl.Initializer is BorrowExpressionSyntax declBorrow)
+			{
+				var borrowedName = GetBaseIdentifierName(declBorrow.Expression);
+				if (borrowedName is not null)
+				{
+					var conflicts = _activeBorrows.Where(b => b.BorrowedName == borrowedName).ToList();
+					if (conflicts.Count > 0)
+					{
+						if (isMutable)
+						{
+							// A mutable borrow requires 100% exclusive access
+							_diagnostics.Report(varDecl.Span, $"Cannot borrow '{borrowedName}' mutably because it is already borrowed by '{conflicts[0].BorrowerName}'");
+						}
+						else if (conflicts.Any(c => c.IsMutable))
+						{
+							// A read-only borrow cannot alias with an active mutable borrow
+							var mutConflict = conflicts.First(c => c.IsMutable);
+							_diagnostics.Report(varDecl.Span, $"Cannot borrow '{borrowedName}' as read-only because it is already borrowed mutably by '{mutConflict.BorrowerName}'");
+						}
+					}
+
+					// Register the active borrow
+					_activeBorrows.Add(new BorrowSymbol(varDecl.Name, borrowedName, isMutable, varDecl.Span));
+				}
+			}
+
 			if (resolvedType is PointerTypeSymbol ptrType)
 			{
 				resolvedType = new PointerTypeSymbol(ptrType.ReferencedType, isMutable);
@@ -285,7 +322,6 @@ public sealed class Binder
 					}
 					else if (symbol is VariableSymbol varSymbol && varSymbol.IsMoved)
 					{
-						// <-- Report use-after-move error here!
 						_diagnostics.Report(id.Span, $"Use of moved variable '{id.Name}'");
 					}
 

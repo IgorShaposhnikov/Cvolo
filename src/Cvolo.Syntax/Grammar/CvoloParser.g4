@@ -72,8 +72,8 @@ blockStatement
 
 statement
 	: returnStatement
-	| expressionStatement
 	| variableDeclaration
+	| expressionStatement
 	| ifStatement
 	| whileStatement
 	| forStatement

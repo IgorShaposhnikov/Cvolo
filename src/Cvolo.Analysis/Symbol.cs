@@ -1,3 +1,5 @@
+using Cvolo.Core;
+
 namespace Cvolo.Analysis;
 
 public abstract class Symbol(string name)
@@ -31,4 +33,12 @@ public sealed class VariableSymbol(string name, TypeSymbol type, bool isMutable)
 	public bool IsMoved { get; set; } = false;
 	// Track pointer lifetimes
 	public bool PointsToParameter { get; set; } = false;
+}
+
+public sealed class BorrowSymbol(string borrowerName, string borrowedName, bool isMutable, TextSpan span)
+{
+	public string BorrowerName { get; } = borrowerName;
+	public string BorrowedName { get; } = borrowedName;
+	public bool IsMutable { get; } = isMutable;
+	public TextSpan Span { get; } = span;
 }
