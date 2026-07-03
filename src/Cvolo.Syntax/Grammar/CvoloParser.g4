@@ -126,6 +126,7 @@ expression
 	| expression ASSIGN expression                          # assignmentExpression
 	| expression (PLUS_ASSIGN | MINUS_ASSIGN | STAR_ASSIGN | DIV_ASSIGN) expression   # compoundAssignmentExpression
 	| Identifier LPAREN argumentList? RPAREN                # callExpression
+	| HEAP expression                                       # heapAllocationExpression
 	| Identifier LBRACE structInitializerList? RBRACE       # structInitializationExpression
 	| Identifier                                            # identifierExpression
 	| IntegerLiteral                                        # integerLiteralExpression

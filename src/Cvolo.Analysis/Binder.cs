@@ -306,6 +306,12 @@ public sealed class Binder
 			PointsToParameter = pointsToParam
 		};
 
+		if (varDecl.Initializer is HeapAllocationExpressionSyntax)
+		{
+			var symbol = scope.Lookup(varDecl.Name) as VariableSymbol;
+			symbol?.IsHeapAllocated = true;
+		}
+
 		scope.Declare(varSymbol);
 	}
 
@@ -335,6 +341,9 @@ public sealed class Binder
 				break;
 			case StructInitializationExpressionSyntax structInit:
 				CheckStructInitializationExpression(structInit, scope);
+				break;
+			case HeapAllocationExpressionSyntax heap:
+				CheckExpression(heap.Expression, scope);
 				break;
 			case CallExpressionSyntax call:
 				{
@@ -472,6 +481,7 @@ public sealed class Binder
 			MemberAccessExpressionSyntax m => CheckMemberAccessExpression(m, scope),
 			BorrowExpressionSyntax b => CheckBorrowExpression(b, scope),
 			StructInitializationExpressionSyntax s => CheckStructInitializationExpression(s, scope),
+			HeapAllocationExpressionSyntax h => GetExpressionType(h.Expression, scope),
 			_ => null
 		};
 	}

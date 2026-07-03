@@ -264,6 +264,8 @@ public sealed class SyntaxParser
 
 					return new StructInitializationExpressionSyntax(SpanOf(structInitCtx), structName, initializers);
 				}
+			case CvoloParser.HeapAllocationExpressionContext heapCtx:
+				return new HeapAllocationExpressionSyntax(SpanOf(heapCtx), BuildExpression(heapCtx.expression()));
 			default:
 				return new IdentifierExpressionSyntax(SpanOf(context), context.GetText());
 		}

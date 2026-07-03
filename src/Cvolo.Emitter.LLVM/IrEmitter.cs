@@ -1,3 +1,4 @@
+using Cvolo.Analysis;
 using Cvolo.Core;
 
 namespace Cvolo.Emitter.LLVM;
@@ -13,11 +14,15 @@ public sealed class IrEmitter
 	private readonly Dictionary<string, StructDeclarationSyntax> _astStructs = [];
 	private readonly Dictionary<string, string> _variableTypes = [];
 	private readonly Dictionary<string, string> _functionReturnTypes = [];
+	private readonly Stack<List<VariableSymbol>> _blockVariables = new();
 
 	public string Emit(CompilationUnitSyntax unit)
 	{
 		_writer.WriteLine("; ModuleID = 'cvolo_module'");
 		_writer.WriteLine("source_filename = \"cvolo_module\"");
+
+		_writer.WriteLine("declare ptr @malloc(i64)");
+		_writer.WriteLine("declare void @free(ptr)");
 
 		foreach (var member in unit.Members)
 		{
@@ -120,8 +125,23 @@ public sealed class IrEmitter
 
 	private void EmitBlock(BlockStatementSyntax block, StringWriter fw)
 	{
-		foreach (var stmt in block.Statements) EmitStmt(stmt, fw);
+		var blockVars = new List<string>();
+
+		foreach (var stmt in block.Statements)
+		{
+			if (stmt is VariableDeclarationSyntax v) blockVars.Add(v.Name);
+			EmitStmt(stmt, fw);
+		}
+
+		// Only emit automatic cleanup if the block does NOT end with a return.
+		// If it has a return, EmitReturn handles the cleanup before the 'ret' instruction.
+		if (!EndsWithReturn(block))
+		{
+			EmitCleanup(blockVars, fw);
+		}
 	}
+
+	private HashSet<string> _heapAllocatedVars = new();
 
 	private void EmitStmt(SyntaxNode stmt, StringWriter fw)
 	{
@@ -139,17 +159,22 @@ public sealed class IrEmitter
 
 	private void EmitReturn(ReturnStatementSyntax r, StringWriter fw)
 	{
+		// RAII: Free all heap variables in the current function before returning
+		// For an MVP, we free all active heap variables tracked in the emitter.
+		EmitCleanup(_locals.Keys.ToList(), fw);
+
 		if (r.Expression is null)
+		{
 			fw.WriteLine("    ret void");
+		}
 		else
 		{
 			var (v, ty) = Eval(r.Expression, fw);
 
-			// If we are returning a struct pointer as a struct value, load it first
 			if (v.StartsWith("ptr ") && _astStructs.ContainsKey(ty))
 			{
 				var valReg = NewLocal();
-				var rawPtrReg = v.Split(' ')[^1]; // Gets the register name (e.g., %2)
+				var rawPtrReg = v.Split(' ')[^1];
 				fw.WriteLine($"    %{valReg} = load %struct.{ty}, ptr {rawPtrReg}");
 				fw.WriteLine($"    ret %struct.{ty} %{valReg}");
 			}
@@ -178,11 +203,11 @@ public sealed class IrEmitter
 	{
 		var typeName = v.Type;
 
+		// Handle Explicit Reference Variables (ref / refvar)
 		if (v.Type == "refvar" || v.Type == "ref")
 		{
 			var (val, valTy) = Eval(v.Initializer!, fw);
 			var innerType = valTy.StartsWith("refvar ") ? valTy.Substring(7) : valTy.StartsWith("ref ") ? valTy.Substring(4) : valTy;
-
 			typeName = v.Type == "refvar" ? $"refvar {innerType}" : $"ref {innerType}";
 
 			var ptr = NewLocal();
@@ -194,9 +219,23 @@ public sealed class IrEmitter
 			return;
 		}
 
+		// Handle Heap Allocations (RAII Owners)
+		if (v.Initializer is HeapAllocationExpressionSyntax heapInit)
+		{
+			var (val, valTy) = Eval(heapInit, fw);
+			var ptr = NewLocal();
+			_locals[v.Name] = ptr;
+			_variableTypes[v.Name] = valTy;
+			_heapAllocatedVars.Add(v.Name);
+
+			fw.WriteLine($"    %{ptr} = alloca ptr"); // Heap variables are ALWAYS pointers on the stack
+			fw.WriteLine($"    store {val}, ptr %{ptr}");
+			return;
+		}
+
+		// Handle Standard Variables (Stack Structs or Primitives)
 		if (typeName is not null)
 		{
-			// Case A: Explicitly typed variable (type is known upfront)
 			var ptr = NewLocal();
 			_locals[v.Name] = ptr;
 			_variableTypes[v.Name] = typeName;
@@ -207,9 +246,7 @@ public sealed class IrEmitter
 			if (v.Initializer is not null)
 			{
 				if (v.Initializer is StructInitializationExpressionSyntax structInit)
-				{
 					EmitStructInitializationInPlace(structInit, ptr, fw);
-				}
 				else
 				{
 					var (val, _) = Eval(v.Initializer, fw);
@@ -219,30 +256,15 @@ public sealed class IrEmitter
 		}
 		else
 		{
-			// Case B: Type-inferred variable (must evaluate initializer first)
-			if (v.Initializer is null)
-				throw new InvalidOperationException($"Type inference requires an initializer for variable '{v.Name}'");
+			// Case: Type Inference (var/val)
+			var (val, valTy) = Eval(v.Initializer!, fw);
+			var ptr = NewLocal();
+			_locals[v.Name] = ptr;
+			_variableTypes[v.Name] = valTy;
 
-			var (val, valTy) = Eval(v.Initializer, fw);
-
-			if (val.StartsWith("ptr "))
-			{
-				// Register Forwarding: The initializer already allocated the struct on the stack.
-				// We map the variable name directly to that pointer, avoiding double allocations!
-				var valReg = val.Split(' ')[^1].TrimStart('%');
-				_locals[v.Name] = valReg;
-				_variableTypes[v.Name] = valTy;
-			}
-			else
-			{
-				var ptr = NewLocal();
-				_locals[v.Name] = ptr;
-				_variableTypes[v.Name] = valTy;
-
-				var ty = Type(valTy);
-				fw.WriteLine($"    %{ptr} = alloca {ty}");
-				fw.WriteLine($"    store {val}, ptr %{ptr}");
-			}
+			var ty = Type(valTy);
+			fw.WriteLine($"    %{ptr} = alloca {ty}");
+			fw.WriteLine($"    store {val}, ptr %{ptr}");
 		}
 	}
 
@@ -319,6 +341,7 @@ public sealed class IrEmitter
 			MemberAccessExpressionSyntax m => EmitMemberAccess(m, fw),
 			BorrowExpressionSyntax b => EmitBorrowExpression(b, fw),
 			StructInitializationExpressionSyntax s => EmitStructInitialization(s, fw),
+			HeapAllocationExpressionSyntax h => EmitHeapAllocation(h, fw),
 			CallExpressionSyntax call => EmitCallExpr(call, fw),
 			BinaryExpressionSyntax { Operator: "=" } assign => EmitLoadStore(assign, fw),
 			BinaryExpressionSyntax bin => EmitBin(bin, fw),
@@ -505,11 +528,17 @@ public sealed class IrEmitter
 				throw new InvalidOperationException($"Undefined variable '{id.Name}'");
 
 			var typeName = _variableTypes[id.Name];
-			if (typeName.StartsWith("ref ") || typeName.StartsWith("refvar "))
+
+			// If the variable is a reference OR a heap-allocated owner, 
+			// we must load the pointer from the stack first.
+			if (typeName.StartsWith("ref ") || typeName.StartsWith("refvar ") || _heapAllocatedVars.Contains(id.Name))
 			{
 				var actualPtr = NewLocal();
 				fw.WriteLine($"    %{actualPtr} = load ptr, ptr %{structPtr}");
-				var innerType = typeName.StartsWith("refvar ") ? typeName.Substring(7) : typeName.Substring(4);
+
+				// Clean up the type name for field lookup
+				var innerType = typeName.StartsWith("refvar ") ? typeName.Substring(7) :
+							   typeName.StartsWith("ref ") ? typeName.Substring(4) : typeName;
 				return (actualPtr, innerType);
 			}
 
@@ -655,6 +684,39 @@ public sealed class IrEmitter
 		else
 		{
 			return ($"{ty} %{currentValReg}", typeName); // Postfix returns the OLD value
+		}
+	}
+
+	private (string val, string ty) EmitHeapAllocation(HeapAllocationExpressionSyntax expr, StringWriter fw)
+	{
+		if (expr.Expression is not StructInitializationExpressionSyntax s)
+			throw new InvalidOperationException("Heap allocation currently only supported for structs");
+
+		var typeName = s.StructTypeName;
+		var structDecl = _astStructs[typeName];
+
+		// Calculate size: fields * 8
+		var size = structDecl.Fields.Count * 8;
+
+		var ptrReg = NewLocal();
+		fw.WriteLine($"    %{ptrReg} = call ptr @malloc(i64 {size})");
+
+		EmitStructInitializationInPlace(s, ptrReg, fw);
+
+		return ($"ptr %{ptrReg}", typeName); // Return the pointer and the struct type name
+	}
+
+	private void EmitCleanup(IEnumerable<string> variableNames, StringWriter fw)
+	{
+		foreach (var name in variableNames)
+		{
+			if (_heapAllocatedVars.Contains(name))
+			{
+				var ptr = _locals[name];
+				var actualPtr = NewLocal();
+				fw.WriteLine($"    %{actualPtr} = load ptr, ptr %{ptr}");
+				fw.WriteLine($"    call void @free(ptr %{actualPtr})");
+			}
 		}
 	}
 }

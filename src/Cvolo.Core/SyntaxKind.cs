@@ -26,4 +26,5 @@ public enum SyntaxKind
 	MemberAccessExpression,
 	StructInitializationExpression,
 	BorrowExpression,
+	HeapAllocationExpression,
 }
