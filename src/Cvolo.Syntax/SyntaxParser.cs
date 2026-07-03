@@ -229,6 +229,14 @@ public sealed class SyntaxParser
 					// Return the assignment: left = (left + right)
 					return new BinaryExpressionSyntax(SpanOf(compoundCtx), left, "=", mathExpr);
 				}
+			case CvoloParser.PostfixIncrementExpressionContext incCtx:
+				return new UnaryExpressionSyntax(SpanOf(incCtx), "++_postfix", BuildExpression(incCtx.expression()));
+			case CvoloParser.PostfixDecrementExpressionContext decCtx:
+				return new UnaryExpressionSyntax(SpanOf(decCtx), "--_postfix", BuildExpression(decCtx.expression()));
+			case CvoloParser.PrefixIncrementExpressionContext preIncCtx:
+				return new UnaryExpressionSyntax(SpanOf(preIncCtx), "++_prefix", BuildExpression(preIncCtx.expression()));
+			case CvoloParser.PrefixDecrementExpressionContext preDecCtx:
+				return new UnaryExpressionSyntax(SpanOf(preDecCtx), "--_prefix", BuildExpression(preDecCtx.expression()));
 			case CvoloParser.MemberAccessExpressionContext memberCtx:
 				{
 					var left = BuildExpression(memberCtx.expression());
@@ -274,10 +282,21 @@ public sealed class SyntaxParser
 
 	private VariableDeclarationSyntax BuildVariableDeclaration(CvoloParser.VariableDeclarationContext context)
 	{
-		// 1. Mutable ONLY if 'var' keyword is explicitly written (defaults to read-only)
-		var isMutable = context.VAR() is not null;
+		if (context.REFVAR() is not null)
+		{
+			var refVarName = context.Identifier().GetText(); // Renamed to avoid conflict
+			var refVarExpr = BuildExpression(context.expression()); // Renamed to avoid conflict
+			return new VariableDeclarationSyntax(SpanOf(context), isMutable: true, "refvar", refVarName, refVarExpr);
+		}
 
-		// 2. Type is null if omitted (enables type inference)
+		if (context.REF() is not null)
+		{
+			var refName = context.Identifier().GetText(); // Renamed to avoid conflict
+			var refExpr = BuildExpression(context.expression()); // Renamed to avoid conflict
+			return new VariableDeclarationSyntax(SpanOf(context), isMutable: false, "ref", refName, refExpr);
+		}
+
+		var isMutable = context.VAR() is not null;
 		var type = context.type() is not null ? GetTypeName(context.type()) : null;
 		var name = context.Identifier().GetText();
 

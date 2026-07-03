@@ -166,7 +166,11 @@ public sealed class IrEmitter
 		{
 			case CallExpressionSyntax call: EmitCall(call, fw); break;
 			case BinaryExpressionSyntax { Operator: "=" } assign: EmitStore(assign, fw); break;
-			default: fw.WriteLine($"    {Eval(es.Expression, fw).val}"); break;
+			default:
+				// Evaluate the expression to write its side-effects (load, compute, store),
+				// but do not print the returned value register to the output file.
+				Eval(es.Expression, fw);
+				break;
 		}
 	}
 
@@ -174,10 +178,25 @@ public sealed class IrEmitter
 	{
 		var typeName = v.Type;
 
+		if (v.Type == "refvar" || v.Type == "ref")
+		{
+			var (val, valTy) = Eval(v.Initializer!, fw);
+			var innerType = valTy.StartsWith("refvar ") ? valTy.Substring(7) : valTy.StartsWith("ref ") ? valTy.Substring(4) : valTy;
+
+			typeName = v.Type == "refvar" ? $"refvar {innerType}" : $"ref {innerType}";
+
+			var ptr = NewLocal();
+			_locals[v.Name] = ptr;
+			_variableTypes[v.Name] = typeName;
+
+			fw.WriteLine($"    %{ptr} = alloca ptr");
+			fw.WriteLine($"    store {val}, ptr %{ptr}");
+			return;
+		}
+
 		if (typeName is not null)
 		{
 			// Case A: Explicitly typed variable (type is known upfront)
-			// Allocate and write alloca first to keep registers perfectly sequential
 			var ptr = NewLocal();
 			_locals[v.Name] = ptr;
 			_variableTypes[v.Name] = typeName;
@@ -200,19 +219,30 @@ public sealed class IrEmitter
 		}
 		else
 		{
-			// Case B: Type-inferred variable (must evaluate initializer first to discover type)
+			// Case B: Type-inferred variable (must evaluate initializer first)
 			if (v.Initializer is null)
 				throw new InvalidOperationException($"Type inference requires an initializer for variable '{v.Name}'");
 
 			var (val, valTy) = Eval(v.Initializer, fw);
 
-			var ptr = NewLocal();
-			_locals[v.Name] = ptr;
-			_variableTypes[v.Name] = valTy;
+			if (val.StartsWith("ptr "))
+			{
+				// Register Forwarding: The initializer already allocated the struct on the stack.
+				// We map the variable name directly to that pointer, avoiding double allocations!
+				var valReg = val.Split(' ')[^1].TrimStart('%');
+				_locals[v.Name] = valReg;
+				_variableTypes[v.Name] = valTy;
+			}
+			else
+			{
+				var ptr = NewLocal();
+				_locals[v.Name] = ptr;
+				_variableTypes[v.Name] = valTy;
 
-			var ty = Type(valTy);
-			fw.WriteLine($"    %{ptr} = alloca {ty}");
-			fw.WriteLine($"    store {val}, ptr %{ptr}");
+				var ty = Type(valTy);
+				fw.WriteLine($"    %{ptr} = alloca {ty}");
+				fw.WriteLine($"    store {val}, ptr %{ptr}");
+			}
 		}
 	}
 
@@ -341,6 +371,11 @@ public sealed class IrEmitter
 
 	private (string val, string ty) EmitUnary(UnaryExpressionSyntax u, StringWriter fw)
 	{
+		if (u.Operator.EndsWith("_postfix") || u.Operator.EndsWith("_prefix"))
+		{
+			return EmitIncrementDecrement(u, u.Operator.EndsWith("_prefix"), u.Operator.StartsWith("++"), fw);
+		}
+
 		var (o, _) = Eval(u.Operand, fw);
 		var r = NewLocal();
 		var (op, resultTy) = u.Operator switch
@@ -564,13 +599,62 @@ public sealed class IrEmitter
 				return ($"ptr %{actualPtr}", typeName);
 			}
 
-			return ($"ptr %{ptr}", $"ref var {typeName}");
+			return ($"ptr %{ptr}", $"refvar {typeName}");
 		}
 		else if (expr.Expression is MemberAccessExpressionSyntax m)
 		{
 			var (fieldPtr, fieldTypeName) = GetFieldPointer(m, fw);
-			return ($"ptr %{fieldPtr}", $"ref var {fieldTypeName}");
+			return ($"ptr %{fieldPtr}", $"refvar {fieldTypeName}");
 		}
+
 		throw new InvalidOperationException("Can only borrow variables or member fields");
+	}
+
+	private (string val, string ty) EmitIncrementDecrement(UnaryExpressionSyntax u, bool isPrefix, bool isIncrement, StringWriter fw)
+	{
+		string ptrReg;
+		string typeName;
+
+		if (u.Operand is IdentifierExpressionSyntax id)
+		{
+			if (!_locals.TryGetValue(id.Name, out var structPtr))
+				throw new InvalidOperationException($"Undefined variable '{id.Name}'");
+			ptrReg = structPtr;
+			typeName = _variableTypes[id.Name];
+		}
+		else if (u.Operand is MemberAccessExpressionSyntax m)
+		{
+			var (fieldPtr, fieldTypeName) = GetFieldPointer(m, fw);
+			ptrReg = fieldPtr;
+			typeName = fieldTypeName;
+		}
+		else
+		{
+			throw new InvalidOperationException("Increment/decrement operand must be a variable or struct field");
+		}
+
+		var ty = Type(typeName);
+
+		// 1. Load current value
+		var currentValReg = NewLocal();
+		fw.WriteLine($"    %{currentValReg} = load {ty}, ptr %{ptrReg}");
+
+		// 2. Compute new value (currentVal +/- 1)
+		var newValReg = NewLocal();
+		var op = isIncrement ? "add" : "sub";
+		fw.WriteLine($"    %{newValReg} = {op} {ty} %{currentValReg}, 1");
+
+		// 3. Store new value back
+		fw.WriteLine($"    store {ty} %{newValReg}, ptr %{ptrReg}");
+
+		// 4. Return correct value based on Prefix vs Postfix rules
+		if (isPrefix)
+		{
+			return ($"{ty} %{newValReg}", typeName); // Prefix returns the NEW value
+		}
+		else
+		{
+			return ($"{ty} %{currentValReg}", typeName); // Postfix returns the OLD value
+		}
 	}
 }

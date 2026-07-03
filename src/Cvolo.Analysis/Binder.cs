@@ -217,7 +217,25 @@ public sealed class Binder
 			resolvedType = GetExpressionType(varDecl.Initializer, scope);
 		}
 
-		if (varDecl.Type is not null)
+		if (varDecl.Type == "refvar" || varDecl.Type == "ref")
+		{
+			if (resolvedType is null)
+			{
+				_diagnostics.Report(varDecl.Span, $"Reference type inference requires an initializer");
+				return;
+			}
+
+			var isMutable = varDecl.Type == "refvar";
+			if (resolvedType is PointerTypeSymbol ptrType)
+			{
+				resolvedType = new PointerTypeSymbol(ptrType.ReferencedType, isMutable);
+			}
+			else
+			{
+				resolvedType = new PointerTypeSymbol(resolvedType, isMutable);
+			}
+		}
+		else if (varDecl.Type is not null)
 		{
 			var declaredType = ResolveType(varDecl.Type);
 			if (declaredType is null)
@@ -234,7 +252,6 @@ public sealed class Binder
 			resolvedType = declaredType;
 		}
 
-		// If both type and initializer are missing, default to Int
 		resolvedType ??= TypeSymbol.Int;
 
 		scope.Declare(new VariableSymbol(varDecl.Name, resolvedType, varDecl.IsMutable));

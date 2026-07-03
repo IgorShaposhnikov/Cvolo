@@ -3,141 +3,147 @@ parser grammar CvoloParser;
 options { tokenVocab = CvoloLexer; }
 
 compilationUnit
-    : declaration* EOF
-    ;
+	: declaration* EOF
+	;
 
 declaration
-    : functionDeclaration
-    | externDeclaration
-    | structDeclaration
-    ;
+	: functionDeclaration
+	| externDeclaration
+	| structDeclaration
+	;
 
 functionDeclaration
-    : returnType Identifier LPAREN parameterList? RPAREN blockStatement
-    ;
+	: returnType Identifier LPAREN parameterList? RPAREN blockStatement
+	;
 
 externDeclaration
-    : EXTERN returnType Identifier LPAREN externParameterList? RPAREN SEMI
-    ;
+	: EXTERN returnType Identifier LPAREN externParameterList? RPAREN SEMI
+	;
 
 structDeclaration
-    : STRUCT Identifier LBRACE structField* RBRACE SEMI?
-    ;
+	: STRUCT Identifier LBRACE structField* RBRACE SEMI?
+	;
 
 structField
-    : type Identifier SEMI
-    ;
+	: type Identifier SEMI
+	;
 
 returnType
-    : VOID
-    | type
-    ;
+	: VOID
+	| type
+	;
 
 type
-    : primitiveType                                     # baseType
-    | Identifier                                        # identifierType
-    | REFVAR type                                       # refVarType
-    | REF type                                          # readOnlyRefType
-    ;
+	: primitiveType                                     # baseType
+	| Identifier                                        # identifierType
+	| REFVAR type                                       # refVarType
+	| REF type                                          # readOnlyRefType
+	;
 
 primitiveType
-    : INT
-    | DOUBLE
-    | BOOL
-    | STRING
-    | CHAR
-    | VOID
-    ;
+	: INT
+	| DOUBLE
+	| BOOL
+	| STRING
+	| CHAR
+	| VOID
+	;
 
 parameterList
-    : parameter (COMMA parameter)*
-    ;
+	: parameter (COMMA parameter)*
+	;
 
 parameter
-    : type Identifier
-    ;
+	: type Identifier
+	;
 
 externParameterList
-    : externParameter (COMMA externParameter)*
-    ;
+	: externParameter (COMMA externParameter)*
+	;
 
 externParameter
-    : type Identifier
-    | ELLIPSIS
-    ;
+	: type Identifier
+	| ELLIPSIS
+	;
 
 blockStatement
-    : LBRACE statement* RBRACE
-    ;
+	: LBRACE statement* RBRACE
+	;
 
 statement
-    : returnStatement
-    | expressionStatement
-    | variableDeclaration
-    | ifStatement
-    | whileStatement
-    | forStatement
-    | blockStatement
-    ;
+	: returnStatement
+	| variableDeclaration
+	| expressionStatement
+	| ifStatement
+	| whileStatement
+	| forStatement
+	| blockStatement
+	;
 
 returnStatement
-    : RETURN expression? SEMI
-    ;
+	: RETURN expression? SEMI
+	;
 
 expressionStatement
-    : expression SEMI
-    ;
+	: expression SEMI
+	;
 
 variableDeclaration
-    : (VAL | VAR) type? Identifier (ASSIGN expression)? SEMI
-    | type Identifier (ASSIGN expression)? SEMI
-    ;
+	: (VAL | VAR) type? Identifier (ASSIGN expression)? SEMI
+	| type Identifier (ASSIGN expression)? SEMI
+	| REFVAR Identifier ASSIGN expression SEMI          // <-- Add this (inferred mutable ref)
+	| REF Identifier ASSIGN expression SEMI             // <-- Add this (inferred read-only ref)
+	;
 
 ifStatement
-    : IF LPAREN expression RPAREN statement (ELSE statement)?
-    ;
+	: IF LPAREN expression RPAREN statement (ELSE statement)?
+	;
 
 whileStatement
-    : WHILE LPAREN expression RPAREN statement
-    ;
+	: WHILE LPAREN expression RPAREN statement
+	;
 
 forStatement
-    : FOR LPAREN variableDeclaration expression SEMI expression RPAREN statement
-    ;
+	: FOR LPAREN variableDeclaration expression SEMI expression RPAREN statement
+	;
 
 expression
-    : REF expression                                        # borrowExpression
-    | expression DOT Identifier                             # memberAccessExpression
-    | LPAREN type RPAREN expression                         # castExpression
-    | MINUS expression                                      # unaryMinusExpression
-    | EXCLAMATION expression                                # logicalNotExpression
-    | expression (STAR | DIV | PERCENT) expression          # multiplicativeExpression
-    | expression (PLUS | MINUS) expression                  # additiveExpression
-    | expression (LT | GT | LTE | GTE) expression           # relationalExpression
-    | expression (EQ | NEQ) expression                      # equalityExpression
-    | expression AND expression                             # logicalAndExpression
-    | expression OR expression                              # logicalOrExpression
-    | expression ASSIGN expression                          # assignmentExpression
-    | expression (PLUS_ASSIGN | MINUS_ASSIGN | STAR_ASSIGN | DIV_ASSIGN) expression   # compoundAssignmentExpression
-    | Identifier LPAREN argumentList? RPAREN                # callExpression
-    | Identifier LBRACE structInitializerList? RBRACE       # structInitializationExpression
-    | Identifier                                            # identifierExpression
-    | IntegerLiteral                                        # integerLiteralExpression
-    | DoubleLiteral                                         # doubleLiteralExpression
-    | StringLiteral                                         # stringLiteralExpression
-    | TRUE                                                  # booleanLiteralExpression
-    | FALSE                                                 # booleanLiteralExpression
-    | LPAREN expression RPAREN                              # parenthesizedExpression
-    ;
+	: REF expression                                        # borrowExpression
+	| expression DOT Identifier                             # memberAccessExpression
+	| LPAREN type RPAREN expression                         # castExpression
+	| MINUS expression                                      # unaryMinusExpression
+	| EXCLAMATION expression                                # logicalNotExpression
+	| expression INC                                        # postfixIncrementExpression
+	| expression DEC                                        # postfixDecrementExpression
+	| INC expression                                        # prefixIncrementExpression
+	| DEC expression                                        # prefixDecrementExpression
+	| expression (STAR | DIV | PERCENT) expression          # multiplicativeExpression
+	| expression (PLUS | MINUS) expression                  # additiveExpression
+	| expression (LT | GT | LTE | GTE) expression           # relationalExpression
+	| expression (EQ | NEQ) expression                      # equalityExpression
+	| expression AND expression                             # logicalAndExpression
+	| expression OR expression                              # logicalOrExpression
+	| expression ASSIGN expression                          # assignmentExpression
+	| expression (PLUS_ASSIGN | MINUS_ASSIGN | STAR_ASSIGN | DIV_ASSIGN) expression   # compoundAssignmentExpression
+	| Identifier LPAREN argumentList? RPAREN                # callExpression
+	| Identifier LBRACE structInitializerList? RBRACE       # structInitializationExpression
+	| Identifier                                            # identifierExpression
+	| IntegerLiteral                                        # integerLiteralExpression
+	| DoubleLiteral                                         # doubleLiteralExpression
+	| StringLiteral                                         # stringLiteralExpression
+	| TRUE                                                  # booleanLiteralExpression
+	| FALSE                                                 # booleanLiteralExpression
+	| LPAREN expression RPAREN                              # parenthesizedExpression
+	;
 
 argumentList
-    : expression (COMMA expression)*
-    ;
+	: expression (COMMA expression)*
+	;
 
 structInitializerList
-    : structMemberInitializer (COMMA structMemberInitializer)*
-    ;
+	: structMemberInitializer (COMMA structMemberInitializer)*
+	;
 
 structMemberInitializer
-    : Identifier COLON expression
-    ;
+	: Identifier COLON expression
+	;

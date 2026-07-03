@@ -63,6 +63,8 @@ STAR_ASSIGN: '*=';
 DIV_ASSIGN: '/=';
 ARROW: '->';
 ELLIPSIS: '...';
+INC: '++';
+DEC: '--';
 
 // Literals
 StringLiteral: '"' (EscapeSequence | ~["\\\r\n])* '"';
