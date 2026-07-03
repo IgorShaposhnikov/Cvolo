@@ -5,8 +5,8 @@ channels { COMMENTS }
 // Keywords
 VAL: 'val';
 VAR: 'var';
-REF: 'ref';
 REFVAR: 'refvar';
+REF: 'ref';
 EXTERN: 'extern';
 RETURN: 'return';
 IF: 'if';
