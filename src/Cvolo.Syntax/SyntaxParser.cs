@@ -376,4 +376,24 @@ public sealed class SyntaxParser
 			diagnostics.Report(span, $"({line},{charPositionInLine}): {msg}");
 		}
 	}
+
+	public static (int Line, int Column) GetLineAndColumn(string text, int position)
+	{
+		var line = 1;
+		var column = 1;
+		for (var i = 0; i < position && i < text.Length; i++)
+		{
+			if (text[i] == '\n')
+			{
+				line++;
+				column = 1;
+			}
+			else
+			{
+				column++;
+			}
+		}
+
+		return (line, column);
+	}
 }

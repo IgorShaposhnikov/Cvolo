@@ -32,9 +32,7 @@ var ast = parser.Parse(sourceCode);
 
 if (parser.Diagnostics.HasErrors)
 {
-	Console.Error.WriteLine("Parse errors:");
-	foreach (var diag in parser.Diagnostics.Diagnostics)
-		Console.Error.WriteLine($"  {diag}");
+	PrintCleanDiagnostics("Parse errors:", parser.Diagnostics.Diagnostics, filePath, sourceCode);
 	return 1;
 }
 
@@ -43,9 +41,7 @@ binder.Bind(ast!);
 
 if (binder.Diagnostics.HasErrors)
 {
-	Console.Error.WriteLine("Analysis errors:");
-	foreach (var diag in binder.Diagnostics.Diagnostics)
-		Console.Error.WriteLine($"  {diag}");
+	PrintCleanDiagnostics("Analysis errors:", binder.Diagnostics.Diagnostics, filePath, sourceCode);
 	return 1;
 }
 
@@ -154,4 +150,172 @@ static string? FindTool(string name)
 	{
 		return null;
 	}
+}
+
+static void PrintCleanDiagnostics(string header, IReadOnlyList<Cvolo.Core.Diagnostic> diagnostics, string filePath, string sourceCode)
+{
+	var originalColor = Console.ForegroundColor;
+
+	// 1. Print section header in Red (Vibrant and clear)
+	Console.ForegroundColor = ConsoleColor.Red;
+	Console.Error.WriteLine($"[{header}]");
+	Console.ResetColor();
+	Console.Error.WriteLine();
+
+	var lines = sourceCode.Split('\n');
+	var coordinates = new List<(int Line, int Col)>();
+
+	for (var i = 0; i < diagnostics.Count; i++)
+	{
+		var diag = diagnostics[i];
+		
+		// 1. Calculate line and column offsets
+		var lineStart = 0;
+		var lineNum = 1;
+		for (var j = 0; j < sourceCode.Length && j < diag.Span.Start; j++)
+		{
+			if (sourceCode[j] == '\n')
+			{
+				lineStart = j + 1;
+				lineNum++;
+			}
+		}
+
+		var colNum = diag.Span.Start - lineStart + 1;
+		coordinates.Add((lineNum, colNum)); // Save for the file list at the bottom
+
+		// 2. Print C#-style header (Coordinate in Gray, Message in White, on a single line)
+		Console.ForegroundColor = ConsoleColor.DarkGray;
+		Console.Error.Write($"  {i + 1}. [Line {lineNum}, Col {colNum}]: ");
+		Console.ForegroundColor = ConsoleColor.White;
+		Console.Error.WriteLine(diag.Message);
+		Console.ResetColor();
+
+		// 3. Print the source code context with connected error lines
+		if (lineNum - 1 >= 0 && lineNum - 1 < lines.Length)
+		{
+			Console.Error.WriteLine(); // Let it breathe
+
+			var originalLineText = lines[lineNum - 1].TrimEnd('\r');
+			var lineText = originalLineText.TrimStart(); // Apply your TrimStart() optimization
+			
+			// Calculate exactly how many leading characters were stripped
+			var trimmedCount = originalLineText.Length - lineText.Length;
+
+			// AUTOMATIC COMMENT STRIPPING: Cleanly strip any trailing comments (//) from the printed line
+			var commentIndex = lineText.IndexOf("//");
+			if (commentIndex >= 0)
+			{
+				lineText = lineText.Substring(0, commentIndex).TrimStart().TrimEnd();
+			}
+			
+			// Fixed-width, mathematically matched prefixes (Arrow '->' completely removed)
+			var errorPrefix = "     |-- error: "; // 17 characters (5 spaces, '|', '-- error: ')
+			var codePrefix  = "     |   ";         // 9 characters  (5 spaces, '|', 3 spaces)
+			var caretPrefix = "     |   ";         // 9 characters  (Matches codePrefix exactly)
+
+			// Calculate the new visual column offset after stripping leading whitespace
+			var visualColNum = colNum - trimmedCount;
+			var indent = new string(' ', Math.Max(0, visualColNum - 1));
+
+			// A. Print the vertical connector and the error message ABOVE the code line (Entirely in DarkGray)
+			Console.ForegroundColor = ConsoleColor.DarkGray;
+			Console.Error.Write(errorPrefix);
+			Console.Error.WriteLine(diag.Message);
+			Console.ResetColor();
+
+			// B. Print the code line (Aligned perfectly on index 17, no arrow)
+			Console.ForegroundColor = ConsoleColor.DarkGray;
+			Console.Error.Write(codePrefix);
+			Console.ResetColor();
+			Console.Error.WriteLine(lineText);
+
+			// C. Print caret pointer and bar
+			Console.ForegroundColor = ConsoleColor.DarkGray;
+			Console.Error.Write(caretPrefix);
+			
+			// Highlight the error caret in Red
+			Console.ForegroundColor = ConsoleColor.Red;
+			var underline = new string('^', Math.Max(1, diag.Span.Length));
+			Console.Error.WriteLine($"{indent}{underline}");
+			Console.ResetColor();
+		}
+
+		Console.Error.WriteLine();
+	}
+
+	// 5. Print the source file references at the bottom (with a 4-space margin matching the headers)
+	Console.ForegroundColor = ConsoleColor.Cyan;
+	Console.Error.WriteLine("  Source files for errors:");
+	Console.ResetColor();
+
+	for (var i = 0; i < diagnostics.Count; i++)
+	{
+		var (line, col) = coordinates[i];
+		var coordStr = $"({line},{col})";
+
+		Console.ForegroundColor = ConsoleColor.DarkGray;
+		Console.Error.Write("    "); // 4 spaces of margin for items
+		Console.Error.Write($"[{i + 1}] ");
+		Console.ForegroundColor = ConsoleColor.DarkCyan;
+		Console.Error.Write($"{coordStr,-16} "); // Padded to 16 characters to align all file paths perfectly!
+		Console.ForegroundColor = ConsoleColor.Blue;
+		Console.Error.WriteLine(filePath);
+		Console.ResetColor();
+	}
+
+	Console.ForegroundColor = originalColor;
+}
+static void PrintWrappedMessage(string prefix, string message, ConsoleColor color)
+{
+	// Get the actual terminal width, defaulting to 100 if redirected
+	var width = 100;
+	try
+	{
+		if (Console.WindowWidth > 0)
+			width = Console.WindowWidth;
+	}
+	catch { }
+
+	var indent = new string(' ', prefix.Length);
+	var words = message.Split(' ');
+
+	// Print the coordinate prefix in Dark Gray
+	Console.ForegroundColor = ConsoleColor.DarkGray;
+	Console.Error.Write(prefix);
+
+	// Print the message in White
+	Console.ForegroundColor = color;
+
+	var currentLength = prefix.Length;
+	var isFirstWordOnLine = true;
+
+	foreach (var word in words)
+	{
+		// If the word exceeds the terminal width, wrap to the next line and indent
+		if (currentLength + word.Length + 1 >= width)
+		{
+			Console.Error.WriteLine();
+			Console.ForegroundColor = ConsoleColor.DarkGray;
+			Console.Error.Write(indent); // Maintain vertical alignment
+			Console.ForegroundColor = color;
+
+			Console.Error.Write(word);
+			currentLength = indent.Length + word.Length;
+			isFirstWordOnLine = true;
+		}
+		else
+		{
+			if (!isFirstWordOnLine)
+			{
+				Console.Error.Write(" ");
+				currentLength++;
+			}
+			Console.Error.Write(word);
+			currentLength += word.Length;
+			isFirstWordOnLine = false;
+		}
+	}
+	Console.Error.WriteLine();
+	Console.ResetColor();
 }
