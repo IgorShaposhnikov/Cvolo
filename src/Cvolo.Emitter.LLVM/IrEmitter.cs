@@ -531,6 +531,15 @@ public sealed class IrEmitter
 		if (expr.Expression is IdentifierExpressionSyntax id && _locals.TryGetValue(id.Name, out var ptr))
 		{
 			var typeName = _variableTypes[id.Name];
+
+			// If the variable is already a reference, load and return its pointer value
+			if (typeName.StartsWith("ref ") || typeName.StartsWith("refvar "))
+			{
+				var actualPtr = NewLocal();
+				fw.WriteLine($"    %{actualPtr} = load ptr, ptr %{ptr}");
+				return ($"ptr %{actualPtr}", typeName);
+			}
+
 			return ($"ptr %{ptr}", $"ref var {typeName}");
 		}
 		else if (expr.Expression is MemberAccessExpressionSyntax m)
@@ -538,7 +547,6 @@ public sealed class IrEmitter
 			var (fieldPtr, fieldTypeName) = GetFieldPointer(m, fw);
 			return ($"ptr %{fieldPtr}", $"ref var {fieldTypeName}");
 		}
-
 		throw new InvalidOperationException("Can only borrow variables or member fields");
 	}
 }

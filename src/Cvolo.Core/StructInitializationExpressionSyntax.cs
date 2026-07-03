@@ -1,4 +1,4 @@
-﻿namespace Cvolo.Core;
+namespace Cvolo.Core;
 
 public sealed class MemberInitializerSyntax(TextSpan span, string memberName, ExpressionSyntax expression) : SyntaxNode(span)
 {
