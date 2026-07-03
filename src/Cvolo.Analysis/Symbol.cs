@@ -27,5 +27,8 @@ public sealed class VariableSymbol(string name, TypeSymbol type, bool isMutable)
 {
 	public TypeSymbol Type { get; } = type;
 	public bool IsMutable { get; } = isMutable;
-	public bool IsMoved { get; set; } = false; // Track ownership state
+	// Track ownership state
+	public bool IsMoved { get; set; } = false;
+	// Track pointer lifetimes
+	public bool PointsToParameter { get; set; } = false;
 }

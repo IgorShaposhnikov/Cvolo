@@ -167,14 +167,13 @@ public sealed class Binder
 		switch (stmt)
 		{
 			case ReturnStatementSyntax ret:
-				if (ret.Expression is not null)
-					CheckExpression(ret.Expression, scope);
+				CheckReturnStatement(ret, scope, currentFunc);
 				break;
 			case ExpressionStatementSyntax exprStmt:
 				CheckExpression(exprStmt.Expression, scope);
 				break;
 			case VariableDeclarationSyntax varDecl:
-				CheckVariableDeclaration(varDecl, scope);
+				CheckVariableDeclaration(varDecl, scope, currentFunc);
 				break;
 			case BlockStatementSyntax block:
 				CheckBlock(block, new SymbolTable(scope), currentFunc);
@@ -192,7 +191,7 @@ public sealed class Binder
 			case ForStatementSyntax forStmt:
 				{
 					var forScope = new SymbolTable(scope);
-					CheckVariableDeclaration(forStmt.Initializer, forScope);
+					CheckVariableDeclaration(forStmt.Initializer, forScope, currentFunc);
 					CheckExpression(forStmt.Condition, forScope);
 					CheckExpression(forStmt.Increment, forScope);
 					CheckStatement(forStmt.Body, forScope, currentFunc);
@@ -201,7 +200,7 @@ public sealed class Binder
 		}
 	}
 
-	private void CheckVariableDeclaration(VariableDeclarationSyntax varDecl, SymbolTable scope)
+	private void CheckVariableDeclaration(VariableDeclarationSyntax varDecl, SymbolTable scope, FunctionDeclarationSyntax currentFunc)
 	{
 		var existing = scope.Lookup(varDecl.Name);
 		if (existing is not null)
@@ -254,7 +253,23 @@ public sealed class Binder
 
 		resolvedType ??= TypeSymbol.Int;
 
-		scope.Declare(new VariableSymbol(varDecl.Name, resolvedType, varDecl.IsMutable));
+		var pointsToParam = false;
+		if (resolvedType is PointerTypeSymbol && varDecl.Initializer is BorrowExpressionSyntax borrow)
+		{
+			var baseName = GetBaseIdentifierName(borrow.Expression);
+			if (baseName is not null)
+			{
+				pointsToParam = currentFunc.Parameters.Any(param => param.Name == baseName);
+			}
+		}
+
+		var varSymbol = new VariableSymbol(varDecl.Name, resolvedType, varDecl.IsMutable)
+		{
+			// Track lifetime safety
+			PointsToParameter = pointsToParam
+		};
+
+		scope.Declare(varSymbol);
 	}
 
 	private void CheckExpression(ExpressionSyntax expr, SymbolTable scope)
@@ -515,5 +530,61 @@ public sealed class Binder
 		}
 
 		return new PointerTypeSymbol(innerType, isMutable);
+	}
+
+	private void CheckReturnStatement(ReturnStatementSyntax ret, SymbolTable scope, FunctionDeclarationSyntax currentFunc)
+	{
+		if (ret.Expression is null) return;
+
+		CheckExpression(ret.Expression, scope);
+
+		var returnType = ResolveType(currentFunc.ReturnType);
+		if (returnType is PointerTypeSymbol)
+		{
+			// Case A: Returning an explicit borrow (e.g., return ref p)
+			if (ret.Expression is BorrowExpressionSyntax borrow)
+			{
+				if (borrow.Expression is IdentifierExpressionSyntax id)
+				{
+					bool isParam = currentFunc.Parameters.Any(p => p.Name == id.Name);
+					if (!isParam)
+					{
+						_diagnostics.Report(ret.Expression.Span, $"Cannot return reference to local variable '{id.Name}' (dangling reference)");
+					}
+				}
+				else if (borrow.Expression is MemberAccessExpressionSyntax m)
+				{
+					var baseVarName = GetBaseIdentifierName(m.Expression);
+					if (baseVarName is not null)
+					{
+						bool isParam = currentFunc.Parameters.Any(p => p.Name == baseVarName);
+						if (!isParam)
+						{
+							_diagnostics.Report(ret.Expression.Span, $"Cannot return reference to field of local variable '{baseVarName}' (dangling reference)");
+						}
+					}
+				}
+			}
+			// Case B: Returning a reference variable directly (e.g., return p)
+			else if (ret.Expression is IdentifierExpressionSyntax id)
+			{
+				var symbol = scope.Lookup(id.Name) as VariableSymbol;
+				if (symbol is not null && symbol.Type is PointerTypeSymbol)
+				{
+					// Block if the reference variable points to local stack space
+					if (!symbol.PointsToParameter)
+					{
+						_diagnostics.Report(ret.Expression.Span, $"Cannot return reference variable '{id.Name}' because it points to local stack space (dangling reference)");
+					}
+				}
+			}
+		}
+	}
+
+	private string? GetBaseIdentifierName(ExpressionSyntax expr)
+	{
+		if (expr is IdentifierExpressionSyntax id) return id.Name;
+		if (expr is MemberAccessExpressionSyntax m) return GetBaseIdentifierName(m.Expression);
+		return null;
 	}
 }
