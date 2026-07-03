@@ -274,12 +274,17 @@ public sealed class SyntaxParser
 
 	private VariableDeclarationSyntax BuildVariableDeclaration(CvoloParser.VariableDeclarationContext context)
 	{
-		var isMutable = context.VAL() is null;
-		var type = GetTypeName(context.type());
+		// 1. Mutable ONLY if 'var' keyword is explicitly written (defaults to read-only)
+		var isMutable = context.VAR() is not null;
+
+		// 2. Type is null if omitted (enables type inference)
+		var type = context.type() is not null ? GetTypeName(context.type()) : null;
 		var name = context.Identifier().GetText();
+
 		ExpressionSyntax? initializer = null;
 		if (context.expression() is { } expr)
 			initializer = BuildExpression(expr);
+
 		return new VariableDeclarationSyntax(SpanOf(context), isMutable, type, name, initializer);
 	}
 

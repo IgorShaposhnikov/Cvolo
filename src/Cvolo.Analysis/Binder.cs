@@ -210,27 +210,32 @@ public sealed class Binder
 			return;
 		}
 
+		TypeSymbol? resolvedType = null;
 		if (varDecl.Initializer is not null)
 		{
 			CheckExpression(varDecl.Initializer, scope);
-
-			// If we initialize a new struct variable using an existing struct variable:
-			if (varDecl.Initializer is IdentifierExpressionSyntax id)
-			{
-				var symbol = scope.Lookup(id.Name) as VariableSymbol;
-				if (symbol is not null && symbol.Type is StructTypeSymbol)
-				{
-					symbol.IsMoved = true; // Ownership of 'p1' is moved to 'p2'
-				}
-			}
+			resolvedType = GetExpressionType(varDecl.Initializer, scope);
 		}
 
-		var resolvedType = varDecl.Type is not null ? ResolveType(varDecl.Type) : TypeSymbol.Int;
-		if (resolvedType is null)
+		if (varDecl.Type is not null)
 		{
-			_diagnostics.Report(varDecl.Span, $"Unknown type '{varDecl.Type}'");
-			return;
+			var declaredType = ResolveType(varDecl.Type);
+			if (declaredType is null)
+			{
+				_diagnostics.Report(varDecl.Span, $"Unknown type '{varDecl.Type}'");
+				return;
+			}
+
+			if (resolvedType is not null && !resolvedType.Equals(declaredType))
+			{
+				_diagnostics.Report(varDecl.Span, $"Cannot initialize variable of type '{declaredType.Name}' with value of type '{resolvedType.Name}'");
+			}
+
+			resolvedType = declaredType;
 		}
+
+		// If both type and initializer are missing, default to Int
+		resolvedType ??= TypeSymbol.Int;
 
 		scope.Declare(new VariableSymbol(varDecl.Name, resolvedType, varDecl.IsMutable));
 	}

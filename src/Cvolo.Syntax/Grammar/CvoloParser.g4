@@ -90,6 +90,7 @@ expressionStatement
 
 variableDeclaration
     : (VAL | VAR) type? Identifier (ASSIGN expression)? SEMI
+    | type Identifier (ASSIGN expression)? SEMI
     ;
 
 ifStatement

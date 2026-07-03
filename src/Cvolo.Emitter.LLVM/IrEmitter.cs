@@ -172,23 +172,47 @@ public sealed class IrEmitter
 
 	private void EmitVar(VariableDeclarationSyntax v, StringWriter fw)
 	{
-		var ptr = NewLocal();
-		_locals[v.Name] = ptr;
-		var typeName = v.Type ?? "int";
-		_variableTypes[v.Name] = typeName;
-		var ty = Type(typeName);
-		fw.WriteLine($"    %{ptr} = alloca {ty}");
-		if (v.Initializer is not null)
+		var typeName = v.Type;
+
+		if (typeName is not null)
 		{
-			if (v.Initializer is StructInitializationExpressionSyntax structInit)
+			// Case A: Explicitly typed variable (type is known upfront)
+			// Allocate and write alloca first to keep registers perfectly sequential
+			var ptr = NewLocal();
+			_locals[v.Name] = ptr;
+			_variableTypes[v.Name] = typeName;
+
+			var ty = Type(typeName);
+			fw.WriteLine($"    %{ptr} = alloca {ty}");
+
+			if (v.Initializer is not null)
 			{
-				EmitStructInitializationInPlace(structInit, ptr, fw);
+				if (v.Initializer is StructInitializationExpressionSyntax structInit)
+				{
+					EmitStructInitializationInPlace(structInit, ptr, fw);
+				}
+				else
+				{
+					var (val, _) = Eval(v.Initializer, fw);
+					fw.WriteLine($"    store {val}, ptr %{ptr}");
+				}
 			}
-			else
-			{
-				var (val, _) = Eval(v.Initializer, fw);
-				fw.WriteLine($"    store {val}, ptr %{ptr}");
-			}
+		}
+		else
+		{
+			// Case B: Type-inferred variable (must evaluate initializer first to discover type)
+			if (v.Initializer is null)
+				throw new InvalidOperationException($"Type inference requires an initializer for variable '{v.Name}'");
+
+			var (val, valTy) = Eval(v.Initializer, fw);
+
+			var ptr = NewLocal();
+			_locals[v.Name] = ptr;
+			_variableTypes[v.Name] = valTy;
+
+			var ty = Type(valTy);
+			fw.WriteLine($"    %{ptr} = alloca {ty}");
+			fw.WriteLine($"    store {val}, ptr %{ptr}");
 		}
 	}
 
