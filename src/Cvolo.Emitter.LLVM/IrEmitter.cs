@@ -480,6 +480,12 @@ public sealed class IrEmitter
 			">" => ($"icmp sgt i32 {V(l)}, {V(r)}", "i1"),
 			"<=" => ($"icmp sle i32 {V(l)}, {V(r)}", "i1"),
 			">=" => ($"icmp sge i32 {V(l)}, {V(r)}", "i1"),
+			"&" => ($"and i32 {V(l)}, {V(r)}", "i32"),
+			"|" => ($"or i32 {V(l)}, {V(r)}", "i32"),
+			"^" => ($"xor i32 {V(l)}, {V(r)}", "i32"),
+			"<<" => ($"shl i32 {V(l)}, {V(r)}", "i32"),
+			">>" => ($"ashr i32 {V(l)}, {V(r)}", "i32"),  // Arithmetic Right Shift
+			">>>" => ($"lshr i32 {V(l)}, {V(r)}", "i32"),  // Logical Right Shift
 			_ => throw new InvalidOperationException($"Unknown binop '{bin.Operator}'"),
 		};
 		fw.WriteLine($"    %{reg} = {op}");
@@ -499,6 +505,7 @@ public sealed class IrEmitter
 		{
 			"-" => ($"sub i32 0, {V(o)}", "i32"),
 			"!" => ($"xor i1 1, {V(o)}", "i1"),
+			"~" => ($"xor i32 {V(o)}, -1", "i32"),
 			_ => throw new InvalidOperationException($"Unknown unary op '{u.Operator}'"),
 		};
 		fw.WriteLine($"    %{r} = {op}");

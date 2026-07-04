@@ -126,21 +126,26 @@ expression
 	: REF expression                                        							# borrowExpression
 	| expression DOT Identifier                             							# memberAccessExpression
 	| expression LBRACK expression RBRACK												# indexExpression
+	| expression INC                                        							# postfixIncrementExpression
+	| expression DEC                                        							# postfixDecrementExpression
 	| LPAREN type RPAREN expression                         							# castExpression
 	| MINUS expression                                      							# unaryMinusExpression
 	| EXCLAMATION expression                                							# logicalNotExpression
-	| expression INC                                        							# postfixIncrementExpression
-	| expression DEC                                        							# postfixDecrementExpression
+	| TILDE expression																	# bitwiseNotExpression
 	| INC expression                                        							# prefixIncrementExpression
 	| DEC expression                                        							# prefixDecrementExpression
 	| expression (STAR | DIV | PERCENT) expression          							# multiplicativeExpression
 	| expression (PLUS | MINUS) expression                  							# additiveExpression
+	| expression (LSHIFT | RSHIFT | URSHIFT) expression									# shiftExpression
 	| expression (LT | GT | LTE | GTE) expression										# relationalExpression
 	| expression (EQ | NEQ) expression													# equalityExpression
+	| expression AMPERSAND expression													# bitwiseAndExpression
+	| expression CARET expression														# bitwiseXorExpression
+	| expression PIPE expression														# bitwiseOrExpression
 	| expression AND expression															# logicalAndExpression
 	| expression OR expression															# logicalOrExpression
 	| expression ASSIGN expression														# assignmentExpression
-	| expression (PLUS_ASSIGN | MINUS_ASSIGN | STAR_ASSIGN | DIV_ASSIGN) expression		# compoundAssignmentExpression
+	| expression (PLUS_ASSIGN | MINUS_ASSIGN | STAR_ASSIGN | DIV_ASSIGN | AND_ASSIGN | OR_ASSIGN | XOR_ASSIGN | LSHIFT_ASSIGN | RSHIFT_ASSIGN | URSHIFT_ASSIGN) expression		# compoundAssignmentExpression
 	| Identifier LPAREN argumentList? RPAREN                							# callExpression
 	| HEAP expression                                       							# heapAllocationExpression
 	| LBRACE (expression (COMMA expression)*)? RBRACE									# arrayInitializationExpression

@@ -243,6 +243,16 @@ public sealed class SyntaxParser
 				return new UnaryExpressionSyntax(SpanOf(incCtx), "++_postfix", BuildExpression(incCtx.expression()));
 			case CvoloParser.PostfixDecrementExpressionContext decCtx:
 				return new UnaryExpressionSyntax(SpanOf(decCtx), "--_postfix", BuildExpression(decCtx.expression()));
+			case CvoloParser.BitwiseNotExpressionContext notCtx:
+				return new UnaryExpressionSyntax(SpanOf(notCtx), "~", BuildExpression(notCtx.expression()));
+			case CvoloParser.ShiftExpressionContext shiftCtx:
+				return new BinaryExpressionSyntax(SpanOf(shiftCtx), BuildExpression(shiftCtx.expression(0)), shiftCtx.GetChild(1).GetText(), BuildExpression(shiftCtx.expression(1)));
+			case CvoloParser.BitwiseAndExpressionContext andCtx:
+				return new BinaryExpressionSyntax(SpanOf(andCtx), BuildExpression(andCtx.expression(0)), "&", BuildExpression(andCtx.expression(1)));
+			case CvoloParser.BitwiseXorExpressionContext xorCtx:
+				return new BinaryExpressionSyntax(SpanOf(xorCtx), BuildExpression(xorCtx.expression(0)), "^", BuildExpression(xorCtx.expression(1)));
+			case CvoloParser.BitwiseOrExpressionContext orCtx:
+				return new BinaryExpressionSyntax(SpanOf(orCtx), BuildExpression(orCtx.expression(0)), "|", BuildExpression(orCtx.expression(1)));
 			case CvoloParser.PrefixIncrementExpressionContext preIncCtx:
 				return new UnaryExpressionSyntax(SpanOf(preIncCtx), "++_prefix", BuildExpression(preIncCtx.expression()));
 			case CvoloParser.PrefixDecrementExpressionContext preDecCtx:

@@ -68,6 +68,15 @@ ARROW: '->';
 ELLIPSIS: '...';
 INC: '++';
 DEC: '--';
+LSHIFT: '<<';
+RSHIFT: '>>';
+URSHIFT: '>>>';
+LSHIFT_ASSIGN: '<<=';
+RSHIFT_ASSIGN: '>>=';
+URSHIFT_ASSIGN: '>>>=';
+AND_ASSIGN: '&=';
+OR_ASSIGN: '|=';
+XOR_ASSIGN: '^=';
 
 // Literals
 StringLiteral: '"' (EscapeSequence | ~["\\\r\n])* '"';
