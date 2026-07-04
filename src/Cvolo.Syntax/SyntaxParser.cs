@@ -443,6 +443,10 @@ public sealed class SyntaxParser
 	private NamespaceDeclarationSyntax BuildNamespaceDeclaration(CvoloParser.NamespaceDeclarationContext context)
 	{
 		var name = context.qualifiedName().GetText();
+		var usings = new List<UsingDirectiveSyntax>();
+		foreach (var u in context.usingDirective())
+			usings.Add(BuildUsingDirective(u));
+
 		var members = new List<SyntaxNode>();
 		foreach (var decl in context.declaration())
 		{
@@ -450,6 +454,7 @@ public sealed class SyntaxParser
 			if (node is not null)
 				members.Add(node);
 		}
-		return new NamespaceDeclarationSyntax(SpanOf(context), name, usings: [], members);
+
+		return new NamespaceDeclarationSyntax(SpanOf(context), name, usings, members);
 	}
 }

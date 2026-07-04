@@ -60,6 +60,7 @@ foreach (var file in project.SourceFiles)
 {
 	Console.WriteLine($"  -> {file}");
 }
+
 Console.WriteLine();
 
 // 2. Parse all files individually
@@ -81,8 +82,10 @@ foreach (var file in project.SourceFiles)
 			var lines = context.FormatDiagnostic("Parse Error", diag.Message, diag.Span);
 			foreach (var line in lines) Console.Error.WriteLine(line);
 		}
+
 		return 1;
 	}
+
 	asts.Add(ast!);
 }
 
@@ -127,19 +130,32 @@ if (emitLlvmOnly)
 	return 0;
 }
 
-// 5. Try to link with clang
+// 5. Try to link (Bundled Clang -> System Clang -> System GCC -> System G++)
 string? linkerPath = null;
 string? linkerName = null;
-string[] linkerCandidates = ["clang", "gcc", "g++"];
 
-foreach (var candidate in linkerCandidates)
+// Check compiler's own folder first for platform-specific bundled Clang (clang.exe or clang)
+var localClangName = OperatingSystem.IsWindows() ? "clang.exe" : "clang";
+var localClangPath = Path.Combine(AppContext.BaseDirectory, localClangName);
+
+if (File.Exists(localClangPath))
 {
-	var path = FindTool(candidate);
-	if (path is not null)
+	linkerPath = localClangPath;
+	linkerName = "bundled-clang";
+}
+else
+{
+	// Fall back to system compilers (Clang / GCC / G++)
+	string[] linkerCandidates = ["clang", "gcc", "g++"];
+	foreach (var candidate in linkerCandidates)
 	{
-		linkerPath = path;
-		linkerName = candidate;
-		break;
+		var path = FindTool(candidate);
+		if (path is not null)
+		{
+			linkerPath = path;
+			linkerName = candidate;
+			break;
+		}
 	}
 }
 
@@ -148,12 +164,13 @@ if (linkerPath is not null)
 	var binaryExt = project.IsShared
 		? (OperatingSystem.IsWindows() ? ".dll" : ".so")
 		: (OperatingSystem.IsWindows() ? ".exe" : "");
-	var binaryPath = Path.Combine(outputDirectory, project.OutputName + binaryExt);
+	var binaryPath = Path.Combine(binDirectory, project.OutputName + binaryExt);
 
 	var typeFlag = project.IsShared ? " -shared" : "";
 
-	// Subsystem flag is only needed/supported when using Clang on Windows
-	var subsystemFlag = linkerName == "clang" && OperatingSystem.IsWindows() && !project.IsShared
+	// Subsystem flag is needed when using Clang (bundled or system) on Windows
+	var isClang = linkerName == "bundled-clang" || linkerName == "clang";
+	var subsystemFlag = isClang && OperatingSystem.IsWindows() && !project.IsShared
 		? " -Xlinker /subsystem:console"
 		: "";
 
@@ -171,7 +188,7 @@ if (linkerPath is not null)
 	return 1;
 }
 
-Console.Error.WriteLine("Error: no compatible linker found (clang, gcc, or g++). Install LLVM or GCC tools to compile.");
+Console.Error.WriteLine("Error: no compatible linker found (bundled clang, system clang, gcc, or g++). Install LLVM or GCC tools to compile.");
 return 1;
 
 static string? FindTool(string name)
