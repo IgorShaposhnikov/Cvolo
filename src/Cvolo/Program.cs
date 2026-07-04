@@ -128,19 +128,37 @@ if (emitLlvmOnly)
 }
 
 // 5. Try to link with clang
-var clangPath = FindTool("clang");
-if (clangPath is not null)
+string? linkerPath = null;
+string? linkerName = null;
+string[] linkerCandidates = ["clang", "gcc", "g++"];
+
+foreach (var candidate in linkerCandidates)
+{
+	var path = FindTool(candidate);
+	if (path is not null)
+	{
+		linkerPath = path;
+		linkerName = candidate;
+		break;
+	}
+}
+
+if (linkerPath is not null)
 {
 	var binaryExt = project.IsShared
 		? (OperatingSystem.IsWindows() ? ".dll" : ".so")
 		: (OperatingSystem.IsWindows() ? ".exe" : "");
-
-	// Output binary directly into bin/Debug/
-	var binaryPath = Path.Combine(binDirectory, project.OutputName + binaryExt);
+	var binaryPath = Path.Combine(outputDirectory, project.OutputName + binaryExt);
 
 	var typeFlag = project.IsShared ? " -shared" : "";
-	var subsystemFlag = OperatingSystem.IsWindows() && !project.IsShared ? " -Xlinker /subsystem:console" : "";
-	var linkResult = System.Diagnostics.Process.Start(clangPath, $"-o {binaryPath} {llPath}{typeFlag}{subsystemFlag}");
+
+	// Subsystem flag is only needed/supported when using Clang on Windows
+	var subsystemFlag = linkerName == "clang" && OperatingSystem.IsWindows() && !project.IsShared
+		? " -Xlinker /subsystem:console"
+		: "";
+
+	Console.WriteLine($"Linking using: {linkerName}...");
+	var linkResult = System.Diagnostics.Process.Start(linkerPath, $"-o {binaryPath} {llPath}{typeFlag}{subsystemFlag}");
 	linkResult?.WaitForExit();
 
 	if (linkResult?.ExitCode == 0)
@@ -153,7 +171,7 @@ if (clangPath is not null)
 	return 1;
 }
 
-Console.Error.WriteLine("Error: clang not found. Install LLVM tools to compile.");
+Console.Error.WriteLine("Error: no compatible linker found (clang, gcc, or g++). Install LLVM or GCC tools to compile.");
 return 1;
 
 static string? FindTool(string name)
