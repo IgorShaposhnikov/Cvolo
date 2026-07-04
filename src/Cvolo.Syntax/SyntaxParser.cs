@@ -29,16 +29,26 @@ public sealed class SyntaxParser
 
 	private CompilationUnitSyntax BuildCompilationUnit(CvoloParser.CompilationUnitContext context)
 	{
+		var usings = new List<UsingDirectiveSyntax>();
+		foreach (var u in context.usingDirective())
+			usings.Add(BuildUsingDirective(u));
+
+		NamespaceDeclarationSyntax? nsDecl = null;
+		if (context.namespaceDeclaration() is { } ns)
+			nsDecl = BuildNamespaceDeclaration(ns);
+
 		var members = new List<SyntaxNode>();
-		foreach (var decl in context.declaration())
+		if (nsDecl is null)
 		{
-			var node = BuildDeclaration(decl);
-			if (node is not null)
-				members.Add(node);
+			foreach (var decl in context.declaration())
+			{
+				var node = BuildDeclaration(decl);
+				if (node is not null)
+					members.Add(node);
+			}
 		}
 
-		var span = SpanOf(context);
-		return new CompilationUnitSyntax(span, members);
+		return new CompilationUnitSyntax(SpanOf(context), usings, nsDecl, members);
 	}
 
 	private SyntaxNode? BuildDeclaration(CvoloParser.DeclarationContext context)
@@ -382,6 +392,11 @@ public sealed class SyntaxParser
 			return $"{GetTypeName(sliceCtx.type())}[]";
 		}
 
+		if (context is CvoloParser.QualifiedTypeContext qualCtx)
+		{
+			return qualCtx.qualifiedName().GetText();
+		}
+
 		return context.GetText();
 	}
 
@@ -418,5 +433,23 @@ public sealed class SyntaxParser
 		}
 
 		return (line, column);
+	}
+
+	private UsingDirectiveSyntax BuildUsingDirective(CvoloParser.UsingDirectiveContext context)
+	{
+		return new UsingDirectiveSyntax(SpanOf(context), context.qualifiedName().GetText());
+	}
+
+	private NamespaceDeclarationSyntax BuildNamespaceDeclaration(CvoloParser.NamespaceDeclarationContext context)
+	{
+		var name = context.qualifiedName().GetText();
+		var members = new List<SyntaxNode>();
+		foreach (var decl in context.declaration())
+		{
+			var node = BuildDeclaration(decl);
+			if (node is not null)
+				members.Add(node);
+		}
+		return new NamespaceDeclarationSyntax(SpanOf(context), name, usings: [], members);
 	}
 }

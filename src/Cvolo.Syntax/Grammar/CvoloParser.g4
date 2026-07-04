@@ -3,7 +3,19 @@ parser grammar CvoloParser;
 options { tokenVocab = CvoloLexer; }
 
 compilationUnit
-	: declaration* EOF
+	: usingDirective* (namespaceDeclaration | declaration*) EOF
+	;
+
+usingDirective
+	: USING qualifiedName SEMI
+	;
+
+namespaceDeclaration
+	: NAMESPACE qualifiedName (SEMI usingDirective* declaration* | LBRACE usingDirective* declaration* RBRACE)
+	;
+
+qualifiedName
+	: Identifier (DOT Identifier)*
 	;
 
 declaration
@@ -35,6 +47,7 @@ returnType
 
 type
 	: primitiveType                                     # baseType
+	| qualifiedName                                     # qualifiedType
 	| Identifier                                        # identifierType
 	| type LBRACK RBRACK                                # sliceType
 	| type LBRACK IntegerLiteral RBRACK                 # arrayType

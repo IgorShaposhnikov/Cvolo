@@ -25,6 +25,8 @@ CHAR: 'char';
 STRUCT: 'struct';
 UNSAFE: 'unsafe';
 PANIC: 'panic';
+NAMESPACE: 'namespace';
+USING: 'using';
 
 // Punctuation
 LPAREN: '(';

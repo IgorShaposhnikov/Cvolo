@@ -1,3 +1,4 @@
+using Cvolo;
 using Cvolo.Analysis;
 using Cvolo.Core;
 using Cvolo.Emitter.LLVM;
@@ -5,7 +6,7 @@ using Cvolo.Syntax;
 
 if (args.Length < 1)
 {
-	Console.Error.WriteLine("Usage: cvolo <file.cv> [options]");
+	Console.Error.WriteLine("Usage: cvolo <file.cv_or_directory> [options]");
 	Console.Error.WriteLine("  Options:");
 	Console.Error.WriteLine("    --llvm         generate .ll LLVM IR only (no linking)");
 	Console.Error.WriteLine("    --shared       build a shared library (.dll/.so)");
@@ -14,133 +15,139 @@ if (args.Length < 1)
 	return 1;
 }
 
-var filePath = args[0];
+if (args[0] == "new")
+{
+	if (args.Length < 2)
+	{
+		Console.Error.WriteLine("Usage: cvolo new <project_name>");
+		return 1;
+	}
+
+	try
+	{
+		CompilationProject.CreateNewProject(args[1]);
+		return 0;
+	}
+	catch (Exception ex)
+	{
+		Console.Error.WriteLine($"Error: {ex.Message}");
+		return 1;
+	}
+}
+
+var inputPath = args[0];
 var emitIr = args.Contains("--emit-ir");
 var useNative = args.Contains("--emit-native");
 var emitLlvmOnly = args.Contains("--llvm");
 var isShared = args.Contains("--shared");
 
-if (!File.Exists(filePath))
+CompilationProject project;
+try
 {
-	Console.Error.WriteLine($"Error: file '{filePath}' not found");
+	project = CompilationProject.Load(inputPath, isShared);
+}
+catch (Exception ex)
+{
+	Console.Error.WriteLine($"Error: {ex.Message}");
 	return 1;
 }
 
-var sourceCode = File.ReadAllText(filePath);
-var context = new CompilationContext(sourceCode, filePath);
-
-var parser = new SyntaxParser();
-var ast = parser.Parse(sourceCode);
-
-if (parser.Diagnostics.HasErrors)
+// PRINT DIAGNOSTIC FILES LIST
+Console.WriteLine("Files selected for compilation:");
+foreach (var file in project.SourceFiles)
 {
-	foreach (var diag in parser.Diagnostics.Diagnostics)
+	Console.WriteLine($"  -> {file}");
+}
+
+Console.WriteLine();
+
+// 2. Parse all files individually
+var asts = new List<CompilationUnitSyntax>();
+var parser = new SyntaxParser();
+CompilationContext? firstContext = null;
+
+foreach (var file in project.SourceFiles)
+{
+	var sourceCode = File.ReadAllText(file);
+	var context = new CompilationContext(sourceCode, file);
+	firstContext ??= context;
+
+	var ast = parser.Parse(sourceCode);
+	if (parser.Diagnostics.HasErrors)
 	{
-		var lines = context.FormatDiagnostic("Parse Error", diag.Message, diag.Span);
-		foreach (var line in lines) Console.Error.WriteLine(line);
+		foreach (var diag in parser.Diagnostics.Diagnostics)
+		{
+			var lines = context.FormatDiagnostic("Parse Error", diag.Message, diag.Span);
+			foreach (var line in lines) Console.Error.WriteLine(line);
+		}
+
+		return 1;
 	}
 
-	return 1;
+	asts.Add(ast!);
 }
 
+// 3. Bind all files inside a single global analysis session
 var binder = new Binder();
-binder.Bind(ast!);
+binder.Bind(asts);
 
 if (binder.Diagnostics.HasErrors)
 {
+	// Bind errors belong to specific files, so we use their contexts
 	foreach (var diag in binder.Diagnostics.Diagnostics)
 	{
-		var lines = context.FormatDiagnostic("Analysis Error", diag.Message, diag.Span);
+		var lines = firstContext!.FormatDiagnostic("Analysis Error", diag.Message, diag.Span);
 		foreach (var line in lines) Console.Error.WriteLine(line);
 	}
 
 	return 1;
 }
 
-var llPath = Path.ChangeExtension(filePath, ".ll");
+// Calculate output directory and LLVM IR path
+var outputDirectory = Path.GetDirectoryName(Path.GetFullPath(project.SourceFiles[0]))!;
+var llPath = Path.Combine(outputDirectory, project.OutputName + ".ll");
 
-if (useNative)
+// 4. Emit unified LLVM IR
+var emitter = new IrEmitter();
+var ir = emitter.Emit(asts, firstContext!);
+
+File.WriteAllText(llPath, ir);
+
+if (emitIr)
+	Console.WriteLine(ir);
+
+if (emitLlvmOnly)
 {
-	var codeGen = new CodeGenerator("cvolo_module");
-	codeGen.Emit(ast!);
+	Console.WriteLine($"Generated: {llPath}");
+	return 0;
+}
 
-	if (emitIr)
-		Console.WriteLine(codeGen.PrintIR());
-
-	var outputPath = Path.ChangeExtension(filePath, ".o");
-	codeGen.WriteObjectFile(outputPath);
-
-	if (emitLlvmOnly)
-	{
-		if (emitIr)
-			Console.WriteLine(codeGen.PrintIR());
-		Console.WriteLine($"Generated: {outputPath}");
-		return 0;
-	}
-
-	var binaryExt = isShared
+// 5. Try to link with clang
+var clangPath = FindTool("clang");
+if (clangPath is not null)
+{
+	var binaryExt = project.IsShared
 		? (OperatingSystem.IsWindows() ? ".dll" : ".so")
 		: (OperatingSystem.IsWindows() ? ".exe" : "");
-	var binaryPath = Path.ChangeExtension(filePath, null) + binaryExt;
+	var binaryPath = Path.Combine(outputDirectory, project.OutputName + binaryExt);
 
-	var typeFlag = isShared ? " -shared" : "";
-	var linkerArgs = $"-o {binaryPath} {outputPath}{typeFlag}";
-	var linkResult = System.Diagnostics.Process.Start("clang", linkerArgs);
+	var typeFlag = project.IsShared ? " -shared" : "";
+	var subsystemFlag = OperatingSystem.IsWindows() && !project.IsShared ? " -Xlinker /subsystem:console" : "";
+	var linkResult = System.Diagnostics.Process.Start(clangPath, $"-o {binaryPath} {llPath}{typeFlag}{subsystemFlag}");
 	linkResult?.WaitForExit();
 
-	if (linkResult?.ExitCode != 0)
+	if (linkResult?.ExitCode == 0)
 	{
-		Console.Error.WriteLine($"Linking failed with exit code {linkResult?.ExitCode}");
-		return 1;
-	}
-
-	Console.WriteLine($"Built: {binaryPath}");
-}
-else
-{
-	var emitter = new IrEmitter();
-	var ir = emitter.Emit(ast!, context);
-
-	File.WriteAllText(llPath, ir);
-
-	if (emitIr)
-		Console.WriteLine(ir);
-
-	if (emitLlvmOnly)
-	{
-		Console.WriteLine($"Generated: {llPath}");
+		Console.WriteLine($"Built: {binaryPath}");
 		return 0;
 	}
 
-	// Try to link with clang
-	var clangPath = FindTool("clang");
-	if (clangPath is not null)
-	{
-		var binaryExt = isShared
-			? (OperatingSystem.IsWindows() ? ".dll" : ".so")
-			: (OperatingSystem.IsWindows() ? ".exe" : "");
-		var binaryPath = Path.ChangeExtension(filePath, null) + binaryExt;
-
-		var typeFlag = isShared ? " -shared" : "";
-		var subsystemFlag = OperatingSystem.IsWindows() && !isShared ? " -Xlinker /subsystem:console" : "";
-		var linkResult = System.Diagnostics.Process.Start(clangPath, $"-o {binaryPath} {llPath}{typeFlag}{subsystemFlag}");
-		linkResult?.WaitForExit();
-
-		if (linkResult?.ExitCode == 0)
-		{
-			Console.WriteLine($"Built: {binaryPath}");
-			return 0;
-		}
-
-		Console.Error.WriteLine($"Linking failed (exit code {linkResult?.ExitCode})");
-		return 1;
-	}
-
-	Console.Error.WriteLine("Error: clang not found. Install LLVM tools to compile.");
+	Console.Error.WriteLine($"Linking failed (exit code {linkResult?.ExitCode})");
 	return 1;
 }
 
-return 0;
+Console.Error.WriteLine("Error: clang not found. Install LLVM tools to compile.");
+return 1;
 
 static string? FindTool(string name)
 {

@@ -29,4 +29,6 @@ public enum SyntaxKind
 	HeapAllocationExpression,
 	IndexExpression,
 	ArrayInitializationExpression,
+	UsingDirective,
+	NamespaceDeclaration,
 }

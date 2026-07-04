@@ -18,71 +18,85 @@ public sealed class IrEmitter
 	private readonly Dictionary<string, string> _variableTypes = [];
 	private readonly Stack<List<VariableSymbol>> _blockVariables = new();
 	private CompilationContext? _context;
+	private string? _currentNamespace;
+	private CompilationUnitSyntax? _currentUnit;
 
-	public string Emit(CompilationUnitSyntax unit, CompilationContext context)
+	public string Emit(IReadOnlyList<CompilationUnitSyntax> units, CompilationContext context)
 	{
 		_context = context;
 		_writer.WriteLine("; ModuleID = 'cvolo_module'");
 		_writer.WriteLine("source_filename = \"cvolo_module\"");
 
-		// Runtime library declarations
 		_writer.WriteLine("declare ptr @malloc(i64)");
 		_writer.WriteLine("declare void @free(ptr)");
 		_writer.WriteLine("declare i32 @puts(ptr)");
 		_writer.WriteLine("declare void @exit(i32)");
 
-		foreach (var member in unit.Members)
+		// First pass: register all struct types
+		foreach (var unit in units)
 		{
-			if (member is StructDeclarationSyntax structDecl)
+			_currentNamespace = unit.NamespaceDeclaration?.Name;
+			var members = _currentNamespace != null ? unit.NamespaceDeclaration!.Members : unit.Members;
+
+			foreach (var member in members)
 			{
-				_astStructs[structDecl.Name] = structDecl;
-				var fieldTypes = string.Join(", ", structDecl.Fields.Select(f => Type(f.Type)));
-				_writer.WriteLine($"%struct.{structDecl.Name} = type {{ {fieldTypes} }}");
+				if (member is StructDeclarationSyntax structDecl)
+				{
+					var mangledName = string.IsNullOrEmpty(_currentNamespace) ? structDecl.Name : $"{_currentNamespace}.{structDecl.Name}";
+					_astStructs[mangledName] = structDecl;
+					var fieldTypes = string.Join(", ", structDecl.Fields.Select(f => Type(f.Type)));
+					_writer.WriteLine($"%struct.{mangledName} = type {{ {fieldTypes} }}");
+				}
 			}
 		}
 
 		if (_astStructs.Count > 0)
 			_writer.WriteLine();
 
-		// Register return types, functions, and externs
-		foreach (var member in unit.Members)
+		// Second pass: register all functions and extern declarations
+		foreach (var unit in units)
 		{
-			if (member is FunctionDeclarationSyntax func)
+			_currentUnit = unit;
+			_currentNamespace = unit.NamespaceDeclaration?.Name;
+			var members = _currentNamespace != null ? unit.NamespaceDeclaration!.Members : unit.Members;
+
+			foreach (var member in members)
 			{
-				_astFunctions[func.Name] = func;
-				_functionReturnTypes[func.Name] = func.ReturnType;
-			}
-			else if (member is ExternDeclarationSyntax ext)
-			{
-				_astExterns[ext.Name] = ext;
-				_functionReturnTypes[ext.Name] = ext.ReturnType;
+				if (member is FunctionDeclarationSyntax func)
+				{
+					var mangledName = string.IsNullOrEmpty(_currentNamespace) ? func.Name : $"{_currentNamespace}.{func.Name}";
+					_astFunctions[mangledName] = func;
+					_functionReturnTypes[mangledName] = func.ReturnType;
+				}
+				else if (member is ExternDeclarationSyntax ext)
+				{
+					_astExterns[ext.Name] = ext;
+					_functionReturnTypes[ext.Name] = ext.ReturnType;
+				}
 			}
 		}
 
-		// Emit external functions
-		foreach (var member in unit.Members)
+		// Emit externs
+		foreach (var ext in _astExterns.Values)
 		{
-			if (member is ExternDeclarationSyntax ext)
-			{
-				EmitExtern(ext);
-			}
+			EmitExtern(ext);
 		}
 
-		// Collect and emit user-defined functions using C# 12 [] syntax
-		List<FunctionDeclarationSyntax> funcs = [];
-		foreach (var member in unit.Members)
+		// Emit user-defined functions
+		foreach (var unit in units)
 		{
-			if (member is FunctionDeclarationSyntax func)
-			{
-				funcs.Add(func);
-			}
-		}
+			_currentNamespace = unit.NamespaceDeclaration?.Name;
+			var members = _currentNamespace != null ? unit.NamespaceDeclaration!.Members : unit.Members;
 
-		foreach (var f in funcs)
-		{
-			var funcWriter = new StringWriter();
-			EmitFunction(f, funcWriter);
-			_writer.Write(funcWriter.ToString());
+			foreach (var member in members)
+			{
+				if (member is FunctionDeclarationSyntax func)
+				{
+					var funcWriter = new StringWriter();
+					EmitFunction(func, funcWriter);
+					_writer.Write(funcWriter.ToString());
+				}
+			}
 		}
 
 		if (_stringDefs.Count > 0)
@@ -240,7 +254,7 @@ public sealed class IrEmitter
 			_variableTypes[v.Name] = valTy;
 			_heapAllocatedVars.Add(v.Name);
 
-			fw.WriteLine($"    %{ptr} = alloca ptr"); // Heap variables are ALWAYS pointers on the stack
+			fw.WriteLine($"    %{ptr} = alloca ptr");
 			fw.WriteLine($"    store {val}, ptr %{ptr}");
 			return;
 		}
@@ -261,7 +275,7 @@ public sealed class IrEmitter
 				{
 					EmitStructInitializationInPlace(structInit, ptr, fw);
 				}
-				else if (v.Initializer is ArrayInitializationExpressionSyntax arrInit) // <-- ADD THIS BLOCK
+				else if (v.Initializer is ArrayInitializationExpressionSyntax arrInit)
 				{
 					EmitArrayInitializationInPlace(arrInit, ptr, typeName, fw);
 				}
@@ -274,14 +288,12 @@ public sealed class IrEmitter
 		}
 		else
 		{
-			// Case B: Type Inference (var/val)
+			// Case B: Type Inference
 			if (v.Initializer is null)
 				throw new InvalidOperationException($"Type inference requires an initializer for variable '{v.Name}'");
 
-			// Intercept array initialization so we can calculate the type and write the elements in-place
 			if (v.Initializer is ArrayInitializationExpressionSyntax arrInitInf)
 			{
-				// Infer the type dynamically: "int" + "[" + count + "]"
 				var (_, elementTy) = Eval(arrInitInf.Elements[0], fw);
 				var inferredType = $"{elementTy}[{arrInitInf.Elements.Count}]";
 
@@ -294,12 +306,10 @@ public sealed class IrEmitter
 				return;
 			}
 
-			// Standard type inference fallback
 			var (val, valTy) = Eval(v.Initializer, fw);
 
 			if (val.StartsWith("ptr "))
 			{
-				// Register forwarding (already loaded)
 				var valReg = val.Split(' ')[^1].TrimStart('%');
 				_locals[v.Name] = valReg;
 				_variableTypes[v.Name] = valTy;
@@ -642,10 +652,15 @@ public sealed class IrEmitter
 				// Clean up the type name for field lookup
 				var innerType = typeName.StartsWith("refvar ") ? typeName.Substring(7) :
 							   typeName.StartsWith("ref ") ? typeName.Substring(4) : typeName;
+
+				// Resolve namespaced type name
+				innerType = ResolveStructName(innerType, _currentUnit!);
 				return (actualPtr, innerType);
 			}
 
-			return (structPtr, typeName);
+			// Resolve namespaced type name
+			var resolvedTypeName = ResolveStructName(typeName, _currentUnit!);
+			return (structPtr, resolvedTypeName);
 		}
 		else if (expr is MemberAccessExpressionSyntax m)
 		{
@@ -658,6 +673,9 @@ public sealed class IrEmitter
 				fw.WriteLine($"    %{lengthPtrReg} = getelementptr inbounds {{ ptr, i32 }}, ptr %{parentPtr}, i32 0, i32 1");
 				return (lengthPtrReg, "int");
 			}
+
+			// Resolve namespaced type name
+			parentTypeName = ResolveStructName(parentTypeName, _currentUnit!);
 
 			var structDecl = _astStructs[parentTypeName];
 			var fieldIndex = -1;
@@ -735,7 +753,6 @@ public sealed class IrEmitter
 				var innerTypeName = parentTypeName.Substring(0, openBracket);
 				var sizeStr = parentTypeName.Substring(openBracket + 1, parentTypeName.Length - openBracket - 2);
 
-
 				var isArraySafeLabel = NextLabel();
 				var arrayPanicLabel = NextLabel();
 
@@ -772,19 +789,21 @@ public sealed class IrEmitter
 
 	private (string val, string ty) EmitStructInitialization(StructInitializationExpressionSyntax expr, StringWriter fw)
 	{
+		var mangledName = ResolveStructName(expr.StructTypeName, _currentUnit!);
 		var tempPtrReg = NewLocal();
-		var structTy = $"%struct.{expr.StructTypeName}";
+		var structTy = $"%struct.{mangledName}";
 		fw.WriteLine($"    %{tempPtrReg} = alloca {structTy}");
 		EmitStructInitializationInPlace(expr, tempPtrReg, fw);
-		return ($"ptr %{tempPtrReg}", expr.StructTypeName);
+		return ($"ptr %{tempPtrReg}", mangledName);
 	}
 
 	private void EmitStructInitializationInPlace(StructInitializationExpressionSyntax expr, string destPtr, StringWriter fw)
 	{
-		var structTy = $"%struct.{expr.StructTypeName}";
+		var mangledName = ResolveStructName(expr.StructTypeName, _currentUnit!);
+		var structTy = $"%struct.{mangledName}";
 		foreach (var init in expr.Initializers)
 		{
-			var structDecl = _astStructs[expr.StructTypeName];
+			var structDecl = _astStructs[mangledName];
 			var fieldIndex = -1;
 			var fieldType = "int";
 
@@ -812,6 +831,7 @@ public sealed class IrEmitter
 			}
 		}
 	}
+
 
 	private (string val, string ty) EmitBorrowExpression(BorrowExpressionSyntax expr, StringWriter fw)
 	{
@@ -891,10 +911,9 @@ public sealed class IrEmitter
 		if (expr.Expression is not StructInitializationExpressionSyntax s)
 			throw new InvalidOperationException("Heap allocation currently only supported for structs");
 
-		var typeName = s.StructTypeName;
-		var structDecl = _astStructs[typeName];
+		var mangledName = ResolveStructName(s.StructTypeName, _currentUnit!);
+		var structDecl = _astStructs[mangledName];
 
-		// Calculate size: fields * 8
 		var size = structDecl.Fields.Count * 8;
 
 		var ptrReg = NewLocal();
@@ -902,7 +921,7 @@ public sealed class IrEmitter
 
 		EmitStructInitializationInPlace(s, ptrReg, fw);
 
-		return ($"ptr %{ptrReg}", typeName); // Return the pointer and the struct type name
+		return ($"ptr %{ptrReg}", mangledName);
 	}
 
 	private (string val, string ty) EmitIndexExpression(IndexExpressionSyntax idx, StringWriter fw)
@@ -995,5 +1014,26 @@ public sealed class IrEmitter
 			return ext.Parameters[index].Type;
 
 		return "int";
+	}
+
+	private string ResolveStructName(string name, CompilationUnitSyntax activeUnit)
+	{
+		if (_astStructs.ContainsKey(name)) return name;
+
+		var currentNamespace = activeUnit.NamespaceDeclaration?.Name;
+		var localMangled = string.IsNullOrEmpty(currentNamespace) ? name : $"{currentNamespace}.{name}";
+		if (_astStructs.ContainsKey(localMangled)) return localMangled;
+
+		var activeUsings = new List<string>(activeUnit.Usings.Select(u => u.NamespaceName));
+		if (activeUnit.NamespaceDeclaration is not null)
+			activeUsings.AddRange(activeUnit.NamespaceDeclaration.Usings.Select(u => u.NamespaceName));
+
+		foreach (var ns in activeUsings)
+		{
+			var candidateMangled = $"{ns}.{name}";
+			if (_astStructs.ContainsKey(candidateMangled)) return candidateMangled;
+		}
+
+		return name;
 	}
 }

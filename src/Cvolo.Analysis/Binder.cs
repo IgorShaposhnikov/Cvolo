@@ -9,39 +9,98 @@ public sealed class Binder
 	private readonly DiagnosticBag _diagnostics = new();
 	private readonly SymbolTable _globals = new();
 	private readonly Dictionary<string, StructTypeSymbol> _structTypes = [];
+	private CompilationUnitSyntax? _currentUnit;
+	private string? _currentNamespace;
 
 	public DiagnosticBag Diagnostics => _diagnostics;
 
-	public void Bind(CompilationUnitSyntax unit)
+	public void Bind(IReadOnlyList<CompilationUnitSyntax> units)
 	{
-		foreach (var member in unit.Members)
+		// First pass: gather all structs with fully mangled names
+		foreach (var unit in units)
 		{
-			if (member is StructDeclarationSyntax structDecl)
+			_currentUnit = unit;
+			_currentNamespace = unit.NamespaceDeclaration?.Name;
+
+			var members = _currentNamespace != null ? unit.NamespaceDeclaration!.Members : unit.Members;
+			foreach (var member in members)
 			{
-				DeclareStruct(structDecl);
+				if (member is StructDeclarationSyntax structDecl)
+				{
+					DeclareStruct(structDecl);
+				}
 			}
 		}
 
-		// First pass: collect all declarations
-		foreach (var member in unit.Members)
+		// Second pass: gather all function signatures with fully mangled names
+		foreach (var unit in units)
 		{
-			switch (member)
+			_currentUnit = unit;
+			_currentNamespace = unit.NamespaceDeclaration?.Name;
+
+			var members = _currentUnit.NamespaceDeclaration != null ? _currentUnit.NamespaceDeclaration.Members : _currentUnit.Members;
+			foreach (var member in members)
 			{
-				case FunctionDeclarationSyntax func:
-					DeclareFunction(func);
-					break;
-				case ExternDeclarationSyntax ext:
-					DeclareExternFunction(ext);
-					break;
+				switch (member)
+				{
+					case FunctionDeclarationSyntax func:
+						DeclareFunction(func);
+						break;
+					case ExternDeclarationSyntax ext:
+						DeclareExternFunction(ext);
+						break;
+				}
 			}
 		}
 
-		// Second pass: check function bodies
-		foreach (var member in unit.Members)
+		// Third pass: check function bodies
+		foreach (var unit in units)
 		{
-			if (member is FunctionDeclarationSyntax func)
-				CheckFunctionBody(func);
+			_currentUnit = unit;
+			_currentNamespace = unit.NamespaceDeclaration?.Name;
+
+			var members = _currentNamespace != null ? unit.NamespaceDeclaration!.Members : unit.Members;
+			foreach (var member in members)
+			{
+				if (member is FunctionDeclarationSyntax func)
+					CheckFunctionBody(func);
+			}
 		}
+	}
+
+	private string GetMangledName(string name, string? namespaceName)
+	{
+		if (string.IsNullOrEmpty(namespaceName)) return name;
+		return $"{namespaceName}.{name}";
+	}
+
+	private FunctionSymbol? ResolveFunction(string name, SymbolTable scope)
+	{
+		var direct = scope.Lookup(name);
+		if (direct is FunctionSymbol f) return f;
+
+		var candidates = new List<FunctionSymbol>();
+
+		var localMangled = GetMangledName(name, _currentNamespace);
+		if (scope.Lookup(localMangled) is FunctionSymbol localFunc)
+			candidates.Add(localFunc);
+
+		if (_currentUnit is not null)
+		{
+			var activeUsings = new List<string>(_currentUnit.Usings.Select(u => u.NamespaceName));
+			if (_currentUnit.NamespaceDeclaration is not null)
+				activeUsings.AddRange(_currentUnit.NamespaceDeclaration.Usings.Select(u => u.NamespaceName));
+
+			foreach (var ns in activeUsings)
+			{
+				var candidateMangled = GetMangledName(name, ns);
+				if (scope.Lookup(candidateMangled) is FunctionSymbol match)
+					candidates.Add(match);
+			}
+		}
+
+		if (candidates.Count == 1) return candidates[0];
+		return null;
 	}
 
 	private void DeclareStruct(StructDeclarationSyntax structDecl)
@@ -526,18 +585,18 @@ public sealed class Binder
 	{
 		if (name.StartsWith("refvar "))
 		{
-			var innerName = name.Substring(7); // "refvar " is 7 characters
+			var innerName = name.Substring(7);
 			var innerType = ResolveType(innerName);
 			if (innerType is null) return null;
-			return new PointerTypeSymbol(innerType, isMutable: true); // Writable
+			return new PointerTypeSymbol(innerType, isMutable: true);
 		}
 
 		if (name.StartsWith("ref "))
 		{
-			var innerName = name.Substring(4); // "ref " is 4 characters
+			var innerName = name.Substring(4);
 			var innerType = ResolveType(innerName);
 			if (innerType is null) return null;
-			return new PointerTypeSymbol(innerType, isMutable: false); // Read-only
+			return new PointerTypeSymbol(innerType, isMutable: false);
 		}
 
 		if (name.EndsWith(']'))
@@ -555,14 +614,39 @@ public sealed class Binder
 			var inner = name[..^2];
 			var innerType = ResolveType(inner);
 			if (innerType is not null)
-				return new StructTypeSymbol(name, []); // Represent slice as struct type for symbol checks
+				return new StructTypeSymbol(name, []);
 		}
 
 		var primitive = TypeSymbol.FromName(name);
 		if (primitive is not null) return primitive;
 
-		if (_structTypes.TryGetValue(name, out var structType))
-			return structType;
+		// Resolve namespaced type lookups dynamically
+		var candidates = new List<StructTypeSymbol>();
+		if (_structTypes.TryGetValue(name, out var exactMatch))
+			candidates.Add(exactMatch);
+
+		if (_currentNamespace != null)
+		{
+			var localMangled = GetMangledName(name, _currentNamespace);
+			if (_structTypes.TryGetValue(localMangled, out var localStruct))
+				candidates.Add(localStruct);
+		}
+
+		if (_currentUnit is not null)
+		{
+			var activeUsings = new List<string>(_currentUnit.Usings.Select(u => u.NamespaceName));
+			if (_currentUnit.NamespaceDeclaration is not null)
+				activeUsings.AddRange(_currentUnit.NamespaceDeclaration.Usings.Select(u => u.NamespaceName));
+
+			foreach (var ns in activeUsings)
+			{
+				var candidateMangled = GetMangledName(name, ns);
+				if (_structTypes.TryGetValue(candidateMangled, out var match))
+					candidates.Add(match);
+			}
+		}
+
+		if (candidates.Count == 1) return candidates[0];
 
 		return null;
 	}
