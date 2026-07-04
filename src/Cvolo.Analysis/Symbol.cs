@@ -34,6 +34,8 @@ public sealed class VariableSymbol(string name, TypeSymbol type, bool isMutable)
 	// Track pointer lifetimes
 	public bool PointsToParameter { get; set; } = false;
 	public bool IsHeapAllocated { get; set; } = false;
+	// Track if the variable has been assigned a value
+	public bool IsInitialized { get; set; } = false;
 }
 
 public sealed class BorrowSymbol(string borrowerName, string borrowedName, bool isMutable, TextSpan span)

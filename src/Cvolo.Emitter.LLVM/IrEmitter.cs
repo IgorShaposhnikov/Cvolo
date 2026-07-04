@@ -650,6 +650,15 @@ public sealed class IrEmitter
 		else if (expr is MemberAccessExpressionSyntax m)
 		{
 			var (parentPtr, parentTypeName) = GetFieldPointer(m.Expression, fw);
+
+			// 1. Slices have a built-in 'Length' field at index 1 of the anonymous struct { ptr, i32 }
+			if (parentTypeName.EndsWith("[]") && m.MemberName == "Length")
+			{
+				var lengthPtrReg = NewLocal();
+				fw.WriteLine($"    %{lengthPtrReg} = getelementptr inbounds {{ ptr, i32 }}, ptr %{parentPtr}, i32 0, i32 1");
+				return (lengthPtrReg, "int");
+			}
+
 			var structDecl = _astStructs[parentTypeName];
 			var fieldIndex = -1;
 			var fieldType = "int";

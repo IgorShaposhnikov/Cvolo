@@ -149,7 +149,13 @@ public sealed class Binder
 		{
 			var paramType = ResolveType(param.Type);
 			if (paramType is not null)
-				localScope.Declare(new VariableSymbol(param.Name, paramType, isMutable: false));
+			{
+				var varSymbol = new VariableSymbol(param.Name, paramType, isMutable: false)
+				{
+					IsInitialized = true
+				};
+				localScope.Declare(varSymbol);
+			}
 		}
 
 		CheckBlock(func.Body, localScope, func);
@@ -311,7 +317,8 @@ public sealed class Binder
 		var varSymbol = new VariableSymbol(varDecl.Name, resolvedType, varDecl.IsMutable)
 		{
 			// Track lifetime safety
-			PointsToParameter = pointsToParam
+			PointsToParameter = pointsToParam,
+			IsInitialized = varDecl.Initializer is not null
 		};
 
 		if (varDecl.Initializer is HeapAllocationExpressionSyntax)
@@ -330,13 +337,21 @@ public sealed class Binder
 			case IdentifierExpressionSyntax id:
 				{
 					var symbol = scope.Lookup(id.Name);
+
 					if (symbol is null)
 					{
 						_diagnostics.Report(id.Span, $"Undefined variable '{id.Name}'");
 					}
-					else if (symbol is VariableSymbol varSymbol && varSymbol.IsMoved)
+					else if (symbol is VariableSymbol varSymbol)
 					{
-						_diagnostics.Report(id.Span, $"Use of moved variable '{id.Name}'");
+						if (varSymbol.IsMoved)
+						{
+							_diagnostics.Report(id.Span, $"Use of moved variable '{id.Name}'");
+						}
+						else if (!varSymbol.IsInitialized)
+						{
+							_diagnostics.Report(id.Span, $"Use of possibly-uninitialized variable '{id.Name}'");
+						}
 					}
 
 					break;
@@ -430,8 +445,8 @@ public sealed class Binder
 									_diagnostics.Report(id.Span, $"Cannot assign to immutable variable '{id.Name}'");
 								}
 
-								// Re-initialize: myPoint is now active again!
 								varSymbol.IsMoved = false;
+								varSymbol.IsInitialized = true;
 							}
 							else
 							{
@@ -443,6 +458,8 @@ public sealed class Binder
 							CheckExpression(bin.Left, scope);
 						}
 					}
+
+
 
 					break;
 				}
@@ -462,6 +479,12 @@ public sealed class Binder
 		if (leftType is PointerTypeSymbol pointerType)
 		{
 			leftType = pointerType.ReferencedType;
+		}
+
+		// Slices have a built-in read-only 'Length' field of type 'int'
+		if (leftType.Name.EndsWith("[]") && expr.MemberName == "Length")
+		{
+			return TypeSymbol.Int;
 		}
 
 		if (leftType is not StructTypeSymbol structType)
