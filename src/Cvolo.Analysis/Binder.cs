@@ -286,6 +286,14 @@ public sealed class Binder
 			}
 
 			resolvedType = declaredType;
+
+			if (declaredType is ArrayTypeSymbol declArr && resolvedType is ArrayTypeSymbol initArr)
+			{
+				if (declArr.Size != initArr.Size)
+				{
+					_diagnostics.Report(varDecl.Span, $"Array size mismatch: declared size is {declArr.Size}, but initializer has {initArr.Size} elements");
+				}
+			}
 		}
 
 		resolvedType ??= TypeSymbol.Int;
@@ -344,6 +352,9 @@ public sealed class Binder
 				break;
 			case HeapAllocationExpressionSyntax heap:
 				CheckExpression(heap.Expression, scope);
+				break;
+			case ArrayInitializationExpressionSyntax arrInit:
+				foreach (var el in arrInit.Elements) CheckExpression(el, scope);
 				break;
 			case CallExpressionSyntax call:
 				{
@@ -483,6 +494,7 @@ public sealed class Binder
 			StructInitializationExpressionSyntax s => CheckStructInitializationExpression(s, scope),
 			HeapAllocationExpressionSyntax h => GetExpressionType(h.Expression, scope),
 			IndexExpressionSyntax idx => (GetExpressionType(idx.Left, scope) as ArrayTypeSymbol)?.ElementType,
+			ArrayInitializationExpressionSyntax a => CheckArrayInitialization(a, scope),
 			_ => null
 		};
 	}
@@ -588,6 +600,24 @@ public sealed class Binder
 		}
 
 		return new PointerTypeSymbol(innerType, isMutable);
+	}
+
+	private TypeSymbol? CheckArrayInitialization(ArrayInitializationExpressionSyntax expr, SymbolTable scope)
+	{
+		if (expr.Elements.Count == 0) return null; // Can't infer type of empty array easily yet
+
+		var elementType = GetExpressionType(expr.Elements[0], scope) ?? TypeSymbol.Int;
+
+		for (var i = 1; i < expr.Elements.Count; i++)
+		{
+			var elType = GetExpressionType(expr.Elements[i], scope);
+			if (elType is not null && !elType.Equals(elementType))
+			{
+				_diagnostics.Report(expr.Elements[i].Span, $"Array elements must have the same type. Expected '{elementType.Name}', found '{elType.Name}'");
+			}
+		}
+
+		return new ArrayTypeSymbol(elementType, expr.Elements.Count);
 	}
 
 	private void CheckReturnStatement(ReturnStatementSyntax ret, SymbolTable scope, FunctionDeclarationSyntax currentFunc)

@@ -252,7 +252,13 @@ public sealed class IrEmitter
 			if (v.Initializer is not null)
 			{
 				if (v.Initializer is StructInitializationExpressionSyntax structInit)
+				{
 					EmitStructInitializationInPlace(structInit, ptr, fw);
+				}
+				else if (v.Initializer is ArrayInitializationExpressionSyntax arrInit) // <-- ADD THIS BLOCK
+				{
+					EmitArrayInitializationInPlace(arrInit, ptr, typeName, fw);
+				}
 				else
 				{
 					var (val, _) = Eval(v.Initializer, fw);
@@ -262,15 +268,46 @@ public sealed class IrEmitter
 		}
 		else
 		{
-			// Case: Type Inference (var/val)
-			var (val, valTy) = Eval(v.Initializer!, fw);
-			var ptr = NewLocal();
-			_locals[v.Name] = ptr;
-			_variableTypes[v.Name] = valTy;
+			// Case B: Type Inference (var/val)
+			if (v.Initializer is null)
+				throw new InvalidOperationException($"Type inference requires an initializer for variable '{v.Name}'");
 
-			var ty = Type(valTy);
-			fw.WriteLine($"    %{ptr} = alloca {ty}");
-			fw.WriteLine($"    store {val}, ptr %{ptr}");
+			// Intercept array initialization so we can calculate the type and write the elements in-place
+			if (v.Initializer is ArrayInitializationExpressionSyntax arrInitInf)
+			{
+				// Infer the type dynamically: "int" + "[" + count + "]"
+				var (_, elementTy) = Eval(arrInitInf.Elements[0], fw);
+				var inferredType = $"{elementTy}[{arrInitInf.Elements.Count}]";
+
+				var ptr = NewLocal();
+				_locals[v.Name] = ptr;
+				_variableTypes[v.Name] = inferredType;
+
+				fw.WriteLine($"    %{ptr} = alloca {Type(inferredType)}");
+				EmitArrayInitializationInPlace(arrInitInf, ptr, inferredType, fw);
+				return;
+			}
+
+			// Standard type inference fallback
+			var (val, valTy) = Eval(v.Initializer, fw);
+
+			if (val.StartsWith("ptr "))
+			{
+				// Register forwarding (already loaded)
+				var valReg = val.Split(' ')[^1].TrimStart('%');
+				_locals[v.Name] = valReg;
+				_variableTypes[v.Name] = valTy;
+			}
+			else
+			{
+				var ptr = NewLocal();
+				_locals[v.Name] = ptr;
+				_variableTypes[v.Name] = valTy;
+
+				var ty = Type(valTy);
+				fw.WriteLine($"    %{ptr} = alloca {ty}");
+				fw.WriteLine($"    store {val}, ptr %{ptr}");
+			}
 		}
 	}
 
@@ -795,5 +832,21 @@ public sealed class IrEmitter
 
 		fw.WriteLine($"    call void @exit(i32 1)");
 		fw.WriteLine($"    unreachable");
+	}
+
+	private void EmitArrayInitializationInPlace(ArrayInitializationExpressionSyntax expr, string destPtr, string arrayTypeName, StringWriter fw)
+	{
+		var llvmArrTy = Type(arrayTypeName);
+
+		for (int i = 0; i < expr.Elements.Count; i++)
+		{
+			var elementPtrReg = NewLocal();
+			// Get pointer to arr[i]
+			fw.WriteLine($"    %{elementPtrReg} = getelementptr inbounds {llvmArrTy}, ptr %{destPtr}, i32 0, i32 {i}");
+
+			// Evaluate the element and store it
+			var (val, _) = Eval(expr.Elements[i], fw);
+			fw.WriteLine($"    store {val}, ptr %{elementPtrReg}");
+		}
 	}
 }

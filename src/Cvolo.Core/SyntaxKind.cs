@@ -28,4 +28,5 @@ public enum SyntaxKind
 	BorrowExpression,
 	HeapAllocationExpression,
 	IndexExpression,
+	ArrayInitializationExpression,
 }

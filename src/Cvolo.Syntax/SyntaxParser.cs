@@ -268,6 +268,15 @@ public sealed class SyntaxParser
 				return new HeapAllocationExpressionSyntax(SpanOf(heapCtx), BuildExpression(heapCtx.expression()));
 			case CvoloParser.IndexExpressionContext idxCtx:
 				return new IndexExpressionSyntax(SpanOf(idxCtx), BuildExpression(idxCtx.expression(0)), BuildExpression(idxCtx.expression(1)));
+			case CvoloParser.ArrayInitializationExpressionContext arrInitCtx:
+				{
+					var elements = new List<ExpressionSyntax>();
+					foreach (var exprCtx in arrInitCtx.expression())
+					{
+						elements.Add(BuildExpression(exprCtx));
+					}
+					return new ArrayInitializationExpressionSyntax(SpanOf(arrInitCtx), elements);
+				}
 			default:
 				return new IdentifierExpressionSyntax(SpanOf(context), context.GetText());
 		}
