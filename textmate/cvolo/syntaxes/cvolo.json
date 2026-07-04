@@ -2,11 +2,7 @@
   "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
   "name": "Cvolo",
   "scopeName": "source.cvolo",
-  "fileTypes": [
-    "cvolo",
-    "cvl",
-    "cv"
-  ],
+  "fileTypes": [ "cvolo", "cvl", "cv" ],
   "repository": {
     "comments": {
       "patterns": [
@@ -15,27 +11,25 @@
       ]
     },
     "block_comment": {
-      "comment": "Block comment",
       "name": "comment.block.cvolo",
       "begin": "/\\*",
       "end": "\\*/"
     },
     "line_comment": {
-      "comment": "Single-line comment",
       "name": "comment.line.double-slash.cvolo",
       "begin": "//",
       "end": "$"
     },
     "string_literal": {
-      "comment": "Double-quote string literal",
       "name": "string.quoted.double.cvolo",
       "begin": "\"",
       "end": "\"",
-      "patterns": [ { "include": "#escaped_character" } ]
-    },
-    "escaped_character": {
-      "name": "constant.character.escape.cvolo",
-      "match": "\\\\([0nrt\"\\\\])"
+      "patterns": [
+        {
+          "name": "constant.character.escape.cvolo",
+          "match": "\\\\([0nrt\"\\\\])"
+        }
+      ]
     },
     "numbers": {
       "patterns": [
@@ -50,16 +44,8 @@
       ]
     },
     "keywords": {
-      "patterns": [
-        {
-          "name": "keyword.control.cvolo",
-          "match": "\\b(return|if|else|while|for)\\b"
-        },
-        {
-          "name": "keyword.other.cvolo",
-          "match": "\\b(val|var|ref|refvar|heap|extern|unsafe|panic)\\b"
-        }
-      ]
+      "name": "keyword.other.cvolo",
+      "match": "\\b(val|var|ref|refvar|heap|ref|extern|unsafe|panic|namespace|using|return|if|else|while|for)\\b"
     },
     "types": {
       "patterns": [
@@ -81,12 +67,40 @@
   "patterns": [
     { "include": "#comments" },
     {
+      "comment": "Using directive",
+      "match": "\\b(using)\\s+([a-zA-Z0-9_.]+)",
+      "captures": {
+        "1": { "name": "keyword.other.cvolo" },
+        "2": { "name": "entity.name.namespace.cvolo" }
+      }
+    },
+    {
+      "comment": "Namespace declaration",
+      "match": "\\b(namespace)\\s+([a-zA-Z0-9_.]+)",
+      "captures": {
+        "1": { "name": "keyword.other.cvolo" },
+        "2": { "name": "entity.name.namespace.cvolo" }
+      }
+    },
+    {
       "comment": "Struct declaration",
       "begin": "\\b(struct)\\s+([a-zA-Z_][a-zA-Z0-9_]*)",
       "end": "(?=\\{)",
       "beginCaptures": {
-        "1": { "name": "storage.type.struct.cvolo" },
-        "2": { "name": "entity.name.type.struct.cvolo" }
+        "1": {
+          "name": "storage.modifier"
+        },
+        "2": {
+          "name": "entity.name.type.class"
+        }
+      }
+    },
+    {
+      "comment": "Struct Fields",
+      "match": "\\b(int|double|bool|string|char|void)\\b\\s+([a-zA-Z_][a-zA-Z0-9_]*)",
+      "captures": {
+        "1": { "name": "storage.type" },
+        "2": { "name": "variable.other.member" }
       }
     },
     {
@@ -115,31 +129,24 @@
     { "include": "#string_literal" },
     { "include": "#numbers" },
     {
-      "comment": "Heap allocation expression",
       "match": "\\bheap\\b",
       "name": "keyword.other.cvolo"
     },
     {
-      "comment": "Function/Struct invocation",
+      "comment": "Member access and method calls",
       "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)(?=\\s*\\(|\\s*\\{)",
       "captures": { "1": { "name": "entity.name.function.cvolo" } }
     },
-    {
-      "comment": "Member access",
-      "match": "\\.([a-zA-Z_][a-zA-Z0-9_]*)\\b",
-      "captures": { "1": { "name": "variable.other.member.cvolo" } }
-    },
     { "include": "#keywords" },
     {
-      "comment": "Boolean constants",
-      "name": "constant.language.boolean.cvolo",
-      "match": "\\b(true|false)\\b"
+      "match": "\\b(true|false)\\b",
+      "name": "constant.language.boolean.cvolo"
     },
     { "include": "#types" },
     {
-      "comment": "Operators",
+      "comment": "All operators including compound, bitwise, and ternary",
       "name": "keyword.operator.cvolo",
-      "match": "(\\+\\+|--|\\+|\\-|\\*|/|%|&|\\||\\^|~|!|=|==|!=|<=|>=|&&|\\|\\||\\+=|\\-=|\\*=|/=|->|\\.\\.\\.|:)"
+      "match": "(\\+\\+|--|<<=|>>=|>>>=|\\+=|\\-=|\\*=|/=|&=|\\|=|\\^=|<<|>>|>>>|==|!=|<=|>=|&&|\\|\\||->|\\.\\.\\.|\\+|\\-|\\*|/|%|&|\\||\\^|~|!|=|\\?|:|\\[|\\])"
     }
   ]
 }
