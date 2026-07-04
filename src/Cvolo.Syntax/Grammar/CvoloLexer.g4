@@ -39,6 +39,7 @@ SEMI: ';';
 COMMA: ',';
 DOT: '.';
 COLON: ':';
+QMARK: '?';
 
 // Operators
 PLUS: '+';

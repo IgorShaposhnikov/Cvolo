@@ -297,6 +297,13 @@ public sealed class SyntaxParser
 					}
 					return new ArrayInitializationExpressionSyntax(SpanOf(arrInitCtx), elements);
 				}
+			case CvoloParser.TernaryExpressionContext ternaryCtx:
+				{
+					var cond = BuildExpression(ternaryCtx.expression(0));
+					var thenExpr = BuildExpression(ternaryCtx.expression(1));
+					var elseExpr = BuildExpression(ternaryCtx.expression(2));
+					return new TernaryExpressionSyntax(SpanOf(ternaryCtx), cond, thenExpr, elseExpr);
+				}
 			default:
 				return new IdentifierExpressionSyntax(SpanOf(context), context.GetText());
 		}

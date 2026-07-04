@@ -430,6 +430,9 @@ public sealed class Binder
 			case ArrayInitializationExpressionSyntax arrInit:
 				foreach (var el in arrInit.Elements) CheckExpression(el, scope);
 				break;
+			case TernaryExpressionSyntax ternary:
+				CheckTernaryExpression(ternary, scope);
+				break;
 			case CallExpressionSyntax call:
 				{
 					var symbol = scope.Lookup(call.FunctionName);
@@ -577,6 +580,7 @@ public sealed class Binder
 			HeapAllocationExpressionSyntax h => GetExpressionType(h.Expression, scope),
 			IndexExpressionSyntax idx => (GetExpressionType(idx.Left, scope) as ArrayTypeSymbol)?.ElementType,
 			ArrayInitializationExpressionSyntax a => CheckArrayInitialization(a, scope),
+			TernaryExpressionSyntax t => CheckTernaryExpression(t, scope),
 			_ => null
 		};
 	}
@@ -789,5 +793,28 @@ public sealed class Binder
 		if (expr is IdentifierExpressionSyntax id) return id.Name;
 		if (expr is MemberAccessExpressionSyntax m) return GetBaseIdentifierName(m.Expression);
 		return null;
+	}
+
+	private TypeSymbol? CheckTernaryExpression(TernaryExpressionSyntax expr, SymbolTable scope)
+	{
+		CheckExpression(expr.Condition, scope);
+		var condType = GetExpressionType(expr.Condition, scope);
+		if (condType is not null && !condType.Equals(TypeSymbol.Bool))
+		{
+			_diagnostics.Report(expr.Condition.Span, $"Ternary condition must be 'bool', found '{condType.Name}'");
+		}
+
+		CheckExpression(expr.ThenExpression, scope);
+		CheckExpression(expr.ElseExpression, scope);
+
+		var thenType = GetExpressionType(expr.ThenExpression, scope);
+		var elseType = GetExpressionType(expr.ElseExpression, scope);
+
+		if (thenType is not null && elseType is not null && !thenType.Equals(elseType))
+		{
+			_diagnostics.Report(expr.Span, $"Ternary branches must have the same type. Found '{thenType.Name}' and '{elseType.Name}'");
+		}
+
+		return thenType;
 	}
 }

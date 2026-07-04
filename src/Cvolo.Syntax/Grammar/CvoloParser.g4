@@ -144,6 +144,7 @@ expression
 	| expression PIPE expression														# bitwiseOrExpression
 	| expression AND expression															# logicalAndExpression
 	| expression OR expression															# logicalOrExpression
+	| expression QMARK expression COLON expression										# ternaryExpression
 	| expression ASSIGN expression														# assignmentExpression
 	| expression (PLUS_ASSIGN | MINUS_ASSIGN | STAR_ASSIGN | DIV_ASSIGN | AND_ASSIGN | OR_ASSIGN | XOR_ASSIGN | LSHIFT_ASSIGN | RSHIFT_ASSIGN | URSHIFT_ASSIGN) expression		# compoundAssignmentExpression
 	| Identifier LPAREN argumentList? RPAREN                							# callExpression

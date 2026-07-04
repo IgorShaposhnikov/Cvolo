@@ -406,6 +406,7 @@ public sealed class IrEmitter
 			BinaryExpressionSyntax { Operator: "=" } assign => EmitLoadStore(assign, fw),
 			BinaryExpressionSyntax bin => EmitBin(bin, fw),
 			UnaryExpressionSyntax u => EmitUnary(u, fw),
+			TernaryExpressionSyntax t => EmitTernaryExpression(t, fw),
 			_ => throw new InvalidOperationException($"Unknown expr: {expr.GetType()}"),
 		};
 	}
@@ -1042,5 +1043,43 @@ public sealed class IrEmitter
 		}
 
 		return name;
+	}
+
+	private (string val, string ty) EmitTernaryExpression(TernaryExpressionSyntax expr, StringWriter fw)
+	{
+		var (cond, _) = Eval(expr.Condition, fw);
+
+		var t = NextLabel();
+		var e = NextLabel();
+		var d = NextLabel();
+
+		var (_, thenTy) = Eval(expr.ThenExpression, fw);
+		var ty = Type(thenTy);
+
+		// 1. Allocate space on stack for result
+		var resultPtr = NewLocal();
+		fw.WriteLine($"    %{resultPtr} = alloca {ty}");
+
+		// 2. Branch conditionally
+		fw.WriteLine($"    br {cond}, label %{t}, label %{e}");
+
+		// 3. Then Block
+		fw.WriteLine($"  {t}:");
+		var (thenVal, _) = Eval(expr.ThenExpression, fw);
+		fw.WriteLine($"    store {thenVal}, ptr %{resultPtr}");
+		fw.WriteLine($"    br label %{d}");
+
+		// 4. Else Block
+		fw.WriteLine($"  {e}:");
+		var (elseVal, _) = Eval(expr.ElseExpression, fw);
+		fw.WriteLine($"    store {elseVal}, ptr %{resultPtr}");
+		fw.WriteLine($"    br label %{d}");
+
+		// 5. Merge Block
+		fw.WriteLine($"  {d}:");
+		var loadedReg = NewLocal();
+		fw.WriteLine($"    %{loadedReg} = load {ty}, ptr %{resultPtr}");
+
+		return ($"{ty} %{loadedReg}", thenTy);
 	}
 }
