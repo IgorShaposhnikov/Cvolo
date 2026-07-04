@@ -36,6 +36,7 @@ returnType
 type
 	: primitiveType                                     # baseType
 	| Identifier                                        # identifierType
+	| type LBRACK RBRACK                                # sliceType
 	| type LBRACK IntegerLiteral RBRACK                 # arrayType
 	| REFVAR type                                       # refVarType
 	| REF type                                          # readOnlyRefType

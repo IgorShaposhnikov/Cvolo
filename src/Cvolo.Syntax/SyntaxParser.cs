@@ -377,6 +377,11 @@ public sealed class SyntaxParser
 			return $"{GetTypeName(arrCtx.type())}[{arrCtx.IntegerLiteral().GetText()}]";
 		}
 
+		if (context is CvoloParser.SliceTypeContext sliceCtx)
+		{
+			return $"{GetTypeName(sliceCtx.type())}[]";
+		}
+
 		return context.GetText();
 	}
 

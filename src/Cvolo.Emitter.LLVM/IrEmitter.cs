@@ -11,16 +11,17 @@ public sealed class IrEmitter
 	private int _stringIndex;
 	private readonly Dictionary<string, string> _locals = [];
 	private readonly List<string> _stringDefs = [];
+	private readonly Dictionary<string, FunctionDeclarationSyntax> _astFunctions = [];
+	private readonly Dictionary<string, ExternDeclarationSyntax> _astExterns = [];
 	private readonly Dictionary<string, StructDeclarationSyntax> _astStructs = [];
-	private readonly Dictionary<string, string> _variableTypes = [];
 	private readonly Dictionary<string, string> _functionReturnTypes = [];
+	private readonly Dictionary<string, string> _variableTypes = [];
 	private readonly Stack<List<VariableSymbol>> _blockVariables = new();
 	private CompilationContext? _context;
 
 	public string Emit(CompilationUnitSyntax unit, CompilationContext context)
 	{
 		_context = context;
-
 		_writer.WriteLine("; ModuleID = 'cvolo_module'");
 		_writer.WriteLine("source_filename = \"cvolo_module\"");
 
@@ -43,13 +44,19 @@ public sealed class IrEmitter
 		if (_astStructs.Count > 0)
 			_writer.WriteLine();
 
-		// Register return types of all functions and externs
+		// Register return types, functions, and externs
 		foreach (var member in unit.Members)
 		{
 			if (member is FunctionDeclarationSyntax func)
+			{
+				_astFunctions[func.Name] = func;
 				_functionReturnTypes[func.Name] = func.ReturnType;
+			}
 			else if (member is ExternDeclarationSyntax ext)
+			{
+				_astExterns[ext.Name] = ext;
 				_functionReturnTypes[ext.Name] = ext.ReturnType;
+			}
 		}
 
 		// Emit external functions
@@ -61,8 +68,8 @@ public sealed class IrEmitter
 			}
 		}
 
-		// Collect and emit user-defined functions
-		var funcs = new List<FunctionDeclarationSyntax>();
+		// Collect and emit user-defined functions using C# 12 [] syntax
+		List<FunctionDeclarationSyntax> funcs = [];
 		foreach (var member in unit.Members)
 		{
 			if (member is FunctionDeclarationSyntax func)
@@ -73,7 +80,6 @@ public sealed class IrEmitter
 
 		foreach (var f in funcs)
 		{
-			// Collect strings into _stringDefs during emit, accumulate at end
 			var funcWriter = new StringWriter();
 			EmitFunction(f, funcWriter);
 			_writer.Write(funcWriter.ToString());
@@ -396,19 +402,53 @@ public sealed class IrEmitter
 
 	private void EmitCall(CallExpressionSyntax call, StringWriter fw)
 	{
-		var args = string.Join(", ", call.Arguments.Select(a => Eval(a, fw).val));
-		fw.WriteLine($"    call void @{call.FunctionName}({args})");
+		List<string> args = [];
+
+		for (var i = 0; i < call.Arguments.Count; i++)
+		{
+			var (val, valTy) = Eval(call.Arguments[i], fw);
+			var paramTy = GetParamType(call.FunctionName, i);
+
+			// If the parameter expects a slice but we are passing an array, perform coercion
+			if (paramTy.Contains("[]") && valTy.Contains('['))
+			{
+				var coerced = CoerceArrayToSlice(val, valTy, paramTy, fw);
+				args.Add(coerced);
+			}
+			else
+			{
+				args.Add(val);
+			}
+		}
+
+		fw.WriteLine($"    call void @{call.FunctionName}({string.Join(", ", args)})");
 	}
 
 	private (string val, string ty) EmitCallExpr(CallExpressionSyntax call, StringWriter fw)
 	{
-		var args = string.Join(", ", call.Arguments.Select(a => Eval(a, fw).val));
-		var r = NewLocal();
+		List<string> args = []; // C# 12 Collection Expression []
 
+		for (var i = 0; i < call.Arguments.Count; i++)
+		{
+			var (val, valTy) = Eval(call.Arguments[i], fw);
+			var paramTy = GetParamType(call.FunctionName, i);
+
+			if (paramTy.Contains("[]") && valTy.Contains("["))
+			{
+				var coerced = CoerceArrayToSlice(val, valTy, paramTy, fw);
+				args.Add(coerced);
+			}
+			else
+			{
+				args.Add(val);
+			}
+		}
+
+		var r = NewLocal();
 		var retTypeName = _functionReturnTypes.TryGetValue(call.FunctionName, out var ret) ? ret : "int";
 		var ty = Type(retTypeName);
 
-		fw.WriteLine($"    %{r} = call {ty} @{call.FunctionName}({args})");
+		fw.WriteLine($"    %{r} = call {ty} @{call.FunctionName}({string.Join(", ", args)})");
 		return ($"{ty} %{r}", retTypeName);
 	}
 
@@ -541,7 +581,12 @@ public sealed class IrEmitter
 		if (t.StartsWith("ref ") || t.StartsWith("refvar "))
 			return "ptr";
 
-		if (t.EndsWith(']'))
+		// 1. Dynamic Slice Types (e.g. "int[]" or "refvar int[]" which was unpacked)
+		if (t.EndsWith("[]"))
+			return "{ ptr, i32 }";
+
+		// 2. Static Array Types (e.g. "int[5]")
+		if (t.Contains('['))
 		{
 			var openBracket = t.LastIndexOf('[');
 			var size = t.Substring(openBracket + 1, t.Length - openBracket - 2);
@@ -630,26 +675,87 @@ public sealed class IrEmitter
 			var (parentPtr, parentTypeName) = GetFieldPointer(idx.Left, fw);
 			var (indexVal, _) = Eval(idx.Index, fw);
 
-			var openBracket = parentTypeName.LastIndexOf('[');
-			var innerType = parentTypeName.Substring(0, openBracket);
-			var sizeStr = parentTypeName.Substring(openBracket + 1, parentTypeName.Length - openBracket - 2);
+			// Case A: Dynamic Slice indexing (type name ends with "[]", e.g., "int[]")
+			if (parentTypeName.EndsWith("[]"))
+			{
+				// 1. Load the actual array pointer from field 0 of the slice struct { ptr, i32 }
+				var arrPtrReg = NewLocal();
+				fw.WriteLine($"    %{arrPtrReg} = getelementptr inbounds {{ ptr, i32 }}, ptr %{parentPtr}, i32 0, i32 0");
+				var arrayPtr = NewLocal();
+				fw.WriteLine($"    %{arrayPtr} = load ptr, ptr %{arrPtrReg}");
 
-			var safeLabel = NextLabel();
-			var errorLabel = NextLabel();
+				// 2. Load the slice length from field 1 for Bounds Checking
+				var lenPtrReg = NewLocal();
+				fw.WriteLine($"    %{lenPtrReg} = getelementptr inbounds {{ ptr, i32 }}, ptr %{parentPtr}, i32 0, i32 1");
+				var lengthReg = NewLocal();
+				fw.WriteLine($"    %{lengthReg} = load i32, ptr %{lenPtrReg}");
 
-			var checkReg = NewLocal();
-			fw.WriteLine($"    %{checkReg} = icmp ult i32 {V(indexVal)}, {sizeStr}");
-			fw.WriteLine($"    br i1 %{checkReg}, label %{safeLabel}, label %{errorLabel}");
+				// 3. Bounds check (index < length)
+				var isSafeLabel = NextLabel();
+				var panicLabel = NextLabel();
+				var checkReg = NewLocal();
 
-			// Call the clean helper method for the error block
-			EmitRuntimeError(idx, errorLabel, fw);
+				fw.WriteLine($"    %{checkReg} = icmp ult i32 {V(indexVal)}, %{lengthReg}");
+				fw.WriteLine($"    br i1 %{checkReg}, label %{isSafeLabel}, label %{panicLabel}");
 
-			fw.WriteLine($"  {safeLabel}:");
-			var elementPtrReg = NewLocal();
-			var llvmArrTy = Type(parentTypeName);
-			fw.WriteLine($"    %{elementPtrReg} = getelementptr inbounds {llvmArrTy}, ptr %{parentPtr}, i32 0, i32 {V(indexVal)}");
+				// Panic Block (Outputs professional C# Style error message)
+				fw.WriteLine($"  {panicLabel}:");
+				var errorLines = _context!.FormatDiagnostic("Runtime Error", "Index was outside the bounds of the array.", idx.Span);
+				foreach (var line in errorLines)
+				{
+					var strPtr = AddString(line);
+					var reg = NewLocal();
+					fw.WriteLine($"    %{reg} = call i32 @puts(ptr {strPtr.Split(' ')[^1]})");
+				}
 
-			return (elementPtrReg, innerType);
+				fw.WriteLine($"    call void @exit(i32 1)");
+				fw.WriteLine($"    unreachable");
+
+				// Safe Block: Get element address
+				fw.WriteLine($"  {isSafeLabel}:");
+				var elementPtrReg = NewLocal();
+				var innerType = parentTypeName[..^2];
+				var elementLlvmTy = Type(innerType);
+				fw.WriteLine($"    %{elementPtrReg} = getelementptr inbounds {elementLlvmTy}, ptr %{arrayPtr}, i32 {V(indexVal)}");
+				return (elementPtrReg, innerType);
+			}
+			else
+			{
+				// Case B: Static Array indexing (type name contains "[size]", e.g., "int[5]")
+				var openBracket = parentTypeName.LastIndexOf('[');
+				var innerTypeName = parentTypeName.Substring(0, openBracket);
+				var sizeStr = parentTypeName.Substring(openBracket + 1, parentTypeName.Length - openBracket - 2);
+
+
+				var isArraySafeLabel = NextLabel();
+				var arrayPanicLabel = NextLabel();
+
+				// Bounds check (index < static_size)
+				var arrayCheckReg = NewLocal();
+				fw.WriteLine($"    %{arrayCheckReg} = icmp ult i32 {V(indexVal)}, {sizeStr}");
+				fw.WriteLine($"    br i1 %{arrayCheckReg}, label %{isArraySafeLabel}, label %{arrayPanicLabel}");
+
+				// Runtime Error Block
+				fw.WriteLine($"  {arrayPanicLabel}:");
+				var arrErrorLines = _context!.FormatDiagnostic("Runtime Error", "Index was outside the bounds of the array.", idx.Span);
+				foreach (var line in arrErrorLines)
+				{
+					var strPtr = AddString(line);
+					var reg = NewLocal();
+					fw.WriteLine($"    %{reg} = call i32 @puts(ptr {strPtr.Split(' ')[^1]})");
+				}
+
+				fw.WriteLine($"    call void @exit(i32 1)");
+				fw.WriteLine($"    unreachable");
+
+				// Safe Block: Get element address
+				fw.WriteLine($"  {isArraySafeLabel}:");
+				var arrayElementPtrReg = NewLocal();
+				var llvmArrTy = Type(parentTypeName);
+				fw.WriteLine($"    %{arrayElementPtrReg} = getelementptr inbounds {llvmArrTy}, ptr %{parentPtr}, i32 0, i32 {V(indexVal)}");
+
+				return (arrayElementPtrReg, innerTypeName);
+			}
 		}
 
 		throw new InvalidOperationException("Unsupported field pointer expression");
@@ -848,5 +954,37 @@ public sealed class IrEmitter
 			var (val, _) = Eval(expr.Elements[i], fw);
 			fw.WriteLine($"    store {val}, ptr %{elementPtrReg}");
 		}
+	}
+
+	private string CoerceArrayToSlice(string arrayVal, string arrayTy, string sliceTy, StringWriter fw)
+	{
+		var openBracket = arrayTy.LastIndexOf('[');
+		var sizeStr = arrayTy.Substring(openBracket + 1, arrayTy.Length - openBracket - 2);
+
+		var slicePtr = NewLocal();
+		fw.WriteLine($"    %{slicePtr} = alloca {{ ptr, i32 }}");
+
+		// Store array pointer into index 0
+		var ptrField = NewLocal();
+		fw.WriteLine($"    %{ptrField} = getelementptr inbounds {{ ptr, i32 }}, ptr %{slicePtr}, i32 0, i32 0");
+		fw.WriteLine($"    store {arrayVal}, ptr %{ptrField}");
+
+		// Store size into index 1
+		var sizeField = NewLocal();
+		fw.WriteLine($"    %{sizeField} = getelementptr inbounds {{ ptr, i32 }}, ptr %{slicePtr}, i32 0, i32 1");
+		fw.WriteLine($"    store i32 {sizeStr}, ptr %{sizeField}");
+
+		return $"ptr %{slicePtr}";
+	}
+
+	private string GetParamType(string funcName, int index)
+	{
+		if (_astFunctions.TryGetValue(funcName, out var func) && index < func.Parameters.Count)
+			return func.Parameters[index].Type;
+
+		if (_astExterns.TryGetValue(funcName, out var ext) && index < ext.Parameters.Count)
+			return ext.Parameters[index].Type;
+
+		return "int";
 	}
 }

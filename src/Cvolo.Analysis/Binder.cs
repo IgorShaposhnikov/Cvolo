@@ -527,6 +527,14 @@ public sealed class Binder
 				return new ArrayTypeSymbol(innerType, size);
 		}
 
+		if (name.EndsWith("[]") && !name.StartsWith("ref"))
+		{
+			var inner = name[..^2];
+			var innerType = ResolveType(inner);
+			if (innerType is not null)
+				return new StructTypeSymbol(name, []); // Represent slice as struct type for symbol checks
+		}
+
 		var primitive = TypeSymbol.FromName(name);
 		if (primitive is not null) return primitive;
 
