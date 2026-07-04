@@ -15,14 +15,20 @@ public sealed class IrEmitter
 	private readonly Dictionary<string, string> _variableTypes = [];
 	private readonly Dictionary<string, string> _functionReturnTypes = [];
 	private readonly Stack<List<VariableSymbol>> _blockVariables = new();
+	private CompilationContext? _context;
 
-	public string Emit(CompilationUnitSyntax unit)
+	public string Emit(CompilationUnitSyntax unit, CompilationContext context)
 	{
+		_context = context;
+
 		_writer.WriteLine("; ModuleID = 'cvolo_module'");
 		_writer.WriteLine("source_filename = \"cvolo_module\"");
 
+		// Runtime library declarations
 		_writer.WriteLine("declare ptr @malloc(i64)");
 		_writer.WriteLine("declare void @free(ptr)");
+		_writer.WriteLine("declare i32 @puts(ptr)");
+		_writer.WriteLine("declare void @exit(i32)");
 
 		foreach (var member in unit.Members)
 		{
@@ -478,12 +484,12 @@ public sealed class IrEmitter
 		var idx = _stringIndex++;
 		var escaped = string.Concat(value.Select(c => c switch
 		{
-			'\n' => "\\0a", // Lowercase 'a'
-			'\r' => "\\0d", // Lowercase 'd'
+			'\n' => "\\0a",
+			'\r' => "\\0d",
 			'\t' => "\\09",
 			'"' => "\\22",
-			'\\' => "\\5c", // Lowercase 'c'
-			_ when c < 32 || c > 126 => $"\\{c:x02}", // Lowercase 'x02'
+			'\\' => "\\5c",
+			_ when c < 32 || c > 126 => $"\\{(int)c:x2}", // Converts \x1b automatically to \1b for LLVM
 			_ => c.ToString(),
 		}));
 		_stringDefs.Add($"@str{idx} = private unnamed_addr constant [{value.Length + 1} x i8] c\"{escaped}\\00\"");
@@ -587,15 +593,25 @@ public sealed class IrEmitter
 			var (parentPtr, parentTypeName) = GetFieldPointer(idx.Left, fw);
 			var (indexVal, _) = Eval(idx.Index, fw);
 
-			// Extract array metadata
 			var openBracket = parentTypeName.LastIndexOf('[');
 			var innerType = parentTypeName.Substring(0, openBracket);
+			var sizeStr = parentTypeName.Substring(openBracket + 1, parentTypeName.Length - openBracket - 2);
 
+			var safeLabel = NextLabel();
+			var errorLabel = NextLabel();
+
+			var checkReg = NewLocal();
+			fw.WriteLine($"    %{checkReg} = icmp ult i32 {V(indexVal)}, {sizeStr}");
+			fw.WriteLine($"    br i1 %{checkReg}, label %{safeLabel}, label %{errorLabel}");
+
+			// Call the clean helper method for the error block
+			EmitRuntimeError(idx, errorLabel, fw);
+
+			fw.WriteLine($"  {safeLabel}:");
 			var elementPtrReg = NewLocal();
 			var llvmArrTy = Type(parentTypeName);
+			fw.WriteLine($"    %{elementPtrReg} = getelementptr inbounds {llvmArrTy}, ptr %{parentPtr}, i32 0, i32 {V(indexVal)}");
 
-			// GEP: [0, index]
-			fw.WriteLine($"    %{elementPtrReg} = getelementptr inbounds {llvmArrTy}, ptr %{parentPtr}, i32 0, {indexVal}");
 			return (elementPtrReg, innerType);
 		}
 
@@ -764,4 +780,20 @@ public sealed class IrEmitter
 		}
 	}
 
+	private void EmitRuntimeError(IndexExpressionSyntax idx, string errorLabel, StringWriter fw)
+	{
+		fw.WriteLine($"  {errorLabel}:");
+
+		var errorLines = _context!.FormatDiagnostic("Runtime Error", "Index was outside the bounds of the array.", idx.Span, true);
+
+		foreach (var line in errorLines)
+		{
+			var strPtr = AddString(line); // Just add the raw string!
+			var reg = NewLocal();
+			fw.WriteLine($"    %{reg} = call i32 @puts(ptr {strPtr.Split(' ')[^1]})");
+		}
+
+		fw.WriteLine($"    call void @exit(i32 1)");
+		fw.WriteLine($"    unreachable");
+	}
 }
