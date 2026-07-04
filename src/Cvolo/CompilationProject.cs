@@ -21,12 +21,10 @@ public sealed class CompilationProject
 		var outputName = "main";
 		var isShared = forceShared;
 
-		if (inputPath.EndsWith(".cvproj") && File.Exists(inputPath))
+		if (inputPath.EndsWith(".cvlproj") && File.Exists(inputPath))
 		{
 			var projDir = Path.GetDirectoryName(Path.GetFullPath(inputPath))!;
-			var files = Directory.GetFiles(projDir, "*.*", SearchOption.AllDirectories)
-				.Where(f => f.EndsWith(".cv") || f.EndsWith(".cvl"))
-				.ToList();
+			var files = Directory.GetFiles(projDir, "*.cvl", SearchOption.AllDirectories).ToList();
 			sourceFiles.AddRange(files);
 
 			try
@@ -50,9 +48,7 @@ public sealed class CompilationProject
 		}
 		else if (Directory.Exists(inputPath))
 		{
-			var files = Directory.GetFiles(inputPath, "*.*", SearchOption.AllDirectories)
-				.Where(f => f.EndsWith(".cv") || f.EndsWith(".cvl"))
-				.ToList();
+			var files = Directory.GetFiles(inputPath, "*.cvl", SearchOption.AllDirectories).ToList();
 			sourceFiles.AddRange(files);
 			outputName = Path.GetFileName(Path.GetFullPath(inputPath).TrimEnd(Path.DirectorySeparatorChar));
 		}
@@ -84,13 +80,13 @@ public sealed class CompilationProject
 
 		Directory.CreateDirectory(projectDir);
 
-		// 1. Create .cvproj file
+		// 1. Create .cvlproj file (Uses $$""" to allow literal { } braces)
 		var projFile = Path.Combine(projectDir, $"{projectName}.cvlproj");
-		var projXml = $"""
+		var projXml = $$"""
 <Project Sdk="Cvolo.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <AssemblyName>{projectName}</AssemblyName>
+    <AssemblyName>{{projectName}}</AssemblyName>
   </PropertyGroup>
 </Project>
 """;
@@ -108,7 +104,7 @@ struct Point {
 """;
 		File.WriteAllText(geomFile, geomSource);
 
-		// 3. Create Main.cv (Uses $$""" to allow literal { } braces)
+		// 3. Create Main.cvl (Uses $$""" to allow literal { } braces)
 		var mainFile = Path.Combine(projectDir, "Main.cvl");
 		var mainSource = $$"""
 using {{projectName}}.Geometry;
@@ -127,6 +123,6 @@ int main() {
 		File.WriteAllText(mainFile, mainSource);
 
 		Console.WriteLine($"Created Cvolo project '{projectName}' successfully.");
-		Console.WriteLine($"To compile: dotnet run --project src/Cvolo -- {projectName}/{projectName}.cvl");
+		Console.WriteLine($"To compile: dotnet run --project src/Cvolo -- {projectName}/{projectName}.cvlproj");
 	}
 }

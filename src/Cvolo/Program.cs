@@ -15,7 +15,14 @@ if (args.Length < 1)
 	return 1;
 }
 
-if (args[0] == "new")
+var inputPath = args[0];
+var emitIr = args.Contains("--emit-ir");
+var useNative = args.Contains("--emit-native");
+var emitLlvmOnly = args.Contains("--llvm");
+var isShared = args.Contains("--shared");
+
+// CLI Tooling: Handle "new" project templates generation
+if (inputPath == "new")
 {
 	if (args.Length < 2)
 	{
@@ -35,12 +42,7 @@ if (args[0] == "new")
 	}
 }
 
-var inputPath = args[0];
-var emitIr = args.Contains("--emit-ir");
-var useNative = args.Contains("--emit-native");
-var emitLlvmOnly = args.Contains("--llvm");
-var isShared = args.Contains("--shared");
-
+// 1. Load the project configuration (handles Single-File, Folder, or .cvlproj)
 CompilationProject project;
 try
 {
@@ -58,7 +60,6 @@ foreach (var file in project.SourceFiles)
 {
 	Console.WriteLine($"  -> {file}");
 }
-
 Console.WriteLine();
 
 // 2. Parse all files individually
@@ -80,10 +81,8 @@ foreach (var file in project.SourceFiles)
 			var lines = context.FormatDiagnostic("Parse Error", diag.Message, diag.Span);
 			foreach (var line in lines) Console.Error.WriteLine(line);
 		}
-
 		return 1;
 	}
-
 	asts.Add(ast!);
 }
 
@@ -99,13 +98,19 @@ if (binder.Diagnostics.HasErrors)
 		var lines = firstContext!.FormatDiagnostic("Analysis Error", diag.Message, diag.Span);
 		foreach (var line in lines) Console.Error.WriteLine(line);
 	}
-
 	return 1;
 }
 
-// Calculate output directory and LLVM IR path
+// Calculate output directories (C# Style: /bin and /obj)
 var outputDirectory = Path.GetDirectoryName(Path.GetFullPath(project.SourceFiles[0]))!;
-var llPath = Path.Combine(outputDirectory, project.OutputName + ".ll");
+var objDirectory = Path.Combine(outputDirectory, "obj", "Debug");
+var binDirectory = Path.Combine(outputDirectory, "bin", "Debug");
+
+Directory.CreateDirectory(objDirectory);
+Directory.CreateDirectory(binDirectory);
+
+// Write .ll IR file to the obj directory
+var llPath = Path.Combine(objDirectory, project.OutputName + ".ll");
 
 // 4. Emit unified LLVM IR
 var emitter = new IrEmitter();
@@ -129,7 +134,9 @@ if (clangPath is not null)
 	var binaryExt = project.IsShared
 		? (OperatingSystem.IsWindows() ? ".dll" : ".so")
 		: (OperatingSystem.IsWindows() ? ".exe" : "");
-	var binaryPath = Path.Combine(outputDirectory, project.OutputName + binaryExt);
+
+	// Output binary directly into bin/Debug/
+	var binaryPath = Path.Combine(binDirectory, project.OutputName + binaryExt);
 
 	var typeFlag = project.IsShared ? " -shared" : "";
 	var subsystemFlag = OperatingSystem.IsWindows() && !project.IsShared ? " -Xlinker /subsystem:console" : "";
