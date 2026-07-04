@@ -342,6 +342,7 @@ public sealed class IrEmitter
 			BorrowExpressionSyntax b => EmitBorrowExpression(b, fw),
 			StructInitializationExpressionSyntax s => EmitStructInitialization(s, fw),
 			HeapAllocationExpressionSyntax h => EmitHeapAllocation(h, fw),
+			IndexExpressionSyntax idx => EmitIndexExpression(idx, fw),
 			CallExpressionSyntax call => EmitCallExpr(call, fw),
 			BinaryExpressionSyntax { Operator: "=" } assign => EmitLoadStore(assign, fw),
 			BinaryExpressionSyntax bin => EmitBin(bin, fw),
@@ -424,6 +425,12 @@ public sealed class IrEmitter
 			var (r, _) = Eval(assign.Right, fw);
 			fw.WriteLine($"    store {r}, ptr %{fieldPtr}");
 		}
+		else if (assign.Left is IndexExpressionSyntax idx)
+		{
+			var (elementPtr, _) = GetFieldPointer(idx, fw);
+			var (r, _) = Eval(assign.Right, fw);
+			fw.WriteLine($"    store {r}, ptr %{elementPtr}");
+		}
 	}
 
 	private (string val, string ty) EmitLoadStore(BinaryExpressionSyntax assign, StringWriter fw)
@@ -490,6 +497,14 @@ public sealed class IrEmitter
 	{
 		if (t.StartsWith("ref ") || t.StartsWith("refvar "))
 			return "ptr";
+
+		if (t.EndsWith(']'))
+		{
+			var openBracket = t.LastIndexOf('[');
+			var size = t.Substring(openBracket + 1, t.Length - openBracket - 2);
+			var inner = t.Substring(0, openBracket);
+			return $"[{size} x {Type(inner)}]";
+		}
 
 		return t switch
 		{
@@ -566,6 +581,22 @@ public sealed class IrEmitter
 			fw.WriteLine($"    %{fieldPtrReg} = getelementptr inbounds {structTy}, ptr %{parentPtr}, i32 0, i32 {fieldIndex}");
 
 			return (fieldPtrReg, fieldType);
+		}
+		else if (expr is IndexExpressionSyntax idx)
+		{
+			var (parentPtr, parentTypeName) = GetFieldPointer(idx.Left, fw);
+			var (indexVal, _) = Eval(idx.Index, fw);
+
+			// Extract array metadata
+			var openBracket = parentTypeName.LastIndexOf('[');
+			var innerType = parentTypeName.Substring(0, openBracket);
+
+			var elementPtrReg = NewLocal();
+			var llvmArrTy = Type(parentTypeName);
+
+			// GEP: [0, index]
+			fw.WriteLine($"    %{elementPtrReg} = getelementptr inbounds {llvmArrTy}, ptr %{parentPtr}, i32 0, {indexVal}");
+			return (elementPtrReg, innerType);
 		}
 
 		throw new InvalidOperationException("Unsupported field pointer expression");
@@ -706,6 +737,19 @@ public sealed class IrEmitter
 		return ($"ptr %{ptrReg}", typeName); // Return the pointer and the struct type name
 	}
 
+	private (string val, string ty) EmitIndexExpression(IndexExpressionSyntax idx, StringWriter fw)
+	{
+		// 1. Get the pointer to the specific array element
+		var (elementPtr, elementTypeName) = GetFieldPointer(idx, fw);
+
+		// 2. Load the value from that pointer
+		var loadedReg = NewLocal();
+		var fTy = Type(elementTypeName);
+		fw.WriteLine($"    %{loadedReg} = load {fTy}, ptr %{elementPtr}");
+
+		return ($"{fTy} %{loadedReg}", elementTypeName);
+	}
+
 	private void EmitCleanup(IEnumerable<string> variableNames, StringWriter fw)
 	{
 		foreach (var name in variableNames)
@@ -719,4 +763,5 @@ public sealed class IrEmitter
 			}
 		}
 	}
+
 }

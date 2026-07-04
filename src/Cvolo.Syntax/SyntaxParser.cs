@@ -266,6 +266,8 @@ public sealed class SyntaxParser
 				}
 			case CvoloParser.HeapAllocationExpressionContext heapCtx:
 				return new HeapAllocationExpressionSyntax(SpanOf(heapCtx), BuildExpression(heapCtx.expression()));
+			case CvoloParser.IndexExpressionContext idxCtx:
+				return new IndexExpressionSyntax(SpanOf(idxCtx), BuildExpression(idxCtx.expression(0)), BuildExpression(idxCtx.expression(1)));
 			default:
 				return new IdentifierExpressionSyntax(SpanOf(context), context.GetText());
 		}
@@ -359,6 +361,11 @@ public sealed class SyntaxParser
 		if (context is CvoloParser.ReadOnlyRefTypeContext refCtx)
 		{
 			return $"ref {GetTypeName(refCtx.type())}";
+		}
+
+		if (context is CvoloParser.ArrayTypeContext arrCtx)
+		{
+			return $"{GetTypeName(arrCtx.type())}[{arrCtx.IntegerLiteral().GetText()}]";
 		}
 
 		return context.GetText();

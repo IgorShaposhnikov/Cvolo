@@ -36,6 +36,7 @@ returnType
 type
 	: primitiveType                                     # baseType
 	| Identifier                                        # identifierType
+	| type LBRACK IntegerLiteral RBRACK                 # arrayType
 	| REFVAR type                                       # refVarType
 	| REF type                                          # readOnlyRefType
 	;
@@ -108,33 +109,34 @@ forStatement
 	;
 
 expression
-	: REF expression                                        # borrowExpression
-	| expression DOT Identifier                             # memberAccessExpression
-	| LPAREN type RPAREN expression                         # castExpression
-	| MINUS expression                                      # unaryMinusExpression
-	| EXCLAMATION expression                                # logicalNotExpression
-	| expression INC                                        # postfixIncrementExpression
-	| expression DEC                                        # postfixDecrementExpression
-	| INC expression                                        # prefixIncrementExpression
-	| DEC expression                                        # prefixDecrementExpression
-	| expression (STAR | DIV | PERCENT) expression          # multiplicativeExpression
-	| expression (PLUS | MINUS) expression                  # additiveExpression
-	| expression (LT | GT | LTE | GTE) expression           # relationalExpression
-	| expression (EQ | NEQ) expression                      # equalityExpression
-	| expression AND expression                             # logicalAndExpression
-	| expression OR expression                              # logicalOrExpression
-	| expression ASSIGN expression                          # assignmentExpression
-	| expression (PLUS_ASSIGN | MINUS_ASSIGN | STAR_ASSIGN | DIV_ASSIGN) expression   # compoundAssignmentExpression
-	| Identifier LPAREN argumentList? RPAREN                # callExpression
-	| HEAP expression                                       # heapAllocationExpression
-	| Identifier LBRACE structInitializerList? RBRACE       # structInitializationExpression
-	| Identifier                                            # identifierExpression
-	| IntegerLiteral                                        # integerLiteralExpression
-	| DoubleLiteral                                         # doubleLiteralExpression
-	| StringLiteral                                         # stringLiteralExpression
-	| TRUE                                                  # booleanLiteralExpression
-	| FALSE                                                 # booleanLiteralExpression
-	| LPAREN expression RPAREN                              # parenthesizedExpression
+	: REF expression                                        							# borrowExpression
+	| expression DOT Identifier                             							# memberAccessExpression
+	| expression LBRACK expression RBRACK												# indexExpression
+	| LPAREN type RPAREN expression                         							# castExpression
+	| MINUS expression                                      							# unaryMinusExpression
+	| EXCLAMATION expression                                							# logicalNotExpression
+	| expression INC                                        							# postfixIncrementExpression
+	| expression DEC                                        							# postfixDecrementExpression
+	| INC expression                                        							# prefixIncrementExpression
+	| DEC expression                                        							# prefixDecrementExpression
+	| expression (STAR | DIV | PERCENT) expression          							# multiplicativeExpression
+	| expression (PLUS | MINUS) expression                  							# additiveExpression
+	| expression (LT | GT | LTE | GTE) expression										# relationalExpression
+	| expression (EQ | NEQ) expression													# equalityExpression
+	| expression AND expression															# logicalAndExpression
+	| expression OR expression															# logicalOrExpression
+	| expression ASSIGN expression														# assignmentExpression
+	| expression (PLUS_ASSIGN | MINUS_ASSIGN | STAR_ASSIGN | DIV_ASSIGN) expression		# compoundAssignmentExpression
+	| Identifier LPAREN argumentList? RPAREN                							# callExpression
+	| HEAP expression                                       							# heapAllocationExpression
+	| Identifier LBRACE structInitializerList? RBRACE       							# structInitializationExpression
+	| Identifier                                            							# identifierExpression
+	| IntegerLiteral                                        							# integerLiteralExpression
+	| DoubleLiteral                                         							# doubleLiteralExpression
+	| StringLiteral                                         							# stringLiteralExpression
+	| TRUE                                                  							# booleanLiteralExpression
+	| FALSE                                                 							# booleanLiteralExpression
+	| LPAREN expression RPAREN                              							# parenthesizedExpression
 	;
 
 argumentList

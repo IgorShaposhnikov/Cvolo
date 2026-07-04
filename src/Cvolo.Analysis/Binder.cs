@@ -482,6 +482,7 @@ public sealed class Binder
 			BorrowExpressionSyntax b => CheckBorrowExpression(b, scope),
 			StructInitializationExpressionSyntax s => CheckStructInitializationExpression(s, scope),
 			HeapAllocationExpressionSyntax h => GetExpressionType(h.Expression, scope),
+			IndexExpressionSyntax idx => (GetExpressionType(idx.Left, scope) as ArrayTypeSymbol)?.ElementType,
 			_ => null
 		};
 	}
@@ -495,12 +496,23 @@ public sealed class Binder
 			if (innerType is null) return null;
 			return new PointerTypeSymbol(innerType, isMutable: true); // Writable
 		}
+
 		if (name.StartsWith("ref "))
 		{
 			var innerName = name.Substring(4); // "ref " is 4 characters
 			var innerType = ResolveType(innerName);
 			if (innerType is null) return null;
 			return new PointerTypeSymbol(innerType, isMutable: false); // Read-only
+		}
+
+		if (name.EndsWith(']'))
+		{
+			var openBracket = name.LastIndexOf('[');
+			var sizePart = name.Substring(openBracket + 1, name.Length - openBracket - 2);
+			var innerName = name.Substring(0, openBracket);
+			var innerType = ResolveType(innerName);
+			if (innerType is not null && int.TryParse(sizePart, out var size))
+				return new ArrayTypeSymbol(innerType, size);
 		}
 
 		var primitive = TypeSymbol.FromName(name);
