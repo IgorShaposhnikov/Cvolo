@@ -96,22 +96,22 @@ foreach (var file in project.SourceFiles)
 // 3. Bind all files inside a single global analysis session
 binder.Bind(asts);
 
-// Verify that an executable project contains a valid main entry point before trying to link
-if (!project.IsShared && binder.Context.Globals.Lookup("main") is null && binder.Context.Globals.Lookup("Main") is null)
-{
-	Console.Error.WriteLine("Error CS5001: Program does not contain a static 'main' method suitable for an entry point");
-	return 1;
-}
-
+// 1. Report Semantic and Analysis Errors First!
 if (binder.Diagnostics.HasErrors)
 {
 	foreach (var diag in binder.Diagnostics.Diagnostics)
 	{
-		// No manual context tracking needed! The diagnostic holds its own physical location.
 		var lines = diag.Context.FormatDiagnostic("Analysis Error", diag.Message, diag.Span);
 		foreach (var line in lines) Console.Error.WriteLine(line);
 	}
 
+	return 1;
+}
+
+// 2. Then Verify the entry point (CS5001)
+if (!project.IsShared && binder.Context.Globals.Lookup("main") is null && binder.Context.Globals.Lookup("Main") is null)
+{
+	Console.Error.WriteLine("Error CS5001: Program does not contain a static 'main' method suitable for an entry point");
 	return 1;
 }
 

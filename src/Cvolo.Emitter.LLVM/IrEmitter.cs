@@ -626,6 +626,15 @@ public sealed class IrEmitter : IEmitter
 		var (r, rTy) = Eval(assign.Right, fw);
 		var llvmTy = Type(rTy);
 
+		// If the right side evaluated to a pointer but the target expects a struct value,
+		// load the struct value from the pointer first.
+		if (r.StartsWith("ptr ") && rTy is StructTypeSymbol)
+		{
+			var structVal = NewLocal();
+			fw.WriteLine($"    %{structVal} = load {llvmTy}, ptr {V(r)}");
+			r = $"{llvmTy} %{structVal}";
+		}
+
 		if (assign.Left is IdentifierExpressionSyntax id && _locals.TryGetValue(id.Name, out var ptr))
 		{
 			fw.WriteLine($"    store {llvmTy} {V(r)}, ptr %{ptr}");
