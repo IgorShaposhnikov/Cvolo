@@ -1,0 +1,8 @@
+extern void printf(string format, ...);
+
+int Main()
+{
+    val x = 100;
+    printf("%d\n", x);
+    return 0;
+}

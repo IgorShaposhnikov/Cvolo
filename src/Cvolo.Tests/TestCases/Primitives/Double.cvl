@@ -1,0 +1,8 @@
+extern void printf(string format, ...);
+
+int Main()
+{
+    double x = 20.5;
+    printf("%.1f\n", x);
+    return 0;
+}

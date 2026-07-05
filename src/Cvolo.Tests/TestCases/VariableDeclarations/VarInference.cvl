@@ -1,0 +1,9 @@
+extern void printf(string format, ...);
+
+int Main()
+{
+    var x = 200;
+    x = 300;
+    printf("%d\n", x);
+    return 0;
+}

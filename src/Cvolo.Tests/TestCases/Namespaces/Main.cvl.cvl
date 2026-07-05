@@ -1,0 +1,13 @@
+using App.Geometry;
+
+extern void printf(string format, ...);
+
+int Main()
+{
+    // Test cross-file namespace declaration and using imports
+    Point p = Point { X: 500, Y: 1000 };
+    var xVal = p.X;
+
+    printf("Namespaces: %d\n", xVal);
+    return 0;
+}

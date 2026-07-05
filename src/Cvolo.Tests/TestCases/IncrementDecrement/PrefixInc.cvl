@@ -1,0 +1,9 @@
+extern void printf(string format, ...);
+
+int Main()
+{
+    var x = 10;
+    var y = ++x; // x becomes 11, y becomes 11
+    printf("%d,%d\n", x, y);
+    return 0;
+}

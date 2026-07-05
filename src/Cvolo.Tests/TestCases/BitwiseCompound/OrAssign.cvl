@@ -1,0 +1,9 @@
+extern void printf(string format, ...);
+
+int Main()
+{
+    var x = 12;
+    x |= 10; // x becomes 14
+    printf("%d\n", x);
+    return 0;
+}

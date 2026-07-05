@@ -1,0 +1,8 @@
+extern void printf(string format, ...);
+
+int Main()
+{
+    var x = 2 << 2; // Shifts 2 left by 2 places (8)
+    printf("%d\n", x);
+    return 0;
+}

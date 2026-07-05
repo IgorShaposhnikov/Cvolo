@@ -1,0 +1,8 @@
+extern void printf(string format, ...);
+
+int Main()
+{
+    int x = 20 / 4;
+    printf("%d\n", x);
+    return 0;
+}

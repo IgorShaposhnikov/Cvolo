@@ -1,0 +1,6 @@
+namespace App.Geometry;
+
+struct Point {
+    int X;
+    int Y;
+}
