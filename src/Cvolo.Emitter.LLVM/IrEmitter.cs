@@ -1,4 +1,4 @@
-using Cvolo.Analysis;
+using Cvolo.Analysis.Symbols;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
 using Cvolo.Core.AST.Expressions;
@@ -622,7 +622,7 @@ public sealed class IrEmitter
 			"int" or "Int32" => "i32",
 			"double" or "Double" => "double",
 			"bool" or "Boolean" => "i1",
-			"string" or "String" => "ptr",
+			"string" or "String" or "ptr" => "ptr",
 			"char" or "Char" => "i8",
 			_ => _astStructs.ContainsKey(t) ? $"%struct.{t}" : "i32",
 		};
@@ -1057,33 +1057,35 @@ public sealed class IrEmitter
 		var e = NextLabel();
 		var d = NextLabel();
 
-		var (_, thenTy) = Eval(expr.ThenExpression, fw);
-		var ty = Type(thenTy);
+		// 1. Determine the actual LLVM type of the branches
+		var (_, thenTyName) = Eval(expr.ThenExpression, fw);
+		var llvmTy = Type(thenTyName); // This will return 'ptr' for strings, 'i32' for ints, etc.
 
-		// 1. Allocate space on stack for result
+		// 2. Allocate the CORRECT type on the stack for the result
 		var resultPtr = NewLocal();
-		fw.WriteLine($"    %{resultPtr} = alloca {ty}");
+		fw.WriteLine($"    %{resultPtr} = alloca {llvmTy}");
 
-		// 2. Branch conditionally
+		// 3. Branch conditionally
 		fw.WriteLine($"    br {cond}, label %{t}, label %{e}");
 
-		// 3. Then Block
+		// 4. Then Block
 		fw.WriteLine($"  {t}:");
 		var (thenVal, _) = Eval(expr.ThenExpression, fw);
 		fw.WriteLine($"    store {thenVal}, ptr %{resultPtr}");
 		fw.WriteLine($"    br label %{d}");
 
-		// 4. Else Block
+		// 5. Else Block
 		fw.WriteLine($"  {e}:");
 		var (elseVal, _) = Eval(expr.ElseExpression, fw);
 		fw.WriteLine($"    store {elseVal}, ptr %{resultPtr}");
 		fw.WriteLine($"    br label %{d}");
 
-		// 5. Merge Block
+		// 6. Merge Block
 		fw.WriteLine($"  {d}:");
 		var loadedReg = NewLocal();
-		fw.WriteLine($"    %{loadedReg} = load {ty}, ptr %{resultPtr}");
+		// Use the correctly resolved llvmTy for the load instruction
+		fw.WriteLine($"    %{loadedReg} = load {llvmTy}, ptr %{resultPtr}");
 
-		return ($"{ty} %{loadedReg}", thenTy);
+		return ($"{llvmTy} %{loadedReg}", thenTyName);
 	}
 }
