@@ -94,6 +94,13 @@ foreach (var file in project.SourceFiles)
 var binder = new Binder();
 binder.Bind(asts);
 
+// Verify that an executable project contains a valid main entry point before trying to link
+if (!project.IsShared && binder.Context.Globals.Lookup("main") is null)
+{
+	Console.Error.WriteLine("Error CS5001: Program does not contain a static 'main' method suitable for an entry point");
+	return 1;
+}
+
 if (binder.Diagnostics.HasErrors)
 {
 	// Bind errors belong to specific files, so we use their contexts
