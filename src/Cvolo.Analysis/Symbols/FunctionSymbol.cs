@@ -1,0 +1,16 @@
+using Cvolo.Analysis.Symbols.Base;
+
+namespace Cvolo.Analysis.Symbols;
+
+public sealed class FunctionSymbol(
+	string name,
+	TypeSymbol returnType,
+	IReadOnlyList<ParameterSymbol> parameters,
+	bool isExtern = false,
+	bool isVariadic = false) : Symbol(name)
+{
+	public TypeSymbol ReturnType { get; } = returnType;
+	public IReadOnlyList<ParameterSymbol> Parameters { get; } = parameters;
+	public bool IsExtern { get; } = isExtern;
+	public bool IsVariadic { get; } = isVariadic;
+}

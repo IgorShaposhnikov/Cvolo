@@ -1,3 +1,5 @@
+using Cvolo.Analysis.Symbols.Base;
+
 namespace Cvolo.Analysis;
 
 public sealed class SymbolTable(SymbolTable? parent = null)

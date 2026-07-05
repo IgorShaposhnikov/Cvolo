@@ -1,4 +1,4 @@
-namespace Cvolo.Analysis;
+namespace Cvolo.Analysis.Symbols.Base;
 
 public class TypeSymbol(string name) : IEquatable<TypeSymbol>
 {

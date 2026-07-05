@@ -1,4 +1,6 @@
-namespace Cvolo.Analysis.@struct;
+using Cvolo.Analysis.Symbols.Base;
+
+namespace Cvolo.Analysis.Symbols.Structs;
 
 public sealed class StructFieldSymbol(string name, TypeSymbol type)
 {
