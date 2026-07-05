@@ -1,6 +1,11 @@
 using System.Globalization;
 using Antlr4.Runtime;
-using Cvolo.Core;
+using Cvolo.Core.AST.Base;
+using Cvolo.Core.AST.Declarations;
+using Cvolo.Core.AST.Directives;
+using Cvolo.Core.AST.Expressions;
+using Cvolo.Core.AST.Statements;
+using Cvolo.Core.Diagnostics;
 
 namespace Cvolo.Syntax;
 
@@ -295,6 +300,7 @@ public sealed class SyntaxParser
 					{
 						elements.Add(BuildExpression(exprCtx));
 					}
+
 					return new ArrayInitializationExpressionSyntax(SpanOf(arrInitCtx), elements);
 				}
 			case CvoloParser.TernaryExpressionContext ternaryCtx:

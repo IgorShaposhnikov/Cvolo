@@ -1,4 +1,4 @@
-using Cvolo.Core;
+using Cvolo.Core.Diagnostics;
 
 namespace Cvolo.Analysis;
 

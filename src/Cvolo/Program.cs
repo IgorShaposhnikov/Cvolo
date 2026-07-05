@@ -1,6 +1,7 @@
 using Cvolo;
 using Cvolo.Analysis;
-using Cvolo.Core;
+using Cvolo.Core.AST.Base;
+using Cvolo.Core.Diagnostics;
 using Cvolo.Emitter.LLVM;
 using Cvolo.Syntax;
 

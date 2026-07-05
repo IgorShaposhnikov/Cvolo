@@ -1,5 +1,9 @@
 using Cvolo.Analysis.@struct;
-using Cvolo.Core;
+using Cvolo.Core.AST.Base;
+using Cvolo.Core.AST.Declarations;
+using Cvolo.Core.AST.Expressions;
+using Cvolo.Core.AST.Statements;
+using Cvolo.Core.Diagnostics;
 
 namespace Cvolo.Analysis;
 
