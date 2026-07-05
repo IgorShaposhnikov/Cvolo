@@ -7,7 +7,7 @@ using Cvolo.Core.Diagnostics;
 
 namespace Cvolo.Emitter.LLVM;
 
-public sealed class IrEmitter
+public sealed class IrEmitter : IEmitter
 {
 	private readonly StringWriter _writer = new();
 	private int _labelCounter;

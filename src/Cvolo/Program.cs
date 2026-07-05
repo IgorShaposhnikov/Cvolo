@@ -117,7 +117,7 @@ Directory.CreateDirectory(binDirectory);
 var llPath = Path.Combine(objDirectory, project.OutputName + ".ll");
 
 // 4. Emit unified LLVM IR
-var emitter = new IrEmitter();
+IEmitter emitter = new IrEmitter();
 var ir = emitter.Emit(asts, firstContext!);
 
 File.WriteAllText(llPath, ir);
