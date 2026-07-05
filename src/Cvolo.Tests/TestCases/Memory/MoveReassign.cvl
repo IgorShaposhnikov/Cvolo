@@ -1,0 +1,16 @@
+extern void printf(string format, ...);
+
+struct Point
+{
+	int X;
+}
+
+void Consume(Point p) {}
+
+int Main() {
+    var Point p1 = Point { X: 10 };
+    Consume(p1); // p1 is moved (inactive)
+    p1 = Point { X: 20 }; // Re-initialize (active again!)
+    printf("%d\n", p1.X);
+    return 0;
+}

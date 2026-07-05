@@ -1,0 +1,18 @@
+extern void printf(string format, ...);
+
+struct Point
+{
+	int X;
+	int Y;
+}
+
+void Scale(refvar Point p) {
+    p.X *= 2;
+}
+
+int Main() {
+    var Point p = Point { X: 50, Y: 100 };
+    Scale(ref p);
+    printf("%d\n", p.X);
+    return 0;
+}

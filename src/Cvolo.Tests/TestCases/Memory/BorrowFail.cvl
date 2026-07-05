@@ -1,0 +1,11 @@
+struct Point
+{
+	int X;
+}
+
+int Main() {
+    var Point p = Point { X: 10 };
+    ref r1 = ref p;
+    refvar r2 = ref p; // INTENTIONAL ERROR: Aliasing conflict!
+    return 0;
+}

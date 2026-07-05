@@ -1,0 +1,13 @@
+struct Point
+{
+	int X;
+}
+
+void Consume(Point p) {}
+
+int Main() {
+    var Point p1 = Point { X: 10 };
+    Consume(p1); // p1 is moved
+    var int x = p1.X; // INTENTIONAL ERROR: Use after move!
+    return 0;
+}

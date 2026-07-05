@@ -1,0 +1,9 @@
+struct Point
+{
+	int X;
+}
+
+ref Point GetLocal() {
+    var Point p = Point { X: 10 };
+    return ref p; // INTENTIONAL ERROR: Dangling stack reference!
+}
