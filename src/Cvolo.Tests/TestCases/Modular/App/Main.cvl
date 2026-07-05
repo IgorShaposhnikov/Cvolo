@@ -1,0 +1,13 @@
+using App.Geometry; // Import the namespace from the other file
+
+extern void printf(string format, ...);
+
+int Main() {
+    // 1. Resolve struct across files
+    var Vector2 v = CreateVector(10, 20); // 2. Resolve function across files
+
+    // 3. Verify values
+    printf("Modular Vector: %d, %d\n", v.X, v.Y);
+    
+    return 0;
+}

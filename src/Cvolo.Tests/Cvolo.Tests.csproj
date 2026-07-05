@@ -24,6 +24,7 @@
 		<Folder Include="TestCases\Flow\" />
 		<Folder Include="TestCases\Collections\" />
 		<Folder Include="TestCases\Memory\" />
+		<Folder Include="TestCases\Modular\App\" />
 		<Folder Include="TestCases\Objects\" />
 		<Folder Include="TestCases\ShiftOperators\" />
 		<!-- Force MSBuild to include and copy all loose test assets recursively -->

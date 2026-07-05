@@ -1,0 +1,11 @@
+namespace App.Geometry;
+
+struct Vector2 {
+    int X;
+    int Y;
+}
+
+// Function inside a namespace
+Vector2 CreateVector(int x, int y) {
+    return Vector2 { X: x, Y: y };
+}
