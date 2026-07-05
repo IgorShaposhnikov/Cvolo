@@ -1,9 +1,10 @@
 namespace Cvolo.Core.Diagnostics;
 
-public class Diagnostic(TextSpan span, string message)
+public sealed class Diagnostic(CompilationContext context, TextSpan span, string message)
 {
+	public CompilationContext Context { get; } = context;
 	public TextSpan Span { get; } = span;
 	public string Message { get; } = message;
 
-	public override string ToString() => $"({Span.Start}-{Span.End}): {Message}";
+	public override string ToString() => $"[{Context.FilePath}]: ({Span.Start}-{Span.End}): {Message}";
 }

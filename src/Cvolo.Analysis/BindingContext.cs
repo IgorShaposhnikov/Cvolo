@@ -14,6 +14,7 @@ public sealed class BindingContext
 	public SymbolTable Globals { get; } = new();
 	public Dictionary<string, StructTypeSymbol> StructTypes { get; } = [];
 	public Dictionary<VariableDeclarationSyntax, VariableSymbol> VariableSymbols { get; } = [];
+	public Dictionary<CompilationUnitSyntax, CompilationContext> FileContexts { get; } = [];
 
 	// Canonical Type Cache (Phase 3: Ensuring structural equality)
 	private readonly Dictionary<string, TypeSymbol> _typeCache = [];

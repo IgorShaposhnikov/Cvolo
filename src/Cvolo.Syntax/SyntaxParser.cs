@@ -15,24 +15,24 @@ public sealed class SyntaxParser
 
 	public DiagnosticBag Diagnostics => _diagnostics;
 
-	public CompilationUnitSyntax? Parse(string sourceCode)
+	public CompilationUnitSyntax? Parse(CompilationContext context)
 	{
-		var inputStream = new AntlrInputStream(sourceCode);
+		var inputStream = new AntlrInputStream(context.Source);
 		var lexer = new CvoloLexer(inputStream);
 		var tokenStream = new CommonTokenStream(lexer);
 		var parser = new CvoloParser(tokenStream);
 
 		parser.RemoveErrorListeners();
-		parser.AddErrorListener(new SyntaxErrorListener(_diagnostics));
+		parser.AddErrorListener(new SyntaxErrorListener(_diagnostics, context));
 
 		var tree = parser.compilationUnit();
 		if (_diagnostics.HasErrors)
 			return null;
 
-		return BuildCompilationUnit(tree);
+		return BuildCompilationUnit(tree, context);
 	}
 
-	private CompilationUnitSyntax BuildCompilationUnit(CvoloParser.CompilationUnitContext context)
+	private CompilationUnitSyntax BuildCompilationUnit(CvoloParser.CompilationUnitContext context, CompilationContext compilationContext)
 	{
 		var usings = new List<UsingDirectiveSyntax>();
 		foreach (var u in context.usingDirective())
@@ -53,7 +53,8 @@ public sealed class SyntaxParser
 			}
 		}
 
-		return new CompilationUnitSyntax(SpanOf(context), usings, nsDecl, members);
+		// Pass compilationContext as the second argument
+		return new CompilationUnitSyntax(SpanOf(context), compilationContext, usings, nsDecl, members);
 	}
 
 	private SyntaxNode? BuildDeclaration(CvoloParser.DeclarationContext context)
@@ -429,12 +430,13 @@ public sealed class SyntaxParser
 		return GetTypeName(context.type());
 	}
 
-	private sealed class SyntaxErrorListener(DiagnosticBag diagnostics) : BaseErrorListener
+	private sealed class SyntaxErrorListener(DiagnosticBag diagnostics, CompilationContext context) : BaseErrorListener
 	{
 		public override void SyntaxError(TextWriter output, IRecognizer recognizer, IToken offendingSymbol, int line, int charPositionInLine, string msg, RecognitionException e)
 		{
 			var span = new TextSpan(offendingSymbol?.StartIndex ?? 0, offendingSymbol?.Text?.Length ?? 0);
-			diagnostics.Report(span, $"({line},{charPositionInLine}): {msg}");
+
+			diagnostics.Report(context, span, $"({line},{charPositionInLine}): {msg}");
 		}
 	}
 

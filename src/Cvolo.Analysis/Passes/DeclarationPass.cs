@@ -48,7 +48,8 @@ public sealed class DeclarationPass(BindingContext context)
 
 		if (context.StructTypes.ContainsKey(mangledName) || TypeSymbol.FromName(structDecl.Name) is not null)
 		{
-			context.Diagnostics.Report(structDecl.Span, $"Duplicate type definition '{structDecl.Name}'");
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, structDecl.Span, $"Duplicate type definition '{structDecl.Name}'");
 			return;
 		}
 
@@ -59,14 +60,16 @@ public sealed class DeclarationPass(BindingContext context)
 		{
 			if (!fieldNames.Add(field.Name))
 			{
-				context.Diagnostics.Report(field.Span, $"Duplicate field '{field.Name}' in struct '{structDecl.Name}'");
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, field.Span, $"Duplicate field '{field.Name}' in struct '{structDecl.Name}'");
 				continue;
 			}
 
 			var fieldType = context.ResolveType(field.Type);
 			if (fieldType is null)
 			{
-				context.Diagnostics.Report(field.Span, $"Unknown type '{field.Type}' of field '{field.Name}'");
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, field.Span, $"Unknown type '{field.Type}' of field '{field.Name}'");
 				continue;
 			}
 
@@ -83,7 +86,8 @@ public sealed class DeclarationPass(BindingContext context)
 		var type = context.ResolveType(func.ReturnType);
 		if (type is null)
 		{
-			context.Diagnostics.Report(func.Span, $"Unknown return type '{func.ReturnType}'");
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, func.Span, $"Unknown return type '{func.ReturnType}'");
 			return;
 		}
 
@@ -93,7 +97,8 @@ public sealed class DeclarationPass(BindingContext context)
 			var paramType = context.ResolveType(param.Type);
 			if (paramType is null)
 			{
-				context.Diagnostics.Report(param.Span, $"Unknown parameter type '{param.Type}'");
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, param.Span, $"Unknown parameter type '{param.Type}'");
 				continue;
 			}
 
@@ -103,7 +108,8 @@ public sealed class DeclarationPass(BindingContext context)
 		var existing = context.Globals.Lookup(func.Name);
 		if (existing is not null)
 		{
-			context.Diagnostics.Report(func.Span, $"Duplicate definition of '{func.Name}'");
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, func.Span, $"Duplicate definition of '{func.Name}'");
 			return;
 		}
 
@@ -115,7 +121,8 @@ public sealed class DeclarationPass(BindingContext context)
 		var returnType = context.ResolveType(ext.ReturnType);
 		if (returnType is null)
 		{
-			context.Diagnostics.Report(ext.Span, $"Unknown return type '{ext.ReturnType}'");
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, ext.Span, $"Unknown return type '{ext.ReturnType}'");
 			return;
 		}
 
@@ -125,7 +132,8 @@ public sealed class DeclarationPass(BindingContext context)
 			var paramType = context.ResolveType(param.Type);
 			if (paramType is null)
 			{
-				context.Diagnostics.Report(param.Span, $"Unknown parameter type '{param.Type}'");
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, param.Span, $"Unknown parameter type '{param.Type}'");
 				continue;
 			}
 
@@ -135,7 +143,8 @@ public sealed class DeclarationPass(BindingContext context)
 		var existing = context.Globals.Lookup(ext.Name);
 		if (existing is not null)
 		{
-			context.Diagnostics.Report(ext.Span, $"Duplicate definition of '{ext.Name}'");
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, ext.Span, $"Duplicate definition of '{ext.Name}'");
 			return;
 		}
 

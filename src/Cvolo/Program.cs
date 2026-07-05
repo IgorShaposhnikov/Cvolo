@@ -65,6 +65,8 @@ foreach (var file in project.SourceFiles)
 Console.WriteLine();
 
 // 2. Parse all files individually
+var binder = new Binder();
+
 var asts = new List<CompilationUnitSyntax>();
 var parser = new SyntaxParser();
 CompilationContext? firstContext = null;
@@ -75,12 +77,12 @@ foreach (var file in project.SourceFiles)
 	var context = new CompilationContext(sourceCode, file);
 	firstContext ??= context;
 
-	var ast = parser.Parse(sourceCode);
+	var ast = parser.Parse(context);
 	if (parser.Diagnostics.HasErrors)
 	{
 		foreach (var diag in parser.Diagnostics.Diagnostics)
 		{
-			var lines = context.FormatDiagnostic("Parse Error", diag.Message, diag.Span);
+			var lines = diag.Context.FormatDiagnostic("Parse Error", diag.Message, diag.Span);
 			foreach (var line in lines) Console.Error.WriteLine(line);
 		}
 
@@ -88,10 +90,10 @@ foreach (var file in project.SourceFiles)
 	}
 
 	asts.Add(ast!);
+	binder.Context.FileContexts[ast!] = context;
 }
 
 // 3. Bind all files inside a single global analysis session
-var binder = new Binder();
 binder.Bind(asts);
 
 // Verify that an executable project contains a valid main entry point before trying to link
@@ -103,12 +105,13 @@ if (!project.IsShared && binder.Context.Globals.Lookup("main") is null)
 
 if (binder.Diagnostics.HasErrors)
 {
-	// Bind errors belong to specific files, so we use their contexts
 	foreach (var diag in binder.Diagnostics.Diagnostics)
 	{
-		var lines = firstContext!.FormatDiagnostic("Analysis Error", diag.Message, diag.Span);
+		// No manual context tracking needed! The diagnostic holds its own physical location.
+		var lines = diag.Context.FormatDiagnostic("Analysis Error", diag.Message, diag.Span);
 		foreach (var line in lines) Console.Error.WriteLine(line);
 	}
+
 	return 1;
 }
 

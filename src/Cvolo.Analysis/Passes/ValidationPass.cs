@@ -98,8 +98,8 @@ public sealed class ValidationPass(BindingContext context)
 		var existing = scope.Lookup(varDecl.Name);
 		if (existing is not null)
 		{
-			context.Diagnostics.Report(varDecl.Span, $"Variable '{varDecl.Name}' is already declared in this scope");
-			return;
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, varDecl.Span, $"Variable '{varDecl.Name}' is already declared in this scope");
 		}
 
 		TypeSymbol? resolvedType = null;
@@ -113,7 +113,8 @@ public sealed class ValidationPass(BindingContext context)
 		{
 			if (resolvedType is null)
 			{
-				context.Diagnostics.Report(varDecl.Span, "Reference type inference requires an initializer");
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, varDecl.Span, "Reference type inference requires an initializer");
 				return;
 			}
 
@@ -129,7 +130,8 @@ public sealed class ValidationPass(BindingContext context)
 			var initializerType = varDecl.Initializer != null ? GetExpressionType(varDecl.Initializer, scope) : null;
 			if (resolvedType != null && initializerType != null && !resolvedType.Equals(initializerType))
 			{
-				context.Diagnostics.Report(varDecl.Span, $"Cannot initialize variable of type '{resolvedType.Name}' with value of type '{initializerType.Name}'");
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, varDecl.Span, $"Cannot initialize variable of type '{resolvedType.Name}' with value of type '{initializerType.Name}'");
 			}
 		}
 
@@ -150,7 +152,8 @@ public sealed class ValidationPass(BindingContext context)
 					var symbol = scope.Lookup(id.Name);
 					if (symbol is null)
 					{
-						context.Diagnostics.Report(id.Span, $"Undefined variable '{id.Name}'");
+						var currentFileContext = context.FileContexts[context.CurrentUnit!];
+						context.Diagnostics.Report(currentFileContext, id.Span, $"Undefined variable '{id.Name}'");
 					}
 
 					break;
@@ -179,13 +182,15 @@ public sealed class ValidationPass(BindingContext context)
 
 					if (symbol is null)
 					{
-						context.Diagnostics.Report(call.Span, $"Undefined function '{call.FunctionName}'");
+						var currentFileContext = context.FileContexts[context.CurrentUnit!];
+						context.Diagnostics.Report(currentFileContext, call.Span, $"Undefined function '{call.FunctionName}'");
 						return;
 					}
 
 					if (symbol is not FunctionSymbol func)
 					{
-						context.Diagnostics.Report(call.Span, $"'{call.FunctionName}' is not a function");
+						var currentFileContext = context.FileContexts[context.CurrentUnit!];
+						context.Diagnostics.Report(currentFileContext, call.Span, $"'{call.FunctionName}' is not a function");
 						return;
 					}
 
@@ -195,13 +200,15 @@ public sealed class ValidationPass(BindingContext context)
 
 					if (!isVariadic && argCount != paramCount)
 					{
-						context.Diagnostics.Report(call.Span, $"Function '{call.FunctionName}' expects {paramCount} arguments but received {argCount}");
+						var currentFileContext = context.FileContexts[context.CurrentUnit!];
+						context.Diagnostics.Report(currentFileContext, call.Span, $"Function '{call.FunctionName}' expects {paramCount} arguments but received {argCount}");
 						return;
 					}
 
 					if (isVariadic && argCount < paramCount)
 					{
-						context.Diagnostics.Report(call.Span, $"Function '{call.FunctionName}' expects at least {paramCount} arguments but received {argCount}");
+						var currentFileContext = context.FileContexts[context.CurrentUnit!];
+						context.Diagnostics.Report(currentFileContext, call.Span, $"Function '{call.FunctionName}' expects at least {paramCount} arguments but received {argCount}");
 						return;
 					}
 
@@ -239,12 +246,14 @@ public sealed class ValidationPass(BindingContext context)
 							{
 								if (!varSymbol.IsMutable)
 								{
-									context.Diagnostics.Report(id.Span, $"Cannot assign to immutable variable '{id.Name}'");
+									var currentFileContext = context.FileContexts[context.CurrentUnit!];
+									context.Diagnostics.Report(currentFileContext, id.Span, $"Cannot assign to immutable variable '{id.Name}'");
 								}
 							}
 							else
 							{
-								context.Diagnostics.Report(id.Span, $"Undefined variable '{id.Name}'");
+								var currentFileContext = context.FileContexts[context.CurrentUnit!];
+								context.Diagnostics.Report(currentFileContext, id.Span, $"Undefined variable '{id.Name}'");
 							}
 						}
 						else
@@ -281,14 +290,16 @@ public sealed class ValidationPass(BindingContext context)
 
 		if (leftType is not StructTypeSymbol structType)
 		{
-			context.Diagnostics.Report(expr.Span, $"Type '{leftType.Name}' is not a struct; cannot access member '{expr.MemberName}'");
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, expr.Span, $"Type '{leftType.Name}' is not a struct; cannot access member '{expr.MemberName}'");
 			return null;
 		}
 
 		var field = structType.FindField(expr.MemberName);
 		if (field is null)
 		{
-			context.Diagnostics.Report(expr.Span, $"Struct '{structType.Name}' does not contain field '{expr.MemberName}'");
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, expr.Span, $"Struct '{structType.Name}' does not contain field '{expr.MemberName}'");
 			return null;
 		}
 
@@ -300,13 +311,15 @@ public sealed class ValidationPass(BindingContext context)
 		var type = context.ResolveType(expr.StructTypeName);
 		if (type is null)
 		{
-			context.Diagnostics.Report(expr.Span, $"Unknown type '{expr.StructTypeName}'");
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, expr.Span, $"Unknown type '{expr.StructTypeName}'");
 			return null;
 		}
 
 		if (type is not StructTypeSymbol structType)
 		{
-			context.Diagnostics.Report(expr.Span, $"Type '{expr.StructTypeName}' is not a struct type");
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, expr.Span, $"Type '{expr.StructTypeName}' is not a struct type");
 			return null;
 		}
 
@@ -315,14 +328,16 @@ public sealed class ValidationPass(BindingContext context)
 		{
 			if (!initializedFields.Add(init.MemberName))
 			{
-				context.Diagnostics.Report(init.Span, $"Duplicate initializer for field '{init.MemberName}'");
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, init.Span, $"Duplicate initializer for field '{init.MemberName}'");
 				continue;
 			}
 
 			var field = structType.FindField(init.MemberName);
 			if (field is null)
 			{
-				context.Diagnostics.Report(init.Span, $"Struct '{structType.Name}' does not contain field '{init.MemberName}'");
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, init.Span, $"Struct '{structType.Name}' does not contain field '{init.MemberName}'");
 				continue;
 			}
 
@@ -330,7 +345,8 @@ public sealed class ValidationPass(BindingContext context)
 			var initType = GetExpressionType(init.Expression, scope);
 			if (initType is not null && !initType.Equals(field.Type))
 			{
-				context.Diagnostics.Report(init.Span, $"Cannot initialize field '{init.MemberName}' of type '{field.Type.Name}' with value of type '{initType.Name}'");
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, init.Span, $"Cannot initialize field '{init.MemberName}' of type '{field.Type.Name}' with value of type '{initType.Name}'");
 			}
 		}
 
@@ -338,7 +354,8 @@ public sealed class ValidationPass(BindingContext context)
 		{
 			if (!initializedFields.Contains(field.Name))
 			{
-				context.Diagnostics.Report(expr.Span, $"Missing initializer for field '{field.Name}' of struct '{structType.Name}'");
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, expr.Span, $"Missing initializer for field '{field.Name}' of struct '{structType.Name}'");
 			}
 		}
 
@@ -356,7 +373,8 @@ public sealed class ValidationPass(BindingContext context)
 			var elType = GetExpressionType(expr.Elements[i], scope);
 			if (elType is not null && !elType.Equals(elementType))
 			{
-				context.Diagnostics.Report(expr.Elements[i].Span, $"Array elements must have the same type. Expected '{elementType.Name}', found '{elType.Name}'");
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, expr.Elements[i].Span, $"Array elements must have the same type. Expected '{elementType.Name}', found '{elType.Name}'");
 			}
 		}
 
@@ -385,7 +403,8 @@ public sealed class ValidationPass(BindingContext context)
 		var condType = GetExpressionType(expr.Condition, scope);
 		if (condType is not null && !condType.Equals(TypeSymbol.Bool))
 		{
-			context.Diagnostics.Report(expr.Condition.Span, $"Ternary condition must be 'bool', found '{condType.Name}'");
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, expr.Condition.Span, $"Ternary condition must be 'bool', found '{condType.Name}'");
 		}
 
 		CheckExpression(expr.ThenExpression, scope);
@@ -396,7 +415,8 @@ public sealed class ValidationPass(BindingContext context)
 
 		if (thenType is not null && elseType is not null && !thenType.Equals(elseType))
 		{
-			context.Diagnostics.Report(expr.Span, $"Ternary branches must have the same type. Found '{thenType.Name}' and '{elseType.Name}'");
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, expr.Span, $"Ternary branches must have the same type. Found '{thenType.Name}' and '{elseType.Name}'");
 		}
 
 		return thenType;
@@ -414,7 +434,8 @@ public sealed class ValidationPass(BindingContext context)
 
 		if (actualType != null && expectedType != null && !actualType.Equals(expectedType))
 		{
-			context.Diagnostics.Report(ret.Expression.Span, $"Function '{currentFunc.Name}' expects return type '{expectedType.Name}' but found '{actualType.Name}'");
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, ret.Expression.Span, $"Function '{currentFunc.Name}' expects return type '{expectedType.Name}' but found '{actualType.Name}'");
 		}
 	}
 

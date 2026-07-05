@@ -7,9 +7,9 @@ public class DiagnosticBag
 	public IReadOnlyList<Diagnostic> Diagnostics => _diagnostics;
 	public bool HasErrors => _diagnostics.Any(d => true);
 
-	public void Report(TextSpan span, string message)
+	public void Report(CompilationContext context, TextSpan span, string message)
 	{
-		_diagnostics.Add(new Diagnostic(span, message));
+		_diagnostics.Add(new Diagnostic(context, span, message));
 	}
 
 	public void AddRange(DiagnosticBag other)

@@ -97,7 +97,8 @@ public sealed class FlowAnalysisPass(BindingContext context)
 				var symbol = scope.Lookup(id.Name) as VariableSymbol;
 				if (symbol != null && !symbol.IsInitialized)
 				{
-					context.Diagnostics.Report(id.Span, $"Use of possibly-uninitialized variable '{id.Name}'");
+					var currentFileContext = context.FileContexts[context.CurrentUnit!];
+					context.Diagnostics.Report(currentFileContext, id.Span, $"Use of possibly-uninitialized variable '{id.Name}'");
 				}
 				break;
 
@@ -108,8 +109,7 @@ public sealed class FlowAnalysisPass(BindingContext context)
 					// RULE: Assignment initializes the left-hand variable
 					if (bin.Left is IdentifierExpressionSyntax leftId)
 					{
-						var leftSymbol = scope.Lookup(leftId.Name) as VariableSymbol;
-						if (leftSymbol != null) leftSymbol.IsInitialized = true;
+						if (scope.Lookup(leftId.Name) is VariableSymbol leftSymbol) leftSymbol.IsInitialized = true;
 					}
 				}
 				else
@@ -117,6 +117,7 @@ public sealed class FlowAnalysisPass(BindingContext context)
 					AnalyzeExpression(bin.Left, scope);
 					AnalyzeExpression(bin.Right, scope);
 				}
+
 				break;
 
 			case MemberAccessExpressionSyntax m:

@@ -90,7 +90,7 @@ public sealed class SafetyPass(BindingContext context)
 		{
 			case IdentifierExpressionSyntax id:
 				if (scope.Lookup(id.Name) is VariableSymbol symbol && symbol.IsMoved)
-					context.Diagnostics.Report(id.Span, $"Use of moved variable '{id.Name}'");
+					context.Diagnostics.Report(context.CurrentUnit!.Context, id.Span, $"Use of moved variable '{id.Name}'");
 				break;
 
 			case MemberAccessExpressionSyntax m:
@@ -139,7 +139,9 @@ public sealed class SafetyPass(BindingContext context)
 				if (conflicts.Count > 0)
 				{
 					if (isMutable || conflicts.Any(c => c.IsMutable))
-						context.Diagnostics.Report(varDecl.Span, $"Cannot borrow '{borrowedName}' because an incompatible borrow is already active");
+					{
+						context.Diagnostics.Report(context.CurrentUnit!.Context, varDecl.Span, $"Cannot borrow '{borrowedName}' because an incompatible borrow is already active");
+					}
 				}
 
 				_activeBorrows.Add(new BorrowSymbol(varDecl.Name, borrowedName, isMutable, varDecl.Span));
@@ -152,7 +154,9 @@ public sealed class SafetyPass(BindingContext context)
 		if (ret.Expression is BorrowExpressionSyntax borrow && borrow.Expression is IdentifierExpressionSyntax id)
 		{
 			if (!func.Parameters.Any(p => p.Name == id.Name))
-				context.Diagnostics.Report(ret.Expression.Span, $"Cannot return reference to local variable '{id.Name}' (dangling reference)");
+			{
+				context.Diagnostics.Report(context.CurrentUnit!.Context, ret.Expression.Span, $"Cannot return reference to local variable '{id.Name}' (dangling reference)");
+			}
 		}
 	}
 

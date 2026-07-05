@@ -6,11 +6,13 @@ namespace Cvolo.Core.AST.Base;
 
 public sealed class CompilationUnitSyntax(
 	TextSpan span,
+	CompilationContext context,
 	IReadOnlyList<UsingDirectiveSyntax> usings,
 	NamespaceDeclarationSyntax? namespaceDeclaration,
 	IReadOnlyList<SyntaxNode> members) : SyntaxNode(span)
 {
 	public override SyntaxKind Kind => SyntaxKind.CompilationUnit;
+	public CompilationContext Context { get; } = context;
 	public IReadOnlyList<UsingDirectiveSyntax> Usings { get; } = usings;
 	public NamespaceDeclarationSyntax? NamespaceDeclaration { get; } = namespaceDeclaration;
 	public IReadOnlyList<SyntaxNode> Members { get; } = members;
