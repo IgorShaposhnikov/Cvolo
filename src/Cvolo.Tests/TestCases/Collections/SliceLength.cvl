@@ -1,0 +1,13 @@
+extern void printf(string format, ...);
+
+void PrintLen(int[] s) {
+    printf("%d\n", s.Length);
+}
+
+int Main() {
+    // Initialize the array so the Flow Analyzer knows it is safe to use!
+    int[5] arr = { 1, 2, 3, 4, 5 }; 
+    
+    PrintLen(arr); 
+    return 0;
+}

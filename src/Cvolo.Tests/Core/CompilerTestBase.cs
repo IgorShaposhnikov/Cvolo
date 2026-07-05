@@ -43,9 +43,13 @@ public abstract class CompilerTestBase
 		var compilerExe = Path.Combine(assemblyDir, OperatingSystem.IsWindows() ? "Cvolo.exe" : "Cvolo");
 		var fullSourcePath = Path.Combine(assemblyDir, TestCasesDirectory, sourcePath);
 
+		// Use the filename as the unique project name to avoid IR/Linker collisions
+		var projectName = Path.GetFileNameWithoutExtension(sourcePath);
+
 		var psi = new ProcessStartInfo
 		{
 			FileName = compilerExe,
+			// Pass the source path directly
 			Arguments = $"\"{fullSourcePath}\"",
 			RedirectStandardOutput = true,
 			RedirectStandardError = true,

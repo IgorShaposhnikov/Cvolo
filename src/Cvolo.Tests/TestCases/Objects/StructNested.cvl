@@ -1,0 +1,22 @@
+extern void printf(string format, ...);
+
+struct Point
+{
+	int X;
+	int Y;
+}
+
+struct Line
+{
+	Point P1;
+	Point P2;
+}
+
+int Main() {
+    Line l = Line {
+        P1: Point { X: 5, Y: 10 },
+        P2: Point { X: 15, Y: 20 }
+    };
+    printf("%d,%d\n", l.P2.X, l.P2.Y);
+    return 0;
+}

@@ -10,13 +10,13 @@ public sealed class OperatorsTests : CompilerTestBase
 	[InlineData("Mul", "30")]
 	[InlineData("Div", "5")]
 	[InlineData("Mod", "1")]
-	public void Arithmetic(string op, string expected)
+	public void Arithmetic(string caseName, string expected)
 	{
-		var fileName = $"ArithmeticOperators/{op}.cvl";
+		var fileName = $"ArithmeticOperators/{caseName}.cvl";
 		var (exitCode, stdout, stderr) = RunCompiler(fileName);
 		AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
 
-		var (runCode, runStdout) = ExecuteBinary(op, "ArithmeticOperators");
+		var (runCode, runStdout) = ExecuteBinary(caseName, "ArithmeticOperators");
 		Assert.Equal(0, runCode);
 		Assert.Contains(expected, runStdout);
 	}

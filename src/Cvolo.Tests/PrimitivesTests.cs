@@ -9,13 +9,13 @@ public sealed class PrimitiveTypesTests : CompilerTestBase
 	[InlineData("Double", "20.5")]
 	[InlineData("Bool", "1")]
 	[InlineData("Char", "A")]
-	public void Primitive(string typeName, string expectedOutput)
+	public void Primitive(string caseName, string expectedOutput)
 	{
-		var fileName = $"Primitives/{typeName}.cvl";
+		var fileName = $"Primitives/{caseName}.cvl";
 		var (exitCode, stdout, stderr) = RunCompiler(fileName);
 		AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
 
-		var (runCode, runStdout) = ExecuteBinary(typeName, "Primitives");
+		var (runCode, runStdout) = ExecuteBinary(caseName, "Primitives");
 		Assert.Equal(0, runCode);
 		Assert.Contains(expectedOutput, runStdout);
 	}

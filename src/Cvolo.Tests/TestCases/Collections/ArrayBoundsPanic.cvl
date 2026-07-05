@@ -1,0 +1,5 @@
+int Main() {
+    int[3] arr;
+    arr[5] = 100; // Intentional panic
+    return 0;
+}
