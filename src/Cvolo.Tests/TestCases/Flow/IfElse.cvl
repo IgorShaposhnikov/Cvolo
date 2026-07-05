@@ -1,0 +1,12 @@
+extern void printf(string format, ...);
+
+int Main()
+{
+	int x = 10;
+	if (x > 5) {
+		printf("Greater\n");
+	} else {
+		printf("Smaller\n");
+	}
+	return 0;
+}

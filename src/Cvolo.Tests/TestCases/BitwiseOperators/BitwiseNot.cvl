@@ -2,7 +2,7 @@ extern void printf(string format, ...);
 
 int Main()
 {
-    var x = 12 ^ 10; // Binary: 1100 ^ 1010 -> 0110 (6)
+    var x = ~12; // Binary: flips 12 to -13
     printf("%d\n", x);
     return 0;
 }

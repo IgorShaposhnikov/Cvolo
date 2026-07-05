@@ -2,7 +2,7 @@ extern void printf(string format, ...);
 
 int Main()
 {
-    int x = 10 * 3;
-    printf("%d\n", x);
-    return 0;
+	int x = 10 * 3;
+	printf("%d\n", x);
+	return 0;
 }

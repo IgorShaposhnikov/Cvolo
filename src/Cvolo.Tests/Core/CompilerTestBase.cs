@@ -4,11 +4,11 @@ using Cvolo.Core.AST.Base;
 using Cvolo.Core.Diagnostics;
 using Cvolo.Syntax;
 
-namespace Cvolo.Tests;
+namespace Cvolo.Tests.Core;
 
 public abstract class CompilerTestBase
 {
-	protected const string TestCasesDirectory = "TestCases";
+	protected const string TestCasesDirectory = Constants.TestCasesDirectory;
 
 	protected (IReadOnlyList<CompilationUnitSyntax>? AST, BindingContext Context) AnalyzeProject(string path)
 	{
@@ -82,5 +82,13 @@ public abstract class CompilerTestBase
 		proc.WaitForExit();
 
 		return (proc.ExitCode, stdout);
+	}
+
+	protected void AssertCompilationSucceeded(int exitCode, string stdout, string stderr, string fileName)
+	{
+		if (exitCode != 0)
+		{
+			Xunit.Assert.Fail($"Compilation of '{fileName}' failed with code {exitCode}.\n\n--- STDERR ---\n{stderr}\n\n--- STDOUT ---\n{stdout}");
+		}
 	}
 }

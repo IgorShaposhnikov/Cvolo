@@ -1,4 +1,4 @@
-namespace Cvolo.Tests;
+namespace Cvolo.Tests.Core;
 
 internal sealed class Constants
 {

@@ -2,7 +2,10 @@ extern void printf(string format, ...);
 
 int Main()
 {
-	int x = 20 / 4;
-	printf("%d\n", x);
+	var i = 0;
+	while (i < 3) {
+		printf("%d", i);
+		i++;
+	}
 	return 0;
 }

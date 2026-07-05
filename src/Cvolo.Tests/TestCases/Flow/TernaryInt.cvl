@@ -2,7 +2,8 @@ extern void printf(string format, ...);
 
 int Main()
 {
-	int x = 20 / 4;
-	printf("%d\n", x);
+	int x = 10;
+	int res = x > 5 ? 100 : 0;
+	printf("%d\n", res);
 	return 0;
 }
