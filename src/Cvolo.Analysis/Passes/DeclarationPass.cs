@@ -43,9 +43,12 @@ public sealed class DeclarationPass(BindingContext context)
 
 	private void DeclareStruct(StructDeclarationSyntax structDecl)
 	{
-		if (context.StructTypes.ContainsKey(structDecl.Name) || TypeSymbol.FromName(structDecl.Name) is not null)
+		// 1. Calculate the fully qualified mangled name (e.g., App.Math.Point)
+		var mangledName = context.GetMangledName(structDecl.Name, context.CurrentNamespace);
+
+		if (context.StructTypes.ContainsKey(mangledName) || TypeSymbol.FromName(structDecl.Name) is not null)
 		{
-			context.Diagnostics.Report(structDecl.Span, $"Duplicate definition of type '{structDecl.Name}'");
+			context.Diagnostics.Report(structDecl.Span, $"Duplicate type definition '{structDecl.Name}'");
 			return;
 		}
 
@@ -70,8 +73,9 @@ public sealed class DeclarationPass(BindingContext context)
 			fields.Add(new StructFieldSymbol(field.Name, fieldType));
 		}
 
-		var structSymbol = new StructTypeSymbol(structDecl.Name, fields);
-		context.StructTypes[structDecl.Name] = structSymbol;
+		// 2. Create the symbol and register it under the mangled name (Added mangledName here)
+		var structSymbol = new StructTypeSymbol(mangledName, fields);
+		context.StructTypes[mangledName] = structSymbol;
 	}
 
 	private void DeclareFunction(FunctionDeclarationSyntax func)

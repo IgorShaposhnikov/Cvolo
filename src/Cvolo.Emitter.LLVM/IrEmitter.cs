@@ -1,5 +1,8 @@
+using Cvolo.Analysis;
 using Cvolo.Analysis.Symbols;
 using Cvolo.Analysis.Symbols.Base;
+using Cvolo.Analysis.Symbols.Collections;
+using Cvolo.Analysis.Symbols.Structs;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
 using Cvolo.Core.AST.Expressions;
@@ -19,17 +22,18 @@ public sealed class IrEmitter : IEmitter
 	private readonly Dictionary<string, FunctionDeclarationSyntax> _astFunctions = [];
 	private readonly Dictionary<string, ExternDeclarationSyntax> _astExterns = [];
 	private readonly Dictionary<string, StructDeclarationSyntax> _astStructs = [];
-	private readonly Dictionary<string, string> _functionReturnTypes = [];
-	private readonly Dictionary<string, string> _variableTypes = [];
+	private readonly Dictionary<string, TypeSymbol> _functionReturnTypes = [];
+	private readonly Dictionary<string, TypeSymbol> _variableTypes = [];
 	private readonly Stack<List<VariableSymbol>> _blockVariables = new();
 	private CompilationContext? _context;
-	private string? _currentNamespace;
+	private BindingContext? _bindingContext;
 	private CompilationUnitSyntax? _currentUnit;
-	private readonly Dictionary<string, List<string>> _functionParameterTypes = [];
+	private readonly Dictionary<string, List<TypeSymbol>> _functionParameterTypes = [];
 
-	public string Emit(IReadOnlyList<CompilationUnitSyntax> units, CompilationContext context)
+	public string Emit(IReadOnlyList<CompilationUnitSyntax> units, CompilationContext context, BindingContext bindingContext)
 	{
 		_context = context;
+		_bindingContext = bindingContext;
 		_writer.WriteLine("; ModuleID = 'cvolo_module'");
 		_writer.WriteLine("source_filename = \"cvolo_module\"");
 
@@ -38,7 +42,7 @@ public sealed class IrEmitter : IEmitter
 		_writer.WriteLine("declare i32 @puts(ptr)");
 		_writer.WriteLine("declare void @exit(i32)");
 
-		// Pass 1: Register all struct NAMES (so they exist in the dictionary)
+		// Pass 1: Register all Struct Names
 		foreach (var unit in units)
 		{
 			var ns = unit.NamespaceDeclaration?.Name;
@@ -47,17 +51,18 @@ public sealed class IrEmitter : IEmitter
 			{
 				if (member is StructDeclarationSyntax structDecl)
 				{
-					// Ensure we use the exact same mangling as the logic above
 					var mangledName = string.IsNullOrEmpty(ns) ? structDecl.Name : $"{ns}.{structDecl.Name}";
 					_astStructs[mangledName] = structDecl;
 				}
 			}
 		}
 
-		// Pass 2: Generate struct LAYOUTS (now that all names are known, we can resolve fields)
+		// Pass 2: Generate Struct Layouts polymorphically
 		foreach (var unit in units)
 		{
 			_currentUnit = unit;
+			bindingContext.CurrentUnit = unit;
+			bindingContext.CurrentNamespace = unit.NamespaceDeclaration?.Name;
 			var ns = unit.NamespaceDeclaration?.Name;
 			var members = ns != null ? unit.NamespaceDeclaration!.Members : unit.Members;
 
@@ -66,20 +71,25 @@ public sealed class IrEmitter : IEmitter
 				if (member is StructDeclarationSyntax structDecl)
 				{
 					var mangledName = string.IsNullOrEmpty(ns) ? structDecl.Name : $"{ns}.{structDecl.Name}";
-					// Resolve each field type to its fully qualified name
-					var fieldTypes = string.Join(", ", structDecl.Fields.Select(f =>
-						Type(ResolveStructName(f.Type, unit))));
-					_writer.WriteLine($"%struct.{mangledName} = type {{ {fieldTypes} }}");
+					var structType = bindingContext.ResolveType(mangledName) as StructTypeSymbol;
+					if (structType != null)
+					{
+						var fieldTypes = string.Join(", ", structDecl.Fields.Select(f =>
+							Type(bindingContext.ResolveType(f.Type)!)));
+						_writer.WriteLine($"%struct.{structType.Name} = type {{ {fieldTypes} }}");
+					}
 				}
 			}
 		}
 
 		if (_astStructs.Count > 0) _writer.WriteLine();
 
-		// Pass 3: Register all function Metadata(AST, Return Types, and Params)
+		// Pass 3: Register Function return/parameter Types as objects
 		foreach (var unit in units)
 		{
 			_currentUnit = unit;
+			bindingContext.CurrentUnit = unit;
+			bindingContext.CurrentNamespace = unit.NamespaceDeclaration?.Name;
 			var ns = unit.NamespaceDeclaration?.Name;
 			var members = ns != null ? unit.NamespaceDeclaration!.Members : unit.Members;
 
@@ -87,19 +97,20 @@ public sealed class IrEmitter : IEmitter
 			{
 				if (member is FunctionDeclarationSyntax func)
 				{
-					var mangledName = string.IsNullOrEmpty(ns) ? func.Name : $"{ns}.{func.Name}";
-
-					// CRITICAL: Register the AST under the mangled name so the Resolver can find it!
+					var mangledName = (string.IsNullOrEmpty(ns) || func.Name == "main") ? func.Name : $"{ns}.{func.Name}";
 					_astFunctions[mangledName] = func;
-					_functionReturnTypes[mangledName] = func.ReturnType;
+					_functionReturnTypes[mangledName] = bindingContext.ResolveType(func.ReturnType)!;
 					_functionParameterTypes[mangledName] = func.Parameters
-						.Select(p => ResolveStructName(p.Type, unit))
+						.Select(p => bindingContext.ResolveType(p.Type)!)
 						.ToList();
 				}
 				else if (member is ExternDeclarationSyntax ext)
 				{
-					_functionReturnTypes[ext.Name] = ext.ReturnType;
-					_functionParameterTypes[ext.Name] = ext.Parameters.Select(p => p.Type).ToList();
+					_astExterns[ext.Name] = ext;
+					_functionReturnTypes[ext.Name] = bindingContext.ResolveType(ext.ReturnType)!;
+					_functionParameterTypes[ext.Name] = ext.Parameters
+						.Select(p => bindingContext.ResolveType(p.Type)!)
+						.ToList();
 				}
 			}
 		}
@@ -118,6 +129,8 @@ public sealed class IrEmitter : IEmitter
 		foreach (var unit in units)
 		{
 			_currentUnit = unit;
+			bindingContext.CurrentUnit = unit;
+			bindingContext.CurrentNamespace = unit.NamespaceDeclaration?.Name;
 			var ns = unit.NamespaceDeclaration?.Name;
 			var members = ns != null ? unit.NamespaceDeclaration!.Members : unit.Members;
 
@@ -125,7 +138,7 @@ public sealed class IrEmitter : IEmitter
 			{
 				if (member is FunctionDeclarationSyntax func)
 				{
-					var mangledName = string.IsNullOrEmpty(ns) ? func.Name : $"{ns}.{func.Name}";
+					var mangledName = (string.IsNullOrEmpty(ns) || func.Name == "main") ? func.Name : $"{ns}.{func.Name}";
 					var funcWriter = new StringWriter();
 					EmitFunction(func, mangledName, funcWriter);
 					_writer.Write(funcWriter.ToString());
@@ -144,8 +157,9 @@ public sealed class IrEmitter : IEmitter
 
 	private void EmitExtern(ExternDeclarationSyntax ext)
 	{
-		var ret = Type(ext.ReturnType);
-		var parms = ext.Parameters.Select(p => Type(p.Type)).ToList();
+		var retSymbol = _bindingContext!.ResolveType(ext.ReturnType)!;
+		var ret = Type(retSymbol);
+		var parms = ext.Parameters.Select(p => Type(_bindingContext.ResolveType(p.Type)!)).ToList();
 		if (ext.IsVariadic) parms.Add("...");
 		_writer.WriteLine($"declare {ret} @{ext.Name}({string.Join(", ", parms)})");
 		_writer.WriteLine();
@@ -157,10 +171,11 @@ public sealed class IrEmitter : IEmitter
 		_localCounter = 0;
 		_locals.Clear();
 
-		var ret = Type(ResolveStructName(func.ReturnType, _currentUnit!));
+		var retSymbol = _bindingContext!.ResolveType(func.ReturnType)!;
+		var ret = Type(retSymbol);
 
-		// Generate the parameter list for the header
-		var parmTypes = func.Parameters.Select(p => Type(ResolveStructName(p.Type, _currentUnit!))).ToList();
+		var parmSymbols = func.Parameters.Select(p => _bindingContext.ResolveType(p.Type)!).ToList();
+		var parmTypes = parmSymbols.Select(Type).ToList();
 		var parmStrings = parmTypes.Zip(func.Parameters, (ty, p) => $"{ty} %{p.Name}");
 
 		fw.WriteLine($"define {ret} @{mangledName}({string.Join(", ", parmStrings)}) {{");
@@ -172,11 +187,10 @@ public sealed class IrEmitter : IEmitter
 			var ptr = NewLocal();
 			_locals[p.Name] = ptr;
 
-			// IMPORTANT: Use the same resolved type we used for the header!
-			var mangledParamType = ResolveStructName(p.Type, _currentUnit!);
-			_variableTypes[p.Name] = mangledParamType;
+			var paramTypeSymbol = parmSymbols[i];
+			_variableTypes[p.Name] = paramTypeSymbol;
 
-			var llvmTy = parmTypes[i]; // Use the pre-calculated type
+			var llvmTy = parmTypes[i];
 			fw.WriteLine($"    %{ptr} = alloca {llvmTy}");
 			fw.WriteLine($"    store {llvmTy} %{p.Name}, ptr %{ptr}");
 		}
@@ -200,8 +214,6 @@ public sealed class IrEmitter : IEmitter
 			EmitStmt(stmt, fw);
 		}
 
-		// Only emit automatic cleanup if the block does NOT end with a return.
-		// If it has a return, EmitReturn handles the cleanup before the 'ret' instruction.
 		if (!EndsWithReturn(block))
 		{
 			EmitCleanup(blockVars, fw);
@@ -226,8 +238,6 @@ public sealed class IrEmitter : IEmitter
 
 	private void EmitReturn(ReturnStatementSyntax r, StringWriter fw)
 	{
-		// RAII: Free all heap variables in the current function before returning
-		// For an MVP, we free all active heap variables tracked in the emitter.
 		EmitCleanup(_locals.Keys.ToList(), fw);
 
 		if (r.Expression is null)
@@ -237,15 +247,12 @@ public sealed class IrEmitter : IEmitter
 		else
 		{
 			var (v, ty) = Eval(r.Expression, fw);
-			var mangledTy = ResolveStructName(ty, _currentUnit!);
 
-			// Use mangledTy to check against _astStructs
-			if (v.StartsWith("ptr ") && _astStructs.ContainsKey(mangledTy))
+			if (v.StartsWith("ptr ") && ty is StructTypeSymbol structType)
 			{
 				var valReg = NewLocal();
-				var rawPtrReg = v.Split(' ')[^1];
-				fw.WriteLine($"    %{valReg} = load %struct.{mangledTy}, ptr {rawPtrReg}");
-				fw.WriteLine($"    ret %struct.{mangledTy} %{valReg}");
+				fw.WriteLine($"    %{valReg} = load %struct.{structType.Name}, ptr {v.Split(' ')[^1]}");
+				fw.WriteLine($"    ret %struct.{structType.Name} %{valReg}");
 			}
 			else
 			{
@@ -261,8 +268,6 @@ public sealed class IrEmitter : IEmitter
 			case CallExpressionSyntax call: EmitCall(call, fw); break;
 			case BinaryExpressionSyntax { Operator: "=" } assign: EmitStore(assign, fw); break;
 			default:
-				// Evaluate the expression to write its side-effects (load, compute, store),
-				// but do not print the returned value register to the output file.
 				Eval(es.Expression, fw);
 				break;
 		}
@@ -270,31 +275,40 @@ public sealed class IrEmitter : IEmitter
 
 	private void EmitVar(VariableDeclarationSyntax v, StringWriter fw)
 	{
-		var typeName = v.Type;
+		TypeSymbol? type = null;
+		if (v.Type != null)
+		{
+			type = _bindingContext!.ResolveType(v.Type);
+		}
 
 		// Handle Explicit Reference Variables (ref / refvar)
 		if (v.Type == "refvar" || v.Type == "ref")
 		{
 			var (val, valTy) = Eval(v.Initializer!, fw);
-			var innerType = valTy.StartsWith("refvar ") ? valTy.Substring(7) : valTy.StartsWith("ref ") ? valTy.Substring(4) : valTy;
-			typeName = v.Type == "refvar" ? $"refvar {innerType}" : $"ref {innerType}";
+			var innerType = valTy is PointerTypeSymbol ptrType ? ptrType.ReferencedType : valTy;
+			var isMutable = v.Type == "refvar";
+			var typeSymbol = new PointerTypeSymbol(innerType, isMutable);
 
+			// Change this line (add 'var' back):
 			var ptr = NewLocal();
 			_locals[v.Name] = ptr;
-			_variableTypes[v.Name] = typeName;
+			_variableTypes[v.Name] = typeSymbol;
 
 			fw.WriteLine($"    %{ptr} = alloca ptr");
 			fw.WriteLine($"    store {val}, ptr %{ptr}");
 			return;
 		}
 
-		// Handle Heap Allocations (RAII Owners)
+		// Handle Heap Allocations (RAII Owners) - Evaluate initializer FIRST, then allocate ptr
 		if (v.Initializer is HeapAllocationExpressionSyntax heapInit)
 		{
 			var (val, valTy) = Eval(heapInit, fw);
-			var ptr = NewLocal();
+
+			var ptr = NewLocal(); // Allocated sequentially AFTER initializer evaluation
 			_locals[v.Name] = ptr;
-			_variableTypes[v.Name] = valTy;
+
+			type ??= valTy;
+			_variableTypes[v.Name] = type;
 			_heapAllocatedVars.Add(v.Name);
 
 			fw.WriteLine($"    %{ptr} = alloca ptr");
@@ -303,13 +317,13 @@ public sealed class IrEmitter : IEmitter
 		}
 
 		// Handle Standard Variables (Stack Structs or Primitives)
-		if (typeName is not null)
+		if (type is not null)
 		{
 			var ptr = NewLocal();
 			_locals[v.Name] = ptr;
-			_variableTypes[v.Name] = typeName;
+			_variableTypes[v.Name] = type;
 
-			var ty = Type(typeName);
+			var ty = Type(type);
 			fw.WriteLine($"    %{ptr} = alloca {ty}");
 
 			if (v.Initializer is not null)
@@ -320,7 +334,7 @@ public sealed class IrEmitter : IEmitter
 				}
 				else if (v.Initializer is ArrayInitializationExpressionSyntax arrInit)
 				{
-					EmitArrayInitializationInPlace(arrInit, ptr, typeName, fw);
+					EmitArrayInitializationInPlace(arrInit, ptr, type as ArrayTypeSymbol, fw);
 				}
 				else
 				{
@@ -335,26 +349,20 @@ public sealed class IrEmitter : IEmitter
 			if (v.Initializer is null)
 				throw new InvalidOperationException($"Type inference requires an initializer for variable '{v.Name}'");
 
-			// 1. Evaluate the initializer to get the register and the type
 			var (val, valTy) = Eval(v.Initializer, fw);
 
-			// 2. Resolve the mangled name immediately
-			var mangledValTy = ResolveStructName(valTy, _currentUnit!);
+			var ptr = NewLocal();
+			_locals[v.Name] = ptr;
+			_variableTypes[v.Name] = valTy;
 
 			if (val.StartsWith("ptr "))
 			{
-				// Register Forwarding: The initializer already allocated the struct.
 				var valReg = val.Split(' ')[^1].TrimStart('%');
 				_locals[v.Name] = valReg;
-				_variableTypes[v.Name] = mangledValTy;
 			}
 			else
 			{
-				var ptr = NewLocal();
-				_locals[v.Name] = ptr;
-				_variableTypes[v.Name] = mangledValTy;
-
-				var ty = Type(mangledValTy);
+				var ty = Type(valTy);
 				fw.WriteLine($"    %{ptr} = alloca {ty}");
 				fw.WriteLine($"    store {val}, ptr %{ptr}");
 			}
@@ -422,14 +430,14 @@ public sealed class IrEmitter : IEmitter
 		fw.WriteLine($"  {d}:");
 	}
 
-	private (string val, string ty) Eval(ExpressionSyntax expr, StringWriter fw)
+	private (string val, TypeSymbol ty) Eval(ExpressionSyntax expr, StringWriter fw)
 	{
 		return expr switch
 		{
-			IntegerLiteralExpressionSyntax n => ($"i32 {n.Value}", "i32"),
-			DoubleLiteralExpressionSyntax d => ($"double {d.Value}", "double"),
-			BooleanLiteralExpressionSyntax b => ($"i1 {(b.Value ? "1" : "0")}", "i1"),
-			StringLiteralExpressionSyntax s => (AddString(s.Value), "ptr"),
+			IntegerLiteralExpressionSyntax n => ($"i32 {n.Value}", TypeSymbol.Int),
+			DoubleLiteralExpressionSyntax d => ($"double {d.Value}", TypeSymbol.Double),
+			BooleanLiteralExpressionSyntax b => ($"i1 {(b.Value ? "1" : "0")}", TypeSymbol.Bool),
+			StringLiteralExpressionSyntax s => (AddString(s.Value), TypeSymbol.String),
 			IdentifierExpressionSyntax id => Load(id.Name, fw),
 			MemberAccessExpressionSyntax m => EmitMemberAccess(m, fw),
 			BorrowExpressionSyntax b => EmitBorrowExpression(b, fw),
@@ -454,16 +462,26 @@ public sealed class IrEmitter : IEmitter
 		{
 			var (val, valTy) = Eval(call.Arguments[i], fw);
 			var paramTy = GetParamType(mangledName, i);
-			if (paramTy.Contains("[]") && valTy.Contains('['))
-				val = CoerceArrayToSlice(val, valTy, paramTy, fw);
+			if (paramTy is SliceTypeSymbol && valTy is ArrayTypeSymbol)
+			{
+				// Coercion: Pass the array POINTER instead of its loaded value!
+				if (call.Arguments[i] is IdentifierExpressionSyntax id && _locals.TryGetValue(id.Name, out var ptr))
+				{
+					val = CoerceArrayToSlice($"ptr %{ptr}", valTy as ArrayTypeSymbol, paramTy as SliceTypeSymbol, fw);
+				}
+				else
+				{
+					val = CoerceArrayToSlice(val, valTy as ArrayTypeSymbol, paramTy as SliceTypeSymbol, fw);
+				}
+			}
+
 			args.Add(val);
 		}
 
 		fw.WriteLine($"    call void @{mangledName}({string.Join(", ", args)})");
 	}
 
-
-	private (string val, string ty) EmitCallExpr(CallExpressionSyntax call, StringWriter fw)
+	private (string val, TypeSymbol ty) EmitCallExpr(CallExpressionSyntax call, StringWriter fw)
 	{
 		var mangledName = ResolveFunctionName(call.FunctionName, _currentUnit!);
 		List<string> args = [];
@@ -472,76 +490,83 @@ public sealed class IrEmitter : IEmitter
 		{
 			var (val, valTy) = Eval(call.Arguments[i], fw);
 			var paramTy = GetParamType(mangledName, i);
-			if (paramTy.Contains("[]") && valTy.Contains("["))
-				val = CoerceArrayToSlice(val, valTy, paramTy, fw);
+			if (paramTy is SliceTypeSymbol && valTy is ArrayTypeSymbol)
+			{
+				// Coercion: Pass the array POINTER instead of its loaded value!
+				if (call.Arguments[i] is IdentifierExpressionSyntax id && _locals.TryGetValue(id.Name, out var ptr))
+				{
+					val = CoerceArrayToSlice($"ptr %{ptr}", valTy as ArrayTypeSymbol, paramTy as SliceTypeSymbol, fw);
+				}
+				else
+				{
+					val = CoerceArrayToSlice(val, valTy as ArrayTypeSymbol, paramTy as SliceTypeSymbol, fw);
+				}
+			}
 			args.Add(val);
 		}
 
 		var r = NewLocal();
-		var retTypeName = _functionReturnTypes.TryGetValue(mangledName, out var ret) ? ret : "int";
-
-		// Mangle the return type so Type() finds the struct layout
-		var resolvedRetType = ResolveStructName(retTypeName, _currentUnit!);
-		var ty = Type(resolvedRetType);
+		var retTypeSymbol = _functionReturnTypes.TryGetValue(mangledName, out var ret) ? ret : TypeSymbol.Int;
+		var ty = Type(retTypeSymbol);
 
 		fw.WriteLine($"    %{r} = call {ty} @{mangledName}({string.Join(", ", args)})");
-		return ($"{ty} %{r}", resolvedRetType);
+		return ($"{ty} %{r}", retTypeSymbol);
 	}
 
-	private (string val, string ty) EmitBin(BinaryExpressionSyntax bin, StringWriter fw)
+	private (string val, TypeSymbol ty) EmitBin(BinaryExpressionSyntax bin, StringWriter fw)
 	{
-		var (l, _) = Eval(bin.Left, fw);
+		var (l, lTy) = Eval(bin.Left, fw);
 		var (r, _) = Eval(bin.Right, fw);
 		var reg = NewLocal();
 		var (op, resultTy) = bin.Operator switch
 		{
-			"+" => ($"add i32 {V(l)}, {V(r)}", "i32"),
-			"-" => ($"sub i32 {V(l)}, {V(r)}", "i32"),
-			"*" => ($"mul i32 {V(l)}, {V(r)}", "i32"),
-			"/" => ($"sdiv i32 {V(l)}, {V(r)}", "i32"),
-			"%" => ($"srem i32 {V(l)}, {V(r)}", "i32"),
-			"==" => ($"icmp eq i32 {V(l)}, {V(r)}", "i1"),
-			"!=" => ($"icmp ne i32 {V(l)}, {V(r)}", "i1"),
-			"<" => ($"icmp slt i32 {V(l)}, {V(r)}", "i1"),
-			">" => ($"icmp sgt i32 {V(l)}, {V(r)}", "i1"),
-			"<=" => ($"icmp sle i32 {V(l)}, {V(r)}", "i1"),
-			">=" => ($"icmp sge i32 {V(l)}, {V(r)}", "i1"),
-			"&" => ($"and i32 {V(l)}, {V(r)}", "i32"),
-			"|" => ($"or i32 {V(l)}, {V(r)}", "i32"),
-			"^" => ($"xor i32 {V(l)}, {V(r)}", "i32"),
-			"<<" => ($"shl i32 {V(l)}, {V(r)}", "i32"),
-			">>" => ($"ashr i32 {V(l)}, {V(r)}", "i32"),  // Arithmetic Right Shift
-			">>>" => ($"lshr i32 {V(l)}, {V(r)}", "i32"),  // Logical Right Shift
+			"+" => ($"add i32 {V(l)}, {V(r)}", TypeSymbol.Int),
+			"-" => ($"sub i32 {V(l)}, {V(r)}", TypeSymbol.Int),
+			"*" => ($"mul i32 {V(l)}, {V(r)}", TypeSymbol.Int),
+			"/" => ($"sdiv i32 {V(l)}, {V(r)}", TypeSymbol.Int),
+			"%" => ($"srem i32 {V(l)}, {V(r)}", TypeSymbol.Int),
+			"==" => ($"icmp eq i32 {V(l)}, {V(r)}", TypeSymbol.Bool),
+			"!=" => ($"icmp ne i32 {V(l)}, {V(r)}", TypeSymbol.Bool),
+			"<" => ($"icmp slt i32 {V(l)}, {V(r)}", TypeSymbol.Bool),
+			">" => ($"icmp sgt i32 {V(l)}, {V(r)}", TypeSymbol.Bool),
+			"<=" => ($"icmp sle i32 {V(l)}, {V(r)}", TypeSymbol.Bool),
+			">=" => ($"icmp sge i32 {V(l)}, {V(r)}", TypeSymbol.Bool),
+			"&" => ($"and i32 {V(l)}, {V(r)}", TypeSymbol.Int),
+			"|" => ($"or i32 {V(l)}, {V(r)}", TypeSymbol.Int),
+			"^" => ($"xor i32 {V(l)}, {V(r)}", TypeSymbol.Int),
+			"<<" => ($"shl i32 {V(l)}, {V(r)}", TypeSymbol.Int),
+			">>" => ($"ashr i32 {V(l)}, {V(r)}", TypeSymbol.Int),
+			">>>" => ($"lshr i32 {V(l)}, {V(r)}", TypeSymbol.Int),
 			_ => throw new InvalidOperationException($"Unknown binop '{bin.Operator}'"),
 		};
 		fw.WriteLine($"    %{reg} = {op}");
-		return ($"{resultTy} %{reg}", resultTy);
+		return ($"{Type(resultTy)} %{reg}", resultTy);
 	}
 
-	private (string val, string ty) EmitUnary(UnaryExpressionSyntax u, StringWriter fw)
+	private (string val, TypeSymbol ty) EmitUnary(UnaryExpressionSyntax u, StringWriter fw)
 	{
 		if (u.Operator.EndsWith("_postfix") || u.Operator.EndsWith("_prefix"))
 		{
 			return EmitIncrementDecrement(u, u.Operator.EndsWith("_prefix"), u.Operator.StartsWith("++"), fw);
 		}
 
-		var (o, _) = Eval(u.Operand, fw);
+		var (o, oTy) = Eval(u.Operand, fw);
 		var r = NewLocal();
 		var (op, resultTy) = u.Operator switch
 		{
-			"-" => ($"sub i32 0, {V(o)}", "i32"),
-			"!" => ($"xor i1 1, {V(o)}", "i1"),
-			"~" => ($"xor i32 {V(o)}, -1", "i32"),
+			"-" => ($"sub i32 0, {V(o)}", TypeSymbol.Int),
+			"!" => ($"xor i1 1, {V(o)}", TypeSymbol.Bool),
+			"~" => ($"xor i32 {V(o)}, -1", TypeSymbol.Int),
 			_ => throw new InvalidOperationException($"Unknown unary op '{u.Operator}'"),
 		};
 		fw.WriteLine($"    %{r} = {op}");
-		return ($"{resultTy} %{r}", resultTy);
+		return ($"{Type(resultTy)} %{r}", resultTy);
 	}
 
 	private void EmitStore(BinaryExpressionSyntax assign, StringWriter fw)
 	{
 		var (r, rTy) = Eval(assign.Right, fw);
-		var llvmTy = Type(rTy); // Correctly resolves to %struct...
+		var llvmTy = Type(rTy);
 
 		if (assign.Left is IdentifierExpressionSyntax id && _locals.TryGetValue(id.Name, out var ptr))
 		{
@@ -555,39 +580,37 @@ public sealed class IrEmitter : IEmitter
 		else if (assign.Left is IndexExpressionSyntax idx)
 		{
 			var (elementPtr, _) = GetFieldPointer(idx, fw);
-			fw.WriteLine($"    store {r}, ptr %{elementPtr}");
+			fw.WriteLine($"    store {llvmTy} {V(r)}, ptr %{elementPtr}");
 		}
 	}
 
-	private (string val, string ty) EmitLoadStore(BinaryExpressionSyntax assign, StringWriter fw)
+	private (string val, TypeSymbol ty) EmitLoadStore(BinaryExpressionSyntax assign, StringWriter fw)
 	{
 		if (assign.Left is IdentifierExpressionSyntax id && _locals.TryGetValue(id.Name, out var ptr))
 		{
-			var (r, _) = Eval(assign.Right, fw);
+			var (r, rTy) = Eval(assign.Right, fw);
 			fw.WriteLine($"    store {r}, ptr %{ptr}");
-			return (r, "i32");
+			return (r, rTy);
 		}
 
 		throw new InvalidOperationException($"Cannot assign to non-variable");
 	}
 
-	private (string val, string ty) Load(string name, StringWriter fw)
+	private (string val, TypeSymbol ty) Load(string name, StringWriter fw)
 	{
 		if (!_locals.TryGetValue(name, out var ptr))
 			throw new InvalidOperationException($"Undefined variable '{name}'");
 
-		var typeName = _variableTypes[name];
-		var ty = Type(typeName);
+		var type = _variableTypes[name];
+		var ty = Type(type);
 
 		var reg = NewLocal();
 		fw.WriteLine($"    %{reg} = load {ty}, ptr %{ptr}");
 
-		// If the variable is a pointer/reference, we perform a second load 
-		// to retrieve the actual primitive value (int, double, bool, char)
-		if (typeName.StartsWith("ref ") || typeName.StartsWith("refvar "))
+		if (type is PointerTypeSymbol ptrType)
 		{
-			var resolvedType = typeName.StartsWith("refvar ") ? typeName.Substring(7) : typeName.Substring(4);
-			if (resolvedType == "int" || resolvedType == "double" || resolvedType == "bool" || resolvedType == "char")
+			var resolvedType = ptrType.ReferencedType;
+			if (resolvedType == TypeSymbol.Int || resolvedType == TypeSymbol.Double || resolvedType == TypeSymbol.Bool || resolvedType == TypeSymbol.Char)
 			{
 				var valReg = NewLocal();
 				var innerTy = Type(resolvedType);
@@ -596,7 +619,7 @@ public sealed class IrEmitter : IEmitter
 			}
 		}
 
-		return ($"{ty} %{reg}", ty);
+		return ($"{ty} %{reg}", type);
 	}
 
 	private string AddString(string value)
@@ -609,7 +632,7 @@ public sealed class IrEmitter : IEmitter
 			'\t' => "\\09",
 			'"' => "\\22",
 			'\\' => "\\5c",
-			_ when c < 32 || c > 126 => $"\\{(int)c:x2}", // Converts \x1b automatically to \1b for LLVM
+			_ when c < 32 || c > 126 => $"\\{(int)c:x2}",
 			_ => c.ToString(),
 		}));
 		_stringDefs.Add($"@str{idx} = private unnamed_addr constant [{value.Length + 1} x i8] c\"{escaped}\\00\"");
@@ -619,46 +642,28 @@ public sealed class IrEmitter : IEmitter
 	private string NextLabel() => $"L{_labelCounter++}";
 	private string NewLocal() => (_localCounter++).ToString();
 
-	private string Type(string t)
+	private string Type(TypeSymbol t)
 	{
-		if (string.IsNullOrEmpty(t)) return "i32";
+		if (t is PointerTypeSymbol) return "ptr";
+		if (t is SliceTypeSymbol) return "{ ptr, i32 }";
 
-		// 1. Handle References
-		if (t.StartsWith("ref ") || t.StartsWith("refvar ")) return "ptr";
+		if (t is ArrayTypeSymbol arr)
+			return $"[{arr.Size} x {Type(arr.ElementType)}]";
 
-		// 2. Handle Slices
-		if (t.EndsWith("[]")) return "{ ptr, i32 }";
+		if (t is StructTypeSymbol)
+			return $"%struct.{t.Name}";
 
-		// 3. Handle Static Arrays
-		if (t.Contains('['))
-		{
-			var openBracket = t.LastIndexOf('[');
-			var size = t.Substring(openBracket + 1, t.Length - openBracket - 2);
-			var inner = t.Substring(0, openBracket);
-			return $"[{size} x {Type(inner)}]";
-		}
-
-		// 4. Try direct lookup (already mangled)
-		if (_astStructs.ContainsKey(t)) return $"%struct.{t}";
-
-		// 5. Try primitive lookup
-		var primitive = t switch
+		var primitive = t.Name switch
 		{
 			"void" => "void",
-			"int" or "Int32" => "i32",
-			"double" or "Double" => "double",
-			"bool" or "Boolean" => "i1",
-			"string" or "String" or "ptr" => "ptr",
-			"char" or "Char" => "i8",
+			"int" => "i32",
+			"double" => "double",
+			"bool" => "i1",
+			"string" or "ptr" => "ptr",
+			"char" => "i8",
 			_ => null
 		};
-		if (primitive != null) return primitive;
-
-		// 6. Last Resort: Try to resolve the struct name from context
-		var resolved = ResolveStructName(t, _currentUnit!);
-		if (_astStructs.ContainsKey(resolved)) return $"%struct.{resolved}";
-
-		return "i32";
+		return primitive ?? $"%struct.{t.Name}";
 	}
 
 	private static string V(string typed) => typed.Split(' ')[^1];
@@ -669,100 +674,87 @@ public sealed class IrEmitter : IEmitter
 		_ => false,
 	};
 
-	private (string val, string ty) EmitMemberAccess(MemberAccessExpressionSyntax m, StringWriter fw)
+	private (string val, TypeSymbol ty) EmitMemberAccess(MemberAccessExpressionSyntax m, StringWriter fw)
 	{
-		var (fieldPtr, fieldTypeName) = GetFieldPointer(m, fw);
-
-		// Ensure the field type name is mangled (e.g., Vector2 -> App.Math.Vector2)
-		var mangledFieldType = ResolveStructName(fieldTypeName, _currentUnit!);
-
+		var (fieldPtr, fieldType) = GetFieldPointer(m, fw);
 		var loadedReg = NewLocal();
-		var fTy = Type(mangledFieldType);
+		var fTy = Type(fieldType);
 		fw.WriteLine($"    %{loadedReg} = load {fTy}, ptr %{fieldPtr}");
-		return ($"{fTy} %{loadedReg}", mangledFieldType);
+		return ($"{fTy} %{loadedReg}", fieldType);
 	}
 
-	private (string ptr, string typeName) GetFieldPointer(ExpressionSyntax expr, StringWriter fw)
+	private (string ptr, TypeSymbol type) GetFieldPointer(ExpressionSyntax expr, StringWriter fw)
 	{
 		if (expr is IdentifierExpressionSyntax id)
 		{
 			if (!_locals.TryGetValue(id.Name, out var structPtr))
 				throw new InvalidOperationException($"Undefined variable '{id.Name}'");
 
-			var typeName = _variableTypes[id.Name];
-
-			// Only load the pointer if the variable is an actual reference (borrow) or heap owner.
-			// Standard local structs (even inferred ones) should NOT be loaded.
-			var isReference = typeName.StartsWith("ref ") || typeName.StartsWith("refvar ");
+			var type = _variableTypes[id.Name];
+			var isReference = type is PointerTypeSymbol;
 			var isHeap = _heapAllocatedVars.Contains(id.Name);
 
 			if (isReference || isHeap)
 			{
 				var actualPtr = NewLocal();
 				fw.WriteLine($"    %{actualPtr} = load ptr, ptr %{structPtr}");
-				var innerType = StripRefPrefix(typeName);
-				return (actualPtr, ResolveStructName(innerType, _currentUnit!));
+				var innerType = type is PointerTypeSymbol ptrType ? ptrType.ReferencedType : type;
+				return (actualPtr, innerType);
 			}
 
-			// Return the stack address directly for standard variables
-			return (structPtr, ResolveStructName(StripRefPrefix(typeName), _currentUnit!));
+			return (structPtr, type);
 		}
 		else if (expr is MemberAccessExpressionSyntax m)
 		{
-			var (parentPtr, parentTypeName) = GetFieldPointer(m.Expression, fw);
+			var (parentPtr, parentType) = GetFieldPointer(m.Expression, fw);
 
-			// 1. Slices have a built-in 'Length' field at index 1 of the anonymous struct { ptr, i32 }
-			if (parentTypeName.EndsWith("[]") && m.MemberName == "Length")
+			if (parentType is SliceTypeSymbol sliceType && m.MemberName == "Length")
 			{
 				var lengthPtrReg = NewLocal();
 				fw.WriteLine($"    %{lengthPtrReg} = getelementptr inbounds {{ ptr, i32 }}, ptr %{parentPtr}, i32 0, i32 1");
-				return (lengthPtrReg, "int");
+				return (lengthPtrReg, TypeSymbol.Int);
 			}
 
-			// Resolve namespaced type name
-			parentTypeName = ResolveStructName(parentTypeName, _currentUnit!);
+			if (parentType is not StructTypeSymbol structType)
+				throw new InvalidOperationException($"Cannot access field of non-struct type '{parentType.Name}'");
 
-			var structDecl = _astStructs[parentTypeName];
+			var structDecl = _astStructs[structType.Name];
 			var fieldIndex = -1;
-			var fieldType = "int";
+			TypeSymbol? fieldType = null;
 
 			for (var i = 0; i < structDecl.Fields.Count; i++)
 			{
 				if (structDecl.Fields[i].Name == m.MemberName)
 				{
 					fieldIndex = i;
-					fieldType = structDecl.Fields[i].Type;
+					fieldType = _bindingContext!.ResolveType(structDecl.Fields[i].Type)!;
 					break;
 				}
 			}
 
 			var fieldPtrReg = NewLocal();
-			var structTy = $"%struct.{parentTypeName}";
+			var structTy = $"%struct.{structType.Name}";
 			fw.WriteLine($"    %{fieldPtrReg} = getelementptr inbounds {structTy}, ptr %{parentPtr}, i32 0, i32 {fieldIndex}");
 
-			return (fieldPtrReg, fieldType);
+			return (fieldPtrReg, fieldType!);
 		}
 		else if (expr is IndexExpressionSyntax idx)
 		{
-			var (parentPtr, parentTypeName) = GetFieldPointer(idx.Left, fw);
+			var (parentPtr, parentType) = GetFieldPointer(idx.Left, fw);
 			var (indexVal, _) = Eval(idx.Index, fw);
 
-			// Case A: Dynamic Slice indexing (type name ends with "[]", e.g., "int[]")
-			if (parentTypeName.EndsWith("[]"))
+			if (parentType is SliceTypeSymbol sliceType)
 			{
-				// 1. Load the actual array pointer from field 0 of the slice struct { ptr, i32 }
 				var arrPtrReg = NewLocal();
 				fw.WriteLine($"    %{arrPtrReg} = getelementptr inbounds {{ ptr, i32 }}, ptr %{parentPtr}, i32 0, i32 0");
 				var arrayPtr = NewLocal();
 				fw.WriteLine($"    %{arrayPtr} = load ptr, ptr %{arrPtrReg}");
 
-				// 2. Load the slice length from field 1 for Bounds Checking
 				var lenPtrReg = NewLocal();
 				fw.WriteLine($"    %{lenPtrReg} = getelementptr inbounds {{ ptr, i32 }}, ptr %{parentPtr}, i32 0, i32 1");
 				var lengthReg = NewLocal();
 				fw.WriteLine($"    %{lengthReg} = load i32, ptr %{lenPtrReg}");
 
-				// 3. Bounds check (index < length)
 				var isSafeLabel = NextLabel();
 				var panicLabel = NextLabel();
 				var checkReg = NewLocal();
@@ -770,100 +762,63 @@ public sealed class IrEmitter : IEmitter
 				fw.WriteLine($"    %{checkReg} = icmp ult i32 {V(indexVal)}, %{lengthReg}");
 				fw.WriteLine($"    br i1 %{checkReg}, label %{isSafeLabel}, label %{panicLabel}");
 
-				// Panic Block (Outputs professional C# Style error message)
-				fw.WriteLine($"  {panicLabel}:");
-				var errorLines = _context!.FormatDiagnostic("Runtime Error", "Index was outside the bounds of the array.", idx.Span);
-				foreach (var line in errorLines)
-				{
-					var strPtr = AddString(line);
-					var reg = NewLocal();
-					fw.WriteLine($"    %{reg} = call i32 @puts(ptr {strPtr.Split(' ')[^1]})");
-				}
+				EmitRuntimeError(idx, panicLabel, fw);
 
-				fw.WriteLine($"    call void @exit(i32 1)");
-				fw.WriteLine($"    unreachable");
-
-				// Safe Block: Get element address
 				fw.WriteLine($"  {isSafeLabel}:");
 				var elementPtrReg = NewLocal();
-				var innerType = parentTypeName[..^2];
-				var elementLlvmTy = Type(innerType);
+				var elementLlvmTy = Type(sliceType.ElementType);
 				fw.WriteLine($"    %{elementPtrReg} = getelementptr inbounds {elementLlvmTy}, ptr %{arrayPtr}, i32 {V(indexVal)}");
-				return (elementPtrReg, innerType);
+				return (elementPtrReg, sliceType.ElementType);
 			}
-			else
+			else if (parentType is ArrayTypeSymbol arrayType)
 			{
-				// Case B: Static Array indexing (type name contains "[size]", e.g., "int[5]")
-				var openBracket = parentTypeName.LastIndexOf('[');
-				var innerTypeName = parentTypeName.Substring(0, openBracket);
-				var sizeStr = parentTypeName.Substring(openBracket + 1, parentTypeName.Length - openBracket - 2);
-
 				var isArraySafeLabel = NextLabel();
 				var arrayPanicLabel = NextLabel();
 
-				// Bounds check (index < static_size)
 				var arrayCheckReg = NewLocal();
-				fw.WriteLine($"    %{arrayCheckReg} = icmp ult i32 {V(indexVal)}, {sizeStr}");
+				fw.WriteLine($"    %{arrayCheckReg} = icmp ult i32 {V(indexVal)}, {arrayType.Size}");
 				fw.WriteLine($"    br i1 %{arrayCheckReg}, label %{isArraySafeLabel}, label %{arrayPanicLabel}");
 
-				// Runtime Error Block
-				fw.WriteLine($"  {arrayPanicLabel}:");
-				var arrErrorLines = _context!.FormatDiagnostic("Runtime Error", "Index was outside the bounds of the array.", idx.Span);
-				foreach (var line in arrErrorLines)
-				{
-					var strPtr = AddString(line);
-					var reg = NewLocal();
-					fw.WriteLine($"    %{reg} = call i32 @puts(ptr {strPtr.Split(' ')[^1]})");
-				}
+				EmitRuntimeError(idx, arrayPanicLabel, fw);
 
-				fw.WriteLine($"    call void @exit(i32 1)");
-				fw.WriteLine($"    unreachable");
-
-				// Safe Block: Get element address
 				fw.WriteLine($"  {isArraySafeLabel}:");
 				var arrayElementPtrReg = NewLocal();
-				var llvmArrTy = Type(parentTypeName);
+				var llvmArrTy = Type(arrayType);
 				fw.WriteLine($"    %{arrayElementPtrReg} = getelementptr inbounds {llvmArrTy}, ptr %{parentPtr}, i32 0, i32 {V(indexVal)}");
 
-				return (arrayElementPtrReg, innerTypeName);
+				return (arrayElementPtrReg, arrayType.ElementType);
 			}
-		}
-		else if (expr is BorrowExpressionSyntax b)
-		{
-			// If we hit a borrow while looking for a pointer, just evaluate it
-			var (val, ty) = Eval(b, fw);
-			return (val.Split(' ')[^1].TrimStart('%'), ty);
 		}
 
 		throw new InvalidOperationException("Unsupported field pointer expression");
 	}
 
-	private (string val, string ty) EmitStructInitialization(StructInitializationExpressionSyntax expr, StringWriter fw)
+	private (string val, TypeSymbol ty) EmitStructInitialization(StructInitializationExpressionSyntax expr, StringWriter fw)
 	{
-		var mangledName = ResolveStructName(expr.StructTypeName, _currentUnit!);
+		var type = _bindingContext!.ResolveType(expr.StructTypeName) as StructTypeSymbol;
 		var tempPtrReg = NewLocal();
-		var structTy = $"%struct.{mangledName}";
+		var structTy = $"%struct.{type!.Name}";
 		fw.WriteLine($"    %{tempPtrReg} = alloca {structTy}");
 		EmitStructInitializationInPlace(expr, tempPtrReg, fw);
-		return ($"ptr %{tempPtrReg}", mangledName);
+		return ($"ptr %{tempPtrReg}", type);
 	}
 
 	private void EmitStructInitializationInPlace(StructInitializationExpressionSyntax expr, string destPtr, StringWriter fw)
 	{
-		var mangledName = ResolveStructName(expr.StructTypeName, _currentUnit!);
-		var structTy = $"%struct.{mangledName}";
+		var mangledName = _bindingContext!.ResolveType(expr.StructTypeName) as StructTypeSymbol;
+		var structTy = $"%struct.{mangledName!.Name}";
 		foreach (var init in expr.Initializers)
 		{
-			var structDecl = _astStructs[mangledName];
+			var structDecl = _astStructs[mangledName.Name];
 			var fieldIndex = -1;
-			var fieldType = "int";
+			TypeSymbol? fieldType = null;
 
 			for (var i = 0; i < structDecl.Fields.Count; i++)
 			{
 				if (structDecl.Fields[i].Name == init.MemberName)
 				{
 					fieldIndex = i;
-					fieldType = structDecl.Fields[i].Type;
+					fieldType = _bindingContext!.ResolveType(structDecl.Fields[i].Type)!;
 					break;
 				}
 			}
@@ -884,55 +839,65 @@ public sealed class IrEmitter : IEmitter
 	}
 
 
-	private (string val, string ty) EmitBorrowExpression(BorrowExpressionSyntax expr, StringWriter fw)
+	private (string val, TypeSymbol ty) EmitBorrowExpression(BorrowExpressionSyntax expr, StringWriter fw)
 	{
 		if (expr.Expression is IdentifierExpressionSyntax id && _locals.TryGetValue(id.Name, out var ptr))
 		{
-			var typeName = _variableTypes[id.Name];
-			bool isRef = typeName.StartsWith("ref ") || typeName.StartsWith("refvar ");
+			var type = _variableTypes[id.Name];
 
-			if (isRef)
+			var isReference = type is PointerTypeSymbol;
+			var isHeap = _heapAllocatedVars.Contains(id.Name);
+
+			if (isReference || isHeap)
 			{
 				var actualPtr = NewLocal();
 				fw.WriteLine($"    %{actualPtr} = load ptr, ptr %{ptr}");
-				return ($"ptr %{actualPtr}", typeName);
+				return ($"ptr %{actualPtr}", type);
 			}
 
-			return ($"ptr %{ptr}", $"refvar {typeName}");
+			var ptrType = _bindingContext!.ResolveType($"refvar {type.Name}")!;
+			return ($"ptr %{ptr}", ptrType);
 		}
 		else if (expr.Expression is MemberAccessExpressionSyntax m)
 		{
-			var (fieldPtr, fieldTypeName) = GetFieldPointer(m, fw);
-			return ($"ptr %{fieldPtr}", $"refvar {fieldTypeName}");
+			var (fieldPtr, fieldType) = GetFieldPointer(m, fw);
+			var ptrType = _bindingContext!.ResolveType($"refvar {fieldType.Name}")!;
+			return ($"ptr %{fieldPtr}", ptrType);
+		}
+		else if (expr.Expression is IndexExpressionSyntax idx)
+		{
+			var (elementPtr, elementType) = GetFieldPointer(idx, fw);
+			var ptrType = _bindingContext!.ResolveType($"refvar {elementType.Name}")!;
+			return ($"ptr %{elementPtr}", ptrType);
 		}
 
 		throw new InvalidOperationException("Can only borrow variables or member fields");
 	}
 
-	private (string val, string ty) EmitIncrementDecrement(UnaryExpressionSyntax u, bool isPrefix, bool isIncrement, StringWriter fw)
+	private (string val, TypeSymbol ty) EmitIncrementDecrement(UnaryExpressionSyntax u, bool isPrefix, bool isIncrement, StringWriter fw)
 	{
 		string ptrReg;
-		string typeName;
+		TypeSymbol type;
 
 		if (u.Operand is IdentifierExpressionSyntax id)
 		{
 			if (!_locals.TryGetValue(id.Name, out var structPtr))
 				throw new InvalidOperationException($"Undefined variable '{id.Name}'");
 			ptrReg = structPtr;
-			typeName = _variableTypes[id.Name];
+			type = _variableTypes[id.Name];
 		}
 		else if (u.Operand is MemberAccessExpressionSyntax m)
 		{
-			var (fieldPtr, fieldTypeName) = GetFieldPointer(m, fw);
+			var (fieldPtr, fieldType) = GetFieldPointer(m, fw);
 			ptrReg = fieldPtr;
-			typeName = fieldTypeName;
+			type = fieldType;
 		}
 		else
 		{
 			throw new InvalidOperationException("Increment/decrement operand must be a variable or struct field");
 		}
 
-		var ty = Type(typeName);
+		var ty = Type(type);
 
 		// 1. Load current value
 		var currentValReg = NewLocal();
@@ -949,21 +914,23 @@ public sealed class IrEmitter : IEmitter
 		// 4. Return correct value based on Prefix vs Postfix rules
 		if (isPrefix)
 		{
-			return ($"{ty} %{newValReg}", typeName); // Prefix returns the NEW value
+			return ($"{ty} %{newValReg}", type); // Prefix returns the NEW value
 		}
 		else
 		{
-			return ($"{ty} %{currentValReg}", typeName); // Postfix returns the OLD value
+			return ($"{ty} %{currentValReg}", type); // Postfix returns the OLD value
 		}
 	}
 
-	private (string val, string ty) EmitHeapAllocation(HeapAllocationExpressionSyntax expr, StringWriter fw)
+	private (string val, TypeSymbol ty) EmitHeapAllocation(HeapAllocationExpressionSyntax expr, StringWriter fw)
 	{
 		if (expr.Expression is not StructInitializationExpressionSyntax s)
 			throw new InvalidOperationException("Heap allocation currently only supported for structs");
 
-		var mangledName = ResolveStructName(s.StructTypeName, _currentUnit!);
-		var structDecl = _astStructs[mangledName];
+		var type = _bindingContext!.ResolveType(s.StructTypeName) as StructTypeSymbol;
+
+		// Change this line (added .Name):
+		var structDecl = _astStructs[type!.Name];
 
 		var size = structDecl.Fields.Count * 8;
 
@@ -972,20 +939,20 @@ public sealed class IrEmitter : IEmitter
 
 		EmitStructInitializationInPlace(s, ptrReg, fw);
 
-		return ($"ptr %{ptrReg}", mangledName);
+		return ($"ptr %{ptrReg}", type);
 	}
 
-	private (string val, string ty) EmitIndexExpression(IndexExpressionSyntax idx, StringWriter fw)
+	private (string val, TypeSymbol ty) EmitIndexExpression(IndexExpressionSyntax idx, StringWriter fw)
 	{
 		// 1. Get the pointer to the specific array element
-		var (elementPtr, elementTypeName) = GetFieldPointer(idx, fw);
+		var (elementPtr, elementType) = GetFieldPointer(idx, fw);
 
 		// 2. Load the value from that pointer
 		var loadedReg = NewLocal();
-		var fTy = Type(elementTypeName);
+		var fTy = Type(elementType);
 		fw.WriteLine($"    %{loadedReg} = load {fTy}, ptr %{elementPtr}");
 
-		return ($"{fTy} %{loadedReg}", elementTypeName);
+		return ($"{fTy} %{loadedReg}", elementType);
 	}
 
 	private void EmitCleanup(IEnumerable<string> variableNames, StringWriter fw)
@@ -1019,9 +986,9 @@ public sealed class IrEmitter : IEmitter
 		fw.WriteLine($"    unreachable");
 	}
 
-	private void EmitArrayInitializationInPlace(ArrayInitializationExpressionSyntax expr, string destPtr, string arrayTypeName, StringWriter fw)
+	private void EmitArrayInitializationInPlace(ArrayInitializationExpressionSyntax expr, string destPtr, ArrayTypeSymbol arrayType, StringWriter fw)
 	{
-		var llvmArrTy = Type(arrayTypeName);
+		var llvmArrTy = Type(arrayType);
 
 		for (int i = 0; i < expr.Elements.Count; i++)
 		{
@@ -1029,17 +996,26 @@ public sealed class IrEmitter : IEmitter
 			// Get pointer to arr[i]
 			fw.WriteLine($"    %{elementPtrReg} = getelementptr inbounds {llvmArrTy}, ptr %{destPtr}, i32 0, i32 {i}");
 
-			// Evaluate the element and store it
-			var (val, _) = Eval(expr.Elements[i], fw);
-			fw.WriteLine($"    store {val}, ptr %{elementPtrReg}");
+			var element = expr.Elements[i];
+			if (element is StructInitializationExpressionSyntax structInit)
+			{
+				// In-Place Initialization: Write values directly into the array element address
+				EmitStructInitializationInPlace(structInit, elementPtrReg, fw);
+			}
+			else if (element is ArrayInitializationExpressionSyntax nestedArr)
+			{
+				EmitArrayInitializationInPlace(nestedArr, elementPtrReg, arrayType.ElementType as ArrayTypeSymbol, fw);
+			}
+			else
+			{
+				var (val, _) = Eval(element, fw);
+				fw.WriteLine($"    store {val}, ptr %{elementPtrReg}");
+			}
 		}
 	}
 
-	private string CoerceArrayToSlice(string arrayVal, string arrayTy, string sliceTy, StringWriter fw)
+	private string CoerceArrayToSlice(string arrayVal, ArrayTypeSymbol arrayTy, SliceTypeSymbol sliceTy, StringWriter fw)
 	{
-		var openBracket = arrayTy.LastIndexOf('[');
-		var sizeStr = arrayTy.Substring(openBracket + 1, arrayTy.Length - openBracket - 2);
-
 		var slicePtr = NewLocal();
 		fw.WriteLine($"    %{slicePtr} = alloca {{ ptr, i32 }}");
 
@@ -1051,19 +1027,23 @@ public sealed class IrEmitter : IEmitter
 		// Store size into index 1
 		var sizeField = NewLocal();
 		fw.WriteLine($"    %{sizeField} = getelementptr inbounds {{ ptr, i32 }}, ptr %{slicePtr}, i32 0, i32 1");
-		fw.WriteLine($"    store i32 {sizeStr}, ptr %{sizeField}");
+		fw.WriteLine($"    store i32 {arrayTy.Size}, ptr %{sizeField}");
 
-		return $"ptr %{slicePtr}";
+		// LOAD the slice struct value so we pass it BY VALUE!
+		var sliceVal = NewLocal();
+		fw.WriteLine($"    %{sliceVal} = load {{ ptr, i32 }}, ptr %{slicePtr}");
+
+		return $"{{ ptr, i32 }} %{sliceVal}";
 	}
 
-	private string GetParamType(string mangledFuncName, int index)
+	private TypeSymbol GetParamType(string mangledFuncName, int index)
 	{
 		if (_functionParameterTypes.TryGetValue(mangledFuncName, out var paramTypes) && index < paramTypes.Count)
 		{
 			return paramTypes[index];
 		}
 
-		return "int";
+		return TypeSymbol.Int;
 	}
 
 	private string ResolveStructName(string name, CompilationUnitSyntax activeUnit)
@@ -1092,7 +1072,7 @@ public sealed class IrEmitter : IEmitter
 		return name;
 	}
 
-	private (string val, string ty) EmitTernaryExpression(TernaryExpressionSyntax expr, StringWriter fw)
+	private (string val, TypeSymbol ty) EmitTernaryExpression(TernaryExpressionSyntax expr, StringWriter fw)
 	{
 		var (cond, _) = Eval(expr.Condition, fw);
 
@@ -1100,40 +1080,34 @@ public sealed class IrEmitter : IEmitter
 		var e = NextLabel();
 		var d = NextLabel();
 
-		// 1. Determine the actual LLVM type of the branches
-		var (_, thenTyName) = Eval(expr.ThenExpression, fw);
-		var llvmTy = Type(thenTyName); // This will return 'ptr' for strings, 'i32' for ints, etc.
+		var (_, thenTy) = Eval(expr.ThenExpression, fw);
+		var llvmTy = Type(thenTy);
 
-		// 2. Allocate the CORRECT type on the stack for the result
 		var resultPtr = NewLocal();
 		fw.WriteLine($"    %{resultPtr} = alloca {llvmTy}");
-
-		// 3. Branch conditionally
 		fw.WriteLine($"    br {cond}, label %{t}, label %{e}");
 
-		// 4. Then Block
 		fw.WriteLine($"  {t}:");
 		var (thenVal, _) = Eval(expr.ThenExpression, fw);
 		fw.WriteLine($"    store {thenVal}, ptr %{resultPtr}");
 		fw.WriteLine($"    br label %{d}");
 
-		// 5. Else Block
 		fw.WriteLine($"  {e}:");
 		var (elseVal, _) = Eval(expr.ElseExpression, fw);
 		fw.WriteLine($"    store {elseVal}, ptr %{resultPtr}");
 		fw.WriteLine($"    br label %{d}");
 
-		// 6. Merge Block
 		fw.WriteLine($"  {d}:");
 		var loadedReg = NewLocal();
-		// Use the correctly resolved llvmTy for the load instruction
 		fw.WriteLine($"    %{loadedReg} = load {llvmTy}, ptr %{resultPtr}");
 
-		return ($"{llvmTy} %{loadedReg}", thenTyName);
+		return ($"{llvmTy} %{loadedReg}", thenTy);
 	}
 
 	private string ResolveFunctionName(string name, CompilationUnitSyntax activeUnit)
 	{
+		if (name == "main") return "main";
+
 		// 1. Is it already a full name or an extern?
 		if (_astFunctions.ContainsKey(name) || _astExterns.ContainsKey(name)) return name;
 

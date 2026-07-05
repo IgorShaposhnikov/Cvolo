@@ -7,6 +7,9 @@ namespace Cvolo.Analysis;
 public sealed class Binder
 {
 	private readonly BindingContext _context = new();
+
+	public BindingContext Context => _context;
+
 	public DiagnosticBag Diagnostics => _context.Diagnostics;
 
 	public void Bind(IReadOnlyList<CompilationUnitSyntax> units)

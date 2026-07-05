@@ -1,6 +1,3 @@
-using System;
-using System.Collections.Generic;
-using System.Text;
 using Cvolo.Analysis.Symbols;
 using Cvolo.Analysis.Symbols.Base;
 using Cvolo.Analysis.Symbols.Collections;
@@ -16,34 +13,39 @@ public sealed class BindingContext
 	public DiagnosticBag Diagnostics { get; } = new();
 	public SymbolTable Globals { get; } = new();
 	public Dictionary<string, StructTypeSymbol> StructTypes { get; } = [];
-	// Maps a variable declaration in the code to its calculated Symbol
 	public Dictionary<VariableDeclarationSyntax, VariableSymbol> VariableSymbols { get; } = [];
 
-	// State for the current file being processed
+	// Canonical Type Cache (Phase 3: Ensuring structural equality)
+	private readonly Dictionary<string, TypeSymbol> _typeCache = [];
+
 	public CompilationUnitSyntax? CurrentUnit { get; set; }
 	public string? CurrentNamespace { get; set; }
 
 	/// <summary>
-	/// Logic moved from Binder.ResolveType to be accessible by all passes.
+	/// Resolves a string type name to its canonical, immutable TypeSymbol object.
 	/// </summary>
 	public TypeSymbol? ResolveType(string name)
 	{
-		if (name.StartsWith("refvar "))
+		if (string.IsNullOrEmpty(name)) return null;
+
+		// 1. Check Canonical Type Cache first (Flyweight Pattern)
+		if (_typeCache.TryGetValue(name, out var cached))
+			return cached;
+
+		// 2. Resolve Pointer/Reference Types (ref / refvar)
+		if (name.StartsWith("refvar ") || name.StartsWith("ref "))
 		{
-			var innerName = name.Substring(7);
+			var isMutable = name.StartsWith("refvar ");
+			var innerName = isMutable ? name.Substring(7) : name.Substring(4);
 			var innerType = ResolveType(innerName);
 			if (innerType is null) return null;
-			return new PointerTypeSymbol(innerType, isMutable: true);
+
+			var ptrType = new PointerTypeSymbol(innerType, isMutable);
+			_typeCache[name] = ptrType;
+			return ptrType;
 		}
 
-		if (name.StartsWith("ref "))
-		{
-			var innerName = name.Substring(4);
-			var innerType = ResolveType(innerName);
-			if (innerType is null) return null;
-			return new PointerTypeSymbol(innerType, isMutable: false);
-		}
-
+		// 3. Resolve Static Array Types (e.g., int[5])
 		if (name.EndsWith(']'))
 		{
 			var openBracket = name.LastIndexOf('[');
@@ -51,21 +53,35 @@ public sealed class BindingContext
 			var innerName = name.Substring(0, openBracket);
 			var innerType = ResolveType(innerName);
 			if (innerType is not null && int.TryParse(sizePart, out var size))
-				return new ArrayTypeSymbol(innerType, size);
+			{
+				var arrType = new ArrayTypeSymbol(innerType, size);
+				_typeCache[name] = arrType;
+				return arrType;
+			}
 		}
 
+		// 4. Resolve Dynamic Slice Types (e.g., int[])
 		if (name.EndsWith("[]") && !name.StartsWith("ref"))
 		{
 			var inner = name[..^2];
 			var innerType = ResolveType(inner);
 			if (innerType is not null)
-				return new StructTypeSymbol(name, []);
+			{
+				var sliceType = new SliceTypeSymbol(innerType);
+				_typeCache[name] = sliceType;
+				return sliceType;
+			}
 		}
 
+		// 5. Check Primitives
 		var primitive = TypeSymbol.FromName(name);
-		if (primitive is not null) return primitive;
+		if (primitive is not null)
+		{
+			_typeCache[name] = primitive;
+			return primitive;
+		}
 
-		// Resolve namespaced type lookups dynamically
+		// 6. Resolve Namespaced/Imported Structures nominal match
 		var candidates = new List<StructTypeSymbol>();
 		if (StructTypes.TryGetValue(name, out var exactMatch))
 			candidates.Add(exactMatch);
@@ -91,7 +107,11 @@ public sealed class BindingContext
 			}
 		}
 
-		if (candidates.Count == 1) return candidates[0];
+		if (candidates.Count == 1)
+		{
+			_typeCache[name] = candidates[0];
+			return candidates[0];
+		}
 
 		return null;
 	}
