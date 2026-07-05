@@ -167,6 +167,8 @@ public sealed class ValidationPass(BindingContext context)
 			case StructInitializationExpressionSyntax structInit:
 				CheckStructInitializationExpression(structInit, scope);
 				break;
+			case CharacterLiteralExpressionSyntax:
+				break;
 			case HeapAllocationExpressionSyntax heap:
 				CheckExpression(heap.Expression, scope);
 				break;
@@ -448,6 +450,7 @@ public sealed class ValidationPass(BindingContext context)
 			DoubleLiteralExpressionSyntax => TypeSymbol.Double,
 			BooleanLiteralExpressionSyntax => TypeSymbol.Bool,
 			StringLiteralExpressionSyntax => TypeSymbol.String,
+			CharacterLiteralExpressionSyntax => TypeSymbol.Char,
 			MemberAccessExpressionSyntax m => CheckMemberAccessExpression(m, scope),
 			BorrowExpressionSyntax b => CheckBorrowExpression(b, scope),
 			StructInitializationExpressionSyntax s => CheckStructInitializationExpression(s, scope),

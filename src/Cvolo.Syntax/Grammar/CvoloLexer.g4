@@ -80,6 +80,7 @@ OR_ASSIGN: '|=';
 XOR_ASSIGN: '^=';
 
 // Literals
+CharLiteral: '\'' (EscapeSequence | ~['\\\r\n]) '\'';
 StringLiteral: '"' (EscapeSequence | ~["\\\r\n])* '"';
 fragment EscapeSequence: '\\' [0nrt"\\];
 IntegerLiteral: [0-9]+;

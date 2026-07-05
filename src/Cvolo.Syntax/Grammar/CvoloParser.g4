@@ -155,6 +155,7 @@ expression
 	| IntegerLiteral                                        							# integerLiteralExpression
 	| DoubleLiteral                                         							# doubleLiteralExpression
 	| StringLiteral                                         							# stringLiteralExpression
+	| CharLiteral																		# charLiteralExpression
 	| TRUE                                                  							# booleanLiteralExpression
 	| FALSE                                                 							# booleanLiteralExpression
 	| LPAREN expression RPAREN                              							# parenthesizedExpression

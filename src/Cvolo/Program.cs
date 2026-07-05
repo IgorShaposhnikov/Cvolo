@@ -97,7 +97,7 @@ foreach (var file in project.SourceFiles)
 binder.Bind(asts);
 
 // Verify that an executable project contains a valid main entry point before trying to link
-if (!project.IsShared && binder.Context.Globals.Lookup("main") is null)
+if (!project.IsShared && binder.Context.Globals.Lookup("main") is null && binder.Context.Globals.Lookup("Main") is null)
 {
 	Console.Error.WriteLine("Error CS5001: Program does not contain a static 'main' method suitable for an entry point");
 	return 1;

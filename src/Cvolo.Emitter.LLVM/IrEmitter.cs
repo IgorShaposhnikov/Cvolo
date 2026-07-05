@@ -1,3 +1,4 @@
+using System.Globalization;
 using Cvolo.Analysis;
 using Cvolo.Analysis.Symbols;
 using Cvolo.Analysis.Symbols.Base;
@@ -97,8 +98,9 @@ public sealed class IrEmitter : IEmitter
 			{
 				if (member is FunctionDeclarationSyntax func)
 				{
-					var mangledName = (string.IsNullOrEmpty(ns) || func.Name == "main") ? func.Name : $"{ns}.{func.Name}";
-					_astFunctions[mangledName] = func;
+					var mangledName = (string.IsNullOrEmpty(ns) || func.Name == "main" || func.Name == "Main") ? func.Name : $"{ns}.{func.Name}";
+                    if (mangledName == "Main") mangledName = "main";
+                    _astFunctions[mangledName] = func;
 					_functionReturnTypes[mangledName] = bindingContext.ResolveType(func.ReturnType)!;
 					_functionParameterTypes[mangledName] = func.Parameters
 						.Select(p => bindingContext.ResolveType(p.Type)!)
@@ -138,8 +140,9 @@ public sealed class IrEmitter : IEmitter
 			{
 				if (member is FunctionDeclarationSyntax func)
 				{
-					var mangledName = (string.IsNullOrEmpty(ns) || func.Name == "main") ? func.Name : $"{ns}.{func.Name}";
-					var funcWriter = new StringWriter();
+					var mangledName = (string.IsNullOrEmpty(ns) || func.Name == "main" || func.Name == "Main") ? func.Name : $"{ns}.{func.Name}";
+                    if (mangledName == "Main") mangledName = "main";
+                    var funcWriter = new StringWriter();
 					EmitFunction(func, mangledName, funcWriter);
 					_writer.Write(funcWriter.ToString());
 				}
@@ -435,9 +438,10 @@ public sealed class IrEmitter : IEmitter
 		return expr switch
 		{
 			IntegerLiteralExpressionSyntax n => ($"i32 {n.Value}", TypeSymbol.Int),
-			DoubleLiteralExpressionSyntax d => ($"double {d.Value}", TypeSymbol.Double),
+			DoubleLiteralExpressionSyntax d => ($"double {d.Value.ToString(CultureInfo.InvariantCulture)}", TypeSymbol.Double),
 			BooleanLiteralExpressionSyntax b => ($"i1 {(b.Value ? "1" : "0")}", TypeSymbol.Bool),
 			StringLiteralExpressionSyntax s => (AddString(s.Value), TypeSymbol.String),
+			CharacterLiteralExpressionSyntax c => ($"i8 {(int)c.Value}", TypeSymbol.Char),
 			IdentifierExpressionSyntax id => Load(id.Name, fw),
 			MemberAccessExpressionSyntax m => EmitMemberAccess(m, fw),
 			BorrowExpressionSyntax b => EmitBorrowExpression(b, fw),
@@ -464,7 +468,6 @@ public sealed class IrEmitter : IEmitter
 			var paramTy = GetParamType(mangledName, i);
 			if (paramTy is SliceTypeSymbol && valTy is ArrayTypeSymbol)
 			{
-				// Coercion: Pass the array POINTER instead of its loaded value!
 				if (call.Arguments[i] is IdentifierExpressionSyntax id && _locals.TryGetValue(id.Name, out var ptr))
 				{
 					val = CoerceArrayToSlice($"ptr %{ptr}", valTy as ArrayTypeSymbol, paramTy as SliceTypeSymbol, fw);
@@ -475,10 +478,39 @@ public sealed class IrEmitter : IEmitter
 				}
 			}
 
+			// PROMOTION FOR VARIADIC ARGUMENTS (C-ABI Promotion Rules)
+			var isVariadic = _astExterns.TryGetValue(mangledName, out var ext) && ext.IsVariadic;
+			if (isVariadic && i >= _functionParameterTypes[mangledName].Count)
+			{
+				if (valTy.Equals(TypeSymbol.Bool))
+				{
+					var promReg = NewLocal();
+					fw.WriteLine($"    %{promReg} = zext i1 {V(val)} to i32");
+					val = $"i32 %{promReg}";
+				}
+				else if (valTy.Equals(TypeSymbol.Char))
+				{
+					var promReg = NewLocal();
+					fw.WriteLine($"    %{promReg} = zext i8 {V(val)} to i32");
+					val = $"i32 %{promReg}";
+				}
+			}
+
 			args.Add(val);
 		}
 
-		fw.WriteLine($"    call void @{mangledName}({string.Join(", ", args)})");
+		var isCallVariadic = _astExterns.TryGetValue(mangledName, out var externDecl) && externDecl.IsVariadic;
+		var retType = _functionReturnTypes.TryGetValue(mangledName, out var foundRet) ? foundRet : TypeSymbol.Int;
+		var ret = Type(retType);
+
+		var callee = $"@{mangledName}";
+		if (isCallVariadic)
+		{
+			var paramTys = string.Join(", ", _functionParameterTypes[mangledName].Select(Type));
+			callee = $"({paramTys}, ...) @{mangledName}"; // <-- Removed ret from here
+		}
+
+		fw.WriteLine($"    call {ret} {callee}({string.Join(", ", args)})");
 	}
 
 	private (string val, TypeSymbol ty) EmitCallExpr(CallExpressionSyntax call, StringWriter fw)
@@ -492,7 +524,6 @@ public sealed class IrEmitter : IEmitter
 			var paramTy = GetParamType(mangledName, i);
 			if (paramTy is SliceTypeSymbol && valTy is ArrayTypeSymbol)
 			{
-				// Coercion: Pass the array POINTER instead of its loaded value!
 				if (call.Arguments[i] is IdentifierExpressionSyntax id && _locals.TryGetValue(id.Name, out var ptr))
 				{
 					val = CoerceArrayToSlice($"ptr %{ptr}", valTy as ArrayTypeSymbol, paramTy as SliceTypeSymbol, fw);
@@ -502,14 +533,41 @@ public sealed class IrEmitter : IEmitter
 					val = CoerceArrayToSlice(val, valTy as ArrayTypeSymbol, paramTy as SliceTypeSymbol, fw);
 				}
 			}
+
+			// PROMOTION FOR VARIADIC ARGUMENTS (C-ABI Promotion Rules)
+			var isVariadic = _astExterns.TryGetValue(mangledName, out var ext) && ext.IsVariadic;
+			if (isVariadic && i >= _functionParameterTypes[mangledName].Count)
+			{
+				if (valTy.Equals(TypeSymbol.Bool))
+				{
+					var promReg = NewLocal();
+					fw.WriteLine($"    %{promReg} = zext i1 {V(val)} to i32");
+					val = $"i32 %{promReg}";
+				}
+				else if (valTy.Equals(TypeSymbol.Char))
+				{
+					var promReg = NewLocal();
+					fw.WriteLine($"    %{promReg} = zext i8 {V(val)} to i32");
+					val = $"i32 %{promReg}";
+				}
+			}
+
 			args.Add(val);
 		}
 
-		var r = NewLocal();
+		var isCallVariadic = _astExterns.TryGetValue(mangledName, out var externDecl) && externDecl.IsVariadic;
 		var retTypeSymbol = _functionReturnTypes.TryGetValue(mangledName, out var ret) ? ret : TypeSymbol.Int;
 		var ty = Type(retTypeSymbol);
 
-		fw.WriteLine($"    %{r} = call {ty} @{mangledName}({string.Join(", ", args)})");
+		var callee = $"@{mangledName}";
+		if (isCallVariadic)
+		{
+			var paramTys = string.Join(", ", _functionParameterTypes[mangledName].Select(Type));
+			callee = $"({paramTys}, ...) @{mangledName}"; // <-- Removed ty from here
+		}
+
+		var r = NewLocal();
+		fw.WriteLine($"    %{r} = call {ty} {callee}({string.Join(", ", args)})");
 		return ($"{ty} %{r}", retTypeSymbol);
 	}
 
@@ -1046,32 +1104,6 @@ public sealed class IrEmitter : IEmitter
 		return TypeSymbol.Int;
 	}
 
-	private string ResolveStructName(string name, CompilationUnitSyntax activeUnit)
-	{
-		if (string.IsNullOrEmpty(name)) return "int";
-
-		// 1. If it's a primitive or already mangled, return as is
-		if (TypeSymbol.FromName(name) != null || _astStructs.ContainsKey(name)) return name;
-
-		// 2. Try current namespace
-		var currentNamespace = activeUnit.NamespaceDeclaration?.Name;
-		var localMangled = string.IsNullOrEmpty(currentNamespace) ? name : $"{currentNamespace}.{name}";
-		if (_astStructs.ContainsKey(localMangled)) return localMangled;
-
-		// 3. Try imported namespaces
-		var activeUsings = new List<string>(activeUnit.Usings.Select(u => u.NamespaceName));
-		if (activeUnit.NamespaceDeclaration is not null)
-			activeUsings.AddRange(activeUnit.NamespaceDeclaration.Usings.Select(u => u.NamespaceName));
-
-		foreach (var ns in activeUsings)
-		{
-			var candidateMangled = $"{ns}.{name}";
-			if (_astStructs.ContainsKey(candidateMangled)) return candidateMangled;
-		}
-
-		return name;
-	}
-
 	private (string val, TypeSymbol ty) EmitTernaryExpression(TernaryExpressionSyntax expr, StringWriter fw)
 	{
 		var (cond, _) = Eval(expr.Condition, fw);
@@ -1106,7 +1138,7 @@ public sealed class IrEmitter : IEmitter
 
 	private string ResolveFunctionName(string name, CompilationUnitSyntax activeUnit)
 	{
-		if (name == "main") return "main";
+		if (name == "main" || name == "Main") return "main";
 
 		// 1. Is it already a full name or an extern?
 		if (_astFunctions.ContainsKey(name) || _astExterns.ContainsKey(name)) return name;
@@ -1129,13 +1161,5 @@ public sealed class IrEmitter : IEmitter
 		}
 
 		return name;
-	}
-
-	private string StripRefPrefix(string typeName)
-	{
-		if (string.IsNullOrEmpty(typeName)) return "int";
-		if (typeName.StartsWith("refvar ")) return typeName.Substring(7);
-		if (typeName.StartsWith("ref ")) return typeName.Substring(4);
-		return typeName;
 	}
 }

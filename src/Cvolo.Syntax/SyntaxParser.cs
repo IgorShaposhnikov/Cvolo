@@ -183,6 +183,26 @@ public sealed class SyntaxParser
 					var value = DecodeString(raw);
 					return new StringLiteralExpressionSyntax(SpanOf(strCtx), value);
 				}
+			case CvoloParser.CharLiteralExpressionContext charCtx:
+				{
+					var text = charCtx.CharLiteral().GetText();
+					var val = text[1..^1]; // Strip single quotes
+					if (val.StartsWith("\\"))
+					{
+						val = val switch
+						{
+							"\\n" => "\n",
+							"\\t" => "\t",
+							"\\r" => "\r",
+							"\\'" => "'",
+							"\\\\" => "\\",
+							"\\0" => "\0",
+							_ => val[1..]
+						};
+					}
+
+					return new CharacterLiteralExpressionSyntax(SpanOf(charCtx), val[0]);
+				}
 
 			case CvoloParser.IntegerLiteralExpressionContext intCtx:
 				return new IntegerLiteralExpressionSyntax(SpanOf(intCtx), int.Parse(intCtx.IntegerLiteral().GetText(), CultureInfo.InvariantCulture));

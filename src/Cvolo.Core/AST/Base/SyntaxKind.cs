@@ -11,6 +11,7 @@ public enum SyntaxKind
 	ExpressionStatement,
 	CallExpression,
 	StringLiteralExpression,
+	CharLiteralExpression,
 	IntegerLiteralExpression,
 	IdentifierExpression,
 	VariableDeclaration,
