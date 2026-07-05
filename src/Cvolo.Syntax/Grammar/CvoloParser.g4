@@ -123,9 +123,9 @@ forStatement
 	;
 
 expression
-	: REF expression                                        							# borrowExpression
-	| expression DOT Identifier                             							# memberAccessExpression
+	: expression DOT Identifier                             							# memberAccessExpression
 	| expression LBRACK expression RBRACK												# indexExpression
+	| REF expression                                        							# borrowExpression
 	| expression INC                                        							# postfixIncrementExpression
 	| expression DEC                                        							# postfixDecrementExpression
 	| LPAREN type RPAREN expression                         							# castExpression

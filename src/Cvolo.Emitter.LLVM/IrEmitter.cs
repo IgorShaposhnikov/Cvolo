@@ -1,4 +1,5 @@
 using Cvolo.Analysis.Symbols;
+using Cvolo.Analysis.Symbols.Base;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
 using Cvolo.Core.AST.Expressions;
@@ -24,6 +25,7 @@ public sealed class IrEmitter : IEmitter
 	private CompilationContext? _context;
 	private string? _currentNamespace;
 	private CompilationUnitSyntax? _currentUnit;
+	private readonly Dictionary<string, List<string>> _functionParameterTypes = [];
 
 	public string Emit(IReadOnlyList<CompilationUnitSyntax> units, CompilationContext context)
 	{
@@ -36,68 +38,96 @@ public sealed class IrEmitter : IEmitter
 		_writer.WriteLine("declare i32 @puts(ptr)");
 		_writer.WriteLine("declare void @exit(i32)");
 
-		// First pass: register all struct types
+		// Pass 1: Register all struct NAMES (so they exist in the dictionary)
 		foreach (var unit in units)
 		{
-			_currentNamespace = unit.NamespaceDeclaration?.Name;
-			var members = _currentNamespace != null ? unit.NamespaceDeclaration!.Members : unit.Members;
+			var ns = unit.NamespaceDeclaration?.Name;
+			var members = ns != null ? unit.NamespaceDeclaration!.Members : unit.Members;
+			foreach (var member in members)
+			{
+				if (member is StructDeclarationSyntax structDecl)
+				{
+					// Ensure we use the exact same mangling as the logic above
+					var mangledName = string.IsNullOrEmpty(ns) ? structDecl.Name : $"{ns}.{structDecl.Name}";
+					_astStructs[mangledName] = structDecl;
+				}
+			}
+		}
+
+		// Pass 2: Generate struct LAYOUTS (now that all names are known, we can resolve fields)
+		foreach (var unit in units)
+		{
+			_currentUnit = unit;
+			var ns = unit.NamespaceDeclaration?.Name;
+			var members = ns != null ? unit.NamespaceDeclaration!.Members : unit.Members;
 
 			foreach (var member in members)
 			{
 				if (member is StructDeclarationSyntax structDecl)
 				{
-					var mangledName = string.IsNullOrEmpty(_currentNamespace) ? structDecl.Name : $"{_currentNamespace}.{structDecl.Name}";
-					_astStructs[mangledName] = structDecl;
-					var fieldTypes = string.Join(", ", structDecl.Fields.Select(f => Type(f.Type)));
+					var mangledName = string.IsNullOrEmpty(ns) ? structDecl.Name : $"{ns}.{structDecl.Name}";
+					// Resolve each field type to its fully qualified name
+					var fieldTypes = string.Join(", ", structDecl.Fields.Select(f =>
+						Type(ResolveStructName(f.Type, unit))));
 					_writer.WriteLine($"%struct.{mangledName} = type {{ {fieldTypes} }}");
 				}
 			}
 		}
 
-		if (_astStructs.Count > 0)
-			_writer.WriteLine();
+		if (_astStructs.Count > 0) _writer.WriteLine();
 
-		// Second pass: register all functions and extern declarations
+		// Pass 3: Register all function Metadata(AST, Return Types, and Params)
 		foreach (var unit in units)
 		{
 			_currentUnit = unit;
-			_currentNamespace = unit.NamespaceDeclaration?.Name;
-			var members = _currentNamespace != null ? unit.NamespaceDeclaration!.Members : unit.Members;
+			var ns = unit.NamespaceDeclaration?.Name;
+			var members = ns != null ? unit.NamespaceDeclaration!.Members : unit.Members;
 
 			foreach (var member in members)
 			{
 				if (member is FunctionDeclarationSyntax func)
 				{
-					var mangledName = string.IsNullOrEmpty(_currentNamespace) ? func.Name : $"{_currentNamespace}.{func.Name}";
+					var mangledName = string.IsNullOrEmpty(ns) ? func.Name : $"{ns}.{func.Name}";
+
+					// CRITICAL: Register the AST under the mangled name so the Resolver can find it!
 					_astFunctions[mangledName] = func;
 					_functionReturnTypes[mangledName] = func.ReturnType;
+					_functionParameterTypes[mangledName] = func.Parameters
+						.Select(p => ResolveStructName(p.Type, unit))
+						.ToList();
 				}
 				else if (member is ExternDeclarationSyntax ext)
 				{
-					_astExterns[ext.Name] = ext;
 					_functionReturnTypes[ext.Name] = ext.ReturnType;
+					_functionParameterTypes[ext.Name] = ext.Parameters.Select(p => p.Type).ToList();
 				}
 			}
 		}
 
-		// Emit externs
-		foreach (var ext in _astExterns.Values)
-		{
-			EmitExtern(ext);
-		}
-
-		// Emit user-defined functions
+		// Pass 4: Emit Externs
 		foreach (var unit in units)
 		{
-			_currentNamespace = unit.NamespaceDeclaration?.Name;
-			var members = _currentNamespace != null ? unit.NamespaceDeclaration!.Members : unit.Members;
+			_currentUnit = unit;
+			var ns = unit.NamespaceDeclaration?.Name;
+			var members = ns != null ? unit.NamespaceDeclaration!.Members : unit.Members;
+			foreach (var member in members)
+				if (member is ExternDeclarationSyntax ext) EmitExtern(ext);
+		}
+
+		// Pass 5: Emit Function Bodies
+		foreach (var unit in units)
+		{
+			_currentUnit = unit;
+			var ns = unit.NamespaceDeclaration?.Name;
+			var members = ns != null ? unit.NamespaceDeclaration!.Members : unit.Members;
 
 			foreach (var member in members)
 			{
 				if (member is FunctionDeclarationSyntax func)
 				{
+					var mangledName = string.IsNullOrEmpty(ns) ? func.Name : $"{ns}.{func.Name}";
 					var funcWriter = new StringWriter();
-					EmitFunction(func, funcWriter);
+					EmitFunction(func, mangledName, funcWriter);
 					_writer.Write(funcWriter.ToString());
 				}
 			}
@@ -106,8 +136,7 @@ public sealed class IrEmitter : IEmitter
 		if (_stringDefs.Count > 0)
 		{
 			_writer.WriteLine();
-			foreach (var def in _stringDefs)
-				_writer.WriteLine(def);
+			foreach (var def in _stringDefs) _writer.WriteLine(def);
 		}
 
 		return _writer.ToString();
@@ -122,26 +151,34 @@ public sealed class IrEmitter : IEmitter
 		_writer.WriteLine();
 	}
 
-	private void EmitFunction(FunctionDeclarationSyntax func, StringWriter fw)
+	private void EmitFunction(FunctionDeclarationSyntax func, string mangledName, StringWriter fw)
 	{
 		_labelCounter = 0;
 		_localCounter = 0;
 		_locals.Clear();
 
-		var ret = Type(func.ReturnType);
-		var parms = string.Join(", ", func.Parameters.Select(p => $"{Type(p.Type)} %{p.Name}"));
-		fw.Write($"define {ret} @{func.Name}({parms})");
-		fw.WriteLine(" {");
+		var ret = Type(ResolveStructName(func.ReturnType, _currentUnit!));
+
+		// Generate the parameter list for the header
+		var parmTypes = func.Parameters.Select(p => Type(ResolveStructName(p.Type, _currentUnit!))).ToList();
+		var parmStrings = parmTypes.Zip(func.Parameters, (ty, p) => $"{ty} %{p.Name}");
+
+		fw.WriteLine($"define {ret} @{mangledName}({string.Join(", ", parmStrings)}) {{");
 		fw.WriteLine("  entry:");
 
-		foreach (var p in func.Parameters)
+		for (int i = 0; i < func.Parameters.Count; i++)
 		{
+			var p = func.Parameters[i];
 			var ptr = NewLocal();
 			_locals[p.Name] = ptr;
-			// Track parameter types dynamically
-			_variableTypes[p.Name] = p.Type;
-			fw.WriteLine($"    %{ptr} = alloca {Type(p.Type)}");
-			fw.WriteLine($"    store {Type(p.Type)} %{p.Name}, ptr %{ptr}");
+
+			// IMPORTANT: Use the same resolved type we used for the header!
+			var mangledParamType = ResolveStructName(p.Type, _currentUnit!);
+			_variableTypes[p.Name] = mangledParamType;
+
+			var llvmTy = parmTypes[i]; // Use the pre-calculated type
+			fw.WriteLine($"    %{ptr} = alloca {llvmTy}");
+			fw.WriteLine($"    store {llvmTy} %{p.Name}, ptr %{ptr}");
 		}
 
 		EmitBlock(func.Body, fw);
@@ -200,13 +237,15 @@ public sealed class IrEmitter : IEmitter
 		else
 		{
 			var (v, ty) = Eval(r.Expression, fw);
+			var mangledTy = ResolveStructName(ty, _currentUnit!);
 
-			if (v.StartsWith("ptr ") && _astStructs.ContainsKey(ty))
+			// Use mangledTy to check against _astStructs
+			if (v.StartsWith("ptr ") && _astStructs.ContainsKey(mangledTy))
 			{
 				var valReg = NewLocal();
 				var rawPtrReg = v.Split(' ')[^1];
-				fw.WriteLine($"    %{valReg} = load %struct.{ty}, ptr {rawPtrReg}");
-				fw.WriteLine($"    ret %struct.{ty} %{valReg}");
+				fw.WriteLine($"    %{valReg} = load %struct.{mangledTy}, ptr {rawPtrReg}");
+				fw.WriteLine($"    ret %struct.{mangledTy} %{valReg}");
 			}
 			else
 			{
@@ -296,35 +335,26 @@ public sealed class IrEmitter : IEmitter
 			if (v.Initializer is null)
 				throw new InvalidOperationException($"Type inference requires an initializer for variable '{v.Name}'");
 
-			if (v.Initializer is ArrayInitializationExpressionSyntax arrInitInf)
-			{
-				var (_, elementTy) = Eval(arrInitInf.Elements[0], fw);
-				var inferredType = $"{elementTy}[{arrInitInf.Elements.Count}]";
-
-				var ptr = NewLocal();
-				_locals[v.Name] = ptr;
-				_variableTypes[v.Name] = inferredType;
-
-				fw.WriteLine($"    %{ptr} = alloca {Type(inferredType)}");
-				EmitArrayInitializationInPlace(arrInitInf, ptr, inferredType, fw);
-				return;
-			}
-
+			// 1. Evaluate the initializer to get the register and the type
 			var (val, valTy) = Eval(v.Initializer, fw);
+
+			// 2. Resolve the mangled name immediately
+			var mangledValTy = ResolveStructName(valTy, _currentUnit!);
 
 			if (val.StartsWith("ptr "))
 			{
+				// Register Forwarding: The initializer already allocated the struct.
 				var valReg = val.Split(' ')[^1].TrimStart('%');
 				_locals[v.Name] = valReg;
-				_variableTypes[v.Name] = valTy;
+				_variableTypes[v.Name] = mangledValTy;
 			}
 			else
 			{
 				var ptr = NewLocal();
 				_locals[v.Name] = ptr;
-				_variableTypes[v.Name] = valTy;
+				_variableTypes[v.Name] = mangledValTy;
 
-				var ty = Type(valTy);
+				var ty = Type(mangledValTy);
 				fw.WriteLine($"    %{ptr} = alloca {ty}");
 				fw.WriteLine($"    store {val}, ptr %{ptr}");
 			}
@@ -417,54 +447,45 @@ public sealed class IrEmitter : IEmitter
 
 	private void EmitCall(CallExpressionSyntax call, StringWriter fw)
 	{
+		var mangledName = ResolveFunctionName(call.FunctionName, _currentUnit!);
 		List<string> args = [];
 
 		for (var i = 0; i < call.Arguments.Count; i++)
 		{
 			var (val, valTy) = Eval(call.Arguments[i], fw);
-			var paramTy = GetParamType(call.FunctionName, i);
-
-			// If the parameter expects a slice but we are passing an array, perform coercion
+			var paramTy = GetParamType(mangledName, i);
 			if (paramTy.Contains("[]") && valTy.Contains('['))
-			{
-				var coerced = CoerceArrayToSlice(val, valTy, paramTy, fw);
-				args.Add(coerced);
-			}
-			else
-			{
-				args.Add(val);
-			}
+				val = CoerceArrayToSlice(val, valTy, paramTy, fw);
+			args.Add(val);
 		}
 
-		fw.WriteLine($"    call void @{call.FunctionName}({string.Join(", ", args)})");
+		fw.WriteLine($"    call void @{mangledName}({string.Join(", ", args)})");
 	}
+
 
 	private (string val, string ty) EmitCallExpr(CallExpressionSyntax call, StringWriter fw)
 	{
-		List<string> args = []; // C# 12 Collection Expression []
+		var mangledName = ResolveFunctionName(call.FunctionName, _currentUnit!);
+		List<string> args = [];
 
 		for (var i = 0; i < call.Arguments.Count; i++)
 		{
 			var (val, valTy) = Eval(call.Arguments[i], fw);
-			var paramTy = GetParamType(call.FunctionName, i);
-
+			var paramTy = GetParamType(mangledName, i);
 			if (paramTy.Contains("[]") && valTy.Contains("["))
-			{
-				var coerced = CoerceArrayToSlice(val, valTy, paramTy, fw);
-				args.Add(coerced);
-			}
-			else
-			{
-				args.Add(val);
-			}
+				val = CoerceArrayToSlice(val, valTy, paramTy, fw);
+			args.Add(val);
 		}
 
 		var r = NewLocal();
-		var retTypeName = _functionReturnTypes.TryGetValue(call.FunctionName, out var ret) ? ret : "int";
-		var ty = Type(retTypeName);
+		var retTypeName = _functionReturnTypes.TryGetValue(mangledName, out var ret) ? ret : "int";
 
-		fw.WriteLine($"    %{r} = call {ty} @{call.FunctionName}({string.Join(", ", args)})");
-		return ($"{ty} %{r}", retTypeName);
+		// Mangle the return type so Type() finds the struct layout
+		var resolvedRetType = ResolveStructName(retTypeName, _currentUnit!);
+		var ty = Type(resolvedRetType);
+
+		fw.WriteLine($"    %{r} = call {ty} @{mangledName}({string.Join(", ", args)})");
+		return ($"{ty} %{r}", resolvedRetType);
 	}
 
 	private (string val, string ty) EmitBin(BinaryExpressionSyntax bin, StringWriter fw)
@@ -519,21 +540,21 @@ public sealed class IrEmitter : IEmitter
 
 	private void EmitStore(BinaryExpressionSyntax assign, StringWriter fw)
 	{
+		var (r, rTy) = Eval(assign.Right, fw);
+		var llvmTy = Type(rTy); // Correctly resolves to %struct...
+
 		if (assign.Left is IdentifierExpressionSyntax id && _locals.TryGetValue(id.Name, out var ptr))
 		{
-			var (r, _) = Eval(assign.Right, fw);
-			fw.WriteLine($"    store {r}, ptr %{ptr}");
+			fw.WriteLine($"    store {llvmTy} {V(r)}, ptr %{ptr}");
 		}
 		else if (assign.Left is MemberAccessExpressionSyntax m)
 		{
 			var (fieldPtr, _) = GetFieldPointer(m, fw);
-			var (r, _) = Eval(assign.Right, fw);
-			fw.WriteLine($"    store {r}, ptr %{fieldPtr}");
+			fw.WriteLine($"    store {llvmTy} {V(r)}, ptr %{fieldPtr}");
 		}
 		else if (assign.Left is IndexExpressionSyntax idx)
 		{
 			var (elementPtr, _) = GetFieldPointer(idx, fw);
-			var (r, _) = Eval(assign.Right, fw);
 			fw.WriteLine($"    store {r}, ptr %{elementPtr}");
 		}
 	}
@@ -600,14 +621,15 @@ public sealed class IrEmitter : IEmitter
 
 	private string Type(string t)
 	{
-		if (t.StartsWith("ref ") || t.StartsWith("refvar "))
-			return "ptr";
+		if (string.IsNullOrEmpty(t)) return "i32";
 
-		// 1. Dynamic Slice Types (e.g. "int[]" or "refvar int[]" which was unpacked)
-		if (t.EndsWith("[]"))
-			return "{ ptr, i32 }";
+		// 1. Handle References
+		if (t.StartsWith("ref ") || t.StartsWith("refvar ")) return "ptr";
 
-		// 2. Static Array Types (e.g. "int[5]")
+		// 2. Handle Slices
+		if (t.EndsWith("[]")) return "{ ptr, i32 }";
+
+		// 3. Handle Static Arrays
 		if (t.Contains('['))
 		{
 			var openBracket = t.LastIndexOf('[');
@@ -616,7 +638,11 @@ public sealed class IrEmitter : IEmitter
 			return $"[{size} x {Type(inner)}]";
 		}
 
-		return t switch
+		// 4. Try direct lookup (already mangled)
+		if (_astStructs.ContainsKey(t)) return $"%struct.{t}";
+
+		// 5. Try primitive lookup
+		var primitive = t switch
 		{
 			"void" => "void",
 			"int" or "Int32" => "i32",
@@ -624,8 +650,15 @@ public sealed class IrEmitter : IEmitter
 			"bool" or "Boolean" => "i1",
 			"string" or "String" or "ptr" => "ptr",
 			"char" or "Char" => "i8",
-			_ => _astStructs.ContainsKey(t) ? $"%struct.{t}" : "i32",
+			_ => null
 		};
+		if (primitive != null) return primitive;
+
+		// 6. Last Resort: Try to resolve the struct name from context
+		var resolved = ResolveStructName(t, _currentUnit!);
+		if (_astStructs.ContainsKey(resolved)) return $"%struct.{resolved}";
+
+		return "i32";
 	}
 
 	private static string V(string typed) => typed.Split(' ')[^1];
@@ -639,10 +672,14 @@ public sealed class IrEmitter : IEmitter
 	private (string val, string ty) EmitMemberAccess(MemberAccessExpressionSyntax m, StringWriter fw)
 	{
 		var (fieldPtr, fieldTypeName) = GetFieldPointer(m, fw);
+
+		// Ensure the field type name is mangled (e.g., Vector2 -> App.Math.Vector2)
+		var mangledFieldType = ResolveStructName(fieldTypeName, _currentUnit!);
+
 		var loadedReg = NewLocal();
-		var fTy = Type(fieldTypeName);
+		var fTy = Type(mangledFieldType);
 		fw.WriteLine($"    %{loadedReg} = load {fTy}, ptr %{fieldPtr}");
-		return ($"{fTy} %{loadedReg}", fTy);
+		return ($"{fTy} %{loadedReg}", mangledFieldType);
 	}
 
 	private (string ptr, string typeName) GetFieldPointer(ExpressionSyntax expr, StringWriter fw)
@@ -654,25 +691,21 @@ public sealed class IrEmitter : IEmitter
 
 			var typeName = _variableTypes[id.Name];
 
-			// If the variable is a reference OR a heap-allocated owner, 
-			// we must load the pointer from the stack first.
-			if (typeName.StartsWith("ref ") || typeName.StartsWith("refvar ") || _heapAllocatedVars.Contains(id.Name))
+			// Only load the pointer if the variable is an actual reference (borrow) or heap owner.
+			// Standard local structs (even inferred ones) should NOT be loaded.
+			var isReference = typeName.StartsWith("ref ") || typeName.StartsWith("refvar ");
+			var isHeap = _heapAllocatedVars.Contains(id.Name);
+
+			if (isReference || isHeap)
 			{
 				var actualPtr = NewLocal();
 				fw.WriteLine($"    %{actualPtr} = load ptr, ptr %{structPtr}");
-
-				// Clean up the type name for field lookup
-				var innerType = typeName.StartsWith("refvar ") ? typeName.Substring(7) :
-							   typeName.StartsWith("ref ") ? typeName.Substring(4) : typeName;
-
-				// Resolve namespaced type name
-				innerType = ResolveStructName(innerType, _currentUnit!);
-				return (actualPtr, innerType);
+				var innerType = StripRefPrefix(typeName);
+				return (actualPtr, ResolveStructName(innerType, _currentUnit!));
 			}
 
-			// Resolve namespaced type name
-			var resolvedTypeName = ResolveStructName(typeName, _currentUnit!);
-			return (structPtr, resolvedTypeName);
+			// Return the stack address directly for standard variables
+			return (structPtr, ResolveStructName(StripRefPrefix(typeName), _currentUnit!));
 		}
 		else if (expr is MemberAccessExpressionSyntax m)
 		{
@@ -795,6 +828,12 @@ public sealed class IrEmitter : IEmitter
 				return (arrayElementPtrReg, innerTypeName);
 			}
 		}
+		else if (expr is BorrowExpressionSyntax b)
+		{
+			// If we hit a borrow while looking for a pointer, just evaluate it
+			var (val, ty) = Eval(b, fw);
+			return (val.Split(' ')[^1].TrimStart('%'), ty);
+		}
 
 		throw new InvalidOperationException("Unsupported field pointer expression");
 	}
@@ -850,9 +889,9 @@ public sealed class IrEmitter : IEmitter
 		if (expr.Expression is IdentifierExpressionSyntax id && _locals.TryGetValue(id.Name, out var ptr))
 		{
 			var typeName = _variableTypes[id.Name];
+			bool isRef = typeName.StartsWith("ref ") || typeName.StartsWith("refvar ");
 
-			// If the variable is already a reference, load and return its pointer value
-			if (typeName.StartsWith("ref ") || typeName.StartsWith("refvar "))
+			if (isRef)
 			{
 				var actualPtr = NewLocal();
 				fw.WriteLine($"    %{actualPtr} = load ptr, ptr %{ptr}");
@@ -1017,25 +1056,29 @@ public sealed class IrEmitter : IEmitter
 		return $"ptr %{slicePtr}";
 	}
 
-	private string GetParamType(string funcName, int index)
+	private string GetParamType(string mangledFuncName, int index)
 	{
-		if (_astFunctions.TryGetValue(funcName, out var func) && index < func.Parameters.Count)
-			return func.Parameters[index].Type;
-
-		if (_astExterns.TryGetValue(funcName, out var ext) && index < ext.Parameters.Count)
-			return ext.Parameters[index].Type;
+		if (_functionParameterTypes.TryGetValue(mangledFuncName, out var paramTypes) && index < paramTypes.Count)
+		{
+			return paramTypes[index];
+		}
 
 		return "int";
 	}
 
 	private string ResolveStructName(string name, CompilationUnitSyntax activeUnit)
 	{
-		if (_astStructs.ContainsKey(name)) return name;
+		if (string.IsNullOrEmpty(name)) return "int";
 
+		// 1. If it's a primitive or already mangled, return as is
+		if (TypeSymbol.FromName(name) != null || _astStructs.ContainsKey(name)) return name;
+
+		// 2. Try current namespace
 		var currentNamespace = activeUnit.NamespaceDeclaration?.Name;
 		var localMangled = string.IsNullOrEmpty(currentNamespace) ? name : $"{currentNamespace}.{name}";
 		if (_astStructs.ContainsKey(localMangled)) return localMangled;
 
+		// 3. Try imported namespaces
 		var activeUsings = new List<string>(activeUnit.Usings.Select(u => u.NamespaceName));
 		if (activeUnit.NamespaceDeclaration is not null)
 			activeUsings.AddRange(activeUnit.NamespaceDeclaration.Usings.Select(u => u.NamespaceName));
@@ -1087,5 +1130,38 @@ public sealed class IrEmitter : IEmitter
 		fw.WriteLine($"    %{loadedReg} = load {llvmTy}, ptr %{resultPtr}");
 
 		return ($"{llvmTy} %{loadedReg}", thenTyName);
+	}
+
+	private string ResolveFunctionName(string name, CompilationUnitSyntax activeUnit)
+	{
+		// 1. Is it already a full name or an extern?
+		if (_astFunctions.ContainsKey(name) || _astExterns.ContainsKey(name)) return name;
+
+		// 2. Try the current namespace
+		var ns = activeUnit.NamespaceDeclaration?.Name;
+		var localMangled = string.IsNullOrEmpty(ns) ? name : $"{ns}.{name}";
+		if (_astFunctions.ContainsKey(localMangled)) return localMangled;
+
+		// 3. Try lookup across all active 'using' namespaces in this file
+		var activeUsings = new List<string>(activeUnit.Usings.Select(u => u.NamespaceName));
+		if (activeUnit.NamespaceDeclaration is not null)
+			activeUsings.AddRange(activeUnit.NamespaceDeclaration.Usings.Select(u => u.NamespaceName));
+
+		foreach (var importNs in activeUsings)
+		{
+			var candidateMangled = $"{importNs}.{name}";
+			if (_astFunctions.ContainsKey(candidateMangled))
+				return candidateMangled;
+		}
+
+		return name;
+	}
+
+	private string StripRefPrefix(string typeName)
+	{
+		if (string.IsNullOrEmpty(typeName)) return "int";
+		if (typeName.StartsWith("refvar ")) return typeName.Substring(7);
+		if (typeName.StartsWith("ref ")) return typeName.Substring(4);
+		return typeName;
 	}
 }
