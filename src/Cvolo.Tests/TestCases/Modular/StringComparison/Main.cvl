@@ -1,0 +1,17 @@
+using Lib;
+
+extern void printf(string f, ...);
+
+int Main() {
+    string local = "Cvolo";
+    string remote = GetProjectName();
+
+    // If pointers match, it prints MATCH. 
+    // Currently, IrEmitter doesn't deduplicate strings globally, so this will likely print MISMATCH.
+    if (local == remote) {
+        printf("RESULT:MATCH");
+    } else {
+        printf("RESULT:MISMATCH");
+    }
+    return 0;
+}

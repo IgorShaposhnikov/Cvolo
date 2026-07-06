@@ -1,0 +1,5 @@
+namespace Lib;
+
+string GetProjectName() {
+    return "Cvolo";
+}

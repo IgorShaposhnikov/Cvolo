@@ -1,0 +1,69 @@
+namespace BankSystem.Core;
+
+using BankSystem.IO;
+
+// ============ TRANSACTION OPERATIONS ============
+
+void AddTransaction<T>(
+    refvar Account<T> account, 
+    T amount, 
+    string description, 
+    bool isDeposit
+) {
+    // Validate transaction
+    if (account.TransactionCount >= 100) {
+        PrintError("Transaction history full!");
+        return;
+    }
+
+    // Check if sufficient balance for withdrawal
+    if (!isDeposit && amount > account.Balance) {
+        PrintError("Insufficient balance!");
+        printf("  Balance: ");
+        PrintValue<T>(account.Balance);
+        printf("\n  Requested: ");
+        PrintValue<T>(amount);
+        printf("\n");
+        return;
+    }
+
+    // Create transaction
+    var Transaction<T> tx;
+    tx.Amount = amount;
+    tx.Currency = account.Currency;
+    tx.Description = description;
+    tx.Timestamp = 20260706; // Simplified timestamp
+    tx.IsCompleted = false;
+
+    // Add to history
+    account.History[account.TransactionCount] = tx;
+    account.TransactionCount = account.TransactionCount + 1;
+
+    // Update balance
+    if (isDeposit) {
+        account.Balance = account.Balance + amount;
+    } else {
+        account.Balance = account.Balance - amount;
+    }
+
+    // Mark as completed
+    account.History[account.TransactionCount - 1].IsCompleted = true;
+}
+
+Transaction<T> GetLastTransaction<T>(ref Account<T> account) {
+    if (account.TransactionCount == 0) {
+        // Return default transaction
+        var Transaction<T> emptyTx;
+        emptyTx.Amount = 0;
+        emptyTx.Currency = "";
+        emptyTx.Description = "No transactions";
+        emptyTx.Timestamp = 0;
+        emptyTx.IsCompleted = false;
+        return emptyTx;
+    }
+    return account.History[account.TransactionCount - 1];
+}
+
+int GetTransactionCount<T>(ref Account<T> account) {
+    return account.TransactionCount;
+}

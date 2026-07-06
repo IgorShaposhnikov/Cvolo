@@ -1,0 +1,124 @@
+namespace BankSystem;
+
+using BankSystem.Core;
+using BankSystem.Banking;
+using BankSystem.IO;
+
+// ============ MAIN PROGRAM ============
+
+int Main() {
+	SetConsoleOutputCP(65001);
+    PrintHeader("Cvolo Bank System v1.0");
+    printf("\n");
+
+    // 1. Create accounts with different types
+    var Account<double> savingsAccount = CreateAccount<double>(
+        1500.50, 
+        "USD", 
+        "Alice Johnson"
+    );
+
+    var Account<double> checkingAccount = CreateAccount<double>(
+        250.75, 
+        "USD", 
+        "Bob Smith"
+    );
+
+    var Account<int> cryptoAccount = CreateAccount<int>(
+        5000, 
+        "BTC", 
+        "Charlie Crypto"
+    );
+
+    // 2. Display initial state
+    PrintAccountInfo<double>(ref savingsAccount);
+    PrintAccountInfo<double>(ref checkingAccount);
+    PrintAccountInfo<int>(ref cryptoAccount);
+
+    // 3. Perform transactions
+    printf("--- PROCESSING TRANSACTIONS ---\n");
+    
+    // Deposit to savings
+    Deposit<double>(ref savingsAccount, 500.00, "Salary deposit");
+    
+    // Withdraw from savings
+    Withdraw<double>(ref savingsAccount, 200.00, "ATM withdrawal");
+    
+    // Transfer between accounts
+    printf("\n--- TRANSFER FUNDS ---\n");
+    TransferFunds<double>(
+        ref savingsAccount,
+        ref checkingAccount,
+        300.00,
+        "Transfer to checking"
+    );
+    
+    // Invalid transaction (insufficient funds)
+    printf("\n--- TESTING ERROR HANDLING ---\n");
+    Withdraw<double>(ref checkingAccount, 1000.00, "Attempt to overdraw");
+    
+    // Cryptocurrency transaction
+    printf("\n--- CRYPTO TRANSACTION ---\n");
+    Withdraw<int>(ref cryptoAccount, 250, "BTC purchase");
+    Deposit<int>(ref cryptoAccount, 100, "Mining reward");
+
+    // 4. Display updated accounts
+    printf("\n");
+    PrintAccountInfo<double>(ref savingsAccount);
+    PrintTransactionHistory<double>(ref savingsAccount);
+    
+    printf("\n");
+    PrintAccountInfo<double>(ref checkingAccount);
+    PrintTransactionHistory<double>(ref checkingAccount);
+    
+    printf("\n");
+    PrintAccountInfo<int>(ref cryptoAccount);
+    PrintTransactionHistory<int>(ref cryptoAccount);
+
+    // 5. Demonstrate generic function usage
+    printf("\n=== GENERIC FUNCTION DEMO ===\n");
+    var a = 42;
+    var b = 84;
+    printf("Before Swap: a=%d, b=%d\n", a, b);
+    Swap<int>(ref a, ref b);
+    printf("After Swap:  a=%d, b=%d\n", a, b);
+
+    var maxVal = Max<int>(100, 200);
+    printf("Max of 100 and 200: %d\n", maxVal);
+    
+    var maxDouble = Max<double>(15.5, 10.2);
+    printf("Max of 15.5 and 10.2: ");
+    PrintValue<double>(maxDouble);
+    printf("\n");
+
+    // 6. Demonstrate bulk transfer
+    printf("\n=== BULK TRANSFER DEMO ===\n");
+    double[3] amounts = { 50.00, 75.00, 100.00 };
+    string[3] descriptions = { "Transfer 1", "Transfer 2", "Transfer 3" };
+    
+    // Create a temporary account for bulk transfer demo
+    var Account<double> tempAccount = CreateAccount<double>(0.00, "USD", "Temp User");
+    
+    BulkTransfer<double>(
+        ref savingsAccount,
+        ref tempAccount,
+        amounts,
+        descriptions
+    );
+    
+    printf("\nTemporary account balance: ");
+    PrintValue<double>(tempAccount.Balance);
+    printf("\n");
+
+    // 7. Demonstrate Pair generic with different types
+    var Pair<int, string> userInfo = Pair<int, string> {
+        First: 12345,
+        Second: "Active User"
+    };
+    printf("\nUser ID: %d, Status: %s\n", userInfo.First, userInfo.Second);
+
+    printf("\n");
+    PrintHeader("Bank system execution successful!");
+    
+    return 0;
+}

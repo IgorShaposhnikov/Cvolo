@@ -1,0 +1,85 @@
+namespace BankSystem.IO;
+
+extern int SetConsoleOutputCP(int codePage);
+extern void printf(string format, ...);
+
+// ============ GENERIC PRINT FUNCTIONS ============
+
+// Generic print helper - compiler will monomorphize
+void PrintValue<T>(T value) {
+    printf("(printing generic value)");
+}
+
+// Specialization for int
+void PrintValue<int>(int value) {
+    printf("%d", value);
+}
+
+// Specialization for double
+void PrintValue<double>(double value) {
+    printf("%.2f", value);
+}
+
+// Specialization for string
+void PrintValue<string>(string value) {
+    printf("%s", value);
+}
+
+void PrintAccountInfo<T>(ref Account<T> account) {
+    printf("=== ACCOUNT INFORMATION ===\n");
+    printf("Owner: %s\n", account.Owner);
+    printf("Currency: %s\n", account.Currency);
+    printf("Balance: ");
+    PrintValue<T>(account.Balance);
+    printf("\n");
+    printf("Transactions: %d\n", account.TransactionCount);
+    printf("============================\n\n");
+}
+
+void PrintTransactionHistory<T>(ref Account<T> account) {
+    printf("\n=== TRANSACTION HISTORY ===\n");
+    if (account.TransactionCount == 0) {
+        printf("No transactions yet.\n");
+        return;
+    }
+
+    var i = 0;
+    while (i < account.TransactionCount) {
+        printf("[%d] ", i + 1);
+        
+        // Determine if deposit or withdrawal by comparing amount
+        // For simplicity, we'll use a heuristic
+        if (account.History[i].Amount >= 0) {
+            printf("DEPOSIT:  ");
+        } else {
+            printf("WITHDRAW: ");
+        }
+        
+        PrintValue<T>(account.History[i].Amount);
+        printf(" %s - %s ", account.History[i].Currency, account.History[i].Description);
+        
+        if (account.History[i].IsCompleted) {
+            printf("[COMPLETED]");
+        } else {
+            printf("[PENDING]");
+        }
+        printf("\n");
+        
+        i = i + 1;
+    }
+    printf("==========================\n");
+}
+
+void PrintHeader(string title) {
+    printf("╔══════════════════════════════════════╗\n");
+    printf("║  %-36s║\n", title);
+    printf("╚══════════════════════════════════════╝\n");
+}
+
+void PrintSuccess(string message) {
+    printf("✓ %s\n", message);
+}
+
+void PrintError(string message) {
+    printf("✗ ERROR: %s\n", message);
+}

@@ -1,0 +1,49 @@
+namespace BankSystem.Banking;
+
+using BankSystem.Core;
+using BankSystem.IO;
+
+// ============ ACCOUNT OPERATIONS ============
+
+void Deposit<T>(refvar Account<T> account, T amount, string description) {
+    if (amount <= 0) {
+        PrintError("Deposit amount must be positive!");
+        return;
+    }
+    AddTransaction<T>(ref account, amount, description, true);
+    PrintSuccess("Deposit completed!");
+}
+
+void Withdraw<T>(refvar Account<T> account, T amount, string description) {
+    if (amount <= 0) {
+        PrintError("Withdrawal amount must be positive!");
+        return;
+    }
+    AddTransaction<T>(ref account, amount, description, false);
+}
+
+T GetBalance<T>(ref Account<T> account) {
+    return account.Balance;
+}
+
+string GetAccountSummary<T>(ref Account<T> account) {
+    // Return a formatted string summary
+    // Note: In real Cvolo, string concatenation would need proper support
+    return "Account summary not implemented in this version";
+}
+
+bool ValidateAccount<T>(ref Account<T> account) {
+    if (account.Currency == "") {
+        PrintError("Account has no currency!");
+        return false;
+    }
+    if (account.Owner == "") {
+        PrintError("Account has no owner!");
+        return false;
+    }
+    if (account.TransactionCount < 0 || account.TransactionCount > 100) {
+        PrintError("Invalid transaction count!");
+        return false;
+    }
+    return true;
+}

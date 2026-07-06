@@ -1,0 +1,42 @@
+namespace BankSystem.Core;
+
+// ============ UTILITY FUNCTIONS ============
+
+void Swap<T>(refvar T a, refvar T b) {
+    T temp = a;
+    a = b;
+    b = temp;
+}
+
+T Max<T>(T a, T b) {
+    if (a > b) {
+        return a;
+    }
+    return b;
+}
+
+T Min<T>(T a, T b) {
+    if (a < b) {
+        return a;
+    }
+    return b;
+}
+
+bool IsEmpty<T>(ref Account<T> account) {
+    return account.TransactionCount == 0;
+}
+
+void ClearAccount<T>(refvar Account<T> account) {
+    account.Balance = 0;
+    account.TransactionCount = 0;
+    // Note: History array remains allocated but will be overwritten
+}
+
+Account<T> CreateAccount<T>(T initialBalance, string currency, string owner) {
+    var Account<T> account;
+    account.Balance = initialBalance;
+    account.Currency = currency;
+    account.Owner = owner;
+    account.TransactionCount = 0;
+    return account;
+}

@@ -1,0 +1,24 @@
+namespace BankSystem.Core;
+
+// ============ GENERIC STRUCTURES ============
+
+struct Transaction<T> {
+    T Amount;
+    string Currency;
+    string Description;
+    int Timestamp;
+    bool IsCompleted;
+}
+
+struct Account<T> {
+    T Balance;
+    string Currency;
+    string Owner;
+    Transaction<T>[100] History;
+    int TransactionCount;
+}
+
+struct Pair<T, U> {
+    T First;
+    U Second;
+}

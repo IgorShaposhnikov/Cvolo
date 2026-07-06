@@ -1,0 +1,49 @@
+namespace BankSystem.Banking;
+
+using BankSystem.Core;
+using BankSystem.IO;
+
+// ============ TRANSFER OPERATIONS ============
+
+void TransferFunds<T>(
+    refvar Account<T> fromAccount,
+    refvar Account<T> toAccount,
+    T amount,
+    string description
+) {
+    // Validate currencies match
+    if (fromAccount.Currency != toAccount.Currency) {
+        PrintError("Currency mismatch!");
+        printf("  From: %s\n", fromAccount.Currency);
+        printf("  To:   %s\n", toAccount.Currency);
+        return;
+    }
+
+    // Check sufficient balance in source
+    if (amount > fromAccount.Balance) {
+        PrintError("Insufficient balance in source account!");
+        return;
+    }
+
+    // Perform withdrawal from source
+    AddTransaction<T>(ref fromAccount, amount, description, false);
+    
+    // Perform deposit to destination
+    AddTransaction<T>(ref toAccount, amount, description, true);
+    
+    PrintSuccess("Transfer completed successfully!");
+}
+
+void BulkTransfer<T>(
+    refvar Account<T> fromAccount,
+    refvar Account<T> toAccount,
+    T[] amounts,
+    string[] descriptions
+) {
+    var i = 0;
+    while (i < amounts.Length && i < descriptions.Length) {
+        printf("\nTransfer %d of %d:\n", i + 1, amounts.Length);
+        TransferFunds<T>(ref fromAccount, ref toAccount, amounts[i], descriptions[i]);
+        i = i + 1;
+    }
+}
