@@ -128,6 +128,13 @@ public sealed class ValidationPass(BindingContext context)
 			resolvedType = context.ResolveType(varDecl.Type);
 
 			var initializerType = varDecl.Initializer != null ? GetExpressionType(varDecl.Initializer, scope) : null;
+
+			// Implicit Dereference: If target is value but initializer is a pointer, unwrap it
+			if (initializerType is PointerTypeSymbol ptr && resolvedType is not PointerTypeSymbol)
+			{
+				initializerType = ptr.ReferencedType;
+			}
+
 			if (resolvedType != null && initializerType != null && !resolvedType.Equals(initializerType))
 			{
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
@@ -437,20 +444,28 @@ public sealed class ValidationPass(BindingContext context)
 
 		CheckExpression(ret.Expression, scope);
 
-		// ONLY check if the Type matches the signature
 		var actualType = GetExpressionType(ret.Expression, scope);
 		var expectedType = context.ResolveType(currentFunc.ReturnType);
 
-		if (actualType != null && expectedType != null && !actualType.Equals(expectedType))
+		if (actualType != null && expectedType != null)
 		{
-			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.Report(currentFileContext, ret.Expression.Span, $"Function '{currentFunc.Name}' expects return type '{expectedType.Name}' but found '{actualType.Name}'");
+			// Implicit Dereference: If expected is value but actual returned is a pointer, unwrap it
+			if (actualType is PointerTypeSymbol ptr && expectedType is not PointerTypeSymbol)
+			{
+				actualType = ptr.ReferencedType;
+			}
+
+			if (!actualType.Equals(expectedType))
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, ret.Expression.Span, $"Function '{currentFunc.Name}' expects return type '{expectedType.Name}' but found '{actualType.Name}'");
+			}
 		}
 	}
 
 	private TypeSymbol? GetExpressionType(ExpressionSyntax expr, SymbolTable scope)
 	{
-		var type = expr switch
+		return expr switch
 		{
 			IdentifierExpressionSyntax id => (scope.Lookup(id.Name) as VariableSymbol)?.Type,
 			IntegerLiteralExpressionSyntax => TypeSymbol.Int,
@@ -467,14 +482,6 @@ public sealed class ValidationPass(BindingContext context)
 			TernaryExpressionSyntax t => CheckTernaryExpression(t, scope),
 			_ => null
 		};
-
-		// Automatically dereference reference types when evaluating expression values
-		if (type is PointerTypeSymbol ptrType)
-		{
-			return ptrType.ReferencedType;
-		}
-
-		return type;
 	}
 
 	private FunctionSymbol? ResolveFunction(string name, SymbolTable scope)
