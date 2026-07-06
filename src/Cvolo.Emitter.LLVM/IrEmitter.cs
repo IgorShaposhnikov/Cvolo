@@ -503,6 +503,7 @@ public sealed class IrEmitter : IEmitter
 			BinaryExpressionSyntax bin => EmitBin(bin, fw),
 			UnaryExpressionSyntax u => EmitUnary(u, fw),
 			TernaryExpressionSyntax t => EmitTernaryExpression(t, fw),
+			ArrayInitializationExpressionSyntax a => EmitArrayInitialization(a, fw),
 			_ => throw new InvalidOperationException($"Unknown expr: {expr.GetType()}"),
 		};
 	}
@@ -1246,5 +1247,33 @@ public sealed class IrEmitter : IEmitter
 		}
 
 		return name;
+	}
+
+	private (string val, TypeSymbol ty) EmitArrayInitialization(ArrayInitializationExpressionSyntax expr, StringWriter fw)
+	{
+		var elementType = expr.Elements.Count > 0 ? GetExprType(expr.Elements[0]) : TypeSymbol.Int;
+		var arrayType = new ArrayTypeSymbol(elementType, expr.Elements.Count);
+
+		var tempPtrReg = NewLocal();
+		var llvmArrTy = Type(arrayType);
+		fw.WriteLine($"    %{tempPtrReg} = alloca {llvmArrTy}");
+
+		EmitArrayInitializationInPlace(expr, tempPtrReg, arrayType, fw);
+
+		return ($"ptr %{tempPtrReg}", arrayType);
+	}
+
+	private TypeSymbol GetExprType(ExpressionSyntax expr)
+	{
+		return expr switch
+		{
+			IntegerLiteralExpressionSyntax => TypeSymbol.Int,
+			DoubleLiteralExpressionSyntax => TypeSymbol.Double,
+			BooleanLiteralExpressionSyntax => TypeSymbol.Bool,
+			StringLiteralExpressionSyntax => TypeSymbol.String,
+			CharacterLiteralExpressionSyntax => TypeSymbol.Char,
+			IdentifierExpressionSyntax id => _variableTypes.TryGetValue(id.Name, out var type) ? type : TypeSymbol.Int,
+			_ => TypeSymbol.Int
+		};
 	}
 }

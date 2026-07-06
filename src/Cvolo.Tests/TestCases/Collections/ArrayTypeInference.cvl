@@ -1,0 +1,14 @@
+extern void printf(string format, ...);
+
+int main() 
+{
+    // Test Type-Inferred Array Initialization (no explicit type)
+    var arr = { 100, 200, 300 };
+
+    var int x = arr[0];
+    var int y = arr[1];
+    var int z = arr[2];
+
+    printf("Inferred Array: %d,%d,%d\n", x, y, z);
+    return 0;
+}

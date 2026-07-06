@@ -7,6 +7,7 @@ public sealed class CollectionsTests : CompilerTestBase
 	[Theory]
 	[InlineData("ArrayInit", "10,20,30")]
 	[InlineData("SliceLength", "5")]
+	[InlineData("ArrayTypeInference", "100,200,300")]
 	public void ArraysAndSlices(string caseName, string expected)
 	{
 		var fileName = $"Collections/{caseName}.cvl";
