@@ -25,7 +25,7 @@ declaration
 	;
 
 functionDeclaration
-	: returnType Identifier LPAREN parameterList? RPAREN blockStatement
+	: returnType Identifier (LT genericParameterList GT)? LPAREN parameterList? RPAREN blockStatement
 	;
 
 externDeclaration
@@ -33,7 +33,7 @@ externDeclaration
 	;
 
 structDeclaration
-	: STRUCT Identifier LBRACE structField* RBRACE SEMI?
+	: STRUCT Identifier (LT genericParameterList GT)? LBRACE structField* RBRACE SEMI?
 	;
 
 structField
@@ -51,6 +51,7 @@ type
 	| Identifier                                        # identifierType
 	| type LBRACK RBRACK                                # sliceType
 	| type LBRACK IntegerLiteral RBRACK                 # arrayType
+	| type LT typeList GT                               # genericInstantiationType
 	| REFVAR type                                       # refVarType
 	| REF type                                          # readOnlyRefType
 	;
@@ -147,10 +148,10 @@ expression
 	| expression QMARK expression COLON expression										# ternaryExpression
 	| expression ASSIGN expression														# assignmentExpression
 	| expression (PLUS_ASSIGN | MINUS_ASSIGN | STAR_ASSIGN | DIV_ASSIGN | AND_ASSIGN | OR_ASSIGN | XOR_ASSIGN | LSHIFT_ASSIGN | RSHIFT_ASSIGN | URSHIFT_ASSIGN) expression		# compoundAssignmentExpression
-	| Identifier LPAREN argumentList? RPAREN                							# callExpression
+	| Identifier (LT typeList GT)? LPAREN argumentList? RPAREN							# callExpression
 	| HEAP expression                                       							# heapAllocationExpression
 	| LBRACE (expression (COMMA expression)*)? RBRACE									# arrayInitializationExpression
-	| Identifier LBRACE structInitializerList? RBRACE       							# structInitializationExpression
+	| Identifier (LT typeList GT)? LBRACE structInitializerList? RBRACE					# structInitializationExpression
 	| Identifier                                            							# identifierExpression
 	| IntegerLiteral                                        							# integerLiteralExpression
 	| DoubleLiteral                                         							# doubleLiteralExpression
@@ -171,4 +172,12 @@ structInitializerList
 
 structMemberInitializer
 	: Identifier COLON expression
+	;
+
+genericParameterList
+	: Identifier (COMMA Identifier)*
+	;
+
+typeList
+	: type (COMMA type)*
 	;

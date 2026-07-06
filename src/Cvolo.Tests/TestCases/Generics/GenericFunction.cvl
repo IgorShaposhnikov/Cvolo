@@ -1,0 +1,18 @@
+extern void printf(string format, ...);
+
+void Swap<T>(refvar T a, refvar T b) 
+{
+    T temp = a;
+    a = b;
+    b = temp;
+}
+
+int main() 
+{
+    var x = 100;
+    var y = 200;
+    Swap<int>(ref x, ref y);
+    
+    printf("X: %d, Y: %d\n", x, y);
+    return 0;
+}

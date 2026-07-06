@@ -37,6 +37,7 @@ public sealed class IrEmitter : IEmitter
 		_bindingContext = bindingContext;
 		_writer.WriteLine("; ModuleID = 'cvolo_module'");
 		_writer.WriteLine("source_filename = \"cvolo_module\"");
+		_writer.WriteLine();
 
 		_writer.WriteLine("declare ptr @malloc(i64)");
 		_writer.WriteLine("declare void @free(ptr)");
@@ -53,12 +54,21 @@ public sealed class IrEmitter : IEmitter
 				if (member is StructDeclarationSyntax structDecl)
 				{
 					var mangledName = string.IsNullOrEmpty(ns) ? structDecl.Name : $"{ns}.{structDecl.Name}";
-					_astStructs[mangledName] = structDecl;
+
+					// If it is a generic template, register it as a template, NOT a physical layout!
+					if (structDecl.GenericParameters.Count > 0)
+					{
+						bindingContext.GenericStructTemplates[mangledName] = structDecl;
+					}
+					else
+					{
+						_astStructs[mangledName] = structDecl;
+					}
 				}
 			}
 		}
 
-		// Pass 2: Generate Struct Layouts polymorphically
+		// Pass 2: Generate Struct LAYOUTS (Only for concrete, non-generic structs!)
 		foreach (var unit in units)
 		{
 			_currentUnit = unit;
@@ -69,7 +79,7 @@ public sealed class IrEmitter : IEmitter
 
 			foreach (var member in members)
 			{
-				if (member is StructDeclarationSyntax structDecl)
+				if (member is StructDeclarationSyntax structDecl && structDecl.GenericParameters.Count == 0) // <-- Skip templates
 				{
 					var mangledName = string.IsNullOrEmpty(ns) ? structDecl.Name : $"{ns}.{structDecl.Name}";
 					var structType = bindingContext.ResolveType(mangledName) as StructTypeSymbol;
@@ -85,7 +95,23 @@ public sealed class IrEmitter : IEmitter
 
 		if (_astStructs.Count > 0) _writer.WriteLine();
 
-		// Pass 3: Register Function return/parameter Types as objects
+        // Pass 2.5: Generate layouts for instantiated generic structs
+        var hasGenericLayouts = false;
+        foreach (var structType in bindingContext.StructTypes.Values)
+        {
+            if (structType.Name.Contains('<'))
+            {
+                hasGenericLayouts = true;
+                var fieldTypes = string.Join(", ", structType.Fields.Select(f => Type(f.Type)));
+
+                // Escape the struct name with quotes so LLVM parses it cleanly
+                _writer.WriteLine($"%\"struct.{structType.Name}\" = type {{ {fieldTypes} }}");
+            }
+        }
+
+        if (hasGenericLayouts) _writer.WriteLine();
+
+		// Pass 3: Register all function Metadata
 		foreach (var unit in units)
 		{
 			_currentUnit = unit;
@@ -96,11 +122,11 @@ public sealed class IrEmitter : IEmitter
 
 			foreach (var member in members)
 			{
-				if (member is FunctionDeclarationSyntax func)
+				if (member is FunctionDeclarationSyntax func && func.GenericParameters.Count == 0) // <-- Skip templates
 				{
-					var mangledName = (string.IsNullOrEmpty(ns) || func.Name == "main" || func.Name == "Main") ? func.Name : $"{ns}.{func.Name}";
-                    if (mangledName == "Main") mangledName = "main";
-                    _astFunctions[mangledName] = func;
+					var mangledName = string.IsNullOrEmpty(ns) ? func.Name : $"{ns}.{func.Name}";
+
+					_astFunctions[mangledName] = func;
 					_functionReturnTypes[mangledName] = bindingContext.ResolveType(func.ReturnType)!;
 					_functionParameterTypes[mangledName] = func.Parameters
 						.Select(p => bindingContext.ResolveType(p.Type)!)
@@ -115,6 +141,15 @@ public sealed class IrEmitter : IEmitter
 						.ToList();
 				}
 			}
+		}
+
+		// Also register metadata for monomorphized generic instantiations!
+		foreach (var instDecl in bindingContext.MonomorphizedFunctionDecls)
+		{
+			_functionReturnTypes[instDecl.Name] = bindingContext.ResolveType(instDecl.ReturnType)!;
+			_functionParameterTypes[instDecl.Name] = instDecl.Parameters
+				.Select(p => bindingContext.ResolveType(p.Type)!)
+				.ToList();
 		}
 
 		// Pass 4: Emit Externs
@@ -138,15 +173,22 @@ public sealed class IrEmitter : IEmitter
 
 			foreach (var member in members)
 			{
-				if (member is FunctionDeclarationSyntax func)
+				if (member is FunctionDeclarationSyntax func && func.GenericParameters.Count == 0) // <-- Skip templates
 				{
-					var mangledName = (string.IsNullOrEmpty(ns) || func.Name == "main" || func.Name == "Main") ? func.Name : $"{ns}.{func.Name}";
-                    if (mangledName == "Main") mangledName = "main";
-                    var funcWriter = new StringWriter();
+					var mangledName = string.IsNullOrEmpty(ns) ? func.Name : $"{ns}.{func.Name}";
+					var funcWriter = new StringWriter();
 					EmitFunction(func, mangledName, funcWriter);
 					_writer.Write(funcWriter.ToString());
 				}
 			}
+		}
+
+		// Also emit monomorphized concrete generic function instantiations!
+		foreach (var instDecl in bindingContext.MonomorphizedFunctionDecls)
+		{
+			var funcWriter = new StringWriter();
+			EmitFunction(instDecl, instDecl.Name, funcWriter);
+			_writer.Write(funcWriter.ToString());
 		}
 
 		if (_stringDefs.Count > 0)
@@ -181,10 +223,18 @@ public sealed class IrEmitter : IEmitter
 		var parmTypes = parmSymbols.Select(Type).ToList();
 		var parmStrings = parmTypes.Zip(func.Parameters, (ty, p) => $"{ty} %{p.Name}");
 
-		fw.WriteLine($"define {ret} @{mangledName}({string.Join(", ", parmStrings)}) {{");
+		// Ensure any namespaced or capitalized entry point is generated globally as lowercase '@main'
+		var emitName = mangledName == "Main" || mangledName == "main" || mangledName.EndsWith(".Main") || mangledName.EndsWith(".main")
+			? "main"
+			: mangledName;
+
+		// Escape the name with quotes if it is an instantiated generic function (e.g., Swap<int>)
+		var escapedName = emitName.Contains('<') ? $"\"{emitName}\"" : emitName;
+
+		fw.WriteLine($"define {ret} @{escapedName}({string.Join(", ", parmStrings)}) {{");
 		fw.WriteLine("  entry:");
 
-		for (int i = 0; i < func.Parameters.Count; i++)
+		for (var i = 0; i < func.Parameters.Count; i++)
 		{
 			var p = func.Parameters[i];
 			var ptr = NewLocal();
@@ -460,6 +510,10 @@ public sealed class IrEmitter : IEmitter
 	private void EmitCall(CallExpressionSyntax call, StringWriter fw)
 	{
 		var mangledName = ResolveFunctionName(call.FunctionName, _currentUnit!);
+		if (call.TypeArguments.Count > 0)
+		{
+			mangledName = $"{mangledName}<{string.Join(", ", call.TypeArguments)}>";
+		}
 		List<string> args = [];
 
 		for (var i = 0; i < call.Arguments.Count; i++)
@@ -503,11 +557,12 @@ public sealed class IrEmitter : IEmitter
 		var retType = _functionReturnTypes.TryGetValue(mangledName, out var foundRet) ? foundRet : TypeSymbol.Int;
 		var ret = Type(retType);
 
-		var callee = $"@{mangledName}";
+		var escapedName = mangledName.Contains('<') ? $"\"{mangledName}\"" : mangledName;
+		var callee = $"@{escapedName}";
 		if (isCallVariadic)
 		{
 			var paramTys = string.Join(", ", _functionParameterTypes[mangledName].Select(Type));
-			callee = $"({paramTys}, ...) @{mangledName}"; // <-- Removed ret from here
+			callee = $"({paramTys}, ...) @{escapedName}";
 		}
 
 		fw.WriteLine($"    call {ret} {callee}({string.Join(", ", args)})");
@@ -516,6 +571,10 @@ public sealed class IrEmitter : IEmitter
 	private (string val, TypeSymbol ty) EmitCallExpr(CallExpressionSyntax call, StringWriter fw)
 	{
 		var mangledName = ResolveFunctionName(call.FunctionName, _currentUnit!);
+		if (call.TypeArguments.Count > 0)
+		{
+			mangledName = $"{mangledName}<{string.Join(", ", call.TypeArguments)}>";
+		}
 		List<string> args = [];
 
 		for (var i = 0; i < call.Arguments.Count; i++)
@@ -559,16 +618,17 @@ public sealed class IrEmitter : IEmitter
 		var retTypeSymbol = _functionReturnTypes.TryGetValue(mangledName, out var ret) ? ret : TypeSymbol.Int;
 		var ty = Type(retTypeSymbol);
 
-		var callee = $"@{mangledName}";
+		var escapedName = mangledName.Contains('<') ? $"\"{mangledName}\"" : mangledName;
+		var callee = $"@{escapedName}";
 		if (isCallVariadic)
 		{
 			var paramTys = string.Join(", ", _functionParameterTypes[mangledName].Select(Type));
-			callee = $"({paramTys}, ...) @{mangledName}"; // <-- Removed ty from here
+			callee = $"({paramTys}, ...) @{escapedName}";
 		}
 
 		var r = NewLocal();
 		fw.WriteLine($"    %{r} = call {ty} {callee}({string.Join(", ", args)})");
-		return ($"{ty} %{r}", retTypeSymbol);
+		return ($"{ty} %{r}", retTypeSymbol); // <-- Fixed missing return here!
 	}
 
 	private (string val, TypeSymbol ty) EmitBin(BinaryExpressionSyntax bin, StringWriter fw)
@@ -626,8 +686,6 @@ public sealed class IrEmitter : IEmitter
 		var (r, rTy) = Eval(assign.Right, fw);
 		var llvmTy = Type(rTy);
 
-		// If the right side evaluated to a pointer but the target expects a struct value,
-		// load the struct value from the pointer first.
 		if (r.StartsWith("ptr ") && rTy is StructTypeSymbol)
 		{
 			var structVal = NewLocal();
@@ -637,7 +695,19 @@ public sealed class IrEmitter : IEmitter
 
 		if (assign.Left is IdentifierExpressionSyntax id && _locals.TryGetValue(id.Name, out var ptr))
 		{
-			fw.WriteLine($"    store {llvmTy} {V(r)}, ptr %{ptr}");
+			var typeName = _variableTypes[id.Name];
+
+			// If the target variable itself is a pointer (reference), load the address first and store into it
+			if (typeName is PointerTypeSymbol)
+			{
+				var actualPtr = NewLocal();
+				fw.WriteLine($"    %{actualPtr} = load ptr, ptr %{ptr}");
+				fw.WriteLine($"    store {llvmTy} {V(r)}, ptr %{actualPtr}");
+			}
+			else
+			{
+				fw.WriteLine($"    store {llvmTy} {V(r)}, ptr %{ptr}");
+			}
 		}
 		else if (assign.Left is MemberAccessExpressionSyntax m)
 		{
@@ -711,6 +781,7 @@ public sealed class IrEmitter : IEmitter
 
 	private string Type(TypeSymbol t)
 	{
+		if (t is null) return "i32";
 		if (t is PointerTypeSymbol) return "ptr";
 		if (t is SliceTypeSymbol) return "{ ptr, i32 }";
 
@@ -718,7 +789,12 @@ public sealed class IrEmitter : IEmitter
 			return $"[{arr.Size} x {Type(arr.ElementType)}]";
 
 		if (t is StructTypeSymbol)
-			return $"%struct.{t.Name}";
+		{
+			var name = t.Name;
+			if (name.Contains('<'))
+				return $"%\"struct.{name}\"";
+			return $"%struct.{name}";
+		}
 
 		var primitive = t.Name switch
 		{
@@ -785,22 +861,22 @@ public sealed class IrEmitter : IEmitter
 			if (parentType is not StructTypeSymbol structType)
 				throw new InvalidOperationException($"Cannot access field of non-struct type '{parentType.Name}'");
 
-			var structDecl = _astStructs[structType.Name];
 			var fieldIndex = -1;
-			TypeSymbol? fieldType = null;
+			TypeSymbol? fieldType = TypeSymbol.Int;
 
-			for (var i = 0; i < structDecl.Fields.Count; i++)
+			// Read fields directly from the TypeSymbol object instead of the AST!
+			for (var i = 0; i < structType.Fields.Count; i++)
 			{
-				if (structDecl.Fields[i].Name == m.MemberName)
+				if (structType.Fields[i].Name == m.MemberName)
 				{
 					fieldIndex = i;
-					fieldType = _bindingContext!.ResolveType(structDecl.Fields[i].Type)!;
+					fieldType = structType.Fields[i].Type;
 					break;
 				}
 			}
 
 			var fieldPtrReg = NewLocal();
-			var structTy = $"%struct.{structType.Name}";
+			var structTy = parentType.Name.Contains('<') ? $"%\"struct.{parentType.Name}\"" : $"%struct.{parentType.Name}";
 			fw.WriteLine($"    %{fieldPtrReg} = getelementptr inbounds {structTy}, ptr %{parentPtr}, i32 0, i32 {fieldIndex}");
 
 			return (fieldPtrReg, fieldType!);
@@ -864,49 +940,49 @@ public sealed class IrEmitter : IEmitter
 	{
 		var type = _bindingContext!.ResolveType(expr.StructTypeName) as StructTypeSymbol;
 		var tempPtrReg = NewLocal();
-		var structTy = $"%struct.{type!.Name}";
+		var structTy = type!.Name.Contains('<') ? $"%\"struct.{type.Name}\"" : $"%struct.{type.Name}";
 		fw.WriteLine($"    %{tempPtrReg} = alloca {structTy}");
 		EmitStructInitializationInPlace(expr, tempPtrReg, fw);
 		return ($"ptr %{tempPtrReg}", type);
 	}
 
-	private void EmitStructInitializationInPlace(StructInitializationExpressionSyntax expr, string destPtr, StringWriter fw)
-	{
-		var mangledName = _bindingContext!.ResolveType(expr.StructTypeName) as StructTypeSymbol;
-		var structTy = $"%struct.{mangledName!.Name}";
+    private void EmitStructInitializationInPlace(StructInitializationExpressionSyntax expr, string destPtr, StringWriter fw)
+    {
+        var mangledName = _bindingContext!.ResolveType(expr.StructTypeName) as StructTypeSymbol;
+		var structTy = mangledName!.Name.Contains('<') ? $"%\"struct.{mangledName.Name}\"" : $"%struct.{mangledName.Name}";
 		foreach (var init in expr.Initializers)
-		{
-			var structDecl = _astStructs[mangledName.Name];
-			var fieldIndex = -1;
-			TypeSymbol? fieldType = null;
+        {
+            var fieldIndex = -1;
+            var fieldType = "int";
 
-			for (var i = 0; i < structDecl.Fields.Count; i++)
-			{
-				if (structDecl.Fields[i].Name == init.MemberName)
-				{
-					fieldIndex = i;
-					fieldType = _bindingContext!.ResolveType(structDecl.Fields[i].Type)!;
-					break;
-				}
-			}
+            // Read fields directly from the TypeSymbol object instead of the AST!
+            for (var i = 0; i < mangledName.Fields.Count; i++)
+            {
+                if (mangledName.Fields[i].Name == init.MemberName)
+                {
+                    fieldIndex = i;
+                    fieldType = mangledName.Fields[i].Type.Name;
+                    break;
+                }
+            }
 
-			var fieldPtrReg = NewLocal();
-			fw.WriteLine($"    %{fieldPtrReg} = getelementptr inbounds {structTy}, ptr %{destPtr}, i32 0, i32 {fieldIndex}");
+            var fieldPtrReg = NewLocal();
+            fw.WriteLine($"    %{fieldPtrReg} = getelementptr inbounds {structTy}, ptr %{destPtr}, i32 0, i32 {fieldIndex}");
 
-			if (init.Expression is StructInitializationExpressionSyntax nestedInit)
-			{
-				EmitStructInitializationInPlace(nestedInit, fieldPtrReg, fw);
-			}
-			else
-			{
-				var (val, _) = Eval(init.Expression, fw);
-				fw.WriteLine($"    store {val}, ptr %{fieldPtrReg}");
-			}
-		}
-	}
+            if (init.Expression is StructInitializationExpressionSyntax nestedInit)
+            {
+                EmitStructInitializationInPlace(nestedInit, fieldPtrReg, fw);
+            }
+            else
+            {
+                var (val, _) = Eval(init.Expression, fw);
+                fw.WriteLine($"    store {val}, ptr %{fieldPtrReg}");
+            }
+        }
+    }
 
 
-	private (string val, TypeSymbol ty) EmitBorrowExpression(BorrowExpressionSyntax expr, StringWriter fw)
+    private (string val, TypeSymbol ty) EmitBorrowExpression(BorrowExpressionSyntax expr, StringWriter fw)
 	{
 		if (expr.Expression is IdentifierExpressionSyntax id && _locals.TryGetValue(id.Name, out var ptr))
 		{
@@ -996,10 +1072,8 @@ public sealed class IrEmitter : IEmitter
 
 		var type = _bindingContext!.ResolveType(s.StructTypeName) as StructTypeSymbol;
 
-		// Change this line (added .Name):
-		var structDecl = _astStructs[type!.Name];
-
-		var size = structDecl.Fields.Count * 8;
+		// Calculate the size directly from the TypeSymbol fields!
+		var size = type!.Fields.Count * 8;
 
 		var ptrReg = NewLocal();
 		fw.WriteLine($"    %{ptrReg} = call ptr @malloc(i64 {size})");
@@ -1149,13 +1223,15 @@ public sealed class IrEmitter : IEmitter
 	{
 		if (name == "main" || name == "Main") return "main";
 
-		// 1. Is it already a full name or an extern?
-		if (_astFunctions.ContainsKey(name) || _astExterns.ContainsKey(name)) return name;
+		// 1. Is it already a full name, an extern, or a generic template?
+		if (_astFunctions.ContainsKey(name) || _astExterns.ContainsKey(name) || _bindingContext!.GenericFunctionTemplates.ContainsKey(name))
+			return name;
 
 		// 2. Try the current namespace
 		var ns = activeUnit.NamespaceDeclaration?.Name;
 		var localMangled = string.IsNullOrEmpty(ns) ? name : $"{ns}.{name}";
-		if (_astFunctions.ContainsKey(localMangled)) return localMangled;
+		if (_astFunctions.ContainsKey(localMangled) || _bindingContext!.GenericFunctionTemplates.ContainsKey(localMangled))
+			return localMangled;
 
 		// 3. Try lookup across all active 'using' namespaces in this file
 		var activeUsings = new List<string>(activeUnit.Usings.Select(u => u.NamespaceName));
@@ -1165,7 +1241,7 @@ public sealed class IrEmitter : IEmitter
 		foreach (var importNs in activeUsings)
 		{
 			var candidateMangled = $"{importNs}.{name}";
-			if (_astFunctions.ContainsKey(candidateMangled))
+			if (_astFunctions.ContainsKey(candidateMangled) || _bindingContext!.GenericFunctionTemplates.ContainsKey(candidateMangled))
 				return candidateMangled;
 		}
 

@@ -43,7 +43,6 @@ public sealed class DeclarationPass(BindingContext context)
 
 	private void DeclareStruct(StructDeclarationSyntax structDecl)
 	{
-		// 1. Calculate the fully qualified mangled name (e.g., App.Math.Point)
 		var mangledName = context.GetMangledName(structDecl.Name, context.CurrentNamespace);
 
 		if (context.StructTypes.ContainsKey(mangledName) || TypeSymbol.FromName(structDecl.Name) is not null)
@@ -51,6 +50,18 @@ public sealed class DeclarationPass(BindingContext context)
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
 			context.Diagnostics.Report(currentFileContext, structDecl.Span, $"Duplicate type definition '{structDecl.Name}'");
 			return;
+		}
+
+		// If this is a generic struct template (e.g. struct Point<T>)
+		if (structDecl.GenericParameters.Count > 0)
+		{
+			context.GenericStructTemplates[mangledName] = structDecl;
+
+			// We register it as an abstract template type in StructTypes for now
+			var placeholderFields = new List<StructFieldSymbol>();
+			var templateSymbol = new StructTypeSymbol(mangledName, placeholderFields);
+			context.StructTypes[mangledName] = templateSymbol;
+			return; // We resolve concrete bodies during instantiation (ResolveType)
 		}
 
 		var fields = new List<StructFieldSymbol>();
@@ -76,13 +87,24 @@ public sealed class DeclarationPass(BindingContext context)
 			fields.Add(new StructFieldSymbol(field.Name, fieldType));
 		}
 
-		// 2. Create the symbol and register it under the mangled name (Added mangledName here)
 		var structSymbol = new StructTypeSymbol(mangledName, fields);
 		context.StructTypes[mangledName] = structSymbol;
 	}
 
 	private void DeclareFunction(FunctionDeclarationSyntax func)
 	{
+		// Entry point (main / Main) is always global, lowercase, and unmangled
+		var mangledName = func.Name == "main" || func.Name == "Main"
+			? "main"
+			: context.GetMangledName(func.Name, context.CurrentNamespace);
+
+		// If this is a generic function template, register it as a template
+		if (func.GenericParameters.Count > 0)
+		{
+			context.GenericFunctionTemplates[mangledName] = func;
+			return;
+		}
+
 		var type = context.ResolveType(func.ReturnType);
 		if (type is null)
 		{
@@ -105,7 +127,7 @@ public sealed class DeclarationPass(BindingContext context)
 			parameters.Add(new ParameterSymbol(param.Name, paramType));
 		}
 
-		var existing = context.Globals.Lookup(func.Name);
+		var existing = context.Globals.Lookup(mangledName);
 		if (existing is not null)
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
@@ -113,7 +135,7 @@ public sealed class DeclarationPass(BindingContext context)
 			return;
 		}
 
-		context.Globals.Declare(new FunctionSymbol(func.Name, type, parameters));
+		context.Globals.Declare(new FunctionSymbol(mangledName, type, parameters));
 	}
 
 	private void DeclareExternFunction(ExternDeclarationSyntax ext)

@@ -15,6 +15,14 @@ public sealed class BindingContext
 	public Dictionary<string, StructTypeSymbol> StructTypes { get; } = [];
 	public Dictionary<VariableDeclarationSyntax, VariableSymbol> VariableSymbols { get; } = [];
 	public Dictionary<CompilationUnitSyntax, CompilationContext> FileContexts { get; } = [];
+	// Store generic struct templates (e.g. "Point<T>")
+	public Dictionary<string, StructDeclarationSyntax> GenericStructTemplates { get; } = [];
+	// Store generic function templates (e.g., "Swap<T>")
+	public Dictionary<string, FunctionDeclarationSyntax> GenericFunctionTemplates { get; } = [];
+
+	// Store monomorphized concrete instantiations (e.g., "Swap<int>")
+	public Dictionary<string, FunctionSymbol> MonomorphizedFunctions { get; } = [];
+	public List<FunctionDeclarationSyntax> MonomorphizedFunctionDecls { get; } = [];
 
 	// Canonical Type Cache (Phase 3: Ensuring structural equality)
 	private readonly Dictionary<string, TypeSymbol> _typeCache = [];
@@ -108,6 +116,29 @@ public sealed class BindingContext
 			}
 		}
 
+		// Resolve Generic Instantiations (e.g., Point<int>)
+		if (name.Contains('<'))
+		{
+			if (_typeCache.TryGetValue(name, out var cachedType)) return cachedType;
+
+			var openBracket = name.IndexOf('<');
+			var baseName = name.Substring(0, openBracket);
+			var argsPart = name.Substring(openBracket + 1, name.Length - openBracket - 2);
+
+			var baseType = ResolveType(baseName) as StructTypeSymbol;
+			if (baseType is not null && GenericStructTemplates.TryGetValue(baseType.Name, out var templateDecl))
+			{
+				var typeArgs = argsPart.Split(',').Select(s => ResolveType(s.Trim())!).ToList();
+
+				var instantiatedType = InstantiateGenericStruct(templateDecl, typeArgs);
+
+				// Register the concrete layout in our global type table!
+				StructTypes[name] = instantiatedType;
+				_typeCache[name] = instantiatedType;
+				return instantiatedType;
+			}
+		}
+
 		if (candidates.Count == 1)
 		{
 			_typeCache[name] = candidates[0];
@@ -121,5 +152,36 @@ public sealed class BindingContext
 	{
 		if (string.IsNullOrEmpty(namespaceName)) return name;
 		return $"{namespaceName}.{name}";
+	}
+
+	private StructTypeSymbol InstantiateGenericStruct(StructDeclarationSyntax templateDecl, List<TypeSymbol> typeArgs)
+	{
+		var mangledName = GetMangledName(templateDecl.Name, CurrentNamespace);
+		var instName = $"{mangledName}<{string.Join(", ", typeArgs.Select(t => t.Name))}>";
+
+		// Map placeholders to concrete type arguments (e.g., T -> int)
+		var substitutionMap = new Dictionary<string, TypeSymbol>();
+		for (int i = 0; i < templateDecl.GenericParameters.Count; i++)
+		{
+			substitutionMap[templateDecl.GenericParameters[i]] = typeArgs[i];
+		}
+
+		var fields = new List<StructFieldSymbol>();
+		foreach (var field in templateDecl.Fields)
+		{
+			TypeSymbol fieldType;
+			if (substitutionMap.TryGetValue(field.Type, out var substitutedType))
+			{
+				fieldType = substitutedType;
+			}
+			else
+			{
+				fieldType = ResolveType(field.Type)!;
+			}
+
+			fields.Add(new StructFieldSymbol(field.Name, fieldType));
+		}
+
+		return new StructTypeSymbol(instName, fields);
 	}
 }

@@ -68,21 +68,6 @@ public sealed class SyntaxParser
 		return null;
 	}
 
-	private FunctionDeclarationSyntax BuildFunctionDeclaration(CvoloParser.FunctionDeclarationContext context)
-	{
-		var returnType = GetReturnTypeName(context.returnType());
-		var name = context.Identifier().GetText();
-		var parameters = new List<ParameterSyntax>();
-		if (context.parameterList() is { } paramList)
-		{
-			foreach (var param in paramList.parameter())
-				parameters.Add(BuildParameter(param));
-		}
-
-		var body = BuildBlockStatement(context.blockStatement());
-		return new FunctionDeclarationSyntax(SpanOf(context), returnType, name, parameters, body);
-	}
-
 	private ExternDeclarationSyntax BuildExternDeclaration(CvoloParser.ExternDeclarationContext context)
 	{
 		var returnType = GetReturnTypeName(context.returnType());
@@ -103,13 +88,46 @@ public sealed class SyntaxParser
 		return new ExternDeclarationSyntax(SpanOf(context), returnType, name, parameters, isVariadic);
 	}
 
+	private FunctionDeclarationSyntax BuildFunctionDeclaration(CvoloParser.FunctionDeclarationContext context)
+	{
+		var returnType = GetReturnTypeName(context.returnType());
+		var name = context.Identifier().GetText();
+
+		// Parse optional generic parameters list: <T, U>
+		var generics = new List<string>();
+		if (context.genericParameterList() is { } genList)
+		{
+			foreach (var id in genList.Identifier())
+				generics.Add(id.GetText());
+		}
+
+		var parameters = new List<ParameterSyntax>();
+		if (context.parameterList() is { } paramList)
+		{
+			foreach (var param in paramList.parameter())
+				parameters.Add(BuildParameter(param));
+		}
+
+		var body = BuildBlockStatement(context.blockStatement());
+		return new FunctionDeclarationSyntax(SpanOf(context), returnType, name, generics, parameters, body);
+	}
+
 	private StructDeclarationSyntax BuildStructDeclaration(CvoloParser.StructDeclarationContext context)
 	{
 		var name = context.Identifier().GetText();
+
+		// Parse optional generic parameters list: <T>
+		var generics = new List<string>();
+		if (context.genericParameterList() is { } genList)
+		{
+			foreach (var id in genList.Identifier())
+				generics.Add(id.GetText());
+		}
+
 		var fields = new List<StructFieldSyntax>();
 		foreach (var field in context.structField())
 			fields.Add(new StructFieldSyntax(SpanOf(field), GetTypeName(field.type()), field.Identifier().GetText()));
-		return new StructDeclarationSyntax(SpanOf(context), name, fields);
+		return new StructDeclarationSyntax(SpanOf(context), name, generics, fields);
 	}
 
 	private ParameterSyntax BuildParameter(CvoloParser.ParameterContext context)
@@ -217,6 +235,15 @@ public sealed class SyntaxParser
 			case CvoloParser.CallExpressionContext callCtx:
 				{
 					var funcName = callCtx.Identifier().GetText();
+
+					// Parse optional type arguments list: Swap<int>(...)
+					var typeArgs = new List<string>();
+					if (callCtx.typeList() is { } typeListCtx)
+					{
+						foreach (var t in typeListCtx.type())
+							typeArgs.Add(GetTypeName(t));
+					}
+
 					var args = new List<ExpressionSyntax>();
 					if (callCtx.argumentList() is { } argList)
 					{
@@ -224,7 +251,7 @@ public sealed class SyntaxParser
 							args.Add(BuildExpression(arg));
 					}
 
-					return new CallExpressionSyntax(SpanOf(callCtx), funcName, args);
+					return new CallExpressionSyntax(SpanOf(callCtx), funcName, typeArgs, args);
 				}
 
 			case CvoloParser.UnaryMinusExpressionContext unaryMinus:
@@ -297,6 +324,14 @@ public sealed class SyntaxParser
 			case CvoloParser.StructInitializationExpressionContext structInitCtx:
 				{
 					var structName = structInitCtx.Identifier().GetText();
+
+					// Reconstruct the full generic type name (e.g. Point<int>) if type arguments are present
+					if (structInitCtx.typeList() is { } typeListCtx)
+					{
+						var args = typeListCtx.type().Select(GetTypeName);
+						structName = $"{structName}<{string.Join(", ", args)}>";
+					}
+
 					var initializers = new List<MemberInitializerSyntax>();
 					if (structInitCtx.structInitializerList() is { } listCtx)
 					{
@@ -439,6 +474,13 @@ public sealed class SyntaxParser
 		if (context is CvoloParser.QualifiedTypeContext qualCtx)
 		{
 			return qualCtx.qualifiedName().GetText();
+		}
+
+		if (context is CvoloParser.GenericInstantiationTypeContext genInstCtx)
+		{
+			var innerTypeName = GetTypeName(genInstCtx.type());
+			var args = genInstCtx.typeList().type().Select(GetTypeName);
+			return $"{innerTypeName}<{string.Join(", ", args)}>";
 		}
 
 		return context.GetText();

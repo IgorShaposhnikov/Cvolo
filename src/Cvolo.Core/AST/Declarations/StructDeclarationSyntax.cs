@@ -3,11 +3,12 @@ using Cvolo.Core.Diagnostics;
 
 namespace Cvolo.Core.AST.Declarations;
 
-public sealed class StructDeclarationSyntax(TextSpan span, string name, IReadOnlyList<StructFieldSyntax> fields) : SyntaxNode(span)
+public sealed class StructDeclarationSyntax(TextSpan span, string name, IReadOnlyList<string> genericParameters, IReadOnlyList<StructFieldSyntax> fields) : SyntaxNode(span)
 {
 	public override SyntaxKind Kind => SyntaxKind.StructDeclaration;
 
 	public string Name { get; } = name;
+	public IReadOnlyList<string> GenericParameters { get; } = genericParameters;
 	public IReadOnlyList<StructFieldSyntax> Fields { get; } = fields;
 
 	public override IEnumerable<SyntaxNode> GetChildren() => Fields;

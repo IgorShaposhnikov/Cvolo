@@ -17,7 +17,7 @@ public sealed class FlowAnalysisPass(BindingContext context)
 			var members = context.CurrentNamespace != null ? unit.NamespaceDeclaration!.Members : unit.Members;
 
 			foreach (var member in members)
-				if (member is FunctionDeclarationSyntax func)
+				if (member is FunctionDeclarationSyntax func && func.GenericParameters.Count == 0)
 					AnalyzeFunctionFlow(func);
 		}
 	}

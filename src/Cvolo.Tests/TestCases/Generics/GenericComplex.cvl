@@ -1,0 +1,47 @@
+namespace App.Collections;
+
+extern void printf(string format, ...);
+
+struct Buffer<T> {
+    T[5] Elements;
+    int Length;
+}
+
+struct Pair<T, U> {
+    T First;
+    U Second;
+}
+
+void Swap<T>(refvar T a, refvar T b) 
+{
+    T temp = a;
+    a = b;
+    b = temp;
+}
+
+int Main() 
+{
+    // 1. Instantiate a nested generic struct
+    Pair<int, string> myPair = Pair<int, string> {
+        First: 100,
+        Second: "Success"
+    };
+
+    // 2. Instantiate a generic buffer struct containing a static array
+    var Buffer<double> myBuffer;
+
+    // 3. Call a generic function with type arguments
+    var x = 10;
+    var y = 20;
+
+    printf("Before generic Swap<T>:\n");
+    printf("X: %d, Y: %d \n", x, y);
+
+    Swap<int>(ref x, ref y);
+
+    printf("After generic Swap<T>:\n");
+    printf("X: %d, Y: %d \n", x, y);
+
+    printf("Generic execution success!\n");
+    return 0;
+}

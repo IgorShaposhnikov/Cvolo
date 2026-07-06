@@ -21,7 +21,7 @@ public sealed class ValidationPass(BindingContext context)
 			var members = context.CurrentNamespace != null ? unit.NamespaceDeclaration!.Members : unit.Members;
 			foreach (var member in members)
 			{
-				if (member is FunctionDeclarationSyntax func)
+				if (member is FunctionDeclarationSyntax func && func.GenericParameters.Count == 0)
 					CheckFunctionBody(func);
 			}
 		}
@@ -180,19 +180,27 @@ public sealed class ValidationPass(BindingContext context)
 				break;
 			case CallExpressionSyntax call:
 				{
-					var symbol = ResolveFunction(call.FunctionName, scope);
+					FunctionSymbol? func = null;
 
-					if (symbol is null)
+					// If calling a generic function Swap<int>(...), instantiate it first
+					if (call.TypeArguments.Count > 0)
+					{
+						var templateName = ResolveFunctionTemplateName(call.FunctionName, scope);
+						if (templateName != null && context.GenericFunctionTemplates.TryGetValue(templateName, out var templateDecl))
+						{
+							var typeArgs = call.TypeArguments.Select(t => context.ResolveType(t)!).ToList();
+							func = InstantiateGenericFunction(templateDecl, typeArgs, scope);
+						}
+					}
+					else
+					{
+						func = ResolveFunction(call.FunctionName, scope);
+					}
+
+					if (func is null)
 					{
 						var currentFileContext = context.FileContexts[context.CurrentUnit!];
 						context.Diagnostics.Report(currentFileContext, call.Span, $"Undefined function '{call.FunctionName}'");
-						return;
-					}
-
-					if (symbol is not FunctionSymbol func)
-					{
-						var currentFileContext = context.FileContexts[context.CurrentUnit!];
-						context.Diagnostics.Report(currentFileContext, call.Span, $"'{call.FunctionName}' is not a function");
 						return;
 					}
 
@@ -219,13 +227,11 @@ public sealed class ValidationPass(BindingContext context)
 						var arg = call.Arguments[i];
 						CheckExpression(arg, scope);
 
-						// If the argument is a variable identifier
 						if (arg is IdentifierExpressionSyntax id)
 						{
 							var argSymbol = scope.Lookup(id.Name) as VariableSymbol;
 							if (argSymbol is not null)
 							{
-								// Safely check parameter type, accounting for variadic arguments (like in printf)
 								var isPointerParam = i < func.Parameters.Count && func.Parameters[i].Type is PointerTypeSymbol;
 							}
 						}
@@ -246,7 +252,8 @@ public sealed class ValidationPass(BindingContext context)
 							var varSymbol = scope.Lookup(id.Name) as VariableSymbol;
 							if (varSymbol is not null)
 							{
-								if (!varSymbol.IsMutable)
+								var isMutable = varSymbol.IsMutable || (varSymbol.Type is PointerTypeSymbol ptr && ptr.IsMutable);
+								if (!isMutable)
 								{
 									var currentFileContext = context.FileContexts[context.CurrentUnit!];
 									context.Diagnostics.Report(currentFileContext, id.Span, $"Cannot assign to immutable variable '{id.Name}'");
@@ -443,7 +450,7 @@ public sealed class ValidationPass(BindingContext context)
 
 	private TypeSymbol? GetExpressionType(ExpressionSyntax expr, SymbolTable scope)
 	{
-		return expr switch
+		var type = expr switch
 		{
 			IdentifierExpressionSyntax id => (scope.Lookup(id.Name) as VariableSymbol)?.Type,
 			IntegerLiteralExpressionSyntax => TypeSymbol.Int,
@@ -460,6 +467,14 @@ public sealed class ValidationPass(BindingContext context)
 			TernaryExpressionSyntax t => CheckTernaryExpression(t, scope),
 			_ => null
 		};
+
+		// Automatically dereference reference types when evaluating expression values
+		if (type is PointerTypeSymbol ptrType)
+		{
+			return ptrType.ReferencedType;
+		}
+
+		return type;
 	}
 
 	private FunctionSymbol? ResolveFunction(string name, SymbolTable scope)
@@ -496,5 +511,184 @@ public sealed class ValidationPass(BindingContext context)
 		if (expr is IdentifierExpressionSyntax id) return id.Name;
 		if (expr is MemberAccessExpressionSyntax m) return GetBaseIdentifierName(m.Expression);
 		return null;
+	}
+
+	private string? ResolveFunctionTemplateName(string name, SymbolTable scope)
+	{
+		var localMangled = context.GetMangledName(name, context.CurrentNamespace);
+		if (context.GenericFunctionTemplates.ContainsKey(localMangled)) return localMangled;
+
+		if (context.CurrentUnit is not null)
+		{
+			var activeUsings = new List<string>(context.CurrentUnit.Usings.Select(u => u.NamespaceName));
+			if (context.CurrentUnit.NamespaceDeclaration is not null)
+				activeUsings.AddRange(context.CurrentUnit.NamespaceDeclaration.Usings.Select(u => u.NamespaceName));
+
+			foreach (var ns in activeUsings)
+			{
+				var candidateMangled = context.GetMangledName(name, ns);
+				if (context.GenericFunctionTemplates.ContainsKey(candidateMangled))
+					return candidateMangled;
+			}
+		}
+
+		if (context.GenericFunctionTemplates.ContainsKey(name)) return name;
+		return null;
+	}
+
+	private FunctionSymbol InstantiateGenericFunction(FunctionDeclarationSyntax templateDecl, List<TypeSymbol> typeArgs, SymbolTable scope)
+	{
+		var mangledName = context.GetMangledName(templateDecl.Name, context.CurrentNamespace);
+		var instName = $"{mangledName}<{string.Join(", ", typeArgs.Select(t => t.Name))}>";
+
+		if (context.MonomorphizedFunctions.TryGetValue(instName, out var existing))
+			return existing;
+
+		var substitutionMap = new Dictionary<string, TypeSymbol>();
+		for (int i = 0; i < templateDecl.GenericParameters.Count; i++)
+		{
+			substitutionMap[templateDecl.GenericParameters[i]] = typeArgs[i];
+		}
+
+		TypeSymbol ResolveSubstitutedType(string typeName)
+		{
+			if (substitutionMap.TryGetValue(typeName, out var subst))
+				return subst;
+
+			if (typeName.StartsWith("refvar ") || typeName.StartsWith("ref "))
+			{
+				var isMutable = typeName.StartsWith("refvar ");
+				var innerName = isMutable ? typeName.Substring(7) : typeName.Substring(4);
+				var innerType = ResolveSubstitutedType(innerName);
+				return new PointerTypeSymbol(innerType, isMutable);
+			}
+
+			return context.ResolveType(typeName)!;
+		}
+
+		var returnType = ResolveSubstitutedType(templateDecl.ReturnType);
+		var parameters = new List<ParameterSymbol>();
+		var instParameters = new List<ParameterSyntax>();
+
+		foreach (var param in templateDecl.Parameters)
+		{
+			var paramType = ResolveSubstitutedType(param.Type);
+			parameters.Add(new ParameterSymbol(param.Name, paramType));
+			instParameters.Add(new ParameterSyntax(param.Span, paramType.Name, param.Name));
+		}
+
+		var instSymbol = new FunctionSymbol(instName, returnType, parameters);
+		context.MonomorphizedFunctions[instName] = instSymbol;
+
+		var instBody = SubstituteBlockGenerics(templateDecl.Body, substitutionMap);
+		var instDecl = new FunctionDeclarationSyntax(templateDecl.Span, returnType.Name, instName, [], instParameters, instBody);
+
+		context.MonomorphizedFunctionDecls.Add(instDecl);
+
+		// Bind the newly generated function body immediately!
+		var localScope = new SymbolTable(context.Globals);
+		foreach (var p in parameters)
+		{
+			localScope.Declare(new VariableSymbol(p.Name, p.Type, false) { IsInitialized = true });
+		}
+		CheckBlock(instBody, localScope, instDecl);
+
+		return instSymbol;
+	}
+
+	private BlockStatementSyntax SubstituteBlockGenerics(BlockStatementSyntax block, Dictionary<string, TypeSymbol> substitutionMap)
+	{
+		var statements = new List<SyntaxNode>();
+		foreach (var stmt in block.Statements)
+			statements.Add(SubstituteStatementGenerics(stmt, substitutionMap));
+		return new BlockStatementSyntax(block.Span, statements);
+	}
+
+	private SyntaxNode SubstituteStatementGenerics(SyntaxNode stmt, Dictionary<string, TypeSymbol> substitutionMap)
+	{
+		switch (stmt)
+		{
+			case VariableDeclarationSyntax v:
+				var newType = v.Type;
+				if (newType != null)
+				{
+					if (substitutionMap.TryGetValue(newType, out var subst))
+						newType = subst.Name;
+					else if (newType.StartsWith("refvar ") || newType.StartsWith("ref "))
+					{
+						var isMutable = newType.StartsWith("refvar ");
+						var innerName = isMutable ? newType.Substring(7) : newType.Substring(4);
+						if (substitutionMap.TryGetValue(innerName, out var innerSubst))
+							newType = $"{(isMutable ? "refvar" : "ref")} {innerSubst.Name}";
+					}
+				}
+				return new VariableDeclarationSyntax(v.Span, v.IsMutable, newType, v.Name, v.Initializer != null ? SubstituteExpressionGenerics(v.Initializer, substitutionMap) : null);
+
+			case BlockStatementSyntax b:
+				return SubstituteBlockGenerics(b, substitutionMap);
+
+			case IfStatementSyntax i:
+				return new IfStatementSyntax(i.Span, SubstituteExpressionGenerics(i.Condition, substitutionMap), SubstituteStatementGenerics(i.ThenStatement, substitutionMap), i.ElseClause != null ? new ElseClauseSyntax(i.ElseClause.Span, SubstituteBlockGenerics(i.ElseClause.Body, substitutionMap)) : null);
+
+			case WhileStatementSyntax w:
+				return new WhileStatementSyntax(w.Span, SubstituteExpressionGenerics(w.Condition, substitutionMap), SubstituteStatementGenerics(w.Body, substitutionMap));
+
+			case ForStatementSyntax f:
+				return new ForStatementSyntax(f.Span, SubstituteStatementGenerics(f.Initializer, substitutionMap) as VariableDeclarationSyntax, SubstituteExpressionGenerics(f.Condition, substitutionMap), SubstituteExpressionGenerics(f.Increment, substitutionMap), SubstituteStatementGenerics(f.Body, substitutionMap));
+
+			case ReturnStatementSyntax r:
+				return new ReturnStatementSyntax(r.Span, r.Expression != null ? SubstituteExpressionGenerics(r.Expression, substitutionMap) : null);
+
+			case ExpressionStatementSyntax e:
+				return new ExpressionStatementSyntax(e.Span, SubstituteExpressionGenerics(e.Expression, substitutionMap));
+
+			default:
+				return stmt;
+		}
+	}
+
+	private ExpressionSyntax SubstituteExpressionGenerics(ExpressionSyntax expr, Dictionary<string, TypeSymbol> substitutionMap)
+	{
+		switch (expr)
+		{
+			case BinaryExpressionSyntax bin:
+				return new BinaryExpressionSyntax(bin.Span, SubstituteExpressionGenerics(bin.Left, substitutionMap), bin.Operator, SubstituteExpressionGenerics(bin.Right, substitutionMap));
+
+			case UnaryExpressionSyntax unary:
+				return new UnaryExpressionSyntax(unary.Span, unary.Operator, SubstituteExpressionGenerics(unary.Operand, substitutionMap));
+
+			case CallExpressionSyntax call:
+				var newTypeArgs = call.TypeArguments.Select(t => substitutionMap.TryGetValue(t, out var s) ? s.Name : t).ToList();
+				var newArgs = call.Arguments.Select(a => SubstituteExpressionGenerics(a, substitutionMap)).ToList();
+				return new CallExpressionSyntax(call.Span, call.FunctionName, newTypeArgs, newArgs);
+
+			case StructInitializationExpressionSyntax structInit:
+				var newTypeName = structInit.StructTypeName;
+				if (substitutionMap.TryGetValue(newTypeName, out var subst))
+					newTypeName = subst.Name;
+				var newInits = structInit.Initializers.Select(i => new MemberInitializerSyntax(i.Span, i.MemberName, SubstituteExpressionGenerics(i.Expression, substitutionMap))).ToList();
+				return new StructInitializationExpressionSyntax(structInit.Span, newTypeName, newInits);
+
+			case MemberAccessExpressionSyntax m:
+				return new MemberAccessExpressionSyntax(m.Span, SubstituteExpressionGenerics(m.Expression, substitutionMap), m.MemberName);
+
+			case IndexExpressionSyntax idx:
+				return new IndexExpressionSyntax(idx.Span, SubstituteExpressionGenerics(idx.Left, substitutionMap), SubstituteExpressionGenerics(idx.Index, substitutionMap));
+
+			case BorrowExpressionSyntax b:
+				return new BorrowExpressionSyntax(b.Span, SubstituteExpressionGenerics(b.Expression, substitutionMap));
+
+			case HeapAllocationExpressionSyntax h:
+				return new HeapAllocationExpressionSyntax(h.Span, SubstituteExpressionGenerics(h.Expression, substitutionMap));
+
+			case ArrayInitializationExpressionSyntax arr:
+				return new ArrayInitializationExpressionSyntax(arr.Span, arr.Elements.Select(e => SubstituteExpressionGenerics(e, substitutionMap)).ToList());
+
+			case TernaryExpressionSyntax t:
+				return new TernaryExpressionSyntax(t.Span, SubstituteExpressionGenerics(t.Condition, substitutionMap), SubstituteExpressionGenerics(t.ThenExpression, substitutionMap), SubstituteExpressionGenerics(t.ElseExpression, substitutionMap));
+
+			default:
+				return expr;
+		}
 	}
 }

@@ -8,6 +8,7 @@ public sealed class FunctionDeclarationSyntax(
 	TextSpan span,
 	string returnType,
 	string name,
+	IReadOnlyList<string> genericParameters,
 	IReadOnlyList<ParameterSyntax> parameters,
 	BlockStatementSyntax body) : SyntaxNode(span)
 {
@@ -15,6 +16,7 @@ public sealed class FunctionDeclarationSyntax(
 
 	public string ReturnType { get; } = returnType;
 	public string Name { get; } = name;
+	public IReadOnlyList<string> GenericParameters { get; } = genericParameters;
 	public IReadOnlyList<ParameterSyntax> Parameters { get; } = parameters;
 	public BlockStatementSyntax Body { get; } = body;
 

@@ -21,7 +21,7 @@ public sealed class SafetyPass(BindingContext context)
 			var members = context.CurrentNamespace != null ? unit.NamespaceDeclaration!.Members : unit.Members;
 
 			foreach (var member in members)
-				if (member is FunctionDeclarationSyntax func)
+				if (member is FunctionDeclarationSyntax func && func.GenericParameters.Count == 0)
 					CheckFunctionSafety(func);
 		}
 	}
@@ -61,6 +61,7 @@ public sealed class SafetyPass(BindingContext context)
 					if (v.Initializer != null) CheckExpressionSafety(v.Initializer, scope);
 					VerifyBorrowRules(v, scope);
 				}
+
 				break;
 
 			case ReturnStatementSyntax r:
