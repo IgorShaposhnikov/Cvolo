@@ -93,12 +93,12 @@ public sealed class SyntaxParser
 		var returnType = GetReturnTypeName(context.returnType());
 		var name = context.Identifier().GetText();
 
-		// Parse optional generic parameters list: <T, U>
+		// Parse optional generic parameters list (which can now contain concrete types like <int>)
 		var generics = new List<string>();
-		if (context.genericParameterList() is { } genList)
+		if (context.typeList() is { } typeListCtx)
 		{
-			foreach (var id in genList.Identifier())
-				generics.Add(id.GetText());
+			foreach (var t in typeListCtx.type())
+				generics.Add(GetTypeName(t));
 		}
 
 		var parameters = new List<ParameterSyntax>();
@@ -390,7 +390,6 @@ public sealed class SyntaxParser
 			var refVarExpr = BuildExpression(context.expression()); // Renamed to avoid conflict
 			return new VariableDeclarationSyntax(SpanOf(context), isMutable: true, "refvar", refVarName, refVarExpr);
 		}
-
 		if (context.REF() is not null)
 		{
 			var refName = context.Identifier().GetText(); // Renamed to avoid conflict

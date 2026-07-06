@@ -25,7 +25,7 @@ declaration
 	;
 
 functionDeclaration
-	: returnType Identifier (LT genericParameterList GT)? LPAREN parameterList? RPAREN blockStatement
+	: returnType Identifier (LT typeList GT)? LPAREN parameterList? RPAREN blockStatement
 	;
 
 externDeclaration

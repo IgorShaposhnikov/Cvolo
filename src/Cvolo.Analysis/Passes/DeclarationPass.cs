@@ -3,6 +3,7 @@ using Cvolo.Analysis.Symbols.Base;
 using Cvolo.Analysis.Symbols.Structs;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
+using static System.Net.Mime.MediaTypeNames;
 
 namespace Cvolo.Analysis.Passes;
 
@@ -55,15 +56,18 @@ public sealed class DeclarationPass(BindingContext context)
 		// If this is a generic struct template (e.g. struct Point<T>)
 		if (structDecl.GenericParameters.Count > 0)
 		{
+			// Record the original template file unit
+			context.SymbolUnits[mangledName] = context.CurrentUnit!;
+
 			context.GenericStructTemplates[mangledName] = structDecl;
 
-			// We register it as an abstract template type in StructTypes for now
 			var placeholderFields = new List<StructFieldSymbol>();
 			var templateSymbol = new StructTypeSymbol(mangledName, placeholderFields);
 			context.StructTypes[mangledName] = templateSymbol;
-			return; // We resolve concrete bodies during instantiation (ResolveType)
+			return;
 		}
 
+		context.SymbolUnits[mangledName] = context.CurrentUnit!;
 		var fields = new List<StructFieldSymbol>();
 		var fieldNames = new HashSet<string>();
 
@@ -101,10 +105,54 @@ public sealed class DeclarationPass(BindingContext context)
 		// If this is a generic function template, register it as a template
 		if (func.GenericParameters.Count > 0)
 		{
+			// Check if all generic parameters are concrete types (explicit specialization)
+			var isSpecialization = func.GenericParameters.All(p => context.ResolveType(p) != null);
+
+			if (isSpecialization)
+			{
+				var rawName = $"{mangledName}<{string.Join(",", func.GenericParameters)}>";
+				// Canonical Name
+				var instName = context.NormalizeGenericName(rawName);
+
+				var returnType = context.ResolveType(func.ReturnType);
+				context.SymbolUnits[mangledName] = context.CurrentUnit!;
+				if (returnType is null)
+				{
+					var currentFileContext = context.FileContexts[context.CurrentUnit!];
+					context.Diagnostics.Report(currentFileContext, func.Span, $"Unknown return type '{func.ReturnType}'");
+					return;
+				}
+
+				var specParameters = new List<ParameterSymbol>();
+				foreach (var param in func.Parameters)
+				{
+					var paramType = context.ResolveType(param.Type);
+					if (paramType is null)
+					{
+						var currentFileContext = context.FileContexts[context.CurrentUnit!];
+						context.Diagnostics.Report(currentFileContext, param.Span, $"Unknown parameter type '{param.Type}'");
+						continue;
+					}
+
+					specParameters.Add(new ParameterSymbol(param.Name, paramType));
+				}
+
+				var instSymbol = new FunctionSymbol(instName, returnType!, specParameters);
+				context.MonomorphizedFunctions[instName] = instSymbol;
+
+				var instDecl = new FunctionDeclarationSyntax(func.Span, func.ReturnType, instName, [], func.Parameters, func.Body);
+				context.MonomorphizedFunctionDecls.Add(instDecl);
+				return;
+			}
+
+			// Record the original template file unit
+			context.SymbolUnits[mangledName] = context.CurrentUnit!;
+
 			context.GenericFunctionTemplates[mangledName] = func;
 			return;
 		}
 
+		context.SymbolUnits[mangledName] = context.CurrentUnit!;
 		var type = context.ResolveType(func.ReturnType);
 		if (type is null)
 		{
@@ -140,6 +188,7 @@ public sealed class DeclarationPass(BindingContext context)
 
 	private void DeclareExternFunction(ExternDeclarationSyntax ext)
 	{
+		context.SymbolUnits[ext.Name] = context.CurrentUnit!;
 		var returnType = context.ResolveType(ext.ReturnType);
 		if (returnType is null)
 		{

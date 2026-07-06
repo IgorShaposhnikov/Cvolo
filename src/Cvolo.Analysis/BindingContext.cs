@@ -26,6 +26,7 @@ public sealed class BindingContext
 
 	// Canonical Type Cache (Phase 3: Ensuring structural equality)
 	private readonly Dictionary<string, TypeSymbol> _typeCache = [];
+	public Dictionary<string, CompilationUnitSyntax> SymbolUnits { get; } = [];
 
 	public CompilationUnitSyntax? CurrentUnit { get; set; }
 	public string? CurrentNamespace { get; set; }
@@ -130,7 +131,8 @@ public sealed class BindingContext
 			{
 				var typeArgs = argsPart.Split(',').Select(s => ResolveType(s.Trim())!).ToList();
 
-				var instantiatedType = InstantiateGenericStruct(templateDecl, typeArgs);
+				// Pass baseType.Name (which is the fully qualified template name) to the instantiator
+				var instantiatedType = InstantiateGenericStruct(templateDecl, baseType.Name, typeArgs!);
 
 				// Register the concrete layout in our global type table!
 				StructTypes[name] = instantiatedType;
@@ -154,10 +156,18 @@ public sealed class BindingContext
 		return $"{namespaceName}.{name}";
 	}
 
-	private StructTypeSymbol InstantiateGenericStruct(StructDeclarationSyntax templateDecl, List<TypeSymbol> typeArgs)
+	private StructTypeSymbol InstantiateGenericStruct(StructDeclarationSyntax templateDecl, string templateMangledName, List<TypeSymbol> typeArgs)
 	{
-		var mangledName = GetMangledName(templateDecl.Name, CurrentNamespace);
-		var instName = $"{mangledName}<{string.Join(", ", typeArgs.Select(t => t.Name))}>";
+		var instName = $"{templateMangledName}<{string.Join(", ", typeArgs.Select(t => t.Name))}>";
+
+		// Save current active contexts
+		var prevUnit = CurrentUnit;
+		var prevNamespace = CurrentNamespace;
+
+		// Restore the template's original namespace and file context
+		var originalUnit = SymbolUnits.TryGetValue(templateMangledName, out var u) ? u : null;
+		CurrentUnit = originalUnit;
+		CurrentNamespace = originalUnit?.NamespaceDeclaration?.Name;
 
 		// Map placeholders to concrete type arguments (e.g., T -> int)
 		var substitutionMap = new Dictionary<string, TypeSymbol>();
@@ -169,19 +179,35 @@ public sealed class BindingContext
 		var fields = new List<StructFieldSymbol>();
 		foreach (var field in templateDecl.Fields)
 		{
-			TypeSymbol fieldType;
-			if (substitutionMap.TryGetValue(field.Type, out var substitutedType))
+			// 1. Substitute placeholders inside type name strings
+			var substitutedTypeName = field.Type;
+			foreach (var kv in substitutionMap)
 			{
-				fieldType = substitutedType;
+				substitutedTypeName = System.Text.RegularExpressions.Regex.Replace(substitutedTypeName, $@"\b{kv.Key}\b", kv.Value.Name);
 			}
-			else
+
+			// 2. Resolve the concrete, substituted type safely
+			var fieldType = ResolveType(substitutedTypeName);
+			if (fieldType is null)
 			{
-				fieldType = ResolveType(field.Type)!;
+				var currentFileContext = FileContexts[CurrentUnit!];
+				Diagnostics.Report(currentFileContext, field.Span, $"Could not resolve field type '{substitutedTypeName}' during generic instantiation of '{instName}'");
+				continue;
 			}
 
 			fields.Add(new StructFieldSymbol(field.Name, fieldType));
 		}
 
+		// Restore active contexts back to previous state
+		CurrentUnit = prevUnit;
+		CurrentNamespace = prevNamespace;
+
 		return new StructTypeSymbol(instName, fields);
+	}
+
+	public string NormalizeGenericName(string name)
+	{
+		// Remove all whitespace to ensure "Point<int>" matches "Point< int >"
+		return name.Replace(" ", "").Trim();
 	}
 }

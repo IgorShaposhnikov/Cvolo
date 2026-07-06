@@ -21,8 +21,25 @@ public sealed class ValidationPass(BindingContext context)
 			var members = context.CurrentNamespace != null ? unit.NamespaceDeclaration!.Members : unit.Members;
 			foreach (var member in members)
 			{
-				if (member is FunctionDeclarationSyntax func && func.GenericParameters.Count == 0)
-					CheckFunctionBody(func);
+				if (member is FunctionDeclarationSyntax func)
+				{
+					var isTemplate = func.GenericParameters.Count > 0 && func.GenericParameters.Any(p => context.ResolveType(p) == null);
+					if (!isTemplate)
+					{
+						// For explicit template specializations, validate the registered monomorphized version
+						if (func.GenericParameters.Count > 0)
+						{
+							var mangledName = context.GetMangledName(func.Name, context.CurrentNamespace);
+							var instName = $"{mangledName}<{string.Join(", ", func.GenericParameters)}>";
+							var instDecl = context.MonomorphizedFunctionDecls.First(d => d.Name == instName);
+							CheckFunctionBody(instDecl);
+						}
+						else
+						{
+							CheckFunctionBody(func);
+						}
+					}
+				}
 			}
 		}
 	}
@@ -545,32 +562,39 @@ public sealed class ValidationPass(BindingContext context)
 
 	private FunctionSymbol InstantiateGenericFunction(FunctionDeclarationSyntax templateDecl, List<TypeSymbol> typeArgs, SymbolTable scope)
 	{
-		var mangledName = context.GetMangledName(templateDecl.Name, context.CurrentNamespace);
-		var instName = $"{mangledName}<{string.Join(", ", typeArgs.Select(t => t.Name))}>";
+		// Resolve the template's fully qualified mangled name (e.g. BankSystem.IO.PrintAccountInfo)
+		var templateMangledName = ResolveFunctionTemplateName(templateDecl.Name, scope)!;
+		var rawName = $"{templateMangledName}<{string.Join(",", typeArgs.Select(t => t.Name))}>";
+		// Canonical Name
+		var instName = context.NormalizeGenericName(rawName);
 
 		if (context.MonomorphizedFunctions.TryGetValue(instName, out var existing))
 			return existing;
 
 		var substitutionMap = new Dictionary<string, TypeSymbol>();
-		for (int i = 0; i < templateDecl.GenericParameters.Count; i++)
+		for (var i = 0; i < templateDecl.GenericParameters.Count; i++)
 		{
 			substitutionMap[templateDecl.GenericParameters[i]] = typeArgs[i];
 		}
 
 		TypeSymbol ResolveSubstitutedType(string typeName)
 		{
-			if (substitutionMap.TryGetValue(typeName, out var subst))
-				return subst;
-
-			if (typeName.StartsWith("refvar ") || typeName.StartsWith("ref "))
+			// Substitute placeholders inside type name strings first
+			var substitutedTypeName = typeName;
+			foreach (var kv in substitutionMap)
 			{
-				var isMutable = typeName.StartsWith("refvar ");
-				var innerName = isMutable ? typeName.Substring(7) : typeName.Substring(4);
+				substitutedTypeName = System.Text.RegularExpressions.Regex.Replace(substitutedTypeName, $@"\b{kv.Key}\b", kv.Value.Name);
+			}
+
+			if (substitutedTypeName.StartsWith("refvar ") || substitutedTypeName.StartsWith("ref "))
+			{
+				var isMutable = substitutedTypeName.StartsWith("refvar ");
+				var innerName = isMutable ? substitutedTypeName.Substring(7) : substitutedTypeName.Substring(4);
 				var innerType = ResolveSubstitutedType(innerName);
 				return new PointerTypeSymbol(innerType, isMutable);
 			}
 
-			return context.ResolveType(typeName)!;
+			return context.ResolveType(substitutedTypeName)!;
 		}
 
 		var returnType = ResolveSubstitutedType(templateDecl.ReturnType);
@@ -592,12 +616,19 @@ public sealed class ValidationPass(BindingContext context)
 
 		context.MonomorphizedFunctionDecls.Add(instDecl);
 
+		// Map the monomorphized instance to the template's original file unit
+		if (context.SymbolUnits.TryGetValue(templateMangledName, out var templateUnit))
+		{
+			context.SymbolUnits[instName] = templateUnit;
+		}
+
 		// Bind the newly generated function body immediately!
 		var localScope = new SymbolTable(context.Globals);
 		foreach (var p in parameters)
 		{
 			localScope.Declare(new VariableSymbol(p.Name, p.Type, false) { IsInitialized = true });
 		}
+
 		CheckBlock(instBody, localScope, instDecl);
 
 		return instSymbol;
@@ -619,14 +650,9 @@ public sealed class ValidationPass(BindingContext context)
 				var newType = v.Type;
 				if (newType != null)
 				{
-					if (substitutionMap.TryGetValue(newType, out var subst))
-						newType = subst.Name;
-					else if (newType.StartsWith("refvar ") || newType.StartsWith("ref "))
+					foreach (var kv in substitutionMap)
 					{
-						var isMutable = newType.StartsWith("refvar ");
-						var innerName = isMutable ? newType.Substring(7) : newType.Substring(4);
-						if (substitutionMap.TryGetValue(innerName, out var innerSubst))
-							newType = $"{(isMutable ? "refvar" : "ref")} {innerSubst.Name}";
+						newType = System.Text.RegularExpressions.Regex.Replace(newType, $@"\b{kv.Key}\b", kv.Value.Name);
 					}
 				}
 				return new VariableDeclarationSyntax(v.Span, v.IsMutable, newType, v.Name, v.Initializer != null ? SubstituteExpressionGenerics(v.Initializer, substitutionMap) : null);
@@ -662,17 +688,36 @@ public sealed class ValidationPass(BindingContext context)
 				return new BinaryExpressionSyntax(bin.Span, SubstituteExpressionGenerics(bin.Left, substitutionMap), bin.Operator, SubstituteExpressionGenerics(bin.Right, substitutionMap));
 
 			case UnaryExpressionSyntax unary:
-				return new UnaryExpressionSyntax(unary.Span, unary.Operator, SubstituteExpressionGenerics(unary.Operand, substitutionMap));
+				var newOp = unary.Operator;
+				if (newOp.StartsWith("(") && newOp.EndsWith(")"))
+				{
+					foreach (var kv in substitutionMap)
+					{
+						newOp = System.Text.RegularExpressions.Regex.Replace(newOp, $@"\b{kv.Key}\b", kv.Value.Name);
+					}
+				}
+				return new UnaryExpressionSyntax(unary.Span, newOp, SubstituteExpressionGenerics(unary.Operand, substitutionMap));
 
 			case CallExpressionSyntax call:
-				var newTypeArgs = call.TypeArguments.Select(t => substitutionMap.TryGetValue(t, out var s) ? s.Name : t).ToList();
+				var newTypeArgs = call.TypeArguments.Select(t => {
+					var substituted = t;
+					foreach (var kv in substitutionMap)
+					{
+						substituted = System.Text.RegularExpressions.Regex.Replace(substituted, $@"\b{kv.Key}\b", kv.Value.Name);
+					}
+
+					return substituted;
+				}).ToList();
 				var newArgs = call.Arguments.Select(a => SubstituteExpressionGenerics(a, substitutionMap)).ToList();
 				return new CallExpressionSyntax(call.Span, call.FunctionName, newTypeArgs, newArgs);
 
 			case StructInitializationExpressionSyntax structInit:
 				var newTypeName = structInit.StructTypeName;
-				if (substitutionMap.TryGetValue(newTypeName, out var subst))
-					newTypeName = subst.Name;
+				foreach (var kv in substitutionMap)
+				{
+					newTypeName = System.Text.RegularExpressions.Regex.Replace(newTypeName, $@"\b{kv.Key}\b", kv.Value.Name);
+				}
+
 				var newInits = structInit.Initializers.Select(i => new MemberInitializerSyntax(i.Span, i.MemberName, SubstituteExpressionGenerics(i.Expression, substitutionMap))).ToList();
 				return new StructInitializationExpressionSyntax(structInit.Span, newTypeName, newInits);
 

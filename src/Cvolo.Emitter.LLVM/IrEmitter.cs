@@ -44,7 +44,7 @@ public sealed class IrEmitter : IEmitter
 		_writer.WriteLine("declare i32 @puts(ptr)");
 		_writer.WriteLine("declare void @exit(i32)");
 
-		// Pass 1: Register all Struct Names
+		// Pass 1: Register Structs
 		foreach (var unit in units)
 		{
 			var ns = unit.NamespaceDeclaration?.Name;
@@ -53,142 +53,129 @@ public sealed class IrEmitter : IEmitter
 			{
 				if (member is StructDeclarationSyntax structDecl)
 				{
-					var mangledName = string.IsNullOrEmpty(ns) ? structDecl.Name : $"{ns}.{structDecl.Name}";
-
-					// If it is a generic template, register it as a template, NOT a physical layout!
-					if (structDecl.GenericParameters.Count > 0)
-					{
-						bindingContext.GenericStructTemplates[mangledName] = structDecl;
-					}
-					else
-					{
-						_astStructs[mangledName] = structDecl;
-					}
+					var mangledName = bindingContext.GetMangledName(structDecl.Name, ns);
+					if (structDecl.GenericParameters.Count == 0) _astStructs[mangledName] = structDecl;
+					else bindingContext.GenericStructTemplates[mangledName] = structDecl;
 				}
 			}
 		}
 
-		// Pass 2: Generate Struct LAYOUTS (Only for concrete, non-generic structs!)
+		// Pass 2: Concrete Struct Layouts
 		foreach (var unit in units)
 		{
-			_currentUnit = unit;
-			bindingContext.CurrentUnit = unit;
-			bindingContext.CurrentNamespace = unit.NamespaceDeclaration?.Name;
 			var ns = unit.NamespaceDeclaration?.Name;
 			var members = ns != null ? unit.NamespaceDeclaration!.Members : unit.Members;
-
 			foreach (var member in members)
 			{
-				if (member is StructDeclarationSyntax structDecl && structDecl.GenericParameters.Count == 0) // <-- Skip templates
+				if (member is StructDeclarationSyntax structDecl && structDecl.GenericParameters.Count == 0)
 				{
-					var mangledName = string.IsNullOrEmpty(ns) ? structDecl.Name : $"{ns}.{structDecl.Name}";
+					var mangledName = bindingContext.GetMangledName(structDecl.Name, ns);
 					var structType = bindingContext.ResolveType(mangledName) as StructTypeSymbol;
 					if (structType != null)
 					{
-						var fieldTypes = string.Join(", ", structDecl.Fields.Select(f =>
-							Type(bindingContext.ResolveType(f.Type)!)));
+						var fieldTypes = string.Join(", ", structType.Fields.Select(f => Type(f.Type)));
 						_writer.WriteLine($"%struct.{structType.Name} = type {{ {fieldTypes} }}");
 					}
 				}
 			}
 		}
 
-		if (_astStructs.Count > 0) _writer.WriteLine();
+		// Pass 2.5: Generic Struct Layouts (Deduplicated)
+		var emittedStructs = new HashSet<string>();
+		foreach (var structType in bindingContext.StructTypes.Values)
+		{
+			if (structType.Name.Contains('<') && emittedStructs.Add(structType.Name))
+			{
+				var fieldTypes = string.Join(", ", structType.Fields.Select(f => Type(f.Type)));
+				_writer.WriteLine($"%\"struct.{structType.Name}\" = type {{ {fieldTypes} }}");
+			}
+		}
+		_writer.WriteLine();
 
-        // Pass 2.5: Generate layouts for instantiated generic structs
-        var hasGenericLayouts = false;
-        foreach (var structType in bindingContext.StructTypes.Values)
-        {
-            if (structType.Name.Contains('<'))
-            {
-                hasGenericLayouts = true;
-                var fieldTypes = string.Join(", ", structType.Fields.Select(f => Type(f.Type)));
-
-                // Escape the struct name with quotes so LLVM parses it cleanly
-                _writer.WriteLine($"%\"struct.{structType.Name}\" = type {{ {fieldTypes} }}");
-            }
-        }
-
-        if (hasGenericLayouts) _writer.WriteLine();
-
-		// Pass 3: Register all function Metadata
+		// Pass 3: Register Metadata (Regular + Externs)
 		foreach (var unit in units)
 		{
-			_currentUnit = unit;
-			bindingContext.CurrentUnit = unit;
-			bindingContext.CurrentNamespace = unit.NamespaceDeclaration?.Name;
 			var ns = unit.NamespaceDeclaration?.Name;
+			bindingContext.CurrentUnit = unit;
+			bindingContext.CurrentNamespace = ns;
 			var members = ns != null ? unit.NamespaceDeclaration!.Members : unit.Members;
 
 			foreach (var member in members)
 			{
-				if (member is FunctionDeclarationSyntax func && func.GenericParameters.Count == 0) // <-- Skip templates
+				if (member is FunctionDeclarationSyntax func && func.GenericParameters.Count == 0 && !func.Name.Contains('<'))
 				{
-					var mangledName = string.IsNullOrEmpty(ns) ? func.Name : $"{ns}.{func.Name}";
-
-					_astFunctions[mangledName] = func;
+					var mangledName = bindingContext.GetMangledName(func.Name, ns);
 					_functionReturnTypes[mangledName] = bindingContext.ResolveType(func.ReturnType)!;
-					_functionParameterTypes[mangledName] = func.Parameters
-						.Select(p => bindingContext.ResolveType(p.Type)!)
-						.ToList();
+					_functionParameterTypes[mangledName] = func.Parameters.Select(p => bindingContext.ResolveType(p.Type)!).ToList();
+					_astFunctions[mangledName] = func;
 				}
 				else if (member is ExternDeclarationSyntax ext)
 				{
 					_astExterns[ext.Name] = ext;
 					_functionReturnTypes[ext.Name] = bindingContext.ResolveType(ext.ReturnType)!;
-					_functionParameterTypes[ext.Name] = ext.Parameters
-						.Select(p => bindingContext.ResolveType(p.Type)!)
-						.ToList();
+					_functionParameterTypes[ext.Name] = ext.Parameters.Select(p => bindingContext.ResolveType(p.Type)!).ToList();
 				}
 			}
 		}
 
-		// Also register metadata for monomorphized generic instantiations!
+		// Pass 3.5: Register Metadata (Monomorphized/Specialized)
 		foreach (var instDecl in bindingContext.MonomorphizedFunctionDecls)
 		{
+			var baseMangledName = instDecl.Name.Split('<')[0];
+			var originalUnit = (bindingContext.SymbolUnits.TryGetValue(baseMangledName, out var u) ? u : null) ?? units.First();
+			bindingContext.CurrentUnit = originalUnit;
+			bindingContext.CurrentNamespace = originalUnit?.NamespaceDeclaration?.Name;
+
 			_functionReturnTypes[instDecl.Name] = bindingContext.ResolveType(instDecl.ReturnType)!;
-			_functionParameterTypes[instDecl.Name] = instDecl.Parameters
-				.Select(p => bindingContext.ResolveType(p.Type)!)
-				.ToList();
+			_functionParameterTypes[instDecl.Name] = instDecl.Parameters.Select(p => bindingContext.ResolveType(p.Type)!).ToList();
 		}
 
 		// Pass 4: Emit Externs
-		foreach (var unit in units)
-		{
-			_currentUnit = unit;
-			var ns = unit.NamespaceDeclaration?.Name;
-			var members = ns != null ? unit.NamespaceDeclaration!.Members : unit.Members;
-			foreach (var member in members)
-				if (member is ExternDeclarationSyntax ext) EmitExtern(ext);
-		}
+		foreach (var ext in _astExterns.Values) EmitExtern(ext);
 
-		// Pass 5: Emit Function Bodies
+		// Pass 5: Emit Bodies (Strictly Deduplicated)
+		var emittedFunctionNames = new HashSet<string>();
+
+		// A. Emit Regular Functions (No generics/specializations)
 		foreach (var unit in units)
 		{
-			_currentUnit = unit;
+			var ns = unit.NamespaceDeclaration?.Name;
 			bindingContext.CurrentUnit = unit;
-			bindingContext.CurrentNamespace = unit.NamespaceDeclaration?.Name;
-			var ns = unit.NamespaceDeclaration?.Name;
-			var members = ns != null ? unit.NamespaceDeclaration!.Members : unit.Members;
+			bindingContext.CurrentNamespace = ns;
+			_currentUnit = unit;
 
+			var members = ns != null ? unit.NamespaceDeclaration!.Members : unit.Members;
 			foreach (var member in members)
 			{
-				if (member is FunctionDeclarationSyntax func && func.GenericParameters.Count == 0) // <-- Skip templates
+				if (member is FunctionDeclarationSyntax func && func.GenericParameters.Count == 0 && !func.Name.Contains('<'))
 				{
-					var mangledName = string.IsNullOrEmpty(ns) ? func.Name : $"{ns}.{func.Name}";
-					var funcWriter = new StringWriter();
-					EmitFunction(func, mangledName, funcWriter);
-					_writer.Write(funcWriter.ToString());
+					var mangledName = bindingContext.GetMangledName(func.Name, ns);
+					if (emittedFunctionNames.Add(mangledName))
+					{
+						var funcWriter = new StringWriter();
+						EmitFunction(func, mangledName, funcWriter);
+						_writer.Write(funcWriter.ToString());
+					}
 				}
 			}
 		}
 
-		// Also emit monomorphized concrete generic function instantiations!
+		// B. Emit All Monomorphized and Explicit Specializations
 		foreach (var instDecl in bindingContext.MonomorphizedFunctionDecls)
 		{
-			var funcWriter = new StringWriter();
-			EmitFunction(instDecl, instDecl.Name, funcWriter);
-			_writer.Write(funcWriter.ToString());
+			var canonicalName = bindingContext.NormalizeGenericName(instDecl.Name);
+			if (emittedFunctionNames.Add(canonicalName))
+			{
+				var baseMangledName = instDecl.Name.Split('<')[0];
+				var originalUnit = (bindingContext.SymbolUnits.TryGetValue(baseMangledName, out var u) ? u : null) ?? units.First();
+				bindingContext.CurrentUnit = originalUnit;
+				bindingContext.CurrentNamespace = originalUnit?.NamespaceDeclaration?.Name;
+				_currentUnit = originalUnit;
+
+				var funcWriter = new StringWriter();
+				EmitFunction(instDecl, instDecl.Name, funcWriter);
+				_writer.Write(funcWriter.ToString());
+			}
 		}
 
 		if (_stringDefs.Count > 0)
@@ -328,24 +315,25 @@ public sealed class IrEmitter : IEmitter
 
 	private void EmitVar(VariableDeclarationSyntax v, StringWriter fw)
 	{
-		TypeSymbol? type = null;
-		if (v.Type != null)
+		TypeSymbol? typeSymbol = null;
+		if (v.Type is not null)
 		{
-			type = _bindingContext!.ResolveType(v.Type);
+			typeSymbol = _bindingContext!.ResolveType(v.Type);
 		}
 
-		// Handle Explicit Reference Variables (ref / refvar)
 		if (v.Type == "refvar" || v.Type == "ref")
 		{
 			var (val, valTy) = Eval(v.Initializer!, fw);
+
+			// Type-safe unwrap using C# pattern matching
 			var innerType = valTy is PointerTypeSymbol ptrType ? ptrType.ReferencedType : valTy;
 			var isMutable = v.Type == "refvar";
-			var typeSymbol = new PointerTypeSymbol(innerType, isMutable);
 
-			// Change this line (add 'var' back):
+			var pointerType = new PointerTypeSymbol(innerType, isMutable);
+
 			var ptr = NewLocal();
 			_locals[v.Name] = ptr;
-			_variableTypes[v.Name] = typeSymbol;
+			_variableTypes[v.Name] = pointerType;
 
 			fw.WriteLine($"    %{ptr} = alloca ptr");
 			fw.WriteLine($"    store {val}, ptr %{ptr}");
@@ -360,8 +348,8 @@ public sealed class IrEmitter : IEmitter
 			var ptr = NewLocal(); // Allocated sequentially AFTER initializer evaluation
 			_locals[v.Name] = ptr;
 
-			type ??= valTy;
-			_variableTypes[v.Name] = type;
+			typeSymbol ??= valTy;
+			_variableTypes[v.Name] = typeSymbol;
 			_heapAllocatedVars.Add(v.Name);
 
 			fw.WriteLine($"    %{ptr} = alloca ptr");
@@ -369,14 +357,14 @@ public sealed class IrEmitter : IEmitter
 			return;
 		}
 
-		// Handle Standard Variables (Stack Structs or Primitives)
-		if (type is not null)
+		if (typeSymbol is not null)
 		{
+			// Case A: Explicitly typed variable (type is known upfront)
 			var ptr = NewLocal();
 			_locals[v.Name] = ptr;
-			_variableTypes[v.Name] = type;
+			_variableTypes[v.Name] = typeSymbol;
 
-			var ty = Type(type);
+			var ty = Type(typeSymbol);
 			fw.WriteLine($"    %{ptr} = alloca {ty}");
 
 			if (v.Initializer is not null)
@@ -387,7 +375,7 @@ public sealed class IrEmitter : IEmitter
 				}
 				else if (v.Initializer is ArrayInitializationExpressionSyntax arrInit)
 				{
-					EmitArrayInitializationInPlace(arrInit, ptr, type as ArrayTypeSymbol, fw);
+					EmitArrayInitializationInPlace(arrInit, ptr, typeSymbol as ArrayTypeSymbol, fw);
 				}
 				else
 				{
@@ -488,7 +476,7 @@ public sealed class IrEmitter : IEmitter
 		return expr switch
 		{
 			IntegerLiteralExpressionSyntax n => ($"i32 {n.Value}", TypeSymbol.Int),
-			DoubleLiteralExpressionSyntax d => ($"double {d.Value.ToString(CultureInfo.InvariantCulture)}", TypeSymbol.Double),
+			DoubleLiteralExpressionSyntax d => (FormatDouble(d.Value), TypeSymbol.Double),
 			BooleanLiteralExpressionSyntax b => ($"i1 {(b.Value ? "1" : "0")}", TypeSymbol.Bool),
 			StringLiteralExpressionSyntax s => (AddString(s.Value), TypeSymbol.String),
 			CharacterLiteralExpressionSyntax c => ($"i8 {(int)c.Value}", TypeSymbol.Char),
@@ -533,7 +521,7 @@ public sealed class IrEmitter : IEmitter
 				}
 			}
 
-			// PROMOTION FOR VARIADIC ARGUMENTS (C-ABI Promotion Rules)
+			// PROMOTION FOR VARIADIC ARGUMENTS
 			var isVariadic = _astExterns.TryGetValue(mangledName, out var ext) && ext.IsVariadic;
 			if (isVariadic && i >= _functionParameterTypes[mangledName].Count)
 			{
@@ -555,7 +543,7 @@ public sealed class IrEmitter : IEmitter
 		}
 
 		var isCallVariadic = _astExterns.TryGetValue(mangledName, out var externDecl) && externDecl.IsVariadic;
-		var retType = _functionReturnTypes.TryGetValue(mangledName, out var foundRet) ? foundRet : TypeSymbol.Int;
+		var retType = _functionReturnTypes.TryGetValue(mangledName, out var foundRet) ? foundRet : TypeSymbol.Void;
 		var ret = Type(retType);
 
 		var escapedName = mangledName.Contains('<') ? $"\"{mangledName}\"" : mangledName;
@@ -566,7 +554,15 @@ public sealed class IrEmitter : IEmitter
 			callee = $"({paramTys}, ...) @{escapedName}";
 		}
 
-		fw.WriteLine($"    call {ret} {callee}({string.Join(", ", args)})");
+		if (ret == "void")
+		{
+			fw.WriteLine($"    call {ret} {callee}({string.Join(", ", args)})");
+		}
+		else
+		{
+			var r = NewLocal();
+			fw.WriteLine($"    %{r} = call {ret} {callee}({string.Join(", ", args)})");
+		}
 	}
 
 	private (string val, TypeSymbol ty) EmitCallExpr(CallExpressionSyntax call, StringWriter fw)
@@ -635,29 +631,86 @@ public sealed class IrEmitter : IEmitter
 	private (string val, TypeSymbol ty) EmitBin(BinaryExpressionSyntax bin, StringWriter fw)
 	{
 		var (l, lTy) = Eval(bin.Left, fw);
-		var (r, _) = Eval(bin.Right, fw);
-		var reg = NewLocal();
-		var (op, resultTy) = bin.Operator switch
+		var (r, rTy) = Eval(bin.Right, fw);
+
+		var isDouble = lTy.Equals(TypeSymbol.Double) || rTy.Equals(TypeSymbol.Double);
+
+		// 1. Implicit promotion: Coerce int to double if one of the operands is double
+		if (isDouble)
 		{
-			"+" => ($"add i32 {V(l)}, {V(r)}", TypeSymbol.Int),
-			"-" => ($"sub i32 {V(l)}, {V(r)}", TypeSymbol.Int),
-			"*" => ($"mul i32 {V(l)}, {V(r)}", TypeSymbol.Int),
-			"/" => ($"sdiv i32 {V(l)}, {V(r)}", TypeSymbol.Int),
-			"%" => ($"srem i32 {V(l)}, {V(r)}", TypeSymbol.Int),
-			"==" => ($"icmp eq i32 {V(l)}, {V(r)}", TypeSymbol.Bool),
-			"!=" => ($"icmp ne i32 {V(l)}, {V(r)}", TypeSymbol.Bool),
-			"<" => ($"icmp slt i32 {V(l)}, {V(r)}", TypeSymbol.Bool),
-			">" => ($"icmp sgt i32 {V(l)}, {V(r)}", TypeSymbol.Bool),
-			"<=" => ($"icmp sle i32 {V(l)}, {V(r)}", TypeSymbol.Bool),
-			">=" => ($"icmp sge i32 {V(l)}, {V(r)}", TypeSymbol.Bool),
-			"&" => ($"and i32 {V(l)}, {V(r)}", TypeSymbol.Int),
-			"|" => ($"or i32 {V(l)}, {V(r)}", TypeSymbol.Int),
-			"^" => ($"xor i32 {V(l)}, {V(r)}", TypeSymbol.Int),
-			"<<" => ($"shl i32 {V(l)}, {V(r)}", TypeSymbol.Int),
-			">>" => ($"ashr i32 {V(l)}, {V(r)}", TypeSymbol.Int),
-			">>>" => ($"lshr i32 {V(l)}, {V(r)}", TypeSymbol.Int),
-			_ => throw new InvalidOperationException($"Unknown binop '{bin.Operator}'"),
-		};
+			if (lTy.Equals(TypeSymbol.Int))
+			{
+				var promReg = NewLocal();
+				fw.WriteLine($"    %{promReg} = sitofp i32 {V(l)} to double");
+				l = $"double %{promReg}";
+			}
+			if (rTy.Equals(TypeSymbol.Int))
+			{
+				var promReg = NewLocal();
+				fw.WriteLine($"    %{promReg} = sitofp i32 {V(r)} to double");
+				r = $"double %{promReg}";
+			}
+		}
+
+		// 2. Allocate register AFTER promotion to maintain sequential LLVM register order
+		var reg = NewLocal();
+
+		string op;
+		TypeSymbol resultTy;
+
+		if (isDouble)
+		{
+			// Floating Point Logic
+			(op, resultTy) = bin.Operator switch
+			{
+				"+" => ($"fadd double {V(l)}, {V(r)}", TypeSymbol.Double),
+				"-" => ($"fsub double {V(l)}, {V(r)}", TypeSymbol.Double),
+				"*" => ($"fmul double {V(l)}, {V(r)}", TypeSymbol.Double),
+				"/" => ($"fdiv double {V(l)}, {V(r)}", TypeSymbol.Double),
+				"%" => ($"frem double {V(l)}, {V(r)}", TypeSymbol.Double),
+				"==" => ($"fcmp oeq double {V(l)}, {V(r)}", TypeSymbol.Bool),
+				"!=" => ($"fcmp one double {V(l)}, {V(r)}", TypeSymbol.Bool),
+				"<" => ($"fcmp olt double {V(l)}, {V(r)}", TypeSymbol.Bool),
+				">" => ($"fcmp ogt double {V(l)}, {V(r)}", TypeSymbol.Bool),
+				"<=" => ($"fcmp ole double {V(l)}, {V(r)}", TypeSymbol.Bool),
+				">=" => ($"fcmp oge double {V(l)}, {V(r)}", TypeSymbol.Bool),
+				_ => throw new InvalidOperationException($"Unknown double binop '{bin.Operator}'")
+			};
+		}
+		else
+		{
+			// Integer / Pointer / Boolean Logic
+			var isPointer = lTy.Equals(TypeSymbol.String) || lTy is PointerTypeSymbol || rTy.Equals(TypeSymbol.String) || rTy is PointerTypeSymbol;
+			var isBool = lTy.Equals(TypeSymbol.Bool) || rTy.Equals(TypeSymbol.Bool);
+
+			// Select LLVM type: ptr for refs, i1 for booleans, i32 for integers
+			var tyStr = isPointer ? "ptr" : (isBool ? "i1" : "i32");
+
+			(op, resultTy) = bin.Operator switch
+			{
+				"+" => ($"add i32 {V(l)}, {V(r)}", TypeSymbol.Int),
+				"-" => ($"sub i32 {V(l)}, {V(r)}", TypeSymbol.Int),
+				"*" => ($"mul i32 {V(l)}, {V(r)}", TypeSymbol.Int),
+				"/" => ($"sdiv i32 {V(l)}, {V(r)}", TypeSymbol.Int),
+				"%" => ($"srem i32 {V(l)}, {V(r)}", TypeSymbol.Int),
+				"==" => ($"icmp eq {tyStr} {V(l)}, {V(r)}", TypeSymbol.Bool),
+				"!=" => ($"icmp ne {tyStr} {V(l)}, {V(r)}", TypeSymbol.Bool),
+				"<" => ($"icmp slt {tyStr} {V(l)}, {V(r)}", TypeSymbol.Bool),
+				">" => ($"icmp sgt {tyStr} {V(l)}, {V(r)}", TypeSymbol.Bool),
+				"<=" => ($"icmp sle {tyStr} {V(l)}, {V(r)}", TypeSymbol.Bool),
+				">=" => ($"icmp sge {tyStr} {V(l)}, {V(r)}", TypeSymbol.Bool),
+				"&" => ($"and i32 {V(l)}, {V(r)}", TypeSymbol.Int),
+				"|" => ($"or i32 {V(l)}, {V(r)}", TypeSymbol.Int),
+				"^" => ($"xor i32 {V(l)}, {V(r)}", TypeSymbol.Int),
+				"&&" => ($"and i1 {V(l)}, {V(r)}", TypeSymbol.Bool),
+				"||" => ($"or i1 {V(l)}, {V(r)}", TypeSymbol.Bool),
+				"<<" => ($"shl i32 {V(l)}, {V(r)}", TypeSymbol.Int),
+				">>" => ($"ashr i32 {V(l)}, {V(r)}", TypeSymbol.Int),
+				">>>" => ($"lshr i32 {V(l)}, {V(r)}", TypeSymbol.Int),
+				_ => throw new InvalidOperationException($"Unknown binop '{bin.Operator}'"),
+			};
+		}
+
 		fw.WriteLine($"    %{reg} = {op}");
 		return ($"{Type(resultTy)} %{reg}", resultTy);
 	}
@@ -763,17 +816,29 @@ public sealed class IrEmitter : IEmitter
 	private string AddString(string value)
 	{
 		var idx = _stringIndex++;
-		var escaped = string.Concat(value.Select(c => c switch
+
+		// 1. Encode the .NET string (UTF-16) into UTF-8 bytes for LLVM i8 arrays
+		var utf8Bytes = System.Text.Encoding.UTF8.GetBytes(value);
+
+		var sb = new System.Text.StringBuilder();
+		foreach (var b in utf8Bytes)
 		{
-			'\n' => "\\0a",
-			'\r' => "\\0d",
-			'\t' => "\\09",
-			'"' => "\\22",
-			'\\' => "\\5c",
-			_ when c < 32 || c > 126 => $"\\{(int)c:x2}",
-			_ => c.ToString(),
-		}));
-		_stringDefs.Add($"@str{idx} = private unnamed_addr constant [{value.Length + 1} x i8] c\"{escaped}\\00\"");
+			// 2. Keep standard printable ASCII as characters, escape everything else as \xx
+			if (b >= 32 && b <= 126 && b != (byte)'"' && b != (byte)'\\')
+			{
+				sb.Append((char)b);
+			}
+			else
+			{
+				sb.Append($"\\{b:x2}");
+			}
+		}
+
+		var escaped = sb.ToString();
+
+		// 3. The array size must be the number of BYTES + 1 for null terminator
+		_stringDefs.Add($"@str{idx} = private unnamed_addr constant [{utf8Bytes.Length + 1} x i8] c\"{escaped}\\00\"");
+
 		return $"ptr @str{idx}";
 	}
 
@@ -860,7 +925,7 @@ public sealed class IrEmitter : IEmitter
 			}
 
 			if (parentType is not StructTypeSymbol structType)
-				throw new InvalidOperationException($"Cannot access field of non-struct type '{parentType.Name}'");
+				throw new InvalidOperationException($"Cannot access field of non-struct type '{parentType?.Name ?? "null"}'");
 
 			var fieldIndex = -1;
 			TypeSymbol? fieldType = TypeSymbol.Int;
@@ -947,43 +1012,43 @@ public sealed class IrEmitter : IEmitter
 		return ($"ptr %{tempPtrReg}", type);
 	}
 
-    private void EmitStructInitializationInPlace(StructInitializationExpressionSyntax expr, string destPtr, StringWriter fw)
-    {
-        var mangledName = _bindingContext!.ResolveType(expr.StructTypeName) as StructTypeSymbol;
+	private void EmitStructInitializationInPlace(StructInitializationExpressionSyntax expr, string destPtr, StringWriter fw)
+	{
+		var mangledName = _bindingContext!.ResolveType(expr.StructTypeName) as StructTypeSymbol;
 		var structTy = mangledName!.Name.Contains('<') ? $"%\"struct.{mangledName.Name}\"" : $"%struct.{mangledName.Name}";
 		foreach (var init in expr.Initializers)
-        {
-            var fieldIndex = -1;
-            var fieldType = "int";
+		{
+			var fieldIndex = -1;
+			var fieldType = "int";
 
-            // Read fields directly from the TypeSymbol object instead of the AST!
-            for (var i = 0; i < mangledName.Fields.Count; i++)
-            {
-                if (mangledName.Fields[i].Name == init.MemberName)
-                {
-                    fieldIndex = i;
-                    fieldType = mangledName.Fields[i].Type.Name;
-                    break;
-                }
-            }
+			// Read fields directly from the TypeSymbol object instead of the AST!
+			for (var i = 0; i < mangledName.Fields.Count; i++)
+			{
+				if (mangledName.Fields[i].Name == init.MemberName)
+				{
+					fieldIndex = i;
+					fieldType = mangledName.Fields[i].Type.Name;
+					break;
+				}
+			}
 
-            var fieldPtrReg = NewLocal();
-            fw.WriteLine($"    %{fieldPtrReg} = getelementptr inbounds {structTy}, ptr %{destPtr}, i32 0, i32 {fieldIndex}");
+			var fieldPtrReg = NewLocal();
+			fw.WriteLine($"    %{fieldPtrReg} = getelementptr inbounds {structTy}, ptr %{destPtr}, i32 0, i32 {fieldIndex}");
 
-            if (init.Expression is StructInitializationExpressionSyntax nestedInit)
-            {
-                EmitStructInitializationInPlace(nestedInit, fieldPtrReg, fw);
-            }
-            else
-            {
-                var (val, _) = Eval(init.Expression, fw);
-                fw.WriteLine($"    store {val}, ptr %{fieldPtrReg}");
-            }
-        }
-    }
+			if (init.Expression is StructInitializationExpressionSyntax nestedInit)
+			{
+				EmitStructInitializationInPlace(nestedInit, fieldPtrReg, fw);
+			}
+			else
+			{
+				var (val, _) = Eval(init.Expression, fw);
+				fw.WriteLine($"    store {val}, ptr %{fieldPtrReg}");
+			}
+		}
+	}
 
 
-    private (string val, TypeSymbol ty) EmitBorrowExpression(BorrowExpressionSyntax expr, StringWriter fw)
+	private (string val, TypeSymbol ty) EmitBorrowExpression(BorrowExpressionSyntax expr, StringWriter fw)
 	{
 		if (expr.Expression is IdentifierExpressionSyntax id && _locals.TryGetValue(id.Name, out var ptr))
 		{
@@ -1275,5 +1340,16 @@ public sealed class IrEmitter : IEmitter
 			IdentifierExpressionSyntax id => _variableTypes.TryGetValue(id.Name, out var type) ? type : TypeSymbol.Int,
 			_ => TypeSymbol.Int
 		};
+	}
+
+	private static string FormatDouble(double value)
+	{
+		var dblStr = value.ToString(CultureInfo.InvariantCulture);
+		if (!dblStr.Contains('.') && !dblStr.Contains('e') && !dblStr.Contains('E'))
+		{
+			dblStr += ".0";
+		}
+
+		return $"double {dblStr}";
 	}
 }
