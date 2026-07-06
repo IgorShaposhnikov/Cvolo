@@ -106,10 +106,13 @@ public sealed class FlowAnalysisPass(BindingContext context)
 				if (bin.Operator == "=")
 				{
 					AnalyzeExpression(bin.Right, scope);
-					// RULE: Assignment initializes the left-hand variable
-					if (bin.Left is IdentifierExpressionSyntax leftId)
+
+					// Resolve the base variable being initialized (e.g. 'myPoint' from 'myPoint.p1.X')
+					var baseVarName = GetBaseIdentifierName(bin.Left);
+					if (baseVarName != null)
 					{
-						if (scope.Lookup(leftId.Name) is VariableSymbol leftSymbol) leftSymbol.IsInitialized = true;
+						if (scope.Lookup(baseVarName) is VariableSymbol baseSymbol)
+							baseSymbol.IsInitialized = true;
 					}
 				}
 				else
@@ -128,5 +131,12 @@ public sealed class FlowAnalysisPass(BindingContext context)
 				foreach (var arg in call.Arguments) AnalyzeExpression(arg, scope);
 				break;
 		}
+	}
+
+	private string? GetBaseIdentifierName(ExpressionSyntax expr)
+	{
+		if (expr is IdentifierExpressionSyntax id) return id.Name;
+		if (expr is MemberAccessExpressionSyntax m) return GetBaseIdentifierName(m.Expression);
+		return null;
 	}
 }
