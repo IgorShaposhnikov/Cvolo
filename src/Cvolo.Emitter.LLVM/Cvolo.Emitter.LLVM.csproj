@@ -1,13 +1,17 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
-  <ItemGroup>
-    <PackageReference Include="LLVMSharp" />
-    <PackageReference Include="libLLVM.runtime.linux-x64" />
-  </ItemGroup>
+	<PropertyGroup>
+		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+	</PropertyGroup>
+	
+	<ItemGroup>
+		<PackageReference Include="LLVMSharp" />
+		<PackageReference Include="libLLVM.runtime.linux-x64" />
+	</ItemGroup>
 
-  <ItemGroup>
-    <ProjectReference Include="..\Cvolo.Core\Cvolo.Core.csproj" />
-    <ProjectReference Include="..\Cvolo.Analysis\Cvolo.Analysis.csproj" />
-  </ItemGroup>
+	<ItemGroup>
+		<ProjectReference Include="..\Cvolo.Core\Cvolo.Core.csproj" />
+		<ProjectReference Include="..\Cvolo.Analysis\Cvolo.Analysis.csproj" />
+	</ItemGroup>
 
 </Project>
