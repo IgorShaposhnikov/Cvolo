@@ -77,6 +77,7 @@ public abstract class CompilerTestBase
 		{
 			FileName = binaryPath,
 			RedirectStandardOutput = true,
+			StandardOutputEncoding = System.Text.Encoding.UTF8,
 			UseShellExecute = false,
 			CreateNoWindow = true
 		};
