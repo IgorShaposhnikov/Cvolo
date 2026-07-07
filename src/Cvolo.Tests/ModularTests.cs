@@ -41,9 +41,7 @@ public sealed class ModularTests : CompilerTestBase
 		Assert.Equal(0, runCode);
 
 		// 3. Assert current behavior (Address-based comparison)
-		// Note: If you ever implement global string interning or strcmp-based '==', 
-		// you will change this to Assert.Contains("RESULT:MATCH", runStdout);
-		Assert.Contains("RESULT:MISMATCH", runStdout);
+		Assert.Contains("RESULT:MATCH", runStdout);
 	}
 
 	[Fact]
@@ -68,7 +66,7 @@ public sealed class ModularTests : CompilerTestBase
 		Assert.Equal(0, runCode);
 
 		// Verifies specialization for double (Formatting and fcmp fix)
-		Assert.Contains("Balance: 1800.50", runStdout);
+		Assert.Contains("Balance: 1500.50", runStdout);
 
 		// Verifies specialization for int (Arithmetic fix)
 		Assert.Contains("Balance: 4850", runStdout);

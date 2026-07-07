@@ -1,0 +1,19 @@
+extern void printf(string format, ...);
+
+int compute(int n)
+{
+    var int x = 10;
+    var int y = 20;
+    var int z = x + y;      // LLVM should constant-fold this to: 30
+    var int result = z * n; // LLVM should simplify this to: 30 * n
+    return result;
+}
+
+int main()
+{
+    // LLVM should pre-compute compute(5) at compile-time to exactly: 150
+    var int finalVal = compute(5); 
+    
+    printf("Result: %d\n", finalVal);
+    return 0;
+}

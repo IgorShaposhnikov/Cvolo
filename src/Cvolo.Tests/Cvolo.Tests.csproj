@@ -19,16 +19,6 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<Folder Include="TestCases\BitwiseOperators\" />
-		<Folder Include="TestCases\BitwiseCompound\" />
-		<Folder Include="TestCases\Flow\" />
-		<Folder Include="TestCases\Collections\" />
-		<Folder Include="TestCases\Memory\" />
-		<Folder Include="TestCases\Modular\App\" />
-		<Folder Include="TestCases\Generics\" />
-		<Folder Include="TestCases\Modular\StringComparison\" />
-		<Folder Include="TestCases\Objects\" />
-		<Folder Include="TestCases\ShiftOperators\" />
 		<!-- Force MSBuild to include and copy all loose test assets recursively -->
 		<None Include="TestCases\**\*" CopyToOutputDirectory="PreserveNewest" />
 	</ItemGroup>
