@@ -15,12 +15,26 @@ public sealed class CompilationProject
 		IsShared = isShared;
 	}
 
-	public static CompilationProject Load(string inputPath, bool forceShared = false)
+	public static CompilationProject Load(string inputPath, string? compilerBaseDir = null, bool forceShared = false)
 	{
 		List<string> sourceFiles = [];
 		var outputName = "main";
 		var isShared = forceShared;
 
+		// 1. Automatically locate the "libraries" folder by traversing up the directory tree
+		var searchDir = compilerBaseDir ?? AppContext.BaseDirectory;
+		var stdLibFullPath = FindStandardLibraryPath(searchDir) ?? FindStandardLibraryPath(Directory.GetCurrentDirectory());
+
+		if (stdLibFullPath != null)
+		{
+			if (Directory.Exists(stdLibFullPath))
+			{
+				sourceFiles.AddRange(Directory.GetFiles(stdLibFullPath, "*.cv", SearchOption.AllDirectories));
+				sourceFiles.AddRange(Directory.GetFiles(stdLibFullPath, "*.cvl", SearchOption.AllDirectories));
+			}
+		}
+
+		// 2. Add User Project files
 		if (inputPath.EndsWith(".cvlproj") && File.Exists(inputPath))
 		{
 			var projDir = Path.GetDirectoryName(Path.GetFullPath(inputPath))!;
@@ -124,5 +138,22 @@ int main() {
 
 		Console.WriteLine($"Created Cvolo project '{projectName}' successfully.");
 		Console.WriteLine($"To compile: dotnet run --project src/Cvolo -- {projectName}/{projectName}.cvlproj");
+	}
+
+	private static string? FindStandardLibraryPath(string startDir)
+	{
+		var dir = new DirectoryInfo(startDir);
+		while (dir != null)
+		{
+			var libPath = Path.Combine(dir.FullName, "libraries");
+			if (Directory.Exists(libPath))
+			{
+				return libPath;
+			}
+
+			dir = dir.Parent;
+		}
+
+		return null;
 	}
 }

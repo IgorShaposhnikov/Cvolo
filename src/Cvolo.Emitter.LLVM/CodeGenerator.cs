@@ -171,6 +171,10 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 	private void DeclareExternFunction(ExternDeclarationSyntax ext)
 	{
+		// Deduplicate: If this extern function has already been declared, return early
+		if (_globals.ContainsKey(ext.Name))
+			return;
+
 		var returnTypeSymbol = _bindingContext!.ResolveType(ext.ReturnType)!;
 		var returnType = GetLLVMType(returnTypeSymbol);
 		_functionReturnTypes[ext.Name] = returnTypeSymbol;
@@ -197,6 +201,10 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 	private void DeclareFunction(FunctionDeclarationSyntax func, string emitName)
 	{
+		// Deduplicate: If this function has already been declared, return early
+		if (_globals.ContainsKey(emitName))
+			return;
+
 		var returnTypeSymbol = _bindingContext!.ResolveType(func.ReturnType)!;
 		var returnType = GetLLVMType(returnTypeSymbol);
 		_functionReturnTypes[emitName] = returnTypeSymbol;
@@ -215,7 +223,13 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		var funcType = LLVMTypeRef.CreateFunction(returnType, [.. paramTypes]);
 
 		var llvmFunc = _module.AddFunction(emitName, funcType);
-		_globals[emitName] = llvmFunc;
+
+        if (emitName != "main")
+        {
+            llvmFunc.Linkage = LLVMLinkage.LLVMInternalLinkage;
+        }
+
+        _globals[emitName] = llvmFunc;
 		_functionTypes[emitName] = funcType;
 	}
 

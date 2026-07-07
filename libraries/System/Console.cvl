@@ -1,0 +1,24 @@
+namespace System;
+
+extern void printf(string format, ...);
+extern int puts(string s);
+
+void Console_WriteLine(string message) 
+{
+    puts(message);
+}
+
+void Console_Write(string message) 
+{
+    printf(message);
+}
+
+void Console_WriteInt(int value)
+{
+    printf("%d", value);
+}
+
+void Console_WriteLineInt(int value)
+{
+    printf("%d\n", value);
+}

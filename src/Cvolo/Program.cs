@@ -47,7 +47,7 @@ if (inputPath == "new")
 CompilationProject project;
 try
 {
-	project = CompilationProject.Load(inputPath, isShared);
+	project = CompilationProject.Load(inputPath, AppContext.BaseDirectory, isShared);
 }
 catch (Exception ex)
 {
@@ -127,7 +127,7 @@ Directory.CreateDirectory(binDirectory);
 var llPath = Path.Combine(objDirectory, project.OutputName + ".ll");
 
 // 4. Emit unified LLVM
-var optimizer = new IrOptimizer(OptimizationLevel.Os);
+var optimizer = new IrOptimizer(OptimizationLevel.O3);
 IEmitter emitter = new CodeGenerator("cvolo_module", optimizer);
 //IEmitter emitter = new IrEmitter();
 var ir = emitter.Emit(asts, firstContext!, binder.Context);

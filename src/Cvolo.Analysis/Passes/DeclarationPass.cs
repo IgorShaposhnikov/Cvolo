@@ -214,6 +214,12 @@ public sealed class DeclarationPass(BindingContext context)
 		var existing = context.Globals.Lookup(ext.Name);
 		if (existing is not null)
 		{
+			// If the existing symbol is also an extern, we can safely ignore the duplicate declaration
+			if (existing is FunctionSymbol existingFunc && existingFunc.IsExtern)
+			{
+				return;
+			}
+
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
 			context.Diagnostics.Report(currentFileContext, ext.Span, $"Duplicate definition of '{ext.Name}'");
 			return;
