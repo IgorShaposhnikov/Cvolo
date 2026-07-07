@@ -126,8 +126,9 @@ Directory.CreateDirectory(binDirectory);
 // Write .ll IR file to the obj directory
 var llPath = Path.Combine(objDirectory, project.OutputName + ".ll");
 
-// 4. Emit unified LLVM IR
-IEmitter emitter = new CodeGenerator("cvolo_module");
+// 4. Emit unified LLVM
+var optimizer = new IrOptimizer(OptimizationLevel.Os);
+IEmitter emitter = new CodeGenerator("cvolo_module", optimizer);
 //IEmitter emitter = new IrEmitter();
 var ir = emitter.Emit(asts, firstContext!, binder.Context);
 

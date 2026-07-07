@@ -17,6 +17,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	private readonly LLVMModuleRef _module;
 	private readonly LLVMBuilderRef _builder;
 	private readonly LLVMContextRef _context; // Holds the native LLVM Context
+	private readonly ILLVMOptimizer? _optimizer;
 
 	// Metadata Cache Dictionaries
 	private readonly Dictionary<string, LLVMValueRef> _globals = [];
@@ -30,16 +31,16 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	private readonly Dictionary<string, ExternDeclarationSyntax> _astExterns = [];
 	private readonly Dictionary<string, List<TypeSymbol>> _functionParameterTypes = [];
 	private readonly Dictionary<string, TypeSymbol> _functionReturnTypes = [];
-
 	private BindingContext? _bindingContext;
 	private CompilationContext? _compilationContext; // Renamed to avoid LLVM _context conflict
 	private CompilationUnitSyntax? _currentUnit;
 
-	public CodeGenerator(string moduleName)
+	public CodeGenerator(string moduleName, ILLVMOptimizer? optimizer = null)
 	{
 		_context = LLVMContextRef.Global;
 		_module = _context.CreateModuleWithName(moduleName);
 		_builder = _context.CreateBuilder();
+		_optimizer = optimizer;
 	}
 
 	public LLVMModuleRef Module => _module;
@@ -162,6 +163,8 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				EmitFunctionBody(instDecl, instDecl.Name);
 			}
 		}
+
+		_optimizer?.Optimize(_module);
 
 		return _module.PrintToString();
 	}

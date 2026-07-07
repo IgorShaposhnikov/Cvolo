@@ -6,5 +6,5 @@ namespace Cvolo.Emitter.LLVM;
 
 public interface IEmitter
 {
-	string Emit(IReadOnlyList<CompilationUnitSyntax> units, CompilationContext context, BindingContext bindingContext);
+	public string Emit(IReadOnlyList<CompilationUnitSyntax> units, CompilationContext context, BindingContext bindingContext);
 }
