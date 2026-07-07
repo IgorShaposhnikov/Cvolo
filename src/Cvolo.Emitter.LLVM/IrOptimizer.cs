@@ -4,64 +4,60 @@ using LLVMSharp.Interop;
 
 public sealed class IrOptimizer(OptimizationLevel level, params string[] additionalFunctions) : ILLVMOptimizer
 {
-	public void Optimize(LLVMModuleRef module)
+	private readonly string _compiledPipeline = (additionalFunctions == null || additionalFunctions.Length == 0)
+		? $"default<{level}>"
+		: $"function({string.Join(",", additionalFunctions)}),default<{level}>";
+
+	static IrOptimizer()
 	{
-		OptimizeInternal(module);
-	}
-
-	private void OptimizeInternal(LLVMModuleRef module)
-	{
-		// If no extra functions are provided, just run the default pipeline
-		if (additionalFunctions == null || additionalFunctions.Length == 0)
-		{
-			OptimizeInternal(module, $"default<{level}>");
-			return;
-		}
-
-		// 1. Join your custom passes: "mem2reg,dce,instcombine"
-		var functionPasses = string.Join(",", additionalFunctions);
-
-		// 2. Wrap them inside an explicit function manager scope
-		var customPipeline = $"function({functionPasses})";
-
-		// 3. Chain them sequentially with the default optimization level
-		// This runs your custom passes first, then applies the standard pipeline
-		var completePipeline = $"{customPipeline},default<{level}>";
-
-		OptimizeInternal(module, completePipeline);
-	}
-
-	private unsafe void OptimizeInternal(LLVMModuleRef module, string pipelineDescription = "default<Os>")
-	{
-		// 1. Initialize ALL core native architectures for flexibility
 		LLVM.InitializeAllTargetInfos();
 		LLVM.InitializeAllTargets();
 		LLVM.InitializeAllTargetMCs();
 		LLVM.InitializeAllAsmParsers();
 		LLVM.InitializeAllAsmPrinters();
+	}
 
-		// 2. Fetch the default target machine layout
+	public void Optimize(LLVMModuleRef module)
+	{
+		OptimizeInternal(module, _compiledPipeline);
+	}
+
+	private unsafe void OptimizeInternal(LLVMModuleRef module, string pipelineDescription)
+	{
+		// 1. Fetch the default target machine layout natively
 		var nativeTriple = LLVM.GetDefaultTargetTriple();
-		var triple = Marshal.PtrToStringAnsi((IntPtr)nativeTriple)!;
+		if (nativeTriple == null)
+		{
+			throw new InvalidOperationException("Failed to retrieve default target triple from LLVM native engine.");
+		}
 
-		// Always free strings returned natively by LLVM target lookups if required by your LLVM version
-		LLVM.DisposeMessage(nativeTriple);
+		LLVMTargetMachineRef machine = default;
+		try
+		{
+			// Create a managed string copy only for the target lookup registry
+			var tripleString = Marshal.PtrToStringAnsi((IntPtr)nativeTriple)!;
+			var target = LLVMTargetRef.GetTargetFromTriple(tripleString);
 
-		var target = LLVMTargetRef.GetTargetFromTriple(triple);
+			// FIX: Pass tripleString here instead of casting nativeTriple
+			machine = target.CreateTargetMachine(
+				tripleString,
+				"generic",
+				"",
+				LLVMCodeGenOptLevel.LLVMCodeGenLevelAggressive,
+				LLVMRelocMode.LLVMRelocDefault,
+				LLVMCodeModel.LLVMCodeModelDefault
+			);
+		}
+		finally
+		{
+			// This remains perfectly safe and still prevents the leak by freeing the native buffer
+			LLVM.DisposeMessage(nativeTriple);
+		}
 
-		var machine = target.CreateTargetMachine(
-			triple,
-			"generic",
-			"",
-			LLVMCodeGenOptLevel.LLVMCodeGenLevelAggressive,
-			LLVMRelocMode.LLVMRelocDefault,
-			LLVMCodeModel.LLVMCodeModelDefault
-		);
-
-		// 3. Initialize pass builder options
+		// 2. Initialize pass builder options
 		var passOptions = LLVM.CreatePassBuilderOptions();
 
-		// 4. Marshal pipeline description and run passes across the module
+		// 3. Marshal pipeline description and run passes across the module
 		var pPipeline = Marshal.StringToHGlobalAnsi(pipelineDescription);
 
 		try
@@ -85,7 +81,7 @@ public sealed class IrOptimizer(OptimizationLevel level, params string[] additio
 		}
 		finally
 		{
-			// 5. CRITICAL: Clean up ALL allocated unmanaged resources
+			// 4. CRITICAL: Clean up ALL allocated unmanaged resources
 			Marshal.FreeHGlobal(pPipeline);
 			LLVM.DisposePassBuilderOptions(passOptions);
 

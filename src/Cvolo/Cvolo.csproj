@@ -19,12 +19,8 @@
 
 	<!-- Windows x64 Tooling (Only copied when building for Windows) -->
 	<ItemGroup Condition=" '$(RuntimeIdentifier)' == 'win-x64' Or '$(RuntimeIdentifier)' == '' ">
-		<None Include="tooling\win-x64\clang.exe"
-			  CopyToOutputDirectory="PreserveNewest"
-			  Link="clang.exe" />
-		<None Include="tooling\win-x64\lld-link.exe"
-			  CopyToOutputDirectory="PreserveNewest"
-			  Link="lld-link.exe" />
+		<None Include="tooling\win-x64\clang.exe" CopyToOutputDirectory="PreserveNewest" Link="clang.exe" />
+		<None Include="tooling\win-x64\lld-link.exe" CopyToOutputDirectory="PreserveNewest" Link="lld-link.exe" />
 	</ItemGroup>
 	
 	<!-- Linux x64 Tooling (Only copied when building for Linux) -->
