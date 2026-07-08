@@ -1,4 +1,5 @@
 using Cvolo.Core.Diagnostics;
+using Cvolo.Projects;
 using Cvolo.Syntax;
 using Cvolo.Tests.Core;
 

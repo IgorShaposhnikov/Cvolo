@@ -2,6 +2,7 @@ using System.Diagnostics;
 using Cvolo.Analysis;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.Diagnostics;
+using Cvolo.Projects;
 using Cvolo.Syntax;
 
 namespace Cvolo.Tests.Core;

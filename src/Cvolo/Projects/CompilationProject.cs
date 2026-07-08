@@ -1,6 +1,6 @@
 using System.Xml.Linq;
 
-namespace Cvolo;
+namespace Cvolo.Projects;
 
 public sealed class CompilationProject
 {

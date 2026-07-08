@@ -8,6 +8,8 @@
 		<PackageReference Include="Antlr4.Runtime.Standard" />
 		<PackageReference Include="libLLVM.runtime.win-x64" />
 		<PackageReference Include="LLVMSharp" />
+		<PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+		<PackageReference Include="System.CommandLine" />
 	</ItemGroup>
 
 	<ItemGroup>
@@ -19,13 +21,13 @@
 
 	<!-- Windows x64 Tooling (Only copied when building for Windows) -->
 	<ItemGroup Condition=" '$(RuntimeIdentifier)' == 'win-x64' Or '$(RuntimeIdentifier)' == '' ">
-		<None Include="tooling\win-x64\clang.exe" CopyToOutputDirectory="PreserveNewest" Link="clang.exe" />
-		<None Include="tooling\win-x64\lld-link.exe" CopyToOutputDirectory="PreserveNewest" Link="lld-link.exe" />
+		<None Include="tooling\win-x64\clang.exe" CopyToOutputDirectory="PreserveNewest" Link="clang.exe" Visible="False" />
+		<None Include="tooling\win-x64\lld-link.exe" CopyToOutputDirectory="PreserveNewest" Link="lld-link.exe" Visible="False" />
 	</ItemGroup>
 	
 	<!-- Linux x64 Tooling (Only copied when building for Linux) -->
 	<ItemGroup Condition=" '$(RuntimeIdentifier)' == 'linux-x64' ">
-		<None Include="tooling\linux-x64\clang" CopyToOutputDirectory="PreserveNewest" Link="clang" />
+		<None Include="tooling\linux-x64\clang" CopyToOutputDirectory="PreserveNewest" Link="clang" Visible="False" />
 	</ItemGroup>
 
 </Project>
