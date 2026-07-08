@@ -11,6 +11,6 @@ internal sealed class IrOnlyStrategy : ICompilationStrategy
 			Console.WriteLine($"Generated LLVM IR: {llPath}");
 		}
 
-		return 0; // Exits cleanly
+		return 0;
 	}
 }

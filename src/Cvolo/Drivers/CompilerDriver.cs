@@ -105,7 +105,7 @@ internal sealed class CompilerDriver : ICompilerDriver
 		}
 
 		// Setup modern C# /bin and /obj folder layouts
-		var outputDirectory = Path.GetDirectoryName(Path.GetFullPath(project.SourceFiles[0]))!;
+		var outputDirectory = project.ProjectDirectory;
 		var objDirectory = Path.Combine(outputDirectory, "obj", "Debug");
 		var binDirectory = Path.Combine(outputDirectory, "bin", "Debug");
 

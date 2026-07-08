@@ -7,12 +7,14 @@ public sealed class CompilationProject
 	public IReadOnlyList<string> SourceFiles { get; }
 	public string OutputName { get; }
 	public bool IsShared { get; private set; }
+	public string ProjectDirectory { get; }
 
-	private CompilationProject(IReadOnlyList<string> sourceFiles, string outputName, bool isShared)
+	private CompilationProject(IReadOnlyList<string> sourceFiles, string outputName, bool isShared, string projectDirectory)
 	{
 		SourceFiles = sourceFiles;
 		OutputName = outputName;
 		IsShared = isShared;
+		ProjectDirectory = projectDirectory;
 	}
 
 	public static CompilationProject Load(string inputPath, string? compilerBaseDir = null, bool forceShared = false)
@@ -24,6 +26,7 @@ public sealed class CompilationProject
 		// 1. Automatically locate the "libraries" folder by traversing up the directory tree
 		var searchDir = compilerBaseDir ?? AppContext.BaseDirectory;
 		var stdLibFullPath = FindStandardLibraryPath(searchDir) ?? FindStandardLibraryPath(Directory.GetCurrentDirectory());
+		var projectDir = Directory.Exists(inputPath) ? Path.GetFullPath(inputPath) : Path.GetDirectoryName(Path.GetFullPath(inputPath))!;
 
 		if (stdLibFullPath != null)
 		{
@@ -81,7 +84,7 @@ public sealed class CompilationProject
 			throw new InvalidOperationException($"No Cvolo source files found in '{inputPath}'");
 		}
 
-		return new CompilationProject(sourceFiles, outputName, isShared);
+		return new CompilationProject(sourceFiles, outputName, isShared, projectDir);
 	}
 
 	public static void CreateNewProject(string projectName)

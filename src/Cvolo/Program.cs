@@ -15,4 +15,4 @@ services.AddSingleton<CvoloRootCommand>();
 using var serviceProvider = services.BuildServiceProvider();
 
 var rootCommand = serviceProvider.GetRequiredService<CvoloRootCommand>();
-rootCommand.Parse(args).Invoke();
+return rootCommand.Parse(args).Invoke();

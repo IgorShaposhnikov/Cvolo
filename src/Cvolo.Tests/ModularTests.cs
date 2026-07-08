@@ -11,7 +11,7 @@ public sealed class ModularTests : CompilerTestBase
 		var (ast, context) = AnalyzeProject("Modular/App");
 
 		Assert.NotNull(ast);
-		Assert.Equal(2, ast.Count); // Ensure both files were parsed
+		Assert.Equal(3, ast.Count);
 		Assert.False(context.Diagnostics.HasErrors, "Expected successful cross-file namespace compilation.");
 	}
 

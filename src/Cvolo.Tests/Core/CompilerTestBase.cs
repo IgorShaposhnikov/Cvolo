@@ -50,8 +50,7 @@ public abstract class CompilerTestBase
 		var psi = new ProcessStartInfo
 		{
 			FileName = compilerExe,
-			// Pass the source path directly
-			Arguments = $"\"{fullSourcePath}\"",
+			Arguments = $"build \"{fullSourcePath}\"",
 			RedirectStandardOutput = true,
 			RedirectStandardError = true,
 			UseShellExecute = false,
@@ -94,7 +93,7 @@ public abstract class CompilerTestBase
 	{
 		if (exitCode != 0)
 		{
-			Xunit.Assert.Fail($"Compilation of '{fileName}' failed with code {exitCode}.\n\n--- STDERR ---\n{stderr}\n\n--- STDOUT ---\n{stdout}");
+			Assert.Fail($"Compilation of '{fileName}' failed with code {exitCode}.\n\n--- STDERR ---\n{stderr}\n\n--- STDOUT ---\n{stdout}");
 		}
 	}
 }
