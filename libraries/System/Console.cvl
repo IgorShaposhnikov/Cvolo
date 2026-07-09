@@ -1,24 +1,84 @@
-namespace System;
+namespace System.Console;
 
+// Isolate the low-level C-linkage printf here
 extern void printf(string format, ...);
-extern int puts(string s);
 
-void Console_WriteLine(string message) 
-{
-    puts(message);
+/// <summary>
+/// Writes the specified string value, followed by the current line terminator, to the standard output stream.
+/// </summary>
+/// <param name="value">The string value to write to the console.</param>
+void WriteLine(string value) {
+    printf("%s\n", value);
 }
 
-void Console_Write(string message) 
-{
-    printf(message);
+/// <summary>
+/// Writes the specified 32-bit signed integer, followed by the current line terminator, to the standard output stream.
+/// </summary>
+/// <param name="value">The integer value to write to the console.</param>
+void WriteLine(int value) {
+    printf("%d\n", value);
 }
 
-void Console_WriteInt(int value)
-{
+/// <summary>
+/// Writes the specified 64-bit floating-point number, followed by the current line terminator, to the standard output stream.
+/// </summary>
+/// <param name="value">The double value to write to the console.</param>
+void WriteLine(double value) {
+    printf("%f\n", value); 
+}
+
+/// <summary>
+/// Writes the text representation of the specified boolean value, followed by the current line terminator, to the standard output stream.
+/// </summary>
+/// <param name="value">The boolean value to write (renders as 1 for True, 0 for False).</param>
+void WriteLine(bool value) {
+    printf("%d\n", value);
+}
+
+/// <summary>
+/// Writes the specified Unicode character, followed by the current line terminator, to the standard output stream.
+/// </summary>
+/// <param name="value">The character to write to the console.</param>
+void WriteLine(char value) {
+    printf("%c\n", value);
+}
+
+/// <summary>
+/// Writes the specified string value to the standard output stream.
+/// </summary>
+/// <param name="value">The string value to write to the console.</param>
+void Write(string value) {
+    printf("%s", value);
+}
+
+/// <summary>
+/// Writes the specified 32-bit signed integer to the standard output stream.
+/// </summary>
+/// <param name="value">The integer value to write to the console.</param>
+void Write(int value) {
     printf("%d", value);
 }
 
-void Console_WriteLineInt(int value)
-{
-    printf("%d\n", value);
+/// <summary>
+/// Writes the specified 64-bit floating-point number to the standard output stream.
+/// </summary>
+/// <param name="value">The double value to write to the console.</param>
+void Write(double value) {
+    printf("%f", value);
+}
+
+/// <summary>
+/// Writes the text representation of the specified boolean value to the standard output stream.
+/// </summary>
+/// <param name="value">The boolean value to write (renders as 1 for True, 0 for False).</param>
+void Write(bool value) {
+    printf("%d", value);
+}
+
+/// <summary>
+/// Writes the specified Unicode character to the standard output stream.
+/// </summary>
+/// <param name="value">The character to write to the console.</param>
+void Write(char value) {
+    printf("%c", value);
 }
