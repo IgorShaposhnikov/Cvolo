@@ -232,6 +232,21 @@ public sealed class SyntaxParser
 				return new IdentifierExpressionSyntax(SpanOf(idCtx), idCtx.Identifier().GetText());
 			case CvoloParser.ParenthesizedExpressionContext parenCtx:
 				return BuildExpression(parenCtx.expression());
+			case CvoloParser.ParenthesizedStructInitializerContext parenCtx:
+				{
+					var initializers = new List<MemberInitializerSyntax>();
+					if (parenCtx.structInitializerList() is { } listCtx)
+					{
+						foreach (var memberInit in listCtx.structMemberInitializer())
+						{
+							var memberName = memberInit.Identifier().GetText();
+							var expr = BuildExpression(memberInit.expression());
+							initializers.Add(new MemberInitializerSyntax(SpanOf(memberInit), memberName, expr));
+						}
+					}
+
+					return new ParenthesizedStructInitializerExpressionSyntax(SpanOf(parenCtx), initializers);
+				}
 			case CvoloParser.CallExpressionContext callCtx:
 				{
 					var funcName = callCtx.Identifier().GetText();
@@ -384,28 +399,74 @@ public sealed class SyntaxParser
 
 	private VariableDeclarationSyntax BuildVariableDeclaration(CvoloParser.VariableDeclarationContext context)
 	{
+		if (context.LPAREN() is not null)
+		{
+			var isMutable = context.VAR() is not null;
+			var typeCtx = context.type();
+			var baseTypeName = GetTypeName(typeCtx);
+			var name = context.Identifier().GetText();
+
+			// Resolve counts
+			ExpressionSyntax countExpr;
+			var elementTypeName = baseTypeName;
+			if (typeCtx is CvoloParser.ArrayTypeContext arrCtx)
+			{
+				var countVal = int.Parse(arrCtx.IntegerLiteral().GetText());
+				countExpr = new IntegerLiteralExpressionSyntax(SpanOf(arrCtx), countVal);
+				elementTypeName = GetTypeName(arrCtx.type());
+			}
+			else
+			{
+				countExpr = new IntegerLiteralExpressionSyntax(SpanOf(typeCtx), 0);
+			}
+
+			// Resolve the value expression (either structural constructor or primitive expression)
+			ExpressionSyntax valueExpr;
+			if (context.structInitializerList() is { } listCtx)
+			{
+				var initializers = new List<MemberInitializerSyntax>();
+				foreach (var memberInit in listCtx.structMemberInitializer())
+				{
+					var memberName = memberInit.Identifier().GetText();
+					var fieldExpr = BuildExpression(memberInit.expression());
+					initializers.Add(new MemberInitializerSyntax(SpanOf(memberInit), memberName, fieldExpr));
+				}
+
+				valueExpr = new StructInitializationExpressionSyntax(SpanOf(context), elementTypeName, initializers);
+			}
+			else
+			{
+				valueExpr = BuildExpression(context.expression());
+			}
+
+			var implicitInitializer = new ArrayReplicationExpressionSyntax(SpanOf(context), valueExpr, countExpr);
+			return new VariableDeclarationSyntax(SpanOf(context), isMutable, baseTypeName, name, implicitInitializer);
+		}
+
+		// Standard variable declaration
 		if (context.REFVAR() is not null)
 		{
-			var refVarName = context.Identifier().GetText(); // Renamed to avoid conflict
-			var refVarExpr = BuildExpression(context.expression()); // Renamed to avoid conflict
+			var refVarName = context.Identifier().GetText();
+			var refVarExpr = BuildExpression(context.expression());
 			return new VariableDeclarationSyntax(SpanOf(context), isMutable: true, "refvar", refVarName, refVarExpr);
 		}
+
 		if (context.REF() is not null)
 		{
-			var refName = context.Identifier().GetText(); // Renamed to avoid conflict
-			var refExpr = BuildExpression(context.expression()); // Renamed to avoid conflict
+			var refName = context.Identifier().GetText();
+			var refExpr = BuildExpression(context.expression());
 			return new VariableDeclarationSyntax(SpanOf(context), isMutable: false, "ref", refName, refExpr);
 		}
 
-		var isMutable = context.VAR() is not null;
+		var isVarMutable = context.VAR() is not null;
 		var type = context.type() is not null ? GetTypeName(context.type()) : null;
-		var name = context.Identifier().GetText();
+		var standardName = context.Identifier().GetText();
 
 		ExpressionSyntax? initializer = null;
 		if (context.expression() is { } expr)
 			initializer = BuildExpression(expr);
 
-		return new VariableDeclarationSyntax(SpanOf(context), isMutable, type, name, initializer);
+		return new VariableDeclarationSyntax(SpanOf(context), isVarMutable, type, standardName, initializer);
 	}
 
 	private IfStatementSyntax BuildIfStatement(CvoloParser.IfStatementContext context)

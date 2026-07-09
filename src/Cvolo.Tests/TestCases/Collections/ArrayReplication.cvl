@@ -1,0 +1,30 @@
+extern void printf(string format, ...);
+
+struct Color {
+    int R;
+    int G;
+    int B;
+}
+
+struct Point {
+    int X;
+    int Y;
+    Color BaseColor;
+}
+
+int main() {
+    // 1. Primitive replication constructor style
+    var int[100] numbers(42);
+    printf("Item 0: %d, Item 99: %d\n", numbers[0], numbers[99]);
+
+    // 2. Recursive target-typed replication constructor style!
+    var Point[3] points(
+        X: 10, 
+        Y: 20, 
+        BaseColor: (R: 255, G: 0, B: 0)
+    );
+
+    printf("Point 2: X = %d, Y = %d, Color R = %d\n", points[2].X, points[2].Y, points[2].BaseColor.R);
+
+    return 0;
+}

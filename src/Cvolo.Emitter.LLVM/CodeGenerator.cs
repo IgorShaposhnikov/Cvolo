@@ -395,6 +395,10 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				return EmitStructInitialization(s);
 			case ArrayInitializationExpressionSyntax a:
 				return EmitArrayInitialization(a);
+			case ArrayReplicationExpressionSyntax arrRepl:
+				return EmitArrayReplication(arrRepl);
+			case ParenthesizedStructInitializerExpressionSyntax parenStruct:
+				return EmitParenthesizedStructInitialization(parenStruct);
 			case CallExpressionSyntax call:
 				return EmitCallExpression(call);
 			case BinaryExpressionSyntax bin:
@@ -674,6 +678,10 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				{
 					EmitArrayInitializationInPlace(arrInit, alloca, (typeSymbol as ArrayTypeSymbol)!);
 				}
+				else if (varDecl.Initializer is ArrayReplicationExpressionSyntax arrRepl)
+				{
+					EmitArrayReplicationInPlace(arrRepl, alloca, (typeSymbol as ArrayTypeSymbol)!);
+				}
 				else
 				{
 					var value = EmitExpression(varDecl.Initializer);
@@ -895,7 +903,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			CallExpressionSyntax call => ResolveCallReturnType(call),
 			BinaryExpressionSyntax bin => ResolveBinaryExpressionType(bin),
 			HeapAllocationExpressionSyntax h => GetExprType(h.Expression),
-			ArrayInitializationExpressionSyntax a => new ArrayTypeSymbol(a.Elements.Count > 0 ? GetExprType(a.Elements[0]) : TypeSymbol.Int, a.Elements.Count), // <-- Added
+			ArrayInitializationExpressionSyntax a => new ArrayTypeSymbol(a.Elements.Count > 0 ? GetExprType(a.Elements[0]) : TypeSymbol.Int, a.Elements.Count),
 			_ => TypeSymbol.Int
 		};
 	}
@@ -1202,9 +1210,13 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0), LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)fieldIndex)
 			}, "init_field_ptr");
 
-			if (init.Expression is StructInitializationExpressionSyntax nestedInit)
+			if (init.Expression is ParenthesizedStructInitializerExpressionSyntax nestedParen)
 			{
-				EmitStructInitializationInPlace(nestedInit, targetFieldPtr);
+				EmitParenthesizedStructInitializationInPlace(nestedParen, targetFieldPtr);
+			}
+			else if (init.Expression is StructInitializationExpressionSyntax structInit)
+			{
+				EmitStructInitializationInPlace(structInit, targetFieldPtr);
 			}
 			else
 			{
@@ -1293,5 +1305,105 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	{
 		_builder.Dispose();
 		_module.Dispose();
+	}
+
+	private LLVMValueRef EmitArrayReplication(ArrayReplicationExpressionSyntax expr)
+	{
+		var valueType = GetExprType(expr.Value);
+		var countVal = (expr.Count is IntegerLiteralExpressionSyntax countLit) ? countLit.Value : 0;
+		var arrayTypeSymbol = new ArrayTypeSymbol(valueType, countVal);
+		var arrayLayout = GetLLVMType(arrayTypeSymbol);
+
+		var tempAlloc = _builder.BuildAlloca(arrayLayout, "arr_repl_tmp");
+		EmitArrayReplicationInPlace(expr, tempAlloc, arrayTypeSymbol);
+		return tempAlloc;
+	}
+
+	private void EmitArrayReplicationInPlace(ArrayReplicationExpressionSyntax expr, LLVMValueRef destPtr, ArrayTypeSymbol arrayType)
+	{
+		var arrayLayout = GetLLVMType(arrayType);
+
+		var currentFunc = _builder.InsertBlock.Parent;
+		var condBlock = currentFunc.AppendBasicBlock("repl_cond");
+		var bodyBlock = currentFunc.AppendBasicBlock("repl_body");
+		var endBlock = currentFunc.AppendBasicBlock("repl_end");
+
+		// Initialize counter: alloca and store 0
+		var counterAlloc = _builder.BuildAlloca(LLVMTypeRef.Int32, "repl_i");
+		_builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0), counterAlloc);
+		_builder.BuildBr(condBlock);
+
+		// Condition verification
+		_builder.PositionAtEnd(condBlock);
+		var iVal = _builder.BuildLoad2(LLVMTypeRef.Int32, counterAlloc, "i_val");
+		var limitVal = EmitExpression(expr.Count);
+		var cmp = _builder.BuildICmp(LLVMIntPredicate.LLVMIntSLT, iVal, limitVal, "repl_cmp");
+		_builder.BuildCondBr(cmp, bodyBlock, endBlock);
+
+		// Loop fill body
+		_builder.PositionAtEnd(bodyBlock);
+		var elementPtr = _builder.BuildGEP2(arrayLayout, destPtr, new LLVMValueRef[]
+		{
+		LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0), iVal
+		}, "repl_el");
+
+		if (expr.Value is ParenthesizedStructInitializerExpressionSyntax nestedParen)
+		{
+			EmitParenthesizedStructInitializationInPlace(nestedParen, elementPtr);
+		}
+		else if (expr.Value is StructInitializationExpressionSyntax structInit)
+		{
+			EmitStructInitializationInPlace(structInit, elementPtr);
+		}
+		else
+		{
+			var val = EmitExpression(expr.Value);
+			_builder.BuildStore(val, elementPtr);
+		}
+
+		// Increment index
+		var nextI = _builder.BuildAdd(iVal, LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1), "next_i");
+		_builder.BuildStore(nextI, counterAlloc);
+		_builder.BuildBr(condBlock);
+
+		_builder.PositionAtEnd(endBlock);
+	}
+
+	private LLVMValueRef EmitParenthesizedStructInitialization(ParenthesizedStructInitializerExpressionSyntax expr)
+	{
+		var typeSymbol = _bindingContext!.ResolveType(expr.ResolvedStructTypeName!) as StructTypeSymbol;
+		var structLayout = GetLLVMType(typeSymbol!);
+		var tempAlloc = _builder.BuildAlloca(structLayout, "struct_tmp");
+		EmitParenthesizedStructInitializationInPlace(expr, tempAlloc);
+		return tempAlloc;
+	}
+
+	private void EmitParenthesizedStructInitializationInPlace(ParenthesizedStructInitializerExpressionSyntax expr, LLVMValueRef destPtr)
+	{
+		var typeSymbol = _bindingContext!.ResolveType(expr.ResolvedStructTypeName!) as StructTypeSymbol;
+		var structLayout = GetLLVMType(typeSymbol!);
+
+		foreach (var init in expr.Initializers)
+		{
+			var fieldIndex = GetFieldIndex(typeSymbol!, init.MemberName);
+			var targetFieldPtr = _builder.BuildGEP2(structLayout, destPtr, new LLVMValueRef[]
+			{
+			LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0), LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)fieldIndex)
+			}, "init_field_ptr");
+
+			if (init.Expression is ParenthesizedStructInitializerExpressionSyntax nestedInit)
+			{
+				EmitParenthesizedStructInitializationInPlace(nestedInit, targetFieldPtr);
+			}
+			else if (init.Expression is StructInitializationExpressionSyntax structInit)
+			{
+				EmitStructInitializationInPlace(structInit, targetFieldPtr);
+			}
+			else
+			{
+				var value = EmitExpression(init.Expression);
+				_builder.BuildStore(value, targetFieldPtr);
+			}
+		}
 	}
 }

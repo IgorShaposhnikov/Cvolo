@@ -30,6 +30,8 @@ public enum SyntaxKind
 	HeapAllocationExpression,
 	IndexExpression,
 	ArrayInitializationExpression,
+	ArrayReplicationExpression,
+	ParenthesizedStructInitializerExpression,
 	TernaryExpression,
 	UsingDirective,
 	NamespaceDeclaration,

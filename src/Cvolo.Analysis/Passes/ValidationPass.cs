@@ -210,6 +210,18 @@ public sealed class ValidationPass(BindingContext context)
 			case ArrayInitializationExpressionSyntax arrInit:
 				foreach (var el in arrInit.Elements) CheckExpression(el, scope);
 				break;
+			case ArrayReplicationExpressionSyntax arrRepl:
+				CheckExpression(arrRepl.Value, scope);
+				CheckExpression(arrRepl.Count, scope);
+				if (GetExpressionType(arrRepl.Count, scope) is { } countTy && !countTy.Equals(TypeSymbol.Int))
+				{
+					var currentFileContext = context.FileContexts[context.CurrentUnit!];
+					context.Diagnostics.Report(currentFileContext, arrRepl.Count.Span, "Array replication count must be an integer.");
+				}
+				break;
+			case ParenthesizedStructInitializerExpressionSyntax parenStruct:
+				CheckParenthesizedStructInitialization(parenStruct, scope);
+				break;
 			case TernaryExpressionSyntax ternary:
 				CheckTernaryExpression(ternary, scope);
 				break;
@@ -383,7 +395,17 @@ public sealed class ValidationPass(BindingContext context)
 				continue;
 			}
 
-			CheckExpression(init.Expression, scope);
+			// Propagate target type expectations down into parenthesized blocks recursively
+			if (init.Expression is ParenthesizedStructInitializerExpressionSyntax nested)
+			{
+				nested.ResolvedStructTypeName = field.Type.Name;
+				CheckParenthesizedStructInitialization(nested, scope);
+			}
+			else
+			{
+				CheckExpression(init.Expression, scope);
+			}
+
 			var initType = GetExpressionType(init.Expression, scope);
 			if (initType is not null && !initType.Equals(field.Type))
 			{
@@ -505,6 +527,8 @@ public sealed class ValidationPass(BindingContext context)
 			HeapAllocationExpressionSyntax h => GetExpressionType(h.Expression, scope),
 			IndexExpressionSyntax idx => (GetExpressionType(idx.Left, scope) as ArrayTypeSymbol)?.ElementType,
 			ArrayInitializationExpressionSyntax a => CheckArrayInitialization(a, scope),
+			ArrayReplicationExpressionSyntax r => CheckArrayReplication(r, scope),
+			ParenthesizedStructInitializerExpressionSyntax p => p.ResolvedStructTypeName is not null ? context.ResolveType(p.ResolvedStructTypeName) : null,
 			TernaryExpressionSyntax t => CheckTernaryExpression(t, scope),
 			_ => null
 		};
@@ -858,5 +882,37 @@ public sealed class ValidationPass(BindingContext context)
 		if (isVariadic) score += 1;
 
 		return score;
+	}
+
+	private TypeSymbol? CheckArrayReplication(ArrayReplicationExpressionSyntax expr, SymbolTable scope)
+	{
+		var valueType = GetExpressionType(expr.Value, scope) ?? TypeSymbol.Int;
+		if (expr.Count is IntegerLiteralExpressionSyntax countLit)
+		{
+			return new ArrayTypeSymbol(valueType, countLit.Value);
+		}
+		return new ArrayTypeSymbol(valueType, 0);
+	}
+
+	private void CheckParenthesizedStructInitialization(ParenthesizedStructInitializerExpressionSyntax expr, SymbolTable scope)
+	{
+		var type = context.ResolveType(expr.ResolvedStructTypeName!);
+		if (type is not StructTypeSymbol structType) return;
+
+		foreach (var init in expr.Initializers)
+		{
+			var field = structType.FindField(init.MemberName);
+			if (field is null) continue;
+
+			if (init.Expression is ParenthesizedStructInitializerExpressionSyntax nestedSub)
+			{
+				nestedSub.ResolvedStructTypeName = field.Type.Name;
+				CheckParenthesizedStructInitialization(nestedSub, scope);
+			}
+			else
+			{
+				CheckExpression(init.Expression, scope);
+			}
+		}
 	}
 }

@@ -107,8 +107,12 @@ expressionStatement
 variableDeclaration
 	: (VAL | VAR) type? Identifier (ASSIGN expression)? SEMI
 	| type Identifier (ASSIGN expression)? SEMI
-	| REFVAR Identifier ASSIGN expression SEMI          // <-- Add this (inferred mutable ref)
-	| REF Identifier ASSIGN expression SEMI             // <-- Add this (inferred read-only ref)
+	| REFVAR Identifier ASSIGN expression SEMI
+	| REF Identifier ASSIGN expression SEMI
+	| (VAL | VAR) type Identifier LPAREN structInitializerList RPAREN SEMI
+	| type Identifier LPAREN structInitializerList RPAREN SEMI
+	| (VAL | VAR) type Identifier LPAREN expression RPAREN SEMI
+	| type Identifier LPAREN expression RPAREN SEMI
 	;
 
 ifStatement
@@ -152,6 +156,7 @@ expression
 	| HEAP expression                                       							# heapAllocationExpression
 	| LBRACE (expression (COMMA expression)*)? RBRACE									# arrayInitializationExpression
 	| Identifier (LT typeList GT)? LBRACE structInitializerList? RBRACE					# structInitializationExpression
+	| LPAREN structInitializerList RPAREN												# parenthesizedStructInitializer
 	| Identifier                                            							# identifierExpression
 	| IntegerLiteral                                        							# integerLiteralExpression
 	| DoubleLiteral                                         							# doubleLiteralExpression

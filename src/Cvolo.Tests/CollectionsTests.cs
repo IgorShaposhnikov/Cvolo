@@ -8,6 +8,7 @@ public sealed class CollectionsTests : CompilerTestBase
 	[InlineData("ArrayInit", "10,20,30")]
 	[InlineData("SliceLength", "5")]
 	[InlineData("ArrayTypeInference", "100,200,300")]
+	[InlineData("ArrayReplication", "Item 0: 42, Item 99: 42\nPoint 2: X = 10, Y = 20, Color R = 255")]
 	public void ArraysAndSlices(string caseName, string expected)
 	{
 		var fileName = $"Collections/{caseName}.cvl";
@@ -16,7 +17,9 @@ public sealed class CollectionsTests : CompilerTestBase
 
 		var (runCode, runStdout) = ExecuteBinary(caseName, "Collections");
 		Assert.Equal(0, runCode);
-		Assert.Contains(expected, runStdout);
+
+		// Normalize line endings to avoid cross-platform CRLF (\r\n) vs LF (\n) match failures
+		Assert.Contains(expected.Replace("\r\n", "\n").Trim(), runStdout.Replace("\r\n", "\n").Trim());
 	}
 
 	[Fact]
