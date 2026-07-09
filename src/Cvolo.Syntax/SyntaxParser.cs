@@ -249,9 +249,9 @@ public sealed class SyntaxParser
 				}
 			case CvoloParser.CallExpressionContext callCtx:
 				{
-					var funcName = callCtx.Identifier().GetText();
+					var funcName = callCtx.qualifiedName().GetText();
 
-					// Parse optional type arguments list: Swap<int>(...)
+					// (The rest of this block remains exactly the same!)
 					var typeArgs = new List<string>();
 					if (callCtx.typeList() is { } typeListCtx)
 					{

@@ -1,0 +1,8 @@
+using ConsoleNamespace;
+
+int Main()
+{
+	// Call the overloaded qualified method
+	TestConsole.Write(123);
+	return 0;
+}

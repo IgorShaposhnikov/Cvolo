@@ -152,7 +152,7 @@ expression
 	| expression QMARK expression COLON expression										# ternaryExpression
 	| expression ASSIGN expression														# assignmentExpression
 	| expression (PLUS_ASSIGN | MINUS_ASSIGN | STAR_ASSIGN | DIV_ASSIGN | AND_ASSIGN | OR_ASSIGN | XOR_ASSIGN | LSHIFT_ASSIGN | RSHIFT_ASSIGN | URSHIFT_ASSIGN) expression		# compoundAssignmentExpression
-	| Identifier (LT typeList GT)? LPAREN argumentList? RPAREN							# callExpression
+	| qualifiedName (LT typeList GT)? LPAREN argumentList? RPAREN						# callExpression
 	| HEAP expression                                       							# heapAllocationExpression
 	| LBRACE (expression (COMMA expression)*)? RBRACE									# arrayInitializationExpression
 	| Identifier (LT typeList GT)? LBRACE structInitializerList? RBRACE					# structInitializationExpression

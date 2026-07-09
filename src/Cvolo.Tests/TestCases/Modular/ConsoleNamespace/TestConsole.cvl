@@ -1,0 +1,7 @@
+namespace ConsoleNamespace.TestConsole;
+
+extern void printf(string format, ...);
+
+void Write(int x) {
+    printf("Value: %d\n", x);
+}

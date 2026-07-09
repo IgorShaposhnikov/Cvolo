@@ -34,4 +34,18 @@ public sealed class MemoryTests : CompilerTestBase
 		// Assert that the exact security error is printed
 		Assert.Contains(expectedError, stderr);
 	}
+
+	[Fact]
+	public void E2E_Qualified_Namespace_Call_Should_Resolve_And_Execute()
+	{
+		// 1. Compile the entire namespace directory
+		var fileName = "Modular/ConsoleNamespace";
+		var (exitCode, stdout, stderr) = RunCompiler(fileName);
+		AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
+
+		// 2. Execute the output binary (takes the folder name 'ConsoleNamespace')
+		var (runCode, runStdout) = ExecuteBinary("ConsoleNamespace", "Modular/ConsoleNamespace");
+		Assert.Equal(0, runCode);
+		Assert.Contains("Value: 123", runStdout);
+	}
 }
