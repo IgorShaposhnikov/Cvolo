@@ -62,6 +62,17 @@ public sealed class ValidationPass(BindingContext context)
 		}
 
 		CheckBlock(func.Body, localScope, func);
+
+		// Guard: Ensure non-void functions end with a return statement
+		if (func.ReturnType != "void" && !EndsWithReturn(func.Body))
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(
+				currentFileContext,
+				func.Span,
+				$"Function '{func.Name}' is declared to return '{func.ReturnType}' but is missing a return statement."
+			);
+		}
 	}
 
 	private void CheckBlock(BlockStatementSyntax block, SymbolTable scope, FunctionDeclarationSyntax currentFunc)
@@ -743,4 +754,11 @@ public sealed class ValidationPass(BindingContext context)
 				return expr;
 		}
 	}
+
+	private static bool EndsWithReturn(SyntaxNode s) => s switch
+	{
+		BlockStatementSyntax b => b.Statements.Count > 0 && b.Statements[^1] is ReturnStatementSyntax,
+		ReturnStatementSyntax => true,
+		_ => false,
+	};
 }
