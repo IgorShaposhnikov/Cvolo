@@ -6,7 +6,7 @@ public sealed class StringsTests : CompilerTestBase
 {
 	[Theory]
 	[InlineData("StringInterpolation", "10,20,30")]
-	[InlineData("StringInterpolationMulti", "Name: Cvolo, Int: 42, Float: 3.140000, Bool: 1, Char: A")]
+	[InlineData("StringInterpolationMultiTypes", "Name: Cvolo, Int: 42, Float: 3.140000, Bool: 1, Char: A")]
 	public void String_Features(string caseName, string expected)
 	{
 		var fileName = $"Strings/{caseName}.cvl";
