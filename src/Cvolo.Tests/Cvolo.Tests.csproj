@@ -30,4 +30,8 @@
 		<ProjectReference Include="..\Cvolo.Syntax\Cvolo.Syntax.csproj" />
 		<ProjectReference Include="..\Cvolo\Cvolo.csproj" />
 	</ItemGroup>
+
+	<ItemGroup>
+	  <Folder Include="TestCases\Overloading\" />
+	</ItemGroup>
 </Project>

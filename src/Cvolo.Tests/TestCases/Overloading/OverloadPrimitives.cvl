@@ -1,0 +1,20 @@
+extern void printf(string format, ...);
+
+void printValue(int x) {
+    printf("Int: %d\n", x);
+}
+
+void printValue(double x) {
+    printf("Double: %.2f\n", x);
+}
+
+void printValue(string x) {
+    printf("String: %s\n", x);
+}
+
+int main() {
+    printValue(10);
+    printValue(3.14);
+    printValue("Hello Overloading!");
+    return 0;
+}

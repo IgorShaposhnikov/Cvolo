@@ -105,7 +105,11 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 						var mangledName = (func.Name == "main" || func.Name == "Main")
 							? "main"
 							: bindingContext.GetMangledName(func.Name, ns);
-						DeclareFunction(func, mangledName);
+
+						// --- FIX: Mangle function registration based on parameter types ---
+						var paramTypes = func.Parameters.Select(p => bindingContext.ResolveType(p.Type)!).ToList();
+						var overloadedMangledName = bindingContext.GetOverloadedMangledName(mangledName, paramTypes);
+						DeclareFunction(func, overloadedMangledName);
 						break;
 				}
 			}
@@ -141,9 +145,14 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 					var mangledName = (func.Name == "main" || func.Name == "Main")
 						? "main"
 						: bindingContext.GetMangledName(func.Name, ns);
-					if (emittedFunctionNames.Add(mangledName))
+
+					// --- FIX: Generate function bodies using their overloaded mangled names ---
+					var paramTypes = func.Parameters.Select(p => bindingContext.ResolveType(p.Type)!).ToList();
+					var overloadedMangledName = bindingContext.GetOverloadedMangledName(mangledName, paramTypes);
+
+					if (emittedFunctionNames.Add(overloadedMangledName))
 					{
-						EmitFunctionBody(func, mangledName);
+						EmitFunctionBody(func, overloadedMangledName);
 					}
 				}
 			}
@@ -407,14 +416,25 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 	private LLVMValueRef EmitCallExpression(CallExpressionSyntax call)
 	{
-		var mangledName = ResolveFunctionName(call.FunctionName, _currentUnit!);
-		if (call.TypeArguments.Count > 0)
+		string emitName;
+
+		// Retrieve the pre-resolved overload from the binder context
+		if (_bindingContext!.ResolvedCalls.TryGetValue(call, out var resolvedFunc))
 		{
-			mangledName = $"{mangledName}<{string.Join(", ", call.TypeArguments)}>";
+			emitName = resolvedFunc.Name;
+		}
+		else
+		{
+			// Fallback for generic configurations and structural fallbacks
+			emitName = ResolveFunctionName(call.FunctionName, _currentUnit!);
+			if (call.TypeArguments.Count > 0)
+			{
+				emitName = $"{emitName}<{string.Join(", ", call.TypeArguments)}>";
+			}
 		}
 
-		var callee = _globals[mangledName];
-		var funcType = _functionTypes[mangledName];
+		var callee = _globals[emitName];
+		var funcType = _functionTypes[emitName];
 
 		var args = new List<LLVMValueRef>();
 		for (var i = 0; i < call.Arguments.Count; i++)
@@ -422,11 +442,10 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			var argExpr = call.Arguments[i];
 			LLVMValueRef val;
 			var valTy = GetExprType(argExpr);
-			var paramTy = GetParamType(mangledName, i);
+			var paramTy = GetParamType(emitName, i);
 
 			if (paramTy is SliceTypeSymbol && valTy is ArrayTypeSymbol)
 			{
-				// Retrieve the pointer address of the array, not its loaded value!
 				LLVMValueRef arrayPtr;
 				if (argExpr is IdentifierExpressionSyntax id)
 				{
@@ -445,9 +464,9 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				val = EmitExpression(argExpr);
 			}
 
-			// Promotions for variadic inputs (e.g. Bool and Char promoted to i32)
-			var isVariadic = _astExterns.TryGetValue(mangledName, out var ext) && ext.IsVariadic;
-			if (isVariadic && i >= _functionParameterTypes[mangledName].Count)
+			// Variadic promotion rules (promote Boolean and Char to i32)
+			var isVariadic = _astExterns.TryGetValue(emitName, out var ext) && ext.IsVariadic;
+			if (isVariadic && i >= _functionParameterTypes[emitName].Count)
 			{
 				if (valTy.Equals(TypeSymbol.Bool))
 				{
@@ -462,9 +481,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			args.Add(val);
 		}
 
-		var retTypeSymbol = _functionReturnTypes.TryGetValue(mangledName, out var ret) ? ret : TypeSymbol.Int;
-
-		// Void functions must not have an instruction name assigned in LLVM IR
+		var retTypeSymbol = _functionReturnTypes.TryGetValue(emitName, out var ret) ? ret : TypeSymbol.Int;
 		var instName = retTypeSymbol.Equals(TypeSymbol.Void) ? "" : "call_val";
 
 		return _builder.BuildCall2(funcType, callee, args.ToArray(), instName);

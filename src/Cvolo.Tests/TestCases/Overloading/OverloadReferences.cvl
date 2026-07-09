@@ -1,0 +1,16 @@
+extern void printf(string format, ...);
+
+void process(int x) {
+    printf("By Value: %d\n", x);
+}
+
+void process(ref int x) {
+    printf("By Reference: %d\n", x);
+}
+
+int main() {
+    val x = 42;
+    process(x);        // Should resolve to process(int)
+    process(ref x);    // Should resolve to process(ref int)
+    return 0;
+}

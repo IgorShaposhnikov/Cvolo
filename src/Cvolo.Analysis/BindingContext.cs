@@ -4,6 +4,7 @@ using Cvolo.Analysis.Symbols.Collections;
 using Cvolo.Analysis.Symbols.Structs;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
+using Cvolo.Core.AST.Expressions;
 using Cvolo.Core.Diagnostics;
 
 namespace Cvolo.Analysis;
@@ -27,6 +28,8 @@ public sealed class BindingContext
 	// Canonical Type Cache (Phase 3: Ensuring structural equality)
 	private readonly Dictionary<string, TypeSymbol> _typeCache = [];
 	public Dictionary<string, CompilationUnitSyntax> SymbolUnits { get; } = [];
+	public Dictionary<string, List<FunctionSymbol>> OverloadedFunctions { get; } = [];
+	public Dictionary<CallExpressionSyntax, FunctionSymbol> ResolvedCalls { get; } = [];
 
 	public CompilationUnitSyntax? CurrentUnit { get; set; }
 	public string? CurrentNamespace { get; set; }
@@ -209,5 +212,31 @@ public sealed class BindingContext
 	{
 		// Remove all whitespace to ensure "Point<int>" matches "Point< int >"
 		return name.Replace(" ", "").Trim();
+	}
+
+	/// <summary>
+	/// Generates a unique name for an overloaded function based on its parameter types.
+	/// </summary>
+	public string GetOverloadedMangledName(string baseName, IReadOnlyList<TypeSymbol> parameterTypes)
+	{
+		if (baseName == "main" || baseName == "Main")
+			return "main";
+
+		var signature = string.Join("_", parameterTypes.Select(t => NormalizeTypeNameForMangling(t.Name)));
+		return string.IsNullOrEmpty(signature) ? $"{baseName}_void" : $"{baseName}_{signature}";
+	}
+
+	private static string NormalizeTypeNameForMangling(string name)
+	{
+		return name.Replace("<", "_")
+				   .Replace(">", "_")
+				   .Replace("[", "Arr")
+				   .Replace("]", "")
+				   .Replace(" ", "")
+				   .Replace(",", "_")
+				   .Replace(".", "_")
+				   .Replace("*", "Ptr")
+				   .Replace("refvar", "refvar")
+				   .Replace("ref", "ref");
 	}
 }

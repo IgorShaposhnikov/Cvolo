@@ -215,9 +215,17 @@ public sealed class ValidationPass(BindingContext context)
 				break;
 			case CallExpressionSyntax call:
 				{
+					// First evaluate argument types at the call site
+					var argTypes = new List<TypeSymbol>();
+					foreach (var arg in call.Arguments)
+					{
+						CheckExpression(arg, scope);
+						var argType = GetExpressionType(arg, scope) ?? TypeSymbol.Int;
+						argTypes.Add(argType);
+					}
+
 					FunctionSymbol? func = null;
 
-					// If calling a generic function Swap<int>(...), instantiate it first
 					if (call.TypeArguments.Count > 0)
 					{
 						var templateName = ResolveFunctionTemplateName(call.FunctionName, scope);
@@ -229,15 +237,20 @@ public sealed class ValidationPass(BindingContext context)
 					}
 					else
 					{
-						func = ResolveFunction(call.FunctionName, scope);
+						// Use overload resolution logic
+						func = ResolveOverloadedFunction(call.FunctionName, argTypes, scope);
 					}
 
 					if (func is null)
 					{
 						var currentFileContext = context.FileContexts[context.CurrentUnit!];
-						context.Diagnostics.Report(currentFileContext, call.Span, $"Undefined function '{call.FunctionName}'");
+						var sigString = string.Join(", ", argTypes.Select(t => t.Name));
+						context.Diagnostics.Report(currentFileContext, call.Span, $"No overload of function '{call.FunctionName}' matches argument types ({sigString})");
 						return;
 					}
+
+					// Record the resolved overload for CodeGenerator consumption
+					context.ResolvedCalls[call] = func;
 
 					var argCount = call.Arguments.Count;
 					var paramCount = func.Parameters.Count;
@@ -255,21 +268,6 @@ public sealed class ValidationPass(BindingContext context)
 						var currentFileContext = context.FileContexts[context.CurrentUnit!];
 						context.Diagnostics.Report(currentFileContext, call.Span, $"Function '{call.FunctionName}' expects at least {paramCount} arguments but received {argCount}");
 						return;
-					}
-
-					for (var i = 0; i < call.Arguments.Count; i++)
-					{
-						var arg = call.Arguments[i];
-						CheckExpression(arg, scope);
-
-						if (arg is IdentifierExpressionSyntax id)
-						{
-							var argSymbol = scope.Lookup(id.Name) as VariableSymbol;
-							if (argSymbol is not null)
-							{
-								var isPointerParam = i < func.Parameters.Count && func.Parameters[i].Type is PointerTypeSymbol;
-							}
-						}
 					}
 
 					break;
@@ -761,4 +759,104 @@ public sealed class ValidationPass(BindingContext context)
 		ReturnStatementSyntax => true,
 		_ => false,
 	};
+
+	private FunctionSymbol? ResolveOverloadedFunction(string name, IReadOnlyList<TypeSymbol> argTypes, SymbolTable scope)
+	{
+		var candidates = new List<FunctionSymbol>();
+
+		// 1. Gather potential overloading candidates based on namespace scope and imports
+		GatherOverloadCandidates(name, candidates);
+
+		// 2. Select the candidate with the best signature match score
+		FunctionSymbol? bestMatch = null;
+		var bestScore = -1;
+
+		foreach (var candidate in candidates)
+		{
+			var paramTypes = candidate.Parameters.Select(p => p.Type).ToList();
+			var score = CompareSignature(paramTypes, argTypes, candidate.IsVariadic);
+			if (score > bestScore)
+			{
+				bestScore = score;
+				bestMatch = candidate;
+			}
+		}
+
+		return bestScore >= 0 ? bestMatch : null;
+	}
+
+	private void GatherOverloadCandidates(string name, List<FunctionSymbol> targetList)
+	{
+		// Direct or exact match search
+		if (context.OverloadedFunctions.TryGetValue(name, out var directMatches))
+			targetList.AddRange(directMatches);
+
+		// Current namespace match search
+		var localMangled = context.GetMangledName(name, context.CurrentNamespace);
+		if (context.OverloadedFunctions.TryGetValue(localMangled, out var localMatches))
+			targetList.AddRange(localMatches);
+
+		// Search through imported namespaces (using directives)
+		if (context.CurrentUnit is not null)
+		{
+			var activeUsings = new List<string>(context.CurrentUnit.Usings.Select(u => u.NamespaceName));
+			if (context.CurrentUnit.NamespaceDeclaration is not null)
+				activeUsings.AddRange(context.CurrentUnit.NamespaceDeclaration.Usings.Select(u => u.NamespaceName));
+
+			foreach (var ns in activeUsings)
+			{
+				var candidateMangled = context.GetMangledName(name, ns);
+				if (context.OverloadedFunctions.TryGetValue(candidateMangled, out var match))
+					targetList.AddRange(match);
+			}
+		}
+	}
+
+	private int CompareSignature(IReadOnlyList<TypeSymbol> paramTypes, IReadOnlyList<TypeSymbol> argTypes, bool isVariadic)
+	{
+		if (!isVariadic && paramTypes.Count != argTypes.Count)
+			return -1; // Incompatible bounds
+
+		if (isVariadic && argTypes.Count < paramTypes.Count)
+			return -1; // Missing required parameters
+
+		var score = 0;
+		var countToCheck = paramTypes.Count;
+
+		for (var i = 0; i < countToCheck; i++)
+		{
+			var param = paramTypes[i];
+			var arg = argTypes[i];
+
+			if (param.Equals(arg))
+			{
+				score += 4; // Direct exact match is preferred
+			}
+			else if (param is SliceTypeSymbol slice && arg is ArrayTypeSymbol arr && slice.ElementType.Equals(arr.ElementType))
+			{
+				score += 3; // Implicit decay of Array to Dynamic Slice
+			}
+			else if (param is PointerTypeSymbol ptr && ptr.ReferencedType.Equals(arg))
+			{
+				score += 2; // Implicit reference casting
+			}
+			else if (arg is PointerTypeSymbol argPtr && param.Equals(argPtr.ReferencedType))
+			{
+				score += 2; // Implicit dereference matches
+			}
+			else if (param.Equals(TypeSymbol.Double) && arg.Equals(TypeSymbol.Int))
+			{
+				score += 1; // Implicit numeric promotion (int -> double)
+			}
+			else
+			{
+				return -1; // Parameter signature mismatch
+			}
+		}
+
+		// Variadic parameters (e.g. printf) gain a base match score modifier
+		if (isVariadic) score += 1;
+
+		return score;
+	}
 }

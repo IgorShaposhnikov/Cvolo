@@ -567,32 +567,41 @@ public sealed class IrEmitter : IEmitter
 
 	private (string val, TypeSymbol ty) EmitCallExpr(CallExpressionSyntax call, StringWriter fw)
 	{
-		var mangledName = ResolveFunctionName(call.FunctionName, _currentUnit!);
-		if (call.TypeArguments.Count > 0)
+		string emitName;
+
+		if (_bindingContext!.ResolvedCalls.TryGetValue(call, out var resolvedFunc))
 		{
-			mangledName = $"{mangledName}<{string.Join(", ", call.TypeArguments)}>";
+			emitName = resolvedFunc.Name;
 		}
+		else
+		{
+			emitName = ResolveFunctionName(call.FunctionName, _currentUnit!);
+			if (call.TypeArguments.Count > 0)
+			{
+				emitName = $"{emitName}<{string.Join(", ", call.TypeArguments)}>";
+			}
+		}
+
 		List<string> args = [];
 
 		for (var i = 0; i < call.Arguments.Count; i++)
 		{
 			var (val, valTy) = Eval(call.Arguments[i], fw);
-			var paramTy = GetParamType(mangledName, i);
+			var paramTy = GetParamType(emitName, i);
 			if (paramTy is SliceTypeSymbol && valTy is ArrayTypeSymbol)
 			{
 				if (call.Arguments[i] is IdentifierExpressionSyntax id && _locals.TryGetValue(id.Name, out var ptr))
 				{
-					val = CoerceArrayToSlice($"ptr %{ptr}", valTy as ArrayTypeSymbol, paramTy as SliceTypeSymbol, fw);
+					val = CoerceArrayToSlice($"ptr %{ptr}", (valTy as ArrayTypeSymbol)!, (paramTy as SliceTypeSymbol)!, fw);
 				}
 				else
 				{
-					val = CoerceArrayToSlice(val, valTy as ArrayTypeSymbol, paramTy as SliceTypeSymbol, fw);
+					val = CoerceArrayToSlice(val, (valTy as ArrayTypeSymbol)!, (paramTy as SliceTypeSymbol)!, fw);
 				}
 			}
 
-			// PROMOTION FOR VARIADIC ARGUMENTS (C-ABI Promotion Rules)
-			var isVariadic = _astExterns.TryGetValue(mangledName, out var ext) && ext.IsVariadic;
-			if (isVariadic && i >= _functionParameterTypes[mangledName].Count)
+			var isVariadic = _astExterns.TryGetValue(emitName, out var ext) && ext.IsVariadic;
+			if (isVariadic && i >= _functionParameterTypes[emitName].Count)
 			{
 				if (valTy.Equals(TypeSymbol.Bool))
 				{
@@ -611,21 +620,21 @@ public sealed class IrEmitter : IEmitter
 			args.Add(val);
 		}
 
-		var isCallVariadic = _astExterns.TryGetValue(mangledName, out var externDecl) && externDecl.IsVariadic;
-		var retTypeSymbol = _functionReturnTypes.TryGetValue(mangledName, out var ret) ? ret : TypeSymbol.Int;
+		var isCallVariadic = _astExterns.TryGetValue(emitName, out var externDecl) && externDecl.IsVariadic;
+		var retTypeSymbol = _functionReturnTypes.TryGetValue(emitName, out var ret) ? ret : TypeSymbol.Int;
 		var ty = Type(retTypeSymbol);
 
-		var escapedName = mangledName.Contains('<') ? $"\"{mangledName}\"" : mangledName;
+		var escapedName = emitName.Contains('<') ? $"\"{emitName}\"" : emitName;
 		var callee = $"@{escapedName}";
 		if (isCallVariadic)
 		{
-			var paramTys = string.Join(", ", _functionParameterTypes[mangledName].Select(Type));
+			var paramTys = string.Join(", ", _functionParameterTypes[emitName].Select(Type));
 			callee = $"({paramTys}, ...) @{escapedName}";
 		}
 
 		var r = NewLocal();
 		fw.WriteLine($"    %{r} = call {ty} {callee}({string.Join(", ", args)})");
-		return ($"{ty} %{r}", retTypeSymbol); // <-- Fixed missing return here!
+		return ($"{ty} %{r}", retTypeSymbol);
 	}
 
 	private (string val, TypeSymbol ty) EmitBin(BinaryExpressionSyntax bin, StringWriter fw)

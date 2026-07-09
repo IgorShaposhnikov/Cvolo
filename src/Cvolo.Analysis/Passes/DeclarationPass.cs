@@ -175,15 +175,26 @@ public sealed class DeclarationPass(BindingContext context)
 			parameters.Add(new ParameterSymbol(param.Name, paramType));
 		}
 
-		var existing = context.Globals.Lookup(mangledName);
+		var overloadedMangledName = context.GetOverloadedMangledName(mangledName, parameters.Select(p => p.Type).ToList());
+
+		var existing = context.Globals.Lookup(overloadedMangledName);
 		if (existing is not null)
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.Report(currentFileContext, func.Span, $"Duplicate definition of '{func.Name}'");
+			context.Diagnostics.Report(currentFileContext, func.Span, $"Duplicate definition of function '{func.Name}' with a matching parameter signature.");
 			return;
 		}
 
-		context.Globals.Declare(new FunctionSymbol(mangledName, type, parameters));
+		var newSymbol = new FunctionSymbol(overloadedMangledName, type, parameters);
+		context.Globals.Declare(newSymbol);
+
+		if (!context.OverloadedFunctions.TryGetValue(mangledName, out var candidates))
+		{
+			candidates = [];
+			context.OverloadedFunctions[mangledName] = candidates;
+		}
+
+		candidates.Add(newSymbol);
 	}
 
 	private void DeclareExternFunction(ExternDeclarationSyntax ext)
@@ -225,6 +236,16 @@ public sealed class DeclarationPass(BindingContext context)
 			return;
 		}
 
-		context.Globals.Declare(new FunctionSymbol(ext.Name, returnType, parameters, isExtern: true, isVariadic: ext.IsVariadic));
+		// Declare the extern symbol with its unmangled base name
+		var newSymbol = new FunctionSymbol(ext.Name, returnType, parameters, isExtern: true, isVariadic: ext.IsVariadic);
+		context.Globals.Declare(newSymbol);
+
+		// Keep candidates registered for lookup under the unmangled name
+		if (!context.OverloadedFunctions.TryGetValue(ext.Name, out var candidates))
+		{
+			candidates = [];
+			context.OverloadedFunctions[ext.Name] = candidates;
+		}
+		candidates.Add(newSymbol);
 	}
 }
