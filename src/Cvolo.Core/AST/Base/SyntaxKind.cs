@@ -32,6 +32,7 @@ public enum SyntaxKind
 	ArrayInitializationExpression,
 	ArrayReplicationExpression,
 	ParenthesizedStructInitializerExpression,
+	InterpolatedStringExpression,
 	TernaryExpression,
 	UsingDirective,
 	NamespaceDeclaration,

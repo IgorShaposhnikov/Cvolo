@@ -161,6 +161,7 @@ expression
 	| IntegerLiteral                                        							# integerLiteralExpression
 	| DoubleLiteral                                         							# doubleLiteralExpression
 	| StringLiteral                                         							# stringLiteralExpression
+	| InterpolatedStringLiteral															# interpolatedStringExpression
 	| CharLiteral																		# charLiteralExpression
 	| TRUE                                                  							# booleanLiteralExpression
 	| FALSE                                                 							# booleanLiteralExpression

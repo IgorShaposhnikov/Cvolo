@@ -155,7 +155,21 @@ public sealed class SyntaxParser
 		if (context.returnStatement() is { } ret)
 			return BuildReturnStatement(ret);
 		if (context.expressionStatement() is { } exprStmt)
-			return BuildExpressionStatement(exprStmt);
+		{
+			var expr = BuildExpression(exprStmt.expression());
+
+			// Intercept console write calls containing interpolated strings to lower them at compile-time
+			if (expr is CallExpressionSyntax call &&
+				(call.FunctionName == "Console.WriteLine" || call.FunctionName == "Console.Write" ||
+				 call.FunctionName == "System.Console.WriteLine" || call.FunctionName == "System.Console.Write") &&
+				call.Arguments.Count == 1 &&
+				call.Arguments[0] is InterpolatedStringExpressionSyntax interpolated)
+			{
+				return LowerInterpolatedConsoleCall(call, interpolated);
+			}
+
+			return new ExpressionStatementSyntax(SpanOf(exprStmt), expr);
+		}
 		if (context.variableDeclaration() is { } varDecl)
 			return BuildVariableDeclaration(varDecl);
 		if (context.blockStatement() is { } block)
@@ -201,6 +215,8 @@ public sealed class SyntaxParser
 					var value = DecodeString(raw);
 					return new StringLiteralExpressionSyntax(SpanOf(strCtx), value);
 				}
+			case CvoloParser.InterpolatedStringExpressionContext interCtx:
+				return new InterpolatedStringExpressionSyntax(SpanOf(interCtx), interCtx.InterpolatedStringLiteral().GetText());
 			case CvoloParser.CharLiteralExpressionContext charCtx:
 				{
 					var text = charCtx.CharLiteral().GetText();
@@ -603,5 +619,124 @@ public sealed class SyntaxParser
 		}
 
 		return new NamespaceDeclarationSyntax(SpanOf(context), name, usings, members);
+	}
+
+	private SyntaxNode LowerInterpolatedConsoleCall(CallExpressionSyntax originalCall, InterpolatedStringExpressionSyntax interpolated)
+	{
+		var segments = ParseInterpolatedString(interpolated.RawText);
+		var statementList = new List<SyntaxNode>();
+		var isWriteLine = originalCall.FunctionName.EndsWith("WriteLine");
+
+		// Resolve safe base write target paths
+		var writeTarget = originalCall.FunctionName.Replace("WriteLine", "Write");
+		var writeLineTarget = originalCall.FunctionName;
+
+		for (var i = 0; i < segments.Count; i++)
+		{
+			var (text, isExpression) = segments[i];
+			ExpressionSyntax elementExpr;
+
+			if (isExpression)
+			{
+				elementExpr = ParseExpressionSegment(text, originalCall.Span);
+			}
+			else
+			{
+				elementExpr = new StringLiteralExpressionSyntax(originalCall.Span, text);
+			}
+
+			// The very last segment uses WriteLine if the original call was WriteLine
+			var targetFunc = (i == segments.Count - 1 && isWriteLine) ? writeLineTarget : writeTarget;
+			var callNode = new CallExpressionSyntax(originalCall.Span, targetFunc, [], [elementExpr]);
+
+			statementList.Add(new ExpressionStatementSyntax(originalCall.Span, callNode));
+		}
+
+		return new BlockStatementSyntax(originalCall.Span, statementList);
+	}
+
+	private List<(string text, bool isExpression)> ParseInterpolatedString(string raw)
+	{
+		// Strip $" and the trailing "
+		var content = raw.Substring(2, raw.Length - 3);
+		var list = new List<(string text, bool isExpression)>();
+
+		var i = 0;
+		var start = 0;
+		while (i < content.Length)
+		{
+			if (content[i] == '{')
+			{
+				// Escape double brace match {{
+				if (i + 1 < content.Length && content[i + 1] == '{')
+				{
+					i += 2;
+					continue;
+				}
+
+				if (i > start)
+				{
+					list.Add((content.Substring(start, i - start), false));
+				}
+
+				var depth = 1;
+				var exprStart = i + 1;
+				i++;
+				while (i < content.Length && depth > 0)
+				{
+					if (content[i] == '{') depth++;
+					else if (content[i] == '}') depth--;
+					i++;
+				}
+
+				var exprText = content.Substring(exprStart, i - exprStart - 1);
+				list.Add((exprText, true));
+				start = i;
+			}
+			else if (content[i] == '}')
+			{
+				// Escape double brace match }}
+				if (i + 1 < content.Length && content[i + 1] == '}')
+				{
+					i += 2;
+					continue;
+				}
+				i++;
+			}
+			else
+			{
+				i++;
+			}
+		}
+
+		if (start < content.Length)
+		{
+			list.Add((content.Substring(start), false));
+		}
+
+		return list;
+	}
+
+	private ExpressionSyntax ParseExpressionSegment(string source, TextSpan parentSpan)
+	{
+		// Wrap the expression segment inside a dummy method body to parse cleanly
+		var dummySource = $"void dummy() {{ {source}; }}";
+		var segmentContext = new CompilationContext(dummySource, "interpolated_segment");
+
+		var inputStream = new AntlrInputStream(segmentContext.Source);
+		var lexer = new CvoloLexer(inputStream);
+		var tokenStream = new CommonTokenStream(lexer);
+		var parser = new CvoloParser(tokenStream);
+
+		parser.RemoveErrorListeners();
+		var tree = parser.compilationUnit();
+
+		var decl = tree.declaration(0);
+		var func = decl.functionDeclaration();
+		var block = func.blockStatement();
+		var stmt = block.statement(0);
+		var exprStmt = stmt.expressionStatement();
+
+		return BuildExpression(exprStmt.expression());
 	}
 }

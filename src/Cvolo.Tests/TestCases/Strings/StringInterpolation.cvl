@@ -1,0 +1,10 @@
+using System;
+
+int Main() {
+    int[3] arr = { 10, 20, 30 };
+    
+    // Dedicated string formatting test case
+    Console.WriteLine($"{arr[0]},{arr[1]},{arr[2]}");
+    
+    return 0;
+}

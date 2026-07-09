@@ -1,0 +1,13 @@
+using System;
+
+int Main() {
+    val integerVal = 42;
+    val doubleVal = 3.14;
+    val stringVal = "Cvolo";
+    val boolVal = true;
+    val charVal = 'A';
+
+    // Mix 5 different primitives inside a single, zero-allocation interpolated string!
+    Console.WriteLine($"Name: {stringVal}, Int: {integerVal}, Float: {doubleVal}, Bool: {boolVal}, Char: {charVal}");
+    return 0;
+}
