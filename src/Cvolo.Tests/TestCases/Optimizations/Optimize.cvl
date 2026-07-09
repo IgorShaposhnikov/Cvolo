@@ -1,4 +1,4 @@
-extern void printf(string format, ...);
+using System;
 
 int compute(int n)
 {
@@ -14,6 +14,6 @@ int main()
     // LLVM should pre-compute compute(5) at compile-time to exactly: 150
     var int finalVal = compute(5); 
     
-    printf("Result: %d\n", finalVal);
+    Console.WriteLine($"Result: {finalVal}");
     return 0;
 }

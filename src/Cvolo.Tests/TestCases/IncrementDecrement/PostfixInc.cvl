@@ -1,9 +1,9 @@
-extern void printf(string format, ...);
+using System;
 
 int Main()
 {
     var x = 10;
     var y = x++; // x becomes 11, y is 10
-    printf("%d,%d\n", x, y);
+    Console.WriteLine($"{x},{y}");
     return 0;
 }

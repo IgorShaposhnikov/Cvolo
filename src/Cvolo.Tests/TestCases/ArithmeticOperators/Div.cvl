@@ -1,8 +1,8 @@
-extern void printf(string format, ...);
+using System;
 
 int Main()
 {
 	int x = 20 / 4;
-	printf("%d\n", x);
+	Console.WriteLine(x);
 	return 0;
 }

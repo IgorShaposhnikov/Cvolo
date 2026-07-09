@@ -1,4 +1,4 @@
-extern void printf(string format, ...);
+using System;
 
 struct Color {
     int R;
@@ -15,16 +15,19 @@ struct Point {
 int main() {
     // 1. Primitive replication constructor style
     var int[100] numbers(42);
-    printf("Item 0: %d, Item 99: %d\n", numbers[0], numbers[99]);
+    
+    // Leverage compile-time lowered string interpolation
+    Console.WriteLine($"Item 0: {numbers[0]}, Item 99: {numbers[99]}");
 
-    // 2. Recursive target-typed replication constructor style!
+    // 2. Recursive target-typed replication constructor style
     var Point[3] points(
         X: 10, 
         Y: 20, 
         BaseColor: (R: 255, G: 0, B: 0)
     );
 
-    printf("Point 2: X = %d, Y = %d, Color R = %d\n", points[2].X, points[2].Y, points[2].BaseColor.R);
+    // Leverage compile-time nested target-typed interpolation
+    Console.WriteLine($"Point 2: X = {points[2].X}, Y = {points[2].Y}, Color R = {points[2].BaseColor.R}");
 
     return 0;
 }

@@ -1,4 +1,4 @@
-extern void printf(string format, ...);
+using System;
 
 void Swap<T>(refvar T a, refvar T b) 
 {
@@ -13,6 +13,6 @@ int main()
     var y = 200;
     Swap<int>(ref x, ref y);
     
-    printf("X: %d, Y: %d\n", x, y);
+    Console.WriteLine($"X: {x}, Y: {y}");
     return 0;
 }

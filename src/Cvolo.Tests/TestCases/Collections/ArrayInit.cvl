@@ -1,7 +1,10 @@
-extern void printf(string format, ...);
+using System;
 
 int Main() {
     int[3] arr = { 10, 20, 30 };
-    printf("%d,%d,%d\n", arr[0], arr[1], arr[2]);
+    
+    // Pure, compile-time lowered string interpolation!
+    Console.WriteLine($"{arr[0]},{arr[1]},{arr[2]}");
+    
     return 0;
 }

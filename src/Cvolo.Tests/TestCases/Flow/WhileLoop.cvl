@@ -1,10 +1,10 @@
-extern void printf(string format, ...);
+using System;
 
 int Main()
 {
 	var i = 0;
 	while (i < 3) {
-		printf("%d", i);
+		Console.Write(i);
 		i++;
 	}
 	return 0;

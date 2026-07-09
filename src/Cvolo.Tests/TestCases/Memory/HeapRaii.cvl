@@ -1,10 +1,14 @@
-extern void printf(string format, ...);
+using System;
 
-struct Point { int X; int Y; }
+struct Point
+{
+	int X;
+	int Y;
+}
 
 int Main() {
     // Allocates on the heap. Compiler automatically inserts 'free' on exit!
     var Point p = heap Point { X: 100, Y: 200 };
-    printf("%d\n", p.X);
+    Console.WriteLine(p.X);
     return 0;
 }

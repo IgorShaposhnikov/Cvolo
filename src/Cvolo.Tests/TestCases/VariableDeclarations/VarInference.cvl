@@ -1,9 +1,9 @@
-extern void printf(string format, ...);
+using System;
 
 int Main()
 {
     var x = 200;
     x = 300;
-    printf("%d\n", x);
+    Console.WriteLine(x);
     return 0;
 }

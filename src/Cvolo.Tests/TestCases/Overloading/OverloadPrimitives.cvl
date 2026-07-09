@@ -1,15 +1,15 @@
-extern void printf(string format, ...);
+using System;
 
 void printValue(int x) {
-    printf("Int: %d\n", x);
+    Console.WriteLine($"Int: {x}");
 }
 
 void printValue(double x) {
-    printf("Double: %.2f\n", x);
+    Console.WriteLine($"Double: {x}");
 }
 
 void printValue(string x) {
-    printf("String: %s\n", x);
+    Console.WriteLine($"String: {x}");
 }
 
 int main() {

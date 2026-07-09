@@ -1,6 +1,6 @@
 namespace App.Collections;
 
-extern void printf(string format, ...);
+using System;
 
 struct Buffer<T> {
     T[5] Elements;
@@ -34,14 +34,14 @@ int Main()
     var x = 10;
     var y = 20;
 
-    printf("Before generic Swap<T>:\n");
-    printf("X: %d, Y: %d \n", x, y);
+	Console.WriteLine("Before generic Swap<T>:");
+    Console.WriteLine($"X: {x}, Y: {y} ");
 
     Swap<int>(ref x, ref y);
 
-    printf("After generic Swap<T>:\n");
-    printf("X: %d, Y: %d \n", x, y);
+    Console.WriteLine("After generic Swap<T>:");
+    Console.WriteLine($"X: {x}, Y: {y} ");
 
-    printf("Generic execution success!\n");
+    Console.WriteLine("Generic execution success!");
     return 0;
 }

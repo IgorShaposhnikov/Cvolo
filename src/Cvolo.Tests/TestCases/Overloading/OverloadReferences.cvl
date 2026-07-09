@@ -1,11 +1,11 @@
-extern void printf(string format, ...);
+using System;
 
 void process(int x) {
-    printf("By Value: %d\n", x);
+    Console.WriteLine($"By Value: {x}");
 }
 
 void process(ref int x) {
-    printf("By Reference: %d\n", x);
+    Console.WriteLine($"By Reference: {x}");
 }
 
 int main() {

@@ -1,8 +1,8 @@
-extern void printf(string format, ...);
+using System;
 
 int Main()
 {
     var x = 2 << 2; // Shifts 2 left by 2 places (8)
-    printf("%d\n", x);
+    Console.WriteLine(x);
     return 0;
 }

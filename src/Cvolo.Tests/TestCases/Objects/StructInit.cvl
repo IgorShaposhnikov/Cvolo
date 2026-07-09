@@ -1,4 +1,4 @@
-extern void printf(string format, ...);
+using System;
 
 struct Point
 {
@@ -8,6 +8,6 @@ struct Point
 
 int Main() {
     Point p = Point { X: 10, Y: 20 };
-    printf("%d,%d\n", p.X, p.Y);
+    Console.WriteLine($"{p.X},{p.Y}\n");
     return 0;
 }

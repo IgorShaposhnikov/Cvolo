@@ -1,12 +1,12 @@
-extern void printf(string format, ...);
+using System;
 
 int Main()
 {
 	int x = 10;
 	if (x > 5) {
-		printf("Greater\n");
+		Console.WriteLine("Greater");
 	} else {
-		printf("Smaller\n");
+		Console.WriteLine("Smaller");
 	}
 	return 0;
 }

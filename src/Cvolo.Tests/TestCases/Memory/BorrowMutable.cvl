@@ -1,4 +1,4 @@
-extern void printf(string format, ...);
+using System;
 
 struct Point
 {
@@ -13,6 +13,6 @@ void Scale(refvar Point p) {
 int Main() {
     var Point p = Point { X: 50, Y: 100 };
     Scale(ref p);
-    printf("%d\n", p.X);
+    Console.WriteLine(p.X);
     return 0;
 }

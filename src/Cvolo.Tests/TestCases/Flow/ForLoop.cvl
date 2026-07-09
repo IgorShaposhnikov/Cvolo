@@ -1,9 +1,9 @@
-extern void printf(string format, ...);
+using System;
 
 int Main()
 {
 	for (var i = 0; i < 3; i++) {
-		printf("%d", i);
+		Console.Write(i);
 	}
 	return 0;
 }

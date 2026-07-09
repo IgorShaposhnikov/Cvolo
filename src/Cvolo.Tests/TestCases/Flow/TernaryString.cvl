@@ -1,9 +1,9 @@
-extern void printf(string format, ...);
+using System;
 
 int Main()
 {
 	int x = 1;
 	string res = x == 1 ? "Yes" : "No";
-	printf("%s\n", res);
+	Console.WriteLine(res);
 	return 0;
 }

@@ -1,9 +1,9 @@
-extern void printf(string format, ...);
+using System;
 
 int Main()
 {
 	int x = 10;
 	int res = x > 5 ? 100 : 0;
-	printf("%d\n", res);
+	Console.WriteLine(res);
 	return 0;
 }

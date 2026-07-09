@@ -1,9 +1,9 @@
-extern void printf(string format, ...);
+using System;
 
 int Main()
 {
 	var x = 2;
 	x <<= 3; // x becomes 16
-	printf("%d\n", x);
+	Console.WriteLine(x);
 	return 0;
 }

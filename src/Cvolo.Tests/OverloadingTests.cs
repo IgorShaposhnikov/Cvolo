@@ -5,7 +5,7 @@ namespace Cvolo.Tests;
 public sealed class OverloadingTests : CompilerTestBase
 {
 	[Theory]
-	[InlineData("OverloadPrimitives", "Int: 10\nDouble: 3.14\nString: Hello Overloading!")]
+	[InlineData("OverloadPrimitives", "Int: 10\nDouble: 3.140000\nString: Hello Overloading!")]
 	[InlineData("OverloadReferences", "By Value: 42\nBy Reference: 42")]
 	public void Function_Overloading_Resolution(string caseName, string expectedOutput)
 	{

@@ -1,7 +1,7 @@
-extern void printf(string format, ...);
+using System;
 
 void PrintLen(int[] s) {
-    printf("%d\n", s.Length);
+    Console.WriteLine(s.Length);
 }
 
 int Main() {
