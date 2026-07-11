@@ -28,6 +28,7 @@ public enum SyntaxKind
 	StructInitializationExpression,
 	BorrowExpression,
 	HeapAllocationExpression,
+	HeapArrayAllocationExpression,
 	IndexExpression,
 	ArrayInitializationExpression,
 	ArrayReplicationExpression,

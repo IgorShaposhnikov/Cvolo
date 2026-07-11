@@ -1,5 +1,6 @@
 using Cvolo.Analysis.Symbols;
 using Cvolo.Analysis.Symbols.Borrowing;
+using Cvolo.Analysis.Symbols.Collections;
 using Cvolo.Analysis.Symbols.Structs;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
@@ -98,6 +99,15 @@ public sealed class SafetyPass(BindingContext context)
 				CheckExpressionSafety(m.Expression, scope);
 				break;
 
+			case IndexExpressionSyntax idx:
+				CheckExpressionSafety(idx.Left, scope);
+				CheckExpressionSafety(idx.Index, scope);
+				break;
+
+			case BorrowExpressionSyntax b:
+				CheckExpressionSafety(b.Expression, scope);
+				break;
+
 			case CallExpressionSyntax call:
 				foreach (var arg in call.Arguments)
 				{
@@ -106,7 +116,7 @@ public sealed class SafetyPass(BindingContext context)
 					{
 						var argSymbol = scope.Lookup(argId.Name) as VariableSymbol;
 						// If we pass a struct by value, it is a MOVE
-						if (argSymbol != null && argSymbol.Type is StructTypeSymbol)
+						if (argSymbol != null && (argSymbol.Type is StructTypeSymbol || argSymbol.Type is SliceTypeSymbol))
 							argSymbol.IsMoved = true;
 					}
 				}

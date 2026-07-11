@@ -8,6 +8,7 @@ public sealed class MemoryTests : CompilerTestBase
 	[InlineData("HeapRaii", "100")]
 	[InlineData("BorrowMutable", "100")]
 	[InlineData("MoveReassign", "20")]
+	[InlineData("DynamicHeapArray", "Buffer 0: 10, Buffer 4: 50, Length: 5")]
 	public void Execution(string caseName, string expected)
 	{
 		var fileName = $"Memory/{caseName}.cvl";
@@ -23,6 +24,7 @@ public sealed class MemoryTests : CompilerTestBase
 	[InlineData("MoveFail", "Use of moved variable 'p1'")]
 	[InlineData("BorrowFail", "Cannot borrow 'p' because an incompatible borrow is already active")]
 	[InlineData("DanglingFail", "Cannot return reference to local variable 'p'")]
+	[InlineData("MoveHeapArrayFail", "Use of moved variable 'buffer'")]
 	public void SafetyRejections(string caseName, string expectedError)
 	{
 		var fileName = $"Memory/{caseName}.cvl";

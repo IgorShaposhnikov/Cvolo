@@ -154,6 +154,7 @@ expression
 	| expression (PLUS_ASSIGN | MINUS_ASSIGN | STAR_ASSIGN | DIV_ASSIGN | AND_ASSIGN | OR_ASSIGN | XOR_ASSIGN | LSHIFT_ASSIGN | RSHIFT_ASSIGN | URSHIFT_ASSIGN) expression		# compoundAssignmentExpression
 	| qualifiedName (LT typeList GT)? LPAREN argumentList? RPAREN						# callExpression
 	| HEAP expression                                       							# heapAllocationExpression
+	| HEAP type LBRACK expression RBRACK                                                # heapArrayAllocationExpression
 	| LBRACE (expression (COMMA expression)*)? RBRACE									# arrayInitializationExpression
 	| Identifier (LT typeList GT)? LBRACE structInitializerList? RBRACE					# structInitializationExpression
 	| LPAREN structInitializerList RPAREN												# parenthesizedStructInitializer

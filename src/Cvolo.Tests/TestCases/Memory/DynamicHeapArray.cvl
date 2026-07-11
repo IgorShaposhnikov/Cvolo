@@ -1,0 +1,16 @@
+using System;
+
+int main() {
+    val dynamicCount = 5; // Simulating a runtime variable
+    
+    // Allocate slice dynamically on the heap!
+    var int[] buffer = heap int[dynamicCount];
+    
+    buffer[0] = 10;
+    buffer[4] = 50;
+
+    Console.WriteLine($"Buffer 0: {buffer[0]}, Buffer 4: {buffer[4]}, Length: {buffer.Length}");
+
+    // The compiler's existing RAII logic will automatically call 'free' on 'buffer' here!
+    return 0;
+}

@@ -378,6 +378,12 @@ public sealed class SyntaxParser
 				}
 			case CvoloParser.HeapAllocationExpressionContext heapCtx:
 				return new HeapAllocationExpressionSyntax(SpanOf(heapCtx), BuildExpression(heapCtx.expression()));
+			case CvoloParser.HeapArrayAllocationExpressionContext heapArrCtx:
+				{
+					var typeName = GetTypeName(heapArrCtx.type());
+					var countExpr = BuildExpression(heapArrCtx.expression());
+					return new HeapArrayAllocationExpressionSyntax(SpanOf(heapArrCtx), typeName, countExpr);
+				}
 			case CvoloParser.IndexExpressionContext idxCtx:
 				return new IndexExpressionSyntax(SpanOf(idxCtx), BuildExpression(idxCtx.expression(0)), BuildExpression(idxCtx.expression(1)));
 			case CvoloParser.ArrayInitializationExpressionContext arrInitCtx:

@@ -1,0 +1,19 @@
+using System;
+
+// Function takes ownership of the dynamic array
+void ConsumeBuffer(int[] data) {
+    Console.WriteLine($"Consumed {data.Length} items.");
+}
+
+int main() {
+    // 1. Allocate dynamic buffer
+    var int[] buffer = heap int[1024];
+
+    // 2. Transfer ownership to the function
+    ConsumeBuffer(buffer);
+
+    // 3. ILLEGAL: Try to read from the moved buffer!
+    Console.WriteLine(buffer[0]); 
+
+    return 0;
+}

@@ -391,6 +391,8 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				return EmitBorrowExpression(b);
 			case HeapAllocationExpressionSyntax h:
 				return EmitHeapAllocation(h);
+			case HeapArrayAllocationExpressionSyntax hArr:
+				return EmitHeapArrayAllocation(hArr);
 			case StructInitializationExpressionSyntax s:
 				return EmitStructInitialization(s);
 			case ArrayInitializationExpressionSyntax a:
@@ -660,6 +662,19 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			_builder.BuildStore(val, alloca);
 			return;
 		}
+		else if (varDecl.Initializer is HeapArrayAllocationExpressionSyntax heapArrInit)
+		{
+			var val = EmitExpression(heapArrInit);
+			var valTy = GetExprType(heapArrInit);
+
+			var alloca = _builder.BuildAlloca(GetLLVMType(valTy), varDecl.Name);
+			_locals[varDecl.Name] = alloca;
+			_variableTypes[varDecl.Name] = valTy;
+			_heapAllocatedVars.Add(varDecl.Name); // Register for RAII cleanup!
+
+			_builder.BuildStore(val, alloca);
+			return;
+		}
 
 		if (typeSymbol is not null)
 		{
@@ -813,9 +828,9 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		{
 			var type = _variableTypes[id.Name];
 			var isReference = type is PointerTypeSymbol;
-			var isHeap = _heapAllocatedVars.Contains(id.Name);
+			var isHeap = _heapAllocatedVars.Contains(id.Name) && type is not SliceTypeSymbol;
 
-			if (isReference || isHeap)
+            if (isReference || isHeap)
 			{
 				return _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), ptr, "borrow_ref");
 			}
@@ -903,7 +918,8 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			CallExpressionSyntax call => ResolveCallReturnType(call),
 			BinaryExpressionSyntax bin => ResolveBinaryExpressionType(bin),
 			HeapAllocationExpressionSyntax h => GetExprType(h.Expression),
-			ArrayInitializationExpressionSyntax a => new ArrayTypeSymbol(a.Elements.Count > 0 ? GetExprType(a.Elements[0]) : TypeSymbol.Int, a.Elements.Count),
+            HeapArrayAllocationExpressionSyntax ha => new SliceTypeSymbol(_bindingContext!.ResolveType(ha.ElementTypeName)!),
+            ArrayInitializationExpressionSyntax a => new ArrayTypeSymbol(a.Elements.Count > 0 ? GetExprType(a.Elements[0]) : TypeSymbol.Int, a.Elements.Count),
 			_ => TypeSymbol.Int
 		};
 	}
@@ -1006,19 +1022,31 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		return name;
 	}
 
-	private void EmitCleanup(IEnumerable<string> variables)
+	private void EmitCleanup(IEnumerable<string> variableNames)
 	{
-		foreach (var name in variables)
+		foreach (var name in variableNames)
 		{
 			if (_heapAllocatedVars.Contains(name) && !_movedVars.Contains(name))
 			{
 				var ptrAlloc = _locals[name];
-				var actualHeapPtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), ptrAlloc, "heap_ptr");
+				var type = _variableTypes[name];
+
+				LLVMValueRef actualHeapPtr;
+
+				// If it's a dynamic array (slice), extract the raw memory pointer first
+				if (type is SliceTypeSymbol sliceType)
+				{
+					var sliceLayout = GetLLVMType(sliceType);
+					var ptrField = _builder.BuildGEP2(sliceLayout, ptrAlloc, new LLVMValueRef[] { LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0), LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0) }, "slice_ptr_field");
+					actualHeapPtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), ptrField, "heap_ptr");
+				}
+				else // Standard struct heap allocation
+				{
+					actualHeapPtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), ptrAlloc, "heap_ptr");
+				}
 
 				var freeFunc = _globals["free"];
 				var freeType = _functionTypes["free"];
-
-				// Passed "" instead of "free_call" to ensure no void register is assigned
 				_builder.BuildCall2(freeType, freeFunc, new LLVMValueRef[] { actualHeapPtr }, "");
 			}
 		}
@@ -1104,9 +1132,9 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 			var type = _variableTypes[id.Name];
 			var isReference = type is PointerTypeSymbol;
-			var isHeap = _heapAllocatedVars.Contains(id.Name);
+			var isHeap = _heapAllocatedVars.Contains(id.Name) && type is not SliceTypeSymbol;
 
-			if (isReference || isHeap)
+            if (isReference || isHeap)
 			{
 				var actualPtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), structPtr, "loaded_ptr");
 				var innerType = type is PointerTypeSymbol ptrType ? ptrType.ReferencedType : type;
@@ -1405,5 +1433,43 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				_builder.BuildStore(value, targetFieldPtr);
 			}
 		}
+	}
+
+	private LLVMValueRef EmitHeapArrayAllocation(HeapArrayAllocationExpressionSyntax expr)
+	{
+		var elementType = _bindingContext!.ResolveType(expr.ElementTypeName);
+		var elementLlvmType = GetLLVMType(elementType!);
+
+		// 1. Evaluate the dynamic count requested by the user
+		var countVal = EmitExpression(expr.CountExpression);
+		var count64 = _builder.BuildZExt(countVal, LLVMTypeRef.Int64, "count_64");
+
+		// 2. Calculate runtime size (count * sizeof(T))
+		// We use a GEP trick to get the exact size of the element type from LLVM safely
+		var nullPtr = LLVMValueRef.CreateConstPointerNull(LLVMTypeRef.CreatePointer(elementLlvmType, 0));
+		var sizePtr = _builder.BuildGEP2(elementLlvmType, nullPtr, new LLVMValueRef[] { LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1) }, "size_ptr");
+		var elementSize64 = _builder.BuildPtrToInt(sizePtr, LLVMTypeRef.Int64, "element_size");
+
+		var totalSize = _builder.BuildMul(count64, elementSize64, "total_alloc_size");
+
+		// 3. Call malloc
+		var mallocFunc = _globals["malloc"];
+		var mallocType = _functionTypes["malloc"];
+		var rawPtr = _builder.BuildCall2(mallocType, mallocFunc, new LLVMValueRef[] { totalSize }, "heap_arr_alloc");
+
+		// 4. Assemble the Slice Fat Pointer { ptr, i32 }
+		var sliceType = new SliceTypeSymbol(elementType!);
+		var sliceLayout = GetLLVMType(sliceType);
+		var sliceAlloc = _builder.BuildAlloca(sliceLayout, "slice_tmp");
+
+		// Store ptr
+		var ptrField = _builder.BuildGEP2(sliceLayout, sliceAlloc, new LLVMValueRef[] { LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0), LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0) }, "ptr_field");
+		_builder.BuildStore(rawPtr, ptrField);
+
+		// Store length
+		var sizeField = _builder.BuildGEP2(sliceLayout, sliceAlloc, new LLVMValueRef[] { LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0), LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1) }, "size_field");
+		_builder.BuildStore(countVal, sizeField);
+
+		return _builder.BuildLoad2(sliceLayout, sliceAlloc, "slice_val");
 	}
 }

@@ -207,6 +207,13 @@ public sealed class ValidationPass(BindingContext context)
 			case HeapAllocationExpressionSyntax heap:
 				CheckExpression(heap.Expression, scope);
 				break;
+			case HeapArrayAllocationExpressionSyntax heapArr:
+				CheckExpression(heapArr.CountExpression, scope);
+				if (GetExpressionType(heapArr.CountExpression, scope) is { } heapCountTy && !heapCountTy.Equals(TypeSymbol.Int))
+				{
+					context.Diagnostics.Report(context.FileContexts[context.CurrentUnit!], heapArr.CountExpression.Span, "Heap array allocation size must be an integer.");
+				}
+				break;
 			case ArrayInitializationExpressionSyntax arrInit:
 				foreach (var el in arrInit.Elements) CheckExpression(el, scope);
 				break;
@@ -525,6 +532,7 @@ public sealed class ValidationPass(BindingContext context)
 			BorrowExpressionSyntax b => CheckBorrowExpression(b, scope),
 			StructInitializationExpressionSyntax s => CheckStructInitializationExpression(s, scope),
 			HeapAllocationExpressionSyntax h => GetExpressionType(h.Expression, scope),
+			HeapArrayAllocationExpressionSyntax ha => new SliceTypeSymbol(context.ResolveType(ha.ElementTypeName)!),
 			IndexExpressionSyntax idx => (GetExpressionType(idx.Left, scope) as ArrayTypeSymbol)?.ElementType,
 			ArrayInitializationExpressionSyntax a => CheckArrayInitialization(a, scope),
 			ArrayReplicationExpressionSyntax r => CheckArrayReplication(r, scope),
