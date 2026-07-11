@@ -38,6 +38,8 @@ public sealed class DeclarationPass(BindingContext context)
 					DeclareFunction(func);
 				else if (member is ExternDeclarationSyntax ext)
 					DeclareExternFunction(ext);
+				else if (member is ExtensionDeclarationSyntax extDecl)
+					DeclareExtension(extDecl);
 			}
 		}
 	}
@@ -247,5 +249,64 @@ public sealed class DeclarationPass(BindingContext context)
 			context.OverloadedFunctions[ext.Name] = candidates;
 		}
 		candidates.Add(newSymbol);
+	}
+
+	private void DeclareExtension(ExtensionDeclarationSyntax extDecl)
+	{
+		var extendedType = context.ResolveType(extDecl.ExtendedTypeName);
+		if (extendedType is null)
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, extDecl.Span, $"Unknown type '{extDecl.ExtendedTypeName}' inside extension block.");
+			return;
+		}
+
+		foreach (var method in extDecl.Methods)
+		{
+			// Mangled name represents the scoped path, e.g., "MyNamespace.Point.Move"
+			var baseMangledName = context.GetMangledName($"{extDecl.ExtendedTypeName}.{method.Name}", context.CurrentNamespace);
+
+			// 1. Inject the implicit first parameter: "this"
+			// It starts as a read-only pointer. The ValidationPass will upgrade it to mutable if needed!
+			var thisParamType = new PointerTypeSymbol(extendedType, isMutable: false);
+			var thisParam = new ParameterSymbol("this", thisParamType);
+
+			var parameters = new List<ParameterSymbol> { thisParam };
+			foreach (var param in method.Parameters)
+			{
+				var paramType = context.ResolveType(param.Type);
+				if (paramType is null)
+				{
+					var currentFileContext = context.FileContexts[context.CurrentUnit!];
+					context.Diagnostics.Report(currentFileContext, param.Span, $"Unknown parameter type '{param.Type}'");
+					continue;
+				}
+
+				parameters.Add(new ParameterSymbol(param.Name, paramType));
+			}
+
+			var returnType = context.ResolveType(method.ReturnType);
+			if (returnType is null)
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, method.Span, $"Unknown return type '{method.ReturnType}'");
+				return;
+			}
+
+			// 2. Register the overloaded, parameter-mangled global signature
+			var overloadedName = context.GetOverloadedMangledName(baseMangledName, parameters.Select(p => p.Type).ToList());
+
+			var newSymbol = new FunctionSymbol(overloadedName, returnType, parameters);
+			context.Globals.Declare(newSymbol);
+
+			if (!context.OverloadedFunctions.TryGetValue(baseMangledName, out var candidates))
+			{
+				candidates = [];
+				context.OverloadedFunctions[baseMangledName] = candidates;
+			}
+			candidates.Add(newSymbol);
+
+			context.SymbolUnits[overloadedName] = context.CurrentUnit!;
+		}
 	}
 }

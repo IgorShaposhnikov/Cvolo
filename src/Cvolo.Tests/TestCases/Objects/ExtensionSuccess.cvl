@@ -1,0 +1,24 @@
+using System;
+
+struct Point {
+    int X;
+    int Y;
+}
+
+extension Point {
+    void Move(int dx, int dy) {
+        X = X + dx;
+        Y = Y + dy;
+    }
+
+    void Print() {
+        Console.WriteLine($"Point Coords: X = {X}, Y = {Y}");
+    }
+}
+
+int main() {
+    var Point p(X: 10, Y: 20);
+    p.Move(5, 5);  // Mutates!
+    p.Print();     // Reads!
+    return 0;
+}

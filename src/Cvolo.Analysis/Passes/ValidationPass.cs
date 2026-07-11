@@ -40,6 +40,13 @@ public sealed class ValidationPass(BindingContext context)
 						}
 					}
 				}
+				else if (member is ExtensionDeclarationSyntax extDecl)
+				{
+					foreach (var method in extDecl.Methods)
+					{
+						CheckExtensionMethodBody(extDecl.ExtendedTypeName, method);
+					}
+				}
 			}
 		}
 	}
@@ -275,10 +282,13 @@ public sealed class ValidationPass(BindingContext context)
 					var paramCount = func.Parameters.Count;
 					var isVariadic = func.IsVariadic;
 
-					if (!isVariadic && argCount != paramCount)
+					var isExtensionCall = func.Parameters.Count > 0 && func.Parameters[0].Name == "this";
+					var expectedParamCount = isExtensionCall ? paramCount - 1 : paramCount;
+
+					if (!isVariadic && argCount != expectedParamCount)
 					{
 						var currentFileContext = context.FileContexts[context.CurrentUnit!];
-						context.Diagnostics.Report(currentFileContext, call.Span, $"Function '{call.FunctionName}' expects {paramCount} arguments but received {argCount}");
+						context.Diagnostics.Report(currentFileContext, call.Span, $"Function '{call.FunctionName}' expects {expectedParamCount} arguments but received {argCount}");
 						return;
 					}
 
@@ -795,9 +805,36 @@ public sealed class ValidationPass(BindingContext context)
 	private FunctionSymbol? ResolveOverloadedFunction(string name, IReadOnlyList<TypeSymbol> argTypes, SymbolTable scope)
 	{
 		var candidates = new List<FunctionSymbol>();
+		var baseName = name;
+		var adjustedArgTypes = new List<TypeSymbol>(argTypes);
 
-		// 1. Gather potential overloading candidates based on namespace scope and imports
-		GatherOverloadCandidates(name, candidates);
+		// Detect dotted extension method call
+		if (name.Contains('.'))
+		{
+			var parts = name.Split('.');
+			var receiverName = parts[0];
+			var methodName = parts[1];
+
+			if (scope.Lookup(receiverName) is VariableSymbol receiverSymbol)
+			{
+				var structType = receiverSymbol.Type as StructTypeSymbol;
+				if (structType is null && receiverSymbol.Type is PointerTypeSymbol ptr)
+					structType = ptr.ReferencedType as StructTypeSymbol;
+
+				if (structType is not null)
+				{
+					// Resolve using "Point.Move" as the base name
+					baseName = $"{structType.Name}.{methodName}";
+
+					// Prepend the receiver's reference type as the first argument!
+					var receiverRefType = new PointerTypeSymbol(structType, isMutable: receiverSymbol.IsMutable);
+					adjustedArgTypes.Insert(0, receiverRefType);
+				}
+			}
+		}
+
+		// 1. Gather all candidates matching the resolved base name
+		GatherOverloadCandidates(baseName, candidates);
 
 		// 2. Select the candidate with the best signature match score
 		FunctionSymbol? bestMatch = null;
@@ -806,7 +843,7 @@ public sealed class ValidationPass(BindingContext context)
 		foreach (var candidate in candidates)
 		{
 			var paramTypes = candidate.Parameters.Select(p => p.Type).ToList();
-			var score = CompareSignature(paramTypes, argTypes, candidate.IsVariadic);
+			var score = CompareSignature(paramTypes, adjustedArgTypes, candidate.IsVariadic);
 			if (score > bestScore)
 			{
 				bestScore = score;
@@ -819,16 +856,16 @@ public sealed class ValidationPass(BindingContext context)
 
 	private void GatherOverloadCandidates(string name, List<FunctionSymbol> targetList)
 	{
-		// Direct or exact match search
+		// Direct or exact match search (e.g., "MyNamespace.Point.Move" or "Point.Move")
 		if (context.OverloadedFunctions.TryGetValue(name, out var directMatches))
 			targetList.AddRange(directMatches);
 
-		// Current namespace match search
+		// Scoped Namespace lookup
 		var localMangled = context.GetMangledName(name, context.CurrentNamespace);
 		if (context.OverloadedFunctions.TryGetValue(localMangled, out var localMatches))
 			targetList.AddRange(localMatches);
 
-		// Search through imported namespaces (using directives)
+		// Search through imported namespaces
 		if (context.CurrentUnit is not null)
 		{
 			var activeUsings = new List<string>(context.CurrentUnit.Usings.Select(u => u.NamespaceName));
@@ -864,6 +901,16 @@ public sealed class ValidationPass(BindingContext context)
 			{
 				score += 4; // Direct exact match is preferred
 			}
+			else if (param is PointerTypeSymbol paramPtr && arg is PointerTypeSymbol argPointer && paramPtr.ReferencedType.Equals(argPointer.ReferencedType))
+			{
+				// Safety check: Cannot pass a read-only pointer to a mutating parameter!
+				if (paramPtr.IsMutable && !argPointer.IsMutable)
+				{
+					return -1;
+				}
+
+				score += paramPtr.IsMutable == argPointer.IsMutable ? 3 : 2;
+			}
 			else if (param is SliceTypeSymbol slice && arg is ArrayTypeSymbol arr && slice.ElementType.Equals(arr.ElementType))
 			{
 				score += 3; // Implicit decay of Array to Dynamic Slice
@@ -886,7 +933,6 @@ public sealed class ValidationPass(BindingContext context)
 			}
 		}
 
-		// Variadic parameters (e.g. printf) gain a base match score modifier
 		if (isVariadic) score += 1;
 
 		return score;
@@ -899,6 +945,7 @@ public sealed class ValidationPass(BindingContext context)
 		{
 			return new ArrayTypeSymbol(valueType, countLit.Value);
 		}
+
 		return new ArrayTypeSymbol(valueType, 0);
 	}
 
@@ -922,5 +969,74 @@ public sealed class ValidationPass(BindingContext context)
 				CheckExpression(init.Expression, scope);
 			}
 		}
+	}
+
+	private void CheckExtensionMethodBody(string extendedTypeName, FunctionDeclarationSyntax method)
+	{
+		var extendedType = context.ResolveType(extendedTypeName) as StructTypeSymbol;
+		if (extendedType is null) return;
+
+		// 1. Static AST Mutation Scan: Infer if the method modifies any fields
+		var isMutating = DetectFieldMutation(method.Body, extendedType);
+
+		// 2. Locate the registered function symbol using the unmutated base registration
+		var baseMangledName = context.GetMangledName($"{extendedTypeName}.{method.Name}", context.CurrentNamespace);
+		var lookupThisType = new PointerTypeSymbol(extendedType, isMutable: false); // Must use 'false' to match DeclarationPass
+		var lookupParams = new List<TypeSymbol> { lookupThisType };
+		foreach (var p in method.Parameters)
+		{
+			lookupParams.Add(context.ResolveType(p.Type)!);
+		}
+
+		var lookupOverloadedName = context.GetOverloadedMangledName(baseMangledName, lookupParams);
+		var funcSymbol = context.Globals.Lookup(lookupOverloadedName) as FunctionSymbol;
+
+		if (funcSymbol is not null)
+		{
+			// Upgrade the registered symbol's "this" parameter mutability based on our scan!
+			var thisParamType = funcSymbol.Parameters[0].Type as PointerTypeSymbol;
+			if (thisParamType is not null)
+			{
+				thisParamType.IsMutable = isMutating;
+			}
+		}
+
+		// 3. Populate local scope with fields so they can be written as flat local variables
+		var localScope = new SymbolTable(context.Globals);
+		foreach (var field in extendedType.Fields)
+		{
+			localScope.Declare(new VariableSymbol(field.Name, field.Type, isMutable: true) { IsInitialized = true });
+		}
+
+		foreach (var param in method.Parameters)
+		{
+			var paramType = context.ResolveType(param.Type);
+			if (paramType is not null)
+			{
+				localScope.Declare(new VariableSymbol(param.Name, paramType, isMutable: false) { IsInitialized = true });
+			}
+		}
+
+		CheckBlock(method.Body, localScope, method);
+	}
+
+	private bool DetectFieldMutation(SyntaxNode node, StructTypeSymbol structType)
+	{
+		if (node is BinaryExpressionSyntax bin && bin.Operator == "=")
+		{
+			var baseName = GetBaseIdentifierName(bin.Left);
+			if (baseName != null && structType.FindField(baseName) != null)
+			{
+				return true; // Detected a field assignment!
+			}
+		}
+
+		foreach (var child in node.GetChildren())
+		{
+			if (DetectFieldMutation(child, structType))
+				return true;
+		}
+
+		return false;
 	}
 }

@@ -65,6 +65,8 @@ public sealed class SyntaxParser
 			return BuildExternDeclaration(ext);
 		if (context.structDeclaration() is { } structDecl)
 			return BuildStructDeclaration(structDecl);
+		if (context.extensionDeclaration() is { } extensionDecl)
+			return BuildExtensionDeclaration(extensionDecl);
 		return null;
 	}
 
@@ -428,20 +430,6 @@ public sealed class SyntaxParser
 			var baseTypeName = GetTypeName(typeCtx);
 			var name = context.Identifier().GetText();
 
-			// Resolve counts
-			ExpressionSyntax countExpr;
-			var elementTypeName = baseTypeName;
-			if (typeCtx is CvoloParser.ArrayTypeContext arrCtx)
-			{
-				var countVal = int.Parse(arrCtx.IntegerLiteral().GetText());
-				countExpr = new IntegerLiteralExpressionSyntax(SpanOf(arrCtx), countVal);
-				elementTypeName = GetTypeName(arrCtx.type());
-			}
-			else
-			{
-				countExpr = new IntegerLiteralExpressionSyntax(SpanOf(typeCtx), 0);
-			}
-
 			// Resolve the value expression (either structural constructor or primitive expression)
 			ExpressionSyntax valueExpr;
 			if (context.structInitializerList() is { } listCtx)
@@ -454,6 +442,8 @@ public sealed class SyntaxParser
 					initializers.Add(new MemberInitializerSyntax(SpanOf(memberInit), memberName, fieldExpr));
 				}
 
+				// Determine correct element type name for target-typing
+				var elementTypeName = typeCtx is CvoloParser.ArrayTypeContext arrCtx ? GetTypeName(arrCtx.type()) : baseTypeName;
 				valueExpr = new StructInitializationExpressionSyntax(SpanOf(context), elementTypeName, initializers);
 			}
 			else
@@ -461,9 +451,21 @@ public sealed class SyntaxParser
 				valueExpr = BuildExpression(context.expression());
 			}
 
-			var implicitInitializer = new ArrayReplicationExpressionSyntax(SpanOf(context), valueExpr, countExpr);
-			return new VariableDeclarationSyntax(SpanOf(context), isMutable, baseTypeName, name, implicitInitializer);
+			// Check if it is a REPLICATED ARRAY or a SCALAR STRUCT initializer
+			if (typeCtx is CvoloParser.ArrayTypeContext arrayCtx)
+			{
+				var countVal = int.Parse(arrayCtx.IntegerLiteral().GetText());
+				var countExpr = new IntegerLiteralExpressionSyntax(SpanOf(arrayCtx), countVal);
+				var implicitInitializer = new ArrayReplicationExpressionSyntax(SpanOf(context), valueExpr, countExpr);
+				return new VariableDeclarationSyntax(SpanOf(context), isMutable, baseTypeName, name, implicitInitializer);
+			}
+			else
+			{
+				// Scalar Struct Initialization: var Point p(X: 10, Y: 20);
+				return new VariableDeclarationSyntax(SpanOf(context), isMutable, baseTypeName, name, valueExpr);
+			}
 		}
+
 
 		// Standard variable declaration
 		if (context.REFVAR() is not null)
@@ -744,5 +746,16 @@ public sealed class SyntaxParser
 		var exprStmt = stmt.expressionStatement();
 
 		return BuildExpression(exprStmt.expression());
+	}
+
+	private ExtensionDeclarationSyntax BuildExtensionDeclaration(CvoloParser.ExtensionDeclarationContext context)
+	{
+		var extendedTypeName = context.Identifier().GetText();
+		var methods = new List<FunctionDeclarationSyntax>();
+		foreach (var funcCtx in context.functionDeclaration())
+		{
+			methods.Add(BuildFunctionDeclaration(funcCtx));
+		}
+		return new ExtensionDeclarationSyntax(SpanOf(context), extendedTypeName, methods);
 	}
 }

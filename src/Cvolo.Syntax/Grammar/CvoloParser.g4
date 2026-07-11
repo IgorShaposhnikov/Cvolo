@@ -22,6 +22,7 @@ declaration
 	: functionDeclaration
 	| externDeclaration
 	| structDeclaration
+	| extensionDeclaration
 	;
 
 functionDeclaration
@@ -34,6 +35,10 @@ externDeclaration
 
 structDeclaration
 	: STRUCT Identifier (LT genericParameterList GT)? LBRACE structField* RBRACE SEMI?
+	;
+
+extensionDeclaration
+	: EXTENSION Identifier LBRACE functionDeclaration* RBRACE SEMI?
 	;
 
 structField

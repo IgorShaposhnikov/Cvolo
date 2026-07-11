@@ -2,7 +2,7 @@ namespace Cvolo.Analysis.Symbols.Base;
 
 public class TypeSymbol(string name) : IEquatable<TypeSymbol>
 {
-	public string Name { get; } = name;
+	public virtual string Name { get; } = name;
 
 	public static readonly TypeSymbol Void = new("void");
 	public static readonly TypeSymbol Int = new("int");

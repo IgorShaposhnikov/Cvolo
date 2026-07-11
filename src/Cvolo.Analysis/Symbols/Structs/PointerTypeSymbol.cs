@@ -6,5 +6,6 @@ public sealed class PointerTypeSymbol(TypeSymbol referencedType, bool isMutable)
 : TypeSymbol($"{(isMutable ? "refvar" : "ref")} {referencedType.Name}")
 {
 	public TypeSymbol ReferencedType { get; } = referencedType;
-	public bool IsMutable { get; } = isMutable;
+	public bool IsMutable { get; set; } = isMutable;
+	public override string Name => $"{(IsMutable ? "refvar" : "ref")} {ReferencedType.Name}";
 }

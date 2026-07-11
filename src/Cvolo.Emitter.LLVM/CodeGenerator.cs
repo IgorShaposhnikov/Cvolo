@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using Cvolo.Analysis;
+using Cvolo.Analysis.Symbols;
 using Cvolo.Analysis.Symbols.Base;
 using Cvolo.Analysis.Symbols.Collections;
 using Cvolo.Analysis.Symbols.Structs;
@@ -111,6 +112,20 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 						var overloadedMangledName = bindingContext.GetOverloadedMangledName(mangledName, paramTypes);
 						DeclareFunction(func, overloadedMangledName);
 						break;
+					case ExtensionDeclarationSyntax extDecl:
+						foreach (var method in extDecl.Methods)
+						{
+							var baseMangledName = bindingContext.GetMangledName($"{extDecl.ExtendedTypeName}.{method.Name}", ns);
+							if (bindingContext.OverloadedFunctions.TryGetValue(baseMangledName, out var candidates))
+							{
+								foreach (var candidate in candidates)
+								{
+									DeclareFunction(method, candidate.Name);
+								}
+							}
+						}
+
+						break;
 				}
 			}
 		}
@@ -153,6 +168,23 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 					if (emittedFunctionNames.Add(overloadedMangledName))
 					{
 						EmitFunctionBody(func, overloadedMangledName);
+					}
+				}
+				else if (member is ExtensionDeclarationSyntax extDecl)
+				{
+					foreach (var method in extDecl.Methods)
+					{
+						var baseMangledName = bindingContext.GetMangledName($"{extDecl.ExtendedTypeName}.{method.Name}", ns);
+						if (bindingContext.OverloadedFunctions.TryGetValue(baseMangledName, out var candidates))
+						{
+							foreach (var candidate in candidates)
+							{
+								if (emittedFunctionNames.Add(candidate.Name))
+								{
+									EmitFunctionBody(method, candidate.Name);
+								}
+							}
+						}
 					}
 				}
 			}
@@ -220,11 +252,22 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 		var paramTypes = new List<LLVMTypeRef>();
 		var paramSymbols = new List<TypeSymbol>();
-		foreach (var param in func.Parameters)
+		if (_bindingContext.Globals.Lookup(emitName) is FunctionSymbol sym)
 		{
-			var paramTypeSymbol = _bindingContext.ResolveType(param.Type)!;
-			paramTypes.Add(GetLLVMType(paramTypeSymbol));
-			paramSymbols.Add(paramTypeSymbol);
+			foreach (var p in sym.Parameters)
+			{
+				paramTypes.Add(GetLLVMType(p.Type));
+				paramSymbols.Add(p.Type);
+			}
+		}
+		else // Fallback for standard declarations
+		{
+			foreach (var param in func.Parameters)
+			{
+				var paramTypeSymbol = _bindingContext.ResolveType(param.Type)!;
+				paramTypes.Add(GetLLVMType(paramTypeSymbol));
+				paramSymbols.Add(paramTypeSymbol);
+			}
 		}
 
 		_functionParameterTypes[emitName] = paramSymbols;
@@ -233,12 +276,12 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 		var llvmFunc = _module.AddFunction(emitName, funcType);
 
-        if (emitName != "main")
-        {
-            llvmFunc.Linkage = LLVMLinkage.LLVMInternalLinkage;
-        }
+		if (emitName != "main")
+		{
+			llvmFunc.Linkage = LLVMLinkage.LLVMInternalLinkage;
+		}
 
-        _globals[emitName] = llvmFunc;
+		_globals[emitName] = llvmFunc;
 		_functionTypes[emitName] = funcType;
 	}
 
@@ -255,20 +298,41 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		_heapAllocatedVars.Clear();
 		_movedVars.Clear();
 
-		for (var i = 0; i < func.Parameters.Count; i++)
+		if (_bindingContext!.Globals.Lookup(mangledName) is FunctionSymbol sym)
 		{
-			var param = llvmFunc.GetParam((uint)i);
-			var paramName = func.Parameters[i].Name;
-			param.Name = paramName;
+			for (var i = 0; i < sym.Parameters.Count; i++)
+			{
+				var param = llvmFunc.GetParam((uint)i);
+				var paramName = sym.Parameters[i].Name;
+				param.Name = paramName;
 
-			var typeSymbol = _bindingContext!.ResolveType(func.Parameters[i].Type)!;
-			var llvmType = GetLLVMType(typeSymbol);
+				var typeSymbol = sym.Parameters[i].Type;
+				var llvmType = GetLLVMType(typeSymbol);
 
-			var alloca = _builder.BuildAlloca(llvmType, paramName);
-			_builder.BuildStore(param, alloca);
+				var alloca = _builder.BuildAlloca(llvmType, paramName);
+				_builder.BuildStore(param, alloca);
 
-			_locals[paramName] = alloca;
-			_variableTypes[paramName] = typeSymbol;
+				_locals[paramName] = alloca;
+				_variableTypes[paramName] = typeSymbol;
+			}
+		}
+		else // Fallback
+		{
+			for (var i = 0; i < func.Parameters.Count; i++)
+			{
+				var param = llvmFunc.GetParam((uint)i);
+				var paramName = func.Parameters[i].Name;
+				param.Name = paramName;
+
+				var typeSymbol = _bindingContext!.ResolveType(func.Parameters[i].Type)!;
+				var llvmType = GetLLVMType(typeSymbol);
+
+				var alloca = _builder.BuildAlloca(llvmType, paramName);
+				_builder.BuildStore(param, alloca);
+
+				_locals[paramName] = alloca;
+				_variableTypes[paramName] = typeSymbol;
+			}
 		}
 
 		EmitBlock(func.Body);
@@ -443,6 +507,16 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		var funcType = _functionTypes[emitName];
 
 		var args = new List<LLVMValueRef>();
+
+		if (call.FunctionName.Contains('.') && _bindingContext.ResolvedCalls.TryGetValue(call, out var extFunc))
+		{
+			var receiverName = call.FunctionName.Split('.')[0];
+			if (_locals.TryGetValue(receiverName, out var receiverPtr))
+			{
+				args.Add(receiverPtr);
+			}
+		}
+
 		for (var i = 0; i < call.Arguments.Count; i++)
 		{
 			var argExpr = call.Arguments[i];
@@ -574,17 +648,34 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			right = _builder.BuildLoad2(llvmTy, right, "loaded_assign_struct");
 		}
 
-		if (bin.Left is IdentifierExpressionSyntax id && _locals.TryGetValue(id.Name, out var ptr))
+		if (bin.Left is IdentifierExpressionSyntax id)
 		{
-			var type = _variableTypes[id.Name];
-			if (type is PointerTypeSymbol)
+			if (_locals.TryGetValue(id.Name, out var ptr))
 			{
-				var actualPtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), ptr, "target_ptr");
-				_builder.BuildStore(right, actualPtr);
+				var type = _variableTypes[id.Name];
+				if (type is PointerTypeSymbol)
+				{
+					var actualPtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), ptr, "target_ptr");
+					_builder.BuildStore(right, actualPtr);
+				}
+				else
+				{
+					_builder.BuildStore(right, ptr);
+				}
+
+				return right;
 			}
-			else
+			else if (_locals.TryGetValue("this", out var thisPtr))
 			{
-				_builder.BuildStore(right, ptr);
+				var thisType = _variableTypes["this"] as PointerTypeSymbol;
+				var structType = thisType!.ReferencedType as StructTypeSymbol;
+				var field = structType!.FindField(id.Name);
+				if (field is not null)
+				{
+					var (fieldPtr, _) = GetFieldPointer(id);
+					_builder.BuildStore(right, fieldPtr);
+					return right;
+				}
 			}
 
 			return right;
@@ -802,7 +893,28 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	private LLVMValueRef Load(string name)
 	{
 		if (!_locals.TryGetValue(name, out var ptr))
+		{
+			if (_locals.TryGetValue("this", out var thisPtr))
+			{
+				var thisType = _variableTypes["this"] as PointerTypeSymbol;
+				var structType = thisType!.ReferencedType as StructTypeSymbol;
+				var field = structType!.FindField(name);
+				if (field is not null)
+				{
+					var actualThisPtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), thisPtr, "loaded_this_ptr");
+
+					var fieldIndex = GetFieldIndex(structType, name);
+					var structLayoutTy = GetLLVMType(structType);
+					var zero = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0);
+					var index = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)fieldIndex);
+
+					var fieldPtr = _builder.BuildGEP2(structLayoutTy, actualThisPtr, new LLVMValueRef[] { zero, index }, "this_field_ptr");
+					return _builder.BuildLoad2(GetLLVMType(field.Type), fieldPtr, "this_field_val");
+				}
+			}
+
 			throw new InvalidOperationException($"Undefined variable '{name}'");
+		}
 
 		var type = _variableTypes[name];
 		var ty = GetLLVMType(type);
@@ -830,7 +942,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			var isReference = type is PointerTypeSymbol;
 			var isHeap = _heapAllocatedVars.Contains(id.Name) && type is not SliceTypeSymbol;
 
-            if (isReference || isHeap)
+			if (isReference || isHeap)
 			{
 				return _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), ptr, "borrow_ref");
 			}
@@ -918,8 +1030,8 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			CallExpressionSyntax call => ResolveCallReturnType(call),
 			BinaryExpressionSyntax bin => ResolveBinaryExpressionType(bin),
 			HeapAllocationExpressionSyntax h => GetExprType(h.Expression),
-            HeapArrayAllocationExpressionSyntax ha => new SliceTypeSymbol(_bindingContext!.ResolveType(ha.ElementTypeName)!),
-            ArrayInitializationExpressionSyntax a => new ArrayTypeSymbol(a.Elements.Count > 0 ? GetExprType(a.Elements[0]) : TypeSymbol.Int, a.Elements.Count),
+			HeapArrayAllocationExpressionSyntax ha => new SliceTypeSymbol(_bindingContext!.ResolveType(ha.ElementTypeName)!),
+			ArrayInitializationExpressionSyntax a => new ArrayTypeSymbol(a.Elements.Count > 0 ? GetExprType(a.Elements[0]) : TypeSymbol.Int, a.Elements.Count),
 			_ => TypeSymbol.Int
 		};
 	}
@@ -1128,13 +1240,35 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		if (expr is IdentifierExpressionSyntax id)
 		{
 			if (!_locals.TryGetValue(id.Name, out var structPtr))
+			{
+				// If the identifier is a field of 'this' in an extension block, resolve its pointer implicitly!
+				if (_locals.TryGetValue("this", out var thisPtr))
+				{
+					var thisType = _variableTypes["this"] as PointerTypeSymbol;
+					var structType = thisType!.ReferencedType as StructTypeSymbol;
+					var field = structType!.FindField(id.Name);
+					if (field is not null)
+					{
+						var actualThisPtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), thisPtr, "loaded_this_ptr");
+
+						var fieldIndex = GetFieldIndex(structType, id.Name);
+						var structLayoutTy = GetLLVMType(structType);
+						var zero = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0);
+						var index = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)fieldIndex);
+
+						var fieldPtr = _builder.BuildGEP2(structLayoutTy, actualThisPtr, new LLVMValueRef[] { zero, index }, "this_field_ptr");
+						return (fieldPtr, field.Type);
+					}
+				}
+
 				throw new InvalidOperationException($"Undefined variable '{id.Name}'");
+			}
 
 			var type = _variableTypes[id.Name];
 			var isReference = type is PointerTypeSymbol;
 			var isHeap = _heapAllocatedVars.Contains(id.Name) && type is not SliceTypeSymbol;
 
-            if (isReference || isHeap)
+			if (isReference || isHeap)
 			{
 				var actualPtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), structPtr, "loaded_ptr");
 				var innerType = type is PointerTypeSymbol ptrType ? ptrType.ReferencedType : type;

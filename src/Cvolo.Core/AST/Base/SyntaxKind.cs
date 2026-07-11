@@ -22,6 +22,7 @@ public enum SyntaxKind
 	WhileStatement,
 	ForStatement,
 	StructDeclaration,
+	ExtensionDeclaration,
 	DoubleLiteralExpression,
 	BooleanLiteralExpression,
 	MemberAccessExpression,
