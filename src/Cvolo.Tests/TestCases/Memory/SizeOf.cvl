@@ -1,0 +1,15 @@
+using System;
+
+struct Point {
+    int X;
+    int Y;
+}
+
+int main() {
+    // Verify compile-time intrinsic evaluations inside the Memory suite
+    Console.WriteLine($"Int: {sizeof<int>()}");
+    Console.WriteLine($"Double: {sizeof<double>()}");
+    Console.WriteLine($"Point: {sizeof<Point>()}");
+    Console.WriteLine($"Slice: {sizeof<int[]>()}");
+    return 0;
+}

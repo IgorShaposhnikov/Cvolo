@@ -9,6 +9,7 @@ public sealed class MemoryTests : CompilerTestBase
 	[InlineData("BorrowMutable", "100")]
 	[InlineData("MoveReassign", "20")]
 	[InlineData("DynamicHeapArray", "Buffer 0: 10, Buffer 4: 50, Length: 5")]
+	[InlineData("SizeOf", "Int: 4\nDouble: 8\nPoint: 8\nSlice: 16")]
 	public void Execution(string caseName, string expected)
 	{
 		var fileName = $"Memory/{caseName}.cvl";
@@ -17,7 +18,7 @@ public sealed class MemoryTests : CompilerTestBase
 
 		var (runCode, runStdout) = ExecuteBinary(caseName, "Memory");
 		Assert.Equal(0, runCode);
-		Assert.Contains(expected, runStdout);
+		Assert.Contains(expected.Replace("\r\n", "\n").Trim(), runStdout.Replace("\r\n", "\n").Trim());
 	}
 
 	[Theory]

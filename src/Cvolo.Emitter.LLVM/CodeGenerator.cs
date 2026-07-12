@@ -486,6 +486,14 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 	private LLVMValueRef EmitCallExpression(CallExpressionSyntax call)
 	{
+		if (call.FunctionName == "sizeof")
+		{
+			var targetTypeName = call.TypeArguments[0];
+			var targetType = _bindingContext!.ResolveType(targetTypeName)!;
+			var size = GetByteSize(targetType);
+			return LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (ulong)size);
+		}
+
 		string emitName;
 
 		// Retrieve the pre-resolved overload from the binder context
@@ -1605,5 +1613,29 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		_builder.BuildStore(countVal, sizeField);
 
 		return _builder.BuildLoad2(sliceLayout, sliceAlloc, "slice_val");
+	}
+
+	public int GetByteSize(TypeSymbol type)
+	{
+		if (type is null) return 0;
+		if (type.Equals(TypeSymbol.Int)) return 4;
+		if (type.Equals(TypeSymbol.Double)) return 8;
+		if (type.Equals(TypeSymbol.Bool)) return 1;
+		if (type.Equals(TypeSymbol.Char)) return 1;
+		if (type.Equals(TypeSymbol.String) || type is PointerTypeSymbol) return 8; // 64-bit pointers
+		if (type is SliceTypeSymbol) return 16; // Fat Pointer: { ptr, i32 }
+		if (type is ArrayTypeSymbol arr) return GetByteSize(arr.ElementType) * arr.Size;
+		if (type is StructTypeSymbol structType)
+		{
+			var size = 0;
+			foreach (var field in structType.Fields)
+			{
+				size += GetByteSize(field.Type);
+			}
+
+			return size;
+		}
+
+		return 4; // Fallback
 	}
 }

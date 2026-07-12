@@ -252,6 +252,23 @@ public sealed class ValidationPass(BindingContext context)
 
 					FunctionSymbol? func = null;
 
+					if (call.FunctionName == "sizeof")
+					{
+						if (call.TypeArguments.Count != 1)
+						{
+							var currentFileContext = context.FileContexts[context.CurrentUnit!];
+							context.Diagnostics.Report(currentFileContext, call.Span, "sizeof expects exactly 1 type argument.");
+						}
+
+						if (call.Arguments.Count != 0)
+						{
+							var currentFileContext = context.FileContexts[context.CurrentUnit!];
+							context.Diagnostics.Report(currentFileContext, call.Span, "sizeof does not accept value arguments.");
+						}
+
+						break;
+					}
+
 					if (call.TypeArguments.Count > 0)
 					{
 						var templateName = ResolveFunctionTemplateName(call.FunctionName, scope);
@@ -538,6 +555,7 @@ public sealed class ValidationPass(BindingContext context)
 			BooleanLiteralExpressionSyntax => TypeSymbol.Bool,
 			StringLiteralExpressionSyntax => TypeSymbol.String,
 			CharacterLiteralExpressionSyntax => TypeSymbol.Char,
+			CallExpressionSyntax call when call.FunctionName == "sizeof" => TypeSymbol.Int,
 			MemberAccessExpressionSyntax m => CheckMemberAccessExpression(m, scope),
 			BorrowExpressionSyntax b => CheckBorrowExpression(b, scope),
 			StructInitializationExpressionSyntax s => CheckStructInitializationExpression(s, scope),
