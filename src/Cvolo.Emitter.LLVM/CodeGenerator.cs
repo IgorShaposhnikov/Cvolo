@@ -35,7 +35,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	private BindingContext? _bindingContext;
 	private CompilationContext? _compilationContext; // Renamed to avoid LLVM _context conflict
 	private CompilationUnitSyntax? _currentUnit;
-
+	private readonly HashSet<string> _disposedVars = [];
 	public CodeGenerator(string moduleName, ILLVMOptimizer? optimizer = null)
 	{
 		_context = LLVMContextRef.Global;
@@ -297,6 +297,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		_variableTypes.Clear();
 		_heapAllocatedVars.Clear();
 		_movedVars.Clear();
+		_disposedVars.Clear();
 
 		if (_bindingContext!.Globals.Lookup(mangledName) is FunctionSymbol sym)
 		{
@@ -1146,21 +1147,52 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	{
 		foreach (var name in variableNames)
 		{
-			if (_heapAllocatedVars.Contains(name) && !_movedVars.Contains(name))
+			if (_movedVars.Contains(name) || _disposedVars.Contains(name))
+				continue;
+
+			_disposedVars.Add(name);
+
+			var ptrAlloc = _locals[name];
+			var type = _variableTypes[name];
+
+			// 1. Call custom 'Dispose()' destructor ONLY for owned StructTypeSymbol variables
+			if (type is StructTypeSymbol structType)
 			{
-				var ptrAlloc = _locals[name];
-				var type = _variableTypes[name];
+				var disposeBaseName = $"{structType.Name}.Dispose";
 
+				if (_bindingContext!.OverloadedFunctions.TryGetValue(disposeBaseName, out var candidates) && candidates.Count > 0)
+				{
+					var disposeSymbol = candidates[0];
+					var callee = _globals[disposeSymbol.Name];
+					var funcType = _functionTypes[disposeSymbol.Name];
+
+					var isHeap = _heapAllocatedVars.Contains(name);
+
+					LLVMValueRef thisPtr;
+					if (isHeap)
+					{
+						thisPtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), ptrAlloc, "this_ptr");
+					}
+					else
+					{
+						thisPtr = ptrAlloc;
+					}
+
+					_builder.BuildCall2(funcType, callee, new LLVMValueRef[] { thisPtr }, "");
+				}
+			}
+
+			// 2. Free heap memory if it was heap-allocated
+			if (_heapAllocatedVars.Contains(name))
+			{
 				LLVMValueRef actualHeapPtr;
-
-				// If it's a dynamic array (slice), extract the raw memory pointer first
 				if (type is SliceTypeSymbol sliceType)
 				{
 					var sliceLayout = GetLLVMType(sliceType);
 					var ptrField = _builder.BuildGEP2(sliceLayout, ptrAlloc, new LLVMValueRef[] { LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0), LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0) }, "slice_ptr_field");
 					actualHeapPtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), ptrField, "heap_ptr");
 				}
-				else // Standard struct heap allocation
+				else
 				{
 					actualHeapPtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), ptrAlloc, "heap_ptr");
 				}
