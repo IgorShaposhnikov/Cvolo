@@ -1,11 +1,13 @@
 using System.Diagnostics;
 using Cvolo.Analysis;
+using Cvolo.Core.AST;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.Diagnostics;
 using Cvolo.Emitter.LLVM;
 using Cvolo.Projects;
 using Cvolo.Strategies;
 using Cvolo.Syntax;
+using Cvolo.Syntax.Rewriters;
 
 namespace Cvolo.Drivers;
 
@@ -16,7 +18,7 @@ internal sealed class CompilerDriver : ICompilerDriver
 {
 	private static readonly string[] _linkerCandidates = ["clang", "gcc", "g++"];
 
-	public int Compile(string path, bool llvmOnly, bool isShared, bool emitIr, string optLevel, bool checkOnly = false, bool runAfterCompile = false, bool verbose = false)
+	public int Compile(string path, bool llvmOnly, bool isShared, bool emitIr, string optLevel, bool checkOnly = false, bool runAfterCompile = false, bool verbose = false, bool emitLowered = false)
 	{
 		// 1. Load the project configuration (automatically walks up directory tree to locate standard libraries)
 		CompilationProject project;
@@ -71,6 +73,40 @@ internal sealed class CompilerDriver : ICompilerDriver
 
 			asts.Add(ast!);
 			binder.Context.FileContexts[ast!] = context;
+		}
+
+		var rewriters = new List<AstRewriterBase> {
+			new StringInterpolationRewriter()
+		};
+
+		var loweredAsts = new List<CompilationUnitSyntax>();
+		foreach (var ast in asts)
+		{
+			var currentAst = ast;
+			foreach (var rewriter in rewriters)
+			{
+				currentAst = (CompilationUnitSyntax)rewriter.Rewrite(currentAst);
+			}
+
+			if (binder.Context.FileContexts.TryGetValue(ast, out var fileContext))
+			{
+				binder.Context.FileContexts[currentAst] = fileContext;
+				binder.Context.FileContexts.Remove(ast); // Clean up the old reference
+			}
+
+			loweredAsts.Add(currentAst);
+		}
+
+		asts = loweredAsts;
+
+		if (emitLowered)
+		{
+			foreach (var ast in asts)
+			{
+				Console.WriteLine(CvoloSourcePrinter.Print(ast));
+			}
+
+			return 0; // Terminate successfully before binder, codegen, or linking!
 		}
 
 		// 4. Semantic analysis passes (Name resolution, types, moves, borrows, and lifetimes validation)

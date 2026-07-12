@@ -16,6 +16,7 @@ internal sealed class BuildCommand : Command
 		var emitIrOption = new Option<bool>("--emit-ir") { Description = "Print generated IR directly to stdout" };
 		var verboseOption = new Option<bool>("--verbose", "-v") { Description = "Show verbose compiler debug and linkage information." };
 		var optOption = new Option<string>("--optimize", "-O", "Os") { Description = "Select optimization level (O0, O1, O2, O3, Os, Oz)" };
+		var emitLoweredOption = new Option<bool>("--emit-lowered", "-l") { Description = "Print lowered Cvolo source code directly to stdout" };
 
 		Add(pathArg);
 		Add(llvmOption);
@@ -31,8 +32,9 @@ internal sealed class BuildCommand : Command
 			var isShared = parseResult.GetValue(sharedOption);
 			var emitIrVal = parseResult.GetValue(emitIrOption);
 			var optLevel = parseResult.GetValue(optOption) ?? "Os";
+			var emitLoweredVal = parseResult.GetValue(emitLoweredOption);
 
-			var exitCode = _compilerDriver.Compile(path, llvmOnly, isShared, emitIrVal, optLevel);
+			var exitCode = _compilerDriver.Compile(path, llvmOnly, isShared, emitIrVal, optLevel, emitLowered: emitLoweredVal);
 			Environment.Exit(exitCode);
 		});
 	}

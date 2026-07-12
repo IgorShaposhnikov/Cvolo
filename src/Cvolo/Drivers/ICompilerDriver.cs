@@ -16,6 +16,7 @@ public interface ICompilerDriver
 	/// <param name="checkOnly">If set to <c>true</c>, terminates immediately after the Binder passes, skipping code generation and linking.</param>
 	/// <param name="runAfterCompile">If set to <c>true</c>, programmatically executes the compiled binary immediately upon success.</param>
 	/// <param name="verbose">If set to <c>true</c>, prints detailed compiler instrumentation, targets, and linkage diagnostic details.</param>
+	/// <param name="emitLowered">If set to <c>true</c>, prints the compiler-lowered (desugared) Cvolo source directly to stdout and exits early.</param>
 	/// <returns>The exit status code of the compilation pass (0 for success, non-zero for failures).</returns>
-	int Compile(string path, bool llvmOnly, bool isShared, bool emitIr, string optLevel, bool checkOnly = false, bool runAfterCompile = false, bool verbose = false);
+	int Compile(string path, bool llvmOnly, bool isShared, bool emitIr, string optLevel, bool checkOnly = false, bool runAfterCompile = false, bool verbose = false, bool emitLowered = false);
 }
