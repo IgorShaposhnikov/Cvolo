@@ -573,6 +573,39 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				}
 			}
 
+			if (paramTy.Equals(TypeSymbol.String) && valTy is ArrayTypeSymbol)
+			{
+				LLVMValueRef arrayPtr;
+				if (argExpr is IdentifierExpressionSyntax id)
+				{
+					arrayPtr = _locals[id.Name];
+				}
+				else
+				{
+					var (ptr, _) = GetFieldPointer(argExpr);
+					arrayPtr = ptr;
+				}
+
+				val = _builder.BuildBitCast(arrayPtr, GetLLVMType(TypeSymbol.String), "array_to_string_cast");
+			}
+			else if (paramTy.Equals(TypeSymbol.String) && valTy is SliceTypeSymbol)
+			{
+				LLVMValueRef slicePtr;
+				if (argExpr is IdentifierExpressionSyntax id)
+				{
+					slicePtr = _locals[id.Name];
+				}
+				else
+				{
+					var (ptr, _) = GetFieldPointer(argExpr);
+					slicePtr = ptr;
+				}
+
+				var sliceLayout = GetLLVMType(valTy);
+				var ptrField = _builder.BuildGEP2(sliceLayout, slicePtr, new LLVMValueRef[] { LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0), LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0) }, "slice_ptr_field");
+				val = _builder.BuildLoad2(GetLLVMType(TypeSymbol.String), ptrField, "slice_to_string_cast");
+			}
+
 			args.Add(val);
 		}
 

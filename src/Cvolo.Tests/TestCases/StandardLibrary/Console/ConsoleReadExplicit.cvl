@@ -1,0 +1,12 @@
+using System;
+
+int main() {
+    // Explicit buffer passing style
+    var char[50] buffer('\0');
+    
+    // Pass by value. Elements are mutated directly via the fat pointer!
+    Console.ReadLine(buffer);
+	Console.WriteLine(buffer);
+
+    return 0;
+}

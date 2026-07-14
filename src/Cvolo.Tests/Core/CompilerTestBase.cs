@@ -96,4 +96,34 @@ public abstract class CompilerTestBase
 			Assert.Fail($"Compilation of '{fileName}' failed with code {exitCode}.\n\n--- STDERR ---\n{stderr}\n\n--- STDOUT ---\n{stdout}");
 		}
 	}
+
+	protected (int ExitCode, string StdOut) ExecuteBinaryWithInput(string binaryName, string folderPath, string input)
+	{
+		var assemblyDir = Path.GetDirectoryName(typeof(CompilerTestBase).Assembly.Location)!;
+		var binaryDir = Path.GetFullPath(Path.Combine(assemblyDir, TestCasesDirectory, folderPath, "bin", "Debug"));
+
+		var binaryExt = OperatingSystem.IsWindows() ? ".exe" : "";
+		var binaryPath = Path.Combine(binaryDir, binaryName + binaryExt);
+
+		var psi = new ProcessStartInfo
+		{
+			FileName = binaryPath,
+			RedirectStandardOutput = true,
+			RedirectStandardInput = true,
+			StandardOutputEncoding = System.Text.Encoding.UTF8,
+			UseShellExecute = false,
+			CreateNoWindow = true
+		};
+
+		using var proc = Process.Start(psi)!;
+
+		proc.StandardInput.WriteLine(input);
+		proc.StandardInput.Flush();
+		proc.StandardInput.Close();
+
+		var stdout = proc.StandardOutput.ReadToEnd();
+		proc.WaitForExit();
+
+		return (proc.ExitCode, stdout);
+	}
 }

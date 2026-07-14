@@ -1,4 +1,7 @@
 using Cvolo.Analysis.Symbols;
+using Cvolo.Analysis.Symbols.Borrowing;
+using Cvolo.Analysis.Symbols.Collections;
+using Cvolo.Analysis.Symbols.Structs;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
 using Cvolo.Core.AST.Expressions;
@@ -128,7 +131,35 @@ public sealed class FlowAnalysisPass(BindingContext context)
 				break;
 
 			case CallExpressionSyntax call:
-				foreach (var arg in call.Arguments) AnalyzeExpression(arg, scope);
+				// If we have resolved metadata, mark any variable passed to a mutable 'refvar' parameter as initialized!
+				if (context.ResolvedCalls.TryGetValue(call, out var func))
+				{
+					for (var i = 0; i < call.Arguments.Count; i++)
+					{
+						var arg = call.Arguments[i];
+
+						// Guard to prevent index out of bounds on variadic argument overflow
+						if (i < func.Parameters.Count)
+						{
+							var param = func.Parameters[i];
+
+							if (param.Type is PointerTypeSymbol ptr && ptr.IsMutable)
+							{
+								var baseName = GetBaseIdentifierName(arg);
+								if (baseName != null && scope.Lookup(baseName) is VariableSymbol sym)
+								{
+									sym.IsInitialized = true;
+								}
+							}
+						}
+
+						AnalyzeExpression(arg, scope);
+					}
+				}
+				else
+				{
+					foreach (var arg in call.Arguments) AnalyzeExpression(arg, scope);
+				}
 				break;
 		}
 	}
@@ -137,6 +168,7 @@ public sealed class FlowAnalysisPass(BindingContext context)
 	{
 		if (expr is IdentifierExpressionSyntax id) return id.Name;
 		if (expr is MemberAccessExpressionSyntax m) return GetBaseIdentifierName(m.Expression);
+		if (expr is BorrowExpressionSyntax b) return GetBaseIdentifierName(b.Expression);
 		return null;
 	}
 }

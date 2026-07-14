@@ -609,6 +609,7 @@ public sealed class ValidationPass(BindingContext context)
 	{
 		if (expr is IdentifierExpressionSyntax id) return id.Name;
 		if (expr is MemberAccessExpressionSyntax m) return GetBaseIdentifierName(m.Expression);
+		if (expr is BorrowExpressionSyntax b) return GetBaseIdentifierName(b.Expression);
 		return null;
 	}
 
@@ -964,6 +965,10 @@ public sealed class ValidationPass(BindingContext context)
 			else if (param.Equals(TypeSymbol.Double) && arg.Equals(TypeSymbol.Int))
 			{
 				score += 1; // Implicit numeric promotion (int -> double)
+			}
+			else if (param.Name == "string" && ((arg is ArrayTypeSymbol arrSymbol && arrSymbol.ElementType.Name == "char") || (arg is SliceTypeSymbol sliceSymbol && sliceSymbol.ElementType.Name == "char")))
+			{
+				score += 1; // Implicit char array/slice to string decay
 			}
 			else
 			{
