@@ -12,7 +12,7 @@ void Scale(refvar Point p) {
 
 int Main() {
     var Point p = Point { X: 50, Y: 100 };
-    Scale(ref p);
+    Scale(refvar p);
     Console.WriteLine(p.X);
     return 0;
 }

@@ -485,14 +485,20 @@ public sealed class ValidationPass(BindingContext context)
 		var innerType = GetExpressionType(expr.Expression, scope);
 		if (innerType is null) return null;
 
-		var isMutable = false;
+		var isVariableMutable = false;
 		if (expr.Expression is IdentifierExpressionSyntax id)
 		{
 			var symbol = scope.Lookup(id.Name) as VariableSymbol;
-			if (symbol is not null) isMutable = symbol.IsMutable;
+			if (symbol is not null) isVariableMutable = symbol.IsMutable;
 		}
 
-		return new PointerTypeSymbol(innerType, isMutable);
+		if (expr.IsMutable && !isVariableMutable)
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, expr.Span, "Cannot take a mutable reference (refvar) of a read-only variable.");
+		}
+
+		return new PointerTypeSymbol(innerType, expr.IsMutable);
 	}
 
 	private TypeSymbol? CheckTernaryExpression(TernaryExpressionSyntax expr, SymbolTable scope)
@@ -557,7 +563,7 @@ public sealed class ValidationPass(BindingContext context)
 			CharacterLiteralExpressionSyntax => TypeSymbol.Char,
 			CallExpressionSyntax call when call.FunctionName == "sizeof" => TypeSymbol.Int,
 			MemberAccessExpressionSyntax m => CheckMemberAccessExpression(m, scope),
-			BorrowExpressionSyntax b => CheckBorrowExpression(b, scope),
+			BorrowExpressionSyntax b => new PointerTypeSymbol(GetExpressionType(b.Expression, scope) ?? TypeSymbol.Int, b.IsMutable),
 			StructInitializationExpressionSyntax s => CheckStructInitializationExpression(s, scope),
 			HeapAllocationExpressionSyntax h => GetExpressionType(h.Expression, scope),
 			HeapArrayAllocationExpressionSyntax ha => new SliceTypeSymbol(context.ResolveType(ha.ElementTypeName)!),
@@ -765,6 +771,7 @@ public sealed class ValidationPass(BindingContext context)
 						newOp = System.Text.RegularExpressions.Regex.Replace(newOp, $@"\b{kv.Key}\b", kv.Value.Name);
 					}
 				}
+
 				return new UnaryExpressionSyntax(unary.Span, newOp, SubstituteExpressionGenerics(unary.Operand, substitutionMap));
 
 			case CallExpressionSyntax call:
@@ -797,7 +804,7 @@ public sealed class ValidationPass(BindingContext context)
 				return new IndexExpressionSyntax(idx.Span, SubstituteExpressionGenerics(idx.Left, substitutionMap), SubstituteExpressionGenerics(idx.Index, substitutionMap));
 
 			case BorrowExpressionSyntax b:
-				return new BorrowExpressionSyntax(b.Span, SubstituteExpressionGenerics(b.Expression, substitutionMap));
+				return new BorrowExpressionSyntax(b.Span, SubstituteExpressionGenerics(b.Expression, substitutionMap), b.IsMutable);
 
 			case HeapAllocationExpressionSyntax h:
 				return new HeapAllocationExpressionSyntax(h.Span, SubstituteExpressionGenerics(h.Expression, substitutionMap));
@@ -919,7 +926,9 @@ public sealed class ValidationPass(BindingContext context)
 			{
 				score += 4; // Direct exact match is preferred
 			}
-			else if (param is PointerTypeSymbol paramPtr && arg is PointerTypeSymbol argPointer && paramPtr.ReferencedType.Equals(argPointer.ReferencedType))
+			else if (param is PointerTypeSymbol paramPtr && arg is PointerTypeSymbol argPointer &&
+					 paramPtr.ReferencedType is SliceTypeSymbol sliceType && argPointer.ReferencedType is ArrayTypeSymbol arrayType &&
+					 sliceType.ElementType.Equals(arrayType.ElementType))
 			{
 				// Safety check: Cannot pass a read-only pointer to a mutating parameter!
 				if (paramPtr.IsMutable && !argPointer.IsMutable)
@@ -928,6 +937,17 @@ public sealed class ValidationPass(BindingContext context)
 				}
 
 				score += paramPtr.IsMutable == argPointer.IsMutable ? 3 : 2;
+				continue;
+			}
+			else if (param is PointerTypeSymbol pPtr && arg is PointerTypeSymbol aPtr && pPtr.ReferencedType.Equals(aPtr.ReferencedType))
+			{
+				if (pPtr.IsMutable && !aPtr.IsMutable)
+				{
+					return -1;
+				}
+
+				score += pPtr.IsMutable == aPtr.IsMutable ? 3 : 2;
+				continue;
 			}
 			else if (param is SliceTypeSymbol slice && arg is ArrayTypeSymbol arr && slice.ElementType.Equals(arr.ElementType))
 			{

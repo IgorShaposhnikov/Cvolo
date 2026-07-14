@@ -533,7 +533,13 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			var valTy = GetExprType(argExpr);
 			var paramTy = GetParamType(emitName, i);
 
-			if (paramTy is SliceTypeSymbol && valTy is ArrayTypeSymbol)
+			var targetSlice = paramTy is SliceTypeSymbol sl
+							? sl
+							: (paramTy is PointerTypeSymbol pPtr && pPtr.ReferencedType is SliceTypeSymbol sRef ? sRef : null);
+
+			var isArgArray = valTy is ArrayTypeSymbol || (valTy is PointerTypeSymbol aPtr && aPtr.ReferencedType is ArrayTypeSymbol);
+
+			if (targetSlice is not null && isArgArray)
 			{
 				LLVMValueRef arrayPtr;
 				if (argExpr is IdentifierExpressionSyntax id)
@@ -546,7 +552,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 					arrayPtr = ptr;
 				}
 
-				val = CoerceArrayToSlice(arrayPtr, (valTy as ArrayTypeSymbol)!, (paramTy as SliceTypeSymbol)!);
+				val = CoerceArrayToSlice(arrayPtr, valTy, targetSlice);
 			}
 			else
 			{
@@ -713,6 +719,47 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		}
 
 		var operand = EmitExpression(unary.Operand);
+
+		if (unary.Operator.StartsWith("(") && unary.Operator.EndsWith(")"))
+		{
+			var targetTypeName = unary.Operator.Substring(1, unary.Operator.Length - 2);
+			var targetTypeSymbol = _bindingContext!.ResolveType(targetTypeName)!;
+			var targetType = GetLLVMType(targetTypeSymbol);
+
+			var operandType = GetExprType(unary.Operand);
+			var operandLlvmType = GetLLVMType(operandType);
+
+			// If casting between the identical LLVM type, return early
+			if (targetType.Handle == operandLlvmType.Handle)
+				return operand;
+
+			// Integer Truncation (e.g. i32 to i8/char)
+			if (targetTypeSymbol.Equals(TypeSymbol.Char) && operandType.Equals(TypeSymbol.Int))
+			{
+				return _builder.BuildTrunc(operand, targetType, "cast_trunc");
+			}
+
+			// Integer Zero-Extension (e.g. i8/char to i32/int)
+			if (targetTypeSymbol.Equals(TypeSymbol.Int) && operandType.Equals(TypeSymbol.Char))
+			{
+				return _builder.BuildZExt(operand, targetType, "cast_zext");
+			}
+
+			// Signed Integer to Float (int -> double)
+			if (targetTypeSymbol.Equals(TypeSymbol.Double) && operandType.Equals(TypeSymbol.Int))
+			{
+				return _builder.BuildSIToFP(operand, targetType, "cast_sitofp");
+			}
+
+			// Float to Signed Integer (double -> int)
+			if (targetTypeSymbol.Equals(TypeSymbol.Int) && operandType.Equals(TypeSymbol.Double))
+			{
+				return _builder.BuildFPToSI(operand, targetType, "cast_fptosi");
+			}
+
+			return _builder.BuildBitCast(operand, targetType, "cast_bitcast");
+		}
+
 		return unary.Operator switch
 		{
 			"-" => _builder.BuildNeg(operand),
@@ -785,6 +832,16 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 			if (varDecl.Initializer is not null)
 			{
+				var valTy = GetExprType(varDecl.Initializer);
+
+				if (typeSymbol is SliceTypeSymbol && valTy is ArrayTypeSymbol)
+				{
+					var arrayPtr = EmitExpression(varDecl.Initializer);
+					var sliceVal = CoerceArrayToSlice(arrayPtr, valTy, (typeSymbol as SliceTypeSymbol)!);
+					_builder.BuildStore(sliceVal, alloca);
+					return;
+				}
+
 				if (varDecl.Initializer is StructInitializationExpressionSyntax structInit)
 				{
 					EmitStructInitializationInPlace(structInit, alloca);
@@ -1022,6 +1079,12 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 	private TypeSymbol GetExprType(ExpressionSyntax expr)
 	{
+		if (expr is BorrowExpressionSyntax bb)
+		{
+			var res = new PointerTypeSymbol(GetExprType(bb.Expression), bb.IsMutable);
+			return res;
+		}
+
 		return expr switch
 		{
 			IntegerLiteralExpressionSyntax => TypeSymbol.Int,
@@ -1373,8 +1436,12 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				return (elementPtr, arrayType.ElementType);
 			}
 		}
+		else if (expr is BorrowExpressionSyntax b)
+		{
+			return (EmitExpression(b), GetExprType(b));
+		}
 
-		throw new InvalidOperationException("Unsupported field pointer expression");
+		throw new InvalidOperationException($"Unsupported {expr.GetType()} field pointer expression");
 	}
 
 	private int GetFieldIndex(StructTypeSymbol type, string name)
@@ -1482,8 +1549,10 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		}
 	}
 
-	private LLVMValueRef CoerceArrayToSlice(LLVMValueRef arrayPtr, ArrayTypeSymbol arrayTy, SliceTypeSymbol sliceTy)
+	private LLVMValueRef CoerceArrayToSlice(LLVMValueRef arrayPtr, TypeSymbol argTy, SliceTypeSymbol sliceTy)
 	{
+		var arrayTy = argTy is PointerTypeSymbol ptr ? ptr.ReferencedType as ArrayTypeSymbol : argTy as ArrayTypeSymbol;
+
 		var fatStructType = GetLLVMType(sliceTy);
 		var sliceAlloc = _builder.BuildAlloca(fatStructType, "slice_tmp");
 
@@ -1492,7 +1561,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		_builder.BuildStore(castPtr, ptrField);
 
 		var sizeField = _builder.BuildGEP2(fatStructType, sliceAlloc, new LLVMValueRef[] { LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0), LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1) }, "size_field");
-		_builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (ulong)arrayTy.Size), sizeField);
+		_builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (ulong)arrayTy!.Size), sizeField);
 
 		return _builder.BuildLoad2(fatStructType, sliceAlloc, "slice_val");
 	}

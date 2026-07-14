@@ -352,7 +352,9 @@ public sealed class SyntaxParser
 			case CvoloParser.BorrowExpressionContext borrowCtx:
 				{
 					var expr = BuildExpression(borrowCtx.expression());
-					return new BorrowExpressionSyntax(SpanOf(borrowCtx), expr);
+					var isMutable = borrowCtx.GetText().StartsWith("refvar");
+					Console.WriteLine($"\n[PARSER_DEBUG] Borrow Text: '{borrowCtx.GetText()}', isMutable: {isMutable}");
+					return new BorrowExpressionSyntax(SpanOf(borrowCtx), expr, isMutable);
 				}
 			case CvoloParser.StructInitializationExpressionContext structInitCtx:
 				{
