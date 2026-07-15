@@ -71,7 +71,14 @@ public sealed class CompilationProject
 		}
 		else if (File.Exists(inputPath))
 		{
-			sourceFiles.Add(inputPath);
+			var dir = Path.GetDirectoryName(Path.GetFullPath(inputPath))!;
+			var files = Directory.GetFiles(dir, "*.cvl", SearchOption.AllDirectories).ToList();
+			foreach (var file in files)
+			{
+				if (!sourceFiles.Contains(file))
+					sourceFiles.Add(file);
+			}
+
 			outputName = Path.GetFileNameWithoutExtension(inputPath);
 		}
 		else

@@ -747,6 +747,10 @@ public sealed class SyntaxParser
 		var stmt = block.statement(0);
 		var exprStmt = stmt.expressionStatement();
 
+		var expr = BuildExpression(exprStmt.expression());
+
+		OverrideSpans(expr, parentSpan);
+
 		return BuildExpression(exprStmt.expression());
 	}
 
@@ -758,6 +762,16 @@ public sealed class SyntaxParser
 		{
 			methods.Add(BuildFunctionDeclaration(funcCtx));
 		}
+
 		return new ExtensionDeclarationSyntax(SpanOf(context), extendedTypeName, methods);
+	}
+
+	private void OverrideSpans(SyntaxNode node, TextSpan span)
+	{
+		node.Span = span;
+		foreach (var child in node.GetChildren())
+		{
+			OverrideSpans(child, span);
+		}
 	}
 }

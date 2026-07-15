@@ -6,7 +6,7 @@ public abstract class SyntaxNode(TextSpan span)
 {
 	public abstract SyntaxKind Kind { get; }
 
-	public TextSpan Span { get; } = span;
+	public TextSpan Span { get; set; } = span;
 
 	public abstract IEnumerable<SyntaxNode> GetChildren();
 }
