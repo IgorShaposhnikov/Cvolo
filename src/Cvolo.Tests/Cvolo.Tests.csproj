@@ -28,6 +28,7 @@
 		<ProjectReference Include="..\Cvolo.Core\Cvolo.Core.csproj" />
 		<ProjectReference Include="..\Cvolo.Emitter.LLVM\Cvolo.Emitter.LLVM.csproj" />
 		<ProjectReference Include="..\Cvolo.Syntax\Cvolo.Syntax.csproj" />
+		<ProjectReference Include="..\Cvolo.Syntax.Antlr\Cvolo.Syntax.Antlr.csproj" />
 		<ProjectReference Include="..\Cvolo\Cvolo.csproj" />
 	</ItemGroup>
 

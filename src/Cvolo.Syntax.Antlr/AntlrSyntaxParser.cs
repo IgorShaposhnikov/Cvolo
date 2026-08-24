@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using Antlr4.Runtime;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
@@ -6,10 +6,11 @@ using Cvolo.Core.AST.Directives;
 using Cvolo.Core.AST.Expressions;
 using Cvolo.Core.AST.Statements;
 using Cvolo.Core.Diagnostics;
+using Cvolo.Syntax;
 
-namespace Cvolo.Syntax;
+namespace Cvolo.Syntax.Antlr;
 
-public sealed class SyntaxParser
+public sealed class AntlrSyntaxParser : ISyntaxParser
 {
 	private readonly DiagnosticBag _diagnostics = new();
 
@@ -159,17 +160,6 @@ public sealed class SyntaxParser
 		if (context.expressionStatement() is { } exprStmt)
 		{
 			var expr = BuildExpression(exprStmt.expression());
-
-			// Intercept console write calls containing interpolated strings to lower them at compile-time
-			if (expr is CallExpressionSyntax call &&
-				(call.FunctionName == "Console.WriteLine" || call.FunctionName == "Console.Write" ||
-				 call.FunctionName == "System.Console.WriteLine" || call.FunctionName == "System.Console.Write") &&
-				call.Arguments.Count == 1 &&
-				call.Arguments[0] is InterpolatedStringExpressionSyntax interpolated)
-			{
-				return LowerInterpolatedConsoleCall(call, interpolated);
-			}
-
 			return new ExpressionStatementSyntax(SpanOf(exprStmt), expr);
 		}
 		if (context.variableDeclaration() is { } varDecl)
@@ -353,7 +343,6 @@ public sealed class SyntaxParser
 				{
 					var expr = BuildExpression(borrowCtx.expression());
 					var isMutable = borrowCtx.GetText().StartsWith("refvar");
-					Console.WriteLine($"\n[PARSER_DEBUG] Borrow Text: '{borrowCtx.GetText()}', isMutable: {isMutable}");
 					return new BorrowExpressionSyntax(SpanOf(borrowCtx), expr, isMutable);
 				}
 			case CvoloParser.StructInitializationExpressionContext structInitCtx:
@@ -588,26 +577,6 @@ public sealed class SyntaxParser
 		}
 	}
 
-	public static (int Line, int Column) GetLineAndColumn(string text, int position)
-	{
-		var line = 1;
-		var column = 1;
-		for (var i = 0; i < position && i < text.Length; i++)
-		{
-			if (text[i] == '\n')
-			{
-				line++;
-				column = 1;
-			}
-			else
-			{
-				column++;
-			}
-		}
-
-		return (line, column);
-	}
-
 	private UsingDirectiveSyntax BuildUsingDirective(CvoloParser.UsingDirectiveContext context)
 	{
 		return new UsingDirectiveSyntax(SpanOf(context), context.qualifiedName().GetText());
@@ -631,129 +600,6 @@ public sealed class SyntaxParser
 		return new NamespaceDeclarationSyntax(SpanOf(context), name, usings, members);
 	}
 
-	private SyntaxNode LowerInterpolatedConsoleCall(CallExpressionSyntax originalCall, InterpolatedStringExpressionSyntax interpolated)
-	{
-		var segments = ParseInterpolatedString(interpolated.RawText);
-		var statementList = new List<SyntaxNode>();
-		var isWriteLine = originalCall.FunctionName.EndsWith("WriteLine");
-
-		// Resolve safe base write target paths
-		var writeTarget = originalCall.FunctionName.Replace("WriteLine", "Write");
-		var writeLineTarget = originalCall.FunctionName;
-
-		for (var i = 0; i < segments.Count; i++)
-		{
-			var (text, isExpression) = segments[i];
-			ExpressionSyntax elementExpr;
-
-			if (isExpression)
-			{
-				elementExpr = ParseExpressionSegment(text, originalCall.Span);
-			}
-			else
-			{
-				elementExpr = new StringLiteralExpressionSyntax(originalCall.Span, text);
-			}
-
-			// The very last segment uses WriteLine if the original call was WriteLine
-			var targetFunc = (i == segments.Count - 1 && isWriteLine) ? writeLineTarget : writeTarget;
-			var callNode = new CallExpressionSyntax(originalCall.Span, targetFunc, [], [elementExpr]);
-
-			statementList.Add(new ExpressionStatementSyntax(originalCall.Span, callNode));
-		}
-
-		return new BlockStatementSyntax(originalCall.Span, statementList);
-	}
-
-	private List<(string text, bool isExpression)> ParseInterpolatedString(string raw)
-	{
-		// Strip $" and the trailing "
-		var content = raw.Substring(2, raw.Length - 3);
-		var list = new List<(string text, bool isExpression)>();
-
-		var i = 0;
-		var start = 0;
-		while (i < content.Length)
-		{
-			if (content[i] == '{')
-			{
-				// Escape double brace match {{
-				if (i + 1 < content.Length && content[i + 1] == '{')
-				{
-					i += 2;
-					continue;
-				}
-
-				if (i > start)
-				{
-					list.Add((content.Substring(start, i - start), false));
-				}
-
-				var depth = 1;
-				var exprStart = i + 1;
-				i++;
-				while (i < content.Length && depth > 0)
-				{
-					if (content[i] == '{') depth++;
-					else if (content[i] == '}') depth--;
-					i++;
-				}
-
-				var exprText = content.Substring(exprStart, i - exprStart - 1);
-				list.Add((exprText, true));
-				start = i;
-			}
-			else if (content[i] == '}')
-			{
-				// Escape double brace match }}
-				if (i + 1 < content.Length && content[i + 1] == '}')
-				{
-					i += 2;
-					continue;
-				}
-				i++;
-			}
-			else
-			{
-				i++;
-			}
-		}
-
-		if (start < content.Length)
-		{
-			list.Add((content.Substring(start), false));
-		}
-
-		return list;
-	}
-
-	private ExpressionSyntax ParseExpressionSegment(string source, TextSpan parentSpan)
-	{
-		// Wrap the expression segment inside a dummy method body to parse cleanly
-		var dummySource = $"void dummy() {{ {source}; }}";
-		var segmentContext = new CompilationContext(dummySource, "interpolated_segment");
-
-		var inputStream = new AntlrInputStream(segmentContext.Source);
-		var lexer = new CvoloLexer(inputStream);
-		var tokenStream = new CommonTokenStream(lexer);
-		var parser = new CvoloParser(tokenStream);
-
-		parser.RemoveErrorListeners();
-		var tree = parser.compilationUnit();
-
-		var decl = tree.declaration(0);
-		var func = decl.functionDeclaration();
-		var block = func.blockStatement();
-		var stmt = block.statement(0);
-		var exprStmt = stmt.expressionStatement();
-
-		var expr = BuildExpression(exprStmt.expression());
-
-		OverrideSpans(expr, parentSpan);
-
-		return BuildExpression(exprStmt.expression());
-	}
-
 	private ExtensionDeclarationSyntax BuildExtensionDeclaration(CvoloParser.ExtensionDeclarationContext context)
 	{
 		var extendedTypeName = context.Identifier().GetText();
@@ -764,14 +610,5 @@ public sealed class SyntaxParser
 		}
 
 		return new ExtensionDeclarationSyntax(SpanOf(context), extendedTypeName, methods);
-	}
-
-	private void OverrideSpans(SyntaxNode node, TextSpan span)
-	{
-		node.Span = span;
-		foreach (var child in node.GetChildren())
-		{
-			OverrideSpans(child, span);
-		}
 	}
 }

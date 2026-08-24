@@ -5,7 +5,6 @@
 	</PropertyGroup>
 
 	<ItemGroup>
-		<PackageReference Include="Antlr4.Runtime.Standard" />
 		<PackageReference Include="libLLVM.runtime.win-x64" />
 		<PackageReference Include="LLVMSharp" />
 		<PackageReference Include="Microsoft.Extensions.DependencyInjection" />
@@ -15,6 +14,7 @@
 	<ItemGroup>
 		<ProjectReference Include="..\Cvolo.Core\Cvolo.Core.csproj" />
 		<ProjectReference Include="..\Cvolo.Syntax\Cvolo.Syntax.csproj" />
+		<ProjectReference Include="..\Cvolo.Syntax.Antlr\Cvolo.Syntax.Antlr.csproj" />
 		<ProjectReference Include="..\Cvolo.Analysis\Cvolo.Analysis.csproj" />
 		<ProjectReference Include="..\Cvolo.Emitter.LLVM\Cvolo.Emitter.LLVM.csproj" />
 	</ItemGroup>

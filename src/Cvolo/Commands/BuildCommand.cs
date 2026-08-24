@@ -24,6 +24,7 @@ internal sealed class BuildCommand : Command
 		Add(emitIrOption);
 		Add(optOption);
 		Add(verboseOption);
+		Add(emitLoweredOption);
 
 		SetAction((ParseResult parseResult) =>
 		{

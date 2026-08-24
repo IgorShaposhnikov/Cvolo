@@ -2,7 +2,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Cvolo.Core\Cvolo.Core.csproj" />
-    <ProjectReference Include="..\Cvolo.Syntax\Cvolo.Syntax.csproj" />
   </ItemGroup>
 
 </Project>

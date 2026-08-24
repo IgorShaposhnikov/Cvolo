@@ -6,7 +6,7 @@ using Cvolo.Core.Diagnostics;
 
 namespace Cvolo.Syntax.Rewriters;
 
-public sealed class StringInterpolationRewriter : AstRewriterBase
+public sealed class StringInterpolationRewriter(ISyntaxParser parser) : AstRewriterBase
 {
 	public override SyntaxNode Rewrite(SyntaxNode node)
 	{
@@ -39,7 +39,7 @@ public sealed class StringInterpolationRewriter : AstRewriterBase
 
 			if (isExpression)
 			{
-				elementExpr = ParseExpressionSegment(text, originalCall.Span);
+				elementExpr = ParseExpressionSegment(text);
 			}
 			else
 			{
@@ -114,17 +114,18 @@ public sealed class StringInterpolationRewriter : AstRewriterBase
 		return list;
 	}
 
-	private ExpressionSyntax ParseExpressionSegment(string source, TextSpan parentSpan)
+	private ExpressionSyntax ParseExpressionSegment(string source)
 	{
 		// Wrap the expression segment inside a dummy method body to parse cleanly
 		var dummySource = $"void dummy() {{ {source}; }}";
 		var segmentContext = new CompilationContext(dummySource, "interpolated_segment");
 
-		// Use the public SyntaxParser API recursively!
-		var parser = new SyntaxParser();
 		var unit = parser.Parse(segmentContext);
 		if (unit == null)
-			throw new InvalidOperationException($"Failed to parse interpolated expression segment: {source}");
+		{
+			var details = string.Join("; ", parser.Diagnostics.Diagnostics.Select(d => d.Message));
+			throw new InvalidOperationException($"Invalid expression in interpolated string: '{{{source}}}'. {details}");
+		}
 
 		// Unpack: compilationUnit -> declaration (FunctionDeclaration) -> body -> statement (ExpressionStatement) -> expression
 		var func = unit.Members[0] as FunctionDeclarationSyntax;

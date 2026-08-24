@@ -1,6 +1,6 @@
 using Cvolo.Core.Diagnostics;
 using Cvolo.Projects;
-using Cvolo.Syntax;
+using Cvolo.Syntax.Antlr;
 using Cvolo.Tests.Core;
 
 namespace Cvolo.Tests;
@@ -17,7 +17,7 @@ public sealed class GenericsTests : CompilerTestBase
 		var fullPath = Path.Combine(assemblyDir, "TestCases", $"Generics/{caseName}");
 
 		var project = CompilationProject.Load(fullPath);
-		var parser = new SyntaxParser();
+		var parser = new AntlrSyntaxParser();
 
 		foreach (var file in project.SourceFiles)
 		{

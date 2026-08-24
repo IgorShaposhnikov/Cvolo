@@ -7,6 +7,7 @@ using Cvolo.Emitter.LLVM;
 using Cvolo.Projects;
 using Cvolo.Strategies;
 using Cvolo.Syntax;
+using Cvolo.Syntax.Antlr;
 using Cvolo.Syntax.Rewriters;
 
 namespace Cvolo.Drivers;
@@ -47,7 +48,7 @@ internal sealed class CompilerDriver : ICompilerDriver
 		// 3. Syntactic parsing pass
 		var binder = new Binder();
 		var asts = new List<CompilationUnitSyntax>();
-		var parser = new SyntaxParser();
+		ISyntaxParser parser = new AntlrSyntaxParser();
 		CompilationContext? firstContext = null;
 
 		foreach (var file in project.SourceFiles)
@@ -76,25 +77,33 @@ internal sealed class CompilerDriver : ICompilerDriver
 		}
 
 		var rewriters = new List<AstRewriterBase> {
-			new StringInterpolationRewriter()
+			new StringInterpolationRewriter(parser)
 		};
 
 		var loweredAsts = new List<CompilationUnitSyntax>();
-		foreach (var ast in asts)
+		try
 		{
-			var currentAst = ast;
-			foreach (var rewriter in rewriters)
+			foreach (var ast in asts)
 			{
-				currentAst = (CompilationUnitSyntax)rewriter.Rewrite(currentAst);
-			}
+				var currentAst = ast;
+				foreach (var rewriter in rewriters)
+				{
+					currentAst = (CompilationUnitSyntax)rewriter.Rewrite(currentAst);
+				}
 
-			if (binder.Context.FileContexts.TryGetValue(ast, out var fileContext))
-			{
-				binder.Context.FileContexts[currentAst] = fileContext;
-				binder.Context.FileContexts.Remove(ast); // Clean up the old reference
-			}
+				if (binder.Context.FileContexts.TryGetValue(ast, out var fileContext))
+				{
+					binder.Context.FileContexts[currentAst] = fileContext;
+					binder.Context.FileContexts.Remove(ast); // Clean up the old reference
+				}
 
-			loweredAsts.Add(currentAst);
+				loweredAsts.Add(currentAst);
+			}
+		}
+		catch (InvalidOperationException ex)
+		{
+			Console.Error.WriteLine($"[Interp Error]: {ex.Message}");
+			return 1;
 		}
 
 		asts = loweredAsts;
