@@ -1,0 +1,15 @@
+struct Pair {
+    int A;
+    int B;
+}
+
+extension Pair {
+    Pair(int a) {
+        A = a;
+    }
+}
+
+int main() {
+    var Pair p = Pair(1);
+    return 0;
+}

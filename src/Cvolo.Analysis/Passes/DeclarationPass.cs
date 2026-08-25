@@ -328,5 +328,68 @@ public sealed class DeclarationPass(BindingContext context)
 				context.Destructors[extDecl.ExtendedTypeName] = newSymbol;
 			}
 		}
+
+		foreach (var ctorDecl in extDecl.Constructors)
+		{
+			if (ctorDecl.StructName != extDecl.ExtendedTypeName)
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, ctorDecl.Span, $"Constructor name '{ctorDecl.StructName}' must match the extended type '{extDecl.ExtendedTypeName}'.");
+				continue;
+			}
+
+			if (extendedType is not StructTypeSymbol ctorStructType)
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, ctorDecl.Span, $"Cannot define a constructor for non-struct type '{extDecl.ExtendedTypeName}'.");
+				continue;
+			}
+
+			// Mangled base name is just the struct name: bare calls 'T(args)' resolve like free functions
+			var ctorBaseMangledName = context.GetMangledName(extDecl.ExtendedTypeName, context.CurrentNamespace);
+
+			// 1. Inject the implicit first parameter: "this" (the destination storage)
+			var ctorThisParamType = new PointerTypeSymbol(ctorStructType, isMutable: true);
+			var ctorParameters = new List<ParameterSymbol> { new ParameterSymbol("this", ctorThisParamType) };
+
+			var hasBadParam = false;
+			foreach (var param in ctorDecl.Parameters)
+			{
+				var paramType = context.ResolveType(param.Type);
+				if (paramType is null)
+				{
+					var currentFileContext = context.FileContexts[context.CurrentUnit!];
+					context.Diagnostics.Report(currentFileContext, param.Span, $"Unknown parameter type '{param.Type}'");
+					hasBadParam = true;
+					continue;
+				}
+
+				ctorParameters.Add(new ParameterSymbol(param.Name, paramType));
+			}
+
+			if (hasBadParam)
+				continue;
+
+			// 2. Register under the struct's name so 'T(...)' call sites resolve via existing overload machinery
+			var ctorOverloadedName = context.GetOverloadedMangledName(ctorBaseMangledName, ctorParameters.Select(p => p.Type).ToList());
+			var ctorSymbol = new FunctionSymbol(ctorOverloadedName, ctorStructType, ctorParameters);
+			context.Globals.Declare(ctorSymbol);
+
+			if (!context.OverloadedFunctions.TryGetValue(ctorBaseMangledName, out var ctorCandidates))
+			{
+				ctorCandidates = [];
+				context.OverloadedFunctions[ctorBaseMangledName] = ctorCandidates;
+			}
+			ctorCandidates.Add(ctorSymbol);
+
+			context.SymbolUnits[ctorOverloadedName] = context.CurrentUnit!;
+
+			if (!context.Constructors.TryGetValue(extDecl.ExtendedTypeName, out var registeredCtors))
+			{
+				registeredCtors = [];
+				context.Constructors[extDecl.ExtendedTypeName] = registeredCtors;
+			}
+			registeredCtors.Add(ctorSymbol);
+		}
 	}
 }

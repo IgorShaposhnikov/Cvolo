@@ -1,0 +1,12 @@
+struct Pair {
+    int A;
+}
+
+extension Pair {
+    ~WrongName() {
+    }
+}
+
+int main() {
+    return 0;
+}

@@ -46,9 +46,67 @@ public sealed class ValidationPass(BindingContext context)
 					{
 						CheckExtensionMethodBody(extDecl.ExtendedTypeName, method);
 					}
+
+					foreach (var ctorDecl in extDecl.Constructors)
+					{
+						CheckConstructorBody(extDecl.ExtendedTypeName, ctorDecl);
+					}
 				}
 			}
 		}
+	}
+
+	private void CheckConstructorBody(string extendedTypeName, ConstructorDeclarationSyntax ctor)
+	{
+		var extendedType = context.ResolveType(extendedTypeName) as StructTypeSymbol;
+		if (extendedType is null) return;
+
+		var wrapper = ctor.ToFunctionDeclaration();
+
+		// Validate the body like any extension method, but "this" is always mutable:
+		// a constructor's purpose is to populate fields.
+		CheckExtensionMethodBody(extendedTypeName, wrapper, forceMutableThis: true);
+
+		// Defensive Initialization: every field of 'this' must be populated before
+		// the constructor exits, preventing uninitialized-memory bugs.
+		var assignedFields = new HashSet<string>();
+		CollectFieldAssignments(ctor.Body, assignedFields);
+
+		foreach (var field in extendedType.Fields)
+		{
+			if (!assignedFields.Contains(field.Name))
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(
+					currentFileContext,
+					ctor.Span,
+					$"Defensive initialization: constructor '{extendedTypeName}' does not initialize field '{field.Name}'."
+				);
+			}
+		}
+	}
+
+	private void CollectFieldAssignments(SyntaxNode node, HashSet<string> assigned)
+	{
+		if (node is BinaryExpressionSyntax bin && bin.Operator == "=")
+		{
+			if (bin.Left is MemberAccessExpressionSyntax member &&
+				GetBaseIdentifierName(member.Expression) == "this")
+			{
+				// 'this.field = ...' populates the field directly
+				assigned.Add(member.MemberName);
+			}
+			else
+			{
+				// Flat field assignment inside extension-member scope
+				var baseName = GetBaseIdentifierName(bin.Left);
+				if (baseName != null && baseName != "this")
+					assigned.Add(baseName);
+			}
+		}
+
+		foreach (var child in node.GetChildren())
+			CollectFieldAssignments(child, assigned);
 	}
 
 	private void CheckFunctionBody(FunctionDeclarationSyntax func)
@@ -858,6 +916,13 @@ public sealed class ValidationPass(BindingContext context)
 				}
 			}
 		}
+		else if (context.Constructors.ContainsKey(name))
+		{
+			// Bare constructor call 'T(args)': prepend the implicit destination-storage
+			// receiver so ctor candidates match like extension methods.
+			if (context.StructTypes.TryGetValue(name, out var ctorStruct))
+				adjustedArgTypes.Insert(0, new PointerTypeSymbol(ctorStruct, isMutable: true));
+		}
 
 		// 1. Gather all candidates matching the resolved base name
 		GatherOverloadCandidates(baseName, candidates);
@@ -1014,13 +1079,13 @@ public sealed class ValidationPass(BindingContext context)
 		}
 	}
 
-	private void CheckExtensionMethodBody(string extendedTypeName, FunctionDeclarationSyntax method)
+	private void CheckExtensionMethodBody(string extendedTypeName, FunctionDeclarationSyntax method, bool forceMutableThis = false)
 	{
 		var extendedType = context.ResolveType(extendedTypeName) as StructTypeSymbol;
 		if (extendedType is null) return;
 
 		// 1. Static AST Mutation Scan: Infer if the method modifies any fields
-		var isMutating = DetectFieldMutation(method.Body, extendedType);
+		var isMutating = forceMutableThis || DetectFieldMutation(method.Body, extendedType);
 
 		// 2. Locate the registered function symbol using the unmutated base registration
 		var baseMangledName = context.GetMangledName($"{extendedTypeName}.{method.Name}", context.CurrentNamespace);

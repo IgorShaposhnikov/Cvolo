@@ -1,0 +1,23 @@
+using System;
+
+struct Pair {
+    int A;
+    int B;
+}
+
+extension Pair {
+    Pair(int a) {
+        A = a;
+        B = a * 2;
+    }
+
+    void Print() {
+        Console.WriteLine($"A={A}, B={B}");
+    }
+}
+
+int main() {
+    var Pair p = Pair(21);
+    p.Print();
+    return 0;
+}

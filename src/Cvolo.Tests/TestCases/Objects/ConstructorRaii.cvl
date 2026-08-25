@@ -1,0 +1,27 @@
+using System;
+
+struct FileStream {
+    int Handle;
+}
+
+extension FileStream {
+    FileStream(string path) {
+        Console.WriteLine($"Opening {path}");
+        Handle = 42;
+    }
+
+    ~FileStream() {
+        Console.WriteLine($"Closing handle: {Handle}");
+    }
+}
+
+int main() {
+    var FileStream outer = FileStream("logs.txt");
+    {
+        var FileStream inner = FileStream("temp.txt");
+        Console.WriteLine("work");
+    }
+    // inner's ~FileStream() runs at block exit,
+    // outer's at end of main - in that order!
+    return 0;
+}

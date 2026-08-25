@@ -113,7 +113,8 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 						DeclareFunction(func, overloadedMangledName);
 						break;
 					case ExtensionDeclarationSyntax extDecl:
-						foreach (var method in extDecl.Methods.Concat(extDecl.Destructors.Select(static d => d.ToFunctionDeclaration())))
+						foreach (var method in extDecl.Methods
+							.Concat(extDecl.Destructors.Select(static d => d.ToFunctionDeclaration())))
 						{
 							var baseMangledName = bindingContext.GetMangledName($"{extDecl.ExtendedTypeName}.{method.Name}", ns);
 							if (bindingContext.OverloadedFunctions.TryGetValue(baseMangledName, out var candidates))
@@ -121,6 +122,18 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 								foreach (var candidate in candidates)
 								{
 									DeclareFunction(method, candidate.Name);
+								}
+							}
+						}
+
+						foreach (var ctorDecl in extDecl.Constructors)
+						{
+							var ctorBaseMangledName = bindingContext.GetMangledName(extDecl.ExtendedTypeName, ns);
+							if (bindingContext.OverloadedFunctions.TryGetValue(ctorBaseMangledName, out var ctorCandidates))
+							{
+								foreach (var candidate in ctorCandidates)
+								{
+									DeclareFunction(ctorDecl.ToFunctionDeclaration(), candidate.Name);
 								}
 							}
 						}
@@ -172,7 +185,8 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				}
 				else if (member is ExtensionDeclarationSyntax extDecl)
 				{
-					foreach (var method in extDecl.Methods.Concat(extDecl.Destructors.Select(static d => d.ToFunctionDeclaration())))
+					foreach (var method in extDecl.Methods
+						.Concat(extDecl.Destructors.Select(static d => d.ToFunctionDeclaration())))
 					{
 						var baseMangledName = bindingContext.GetMangledName($"{extDecl.ExtendedTypeName}.{method.Name}", ns);
 						if (bindingContext.OverloadedFunctions.TryGetValue(baseMangledName, out var candidates))
@@ -182,6 +196,21 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 								if (emittedFunctionNames.Add(candidate.Name))
 								{
 									EmitFunctionBody(method, candidate.Name);
+								}
+							}
+						}
+					}
+
+					foreach (var ctorDecl in extDecl.Constructors)
+					{
+						var ctorBaseMangledName = bindingContext.GetMangledName(extDecl.ExtendedTypeName, ns);
+						if (bindingContext.OverloadedFunctions.TryGetValue(ctorBaseMangledName, out var ctorCandidates))
+						{
+							foreach (var candidate in ctorCandidates)
+							{
+								if (emittedFunctionNames.Add(candidate.Name))
+								{
+									EmitFunctionBody(ctorDecl.ToFunctionDeclaration(), candidate.Name);
 								}
 							}
 						}
@@ -485,7 +514,34 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		return _builder.BuildGlobalStringPtr(value, "str");
 	}
 
+	private bool IsConstructorCall(CallExpressionSyntax call, TypeSymbol targetType)
+	{
+		if (call.TypeArguments.Count != 0 || call.FunctionName.Contains('.'))
+			return false;
+
+		if (!string.Equals(call.FunctionName, targetType.Name, StringComparison.Ordinal))
+			return false;
+
+		if (!_bindingContext!.Constructors.TryGetValue(targetType.Name, out var ctors) || ctors.Count == 0)
+			return false;
+
+		return _bindingContext.ResolvedCalls.TryGetValue(call, out var resolved) &&
+			   resolved.Parameters.Count > 0 &&
+			   resolved.Parameters[0].Name == "this";
+	}
+
+	private LLVMValueRef EmitCallExpression(CallExpressionSyntax call, LLVMValueRef? implicitThisPtr = null)
+	{
+		var paramOffset = implicitThisPtr is not null ? 1 : 0;
+		return EmitCallExpressionCore(call, implicitThisPtr, paramOffset);
+	}
+
 	private LLVMValueRef EmitCallExpression(CallExpressionSyntax call)
+	{
+		return EmitCallExpressionCore(call, null, 0);
+	}
+
+	private LLVMValueRef EmitCallExpressionCore(CallExpressionSyntax call, LLVMValueRef? implicitThisPtr, int paramOffset)
 	{
 		if (call.FunctionName == "sizeof")
 		{
@@ -525,13 +581,18 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				args.Add(receiverPtr);
 			}
 		}
+		else if (implicitThisPtr is not null)
+		{
+			// Constructor call: first parameter is the destination storage
+			args.Add(implicitThisPtr.Value);
+		}
 
 		for (var i = 0; i < call.Arguments.Count; i++)
 		{
 			var argExpr = call.Arguments[i];
 			LLVMValueRef val;
 			var valTy = GetExprType(argExpr);
-			var paramTy = GetParamType(emitName, i);
+			var paramTy = GetParamType(emitName, i + paramOffset);
 
 			var targetSlice = paramTy is SliceTypeSymbol sl
 							? sl
@@ -561,7 +622,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 			// Variadic promotion rules (promote Boolean and Char to i32)
 			var isVariadic = _astExterns.TryGetValue(emitName, out var ext) && ext.IsVariadic;
-			if (isVariadic && i >= _functionParameterTypes[emitName].Count)
+			if (isVariadic && i + paramOffset >= _functionParameterTypes[emitName].Count)
 			{
 				if (valTy.Equals(TypeSymbol.Bool))
 				{
@@ -883,11 +944,17 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				{
 					EmitArrayInitializationInPlace(arrInit, alloca, (typeSymbol as ArrayTypeSymbol)!);
 				}
-				else if (varDecl.Initializer is ArrayReplicationExpressionSyntax arrRepl)
+			else if (varDecl.Initializer is ArrayReplicationExpressionSyntax arrRepl)
 				{
 					EmitArrayReplicationInPlace(arrRepl, alloca, (typeSymbol as ArrayTypeSymbol)!);
 				}
-				else
+			else if (varDecl.Initializer is CallExpressionSyntax ctorCall && IsConstructorCall(ctorCall, typeSymbol))
+				{
+					// 'var T v = T(args)': the constructor populates the variable's storage
+					// in place via its implicit 'this' parameter; no value store follows.
+					EmitCallExpression(ctorCall, alloca);
+				}
+			else
 				{
 					var value = EmitExpression(varDecl.Initializer);
 					_builder.BuildStore(value, alloca);

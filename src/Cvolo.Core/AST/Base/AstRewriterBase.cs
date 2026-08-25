@@ -30,7 +30,8 @@ public abstract class AstRewriterBase
 		{
 			var rewrittenMethods = extDecl.Methods.Select(Rewrite).Cast<FunctionDeclarationSyntax>().ToList();
 			var rewrittenDestructors = extDecl.Destructors.Select(Rewrite).Cast<DestructorDeclarationSyntax>().ToList();
-			return new ExtensionDeclarationSyntax(extDecl.Span, extDecl.ExtendedTypeName, rewrittenMethods, rewrittenDestructors);
+			var rewrittenConstructors = extDecl.Constructors.Select(Rewrite).Cast<ConstructorDeclarationSyntax>().ToList();
+			return new ExtensionDeclarationSyntax(extDecl.Span, extDecl.ExtendedTypeName, rewrittenMethods, rewrittenDestructors, rewrittenConstructors);
 		}
 
 		if (node is FunctionDeclarationSyntax func)
@@ -43,6 +44,13 @@ public abstract class AstRewriterBase
 		{
 			var rewrittenDtorBody = (BlockStatementSyntax)Rewrite(dtor.Body);
 			return new DestructorDeclarationSyntax(dtor.Span, dtor.StructName, rewrittenDtorBody);
+		}
+
+		if (node is ConstructorDeclarationSyntax ctor)
+		{
+			var rewrittenCtorParams = ctor.Parameters.Select(p => new ParameterSyntax(p.Span, p.Type, p.Name)).ToList();
+			var rewrittenCtorBody = (BlockStatementSyntax)Rewrite(ctor.Body);
+			return new ConstructorDeclarationSyntax(ctor.Span, ctor.StructName, rewrittenCtorParams, rewrittenCtorBody);
 		}
 
 		if (node is BlockStatementSyntax block)
