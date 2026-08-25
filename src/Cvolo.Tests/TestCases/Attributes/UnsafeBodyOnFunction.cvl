@@ -1,0 +1,13 @@
+using System;
+
+[UnsafeBody]
+int Compute()
+{
+    return 6 * 7;
+}
+
+int main()
+{
+    Console.WriteLine($"Answer: {Compute()}");
+    return 0;
+}

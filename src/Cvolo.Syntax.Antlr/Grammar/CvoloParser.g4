@@ -30,8 +30,16 @@ globalVariableDeclaration
 	: GLOBAL (VAL | VAR)? type Identifier (ASSIGN expression)? SEMI
 	;
 
+attributeList
+	: LBRACK attribute (COMMA attribute)* RBRACK
+	;
+
+attribute
+	: qualifiedName (LPAREN argumentList? RPAREN)?
+	;
+
 functionDeclaration
-	: returnType Identifier (LT typeList GT)? LPAREN parameterList? RPAREN blockStatement
+	: attributeList* returnType Identifier (LT typeList GT)? LPAREN parameterList? RPAREN blockStatement
 	;
 
 externDeclaration
@@ -39,7 +47,7 @@ externDeclaration
 	;
 
 structDeclaration
-	: STRUCT Identifier (LT genericParameterList GT)? LBRACE structField* RBRACE SEMI?
+	: attributeList* STRUCT Identifier (LT genericParameterList GT)? LBRACE structField* RBRACE SEMI?
 	;
 
 extensionDeclaration
@@ -47,11 +55,11 @@ extensionDeclaration
 	;
 
 destructorDeclaration
-	: TILDE Identifier LPAREN RPAREN blockStatement SEMI?
+	: attributeList* TILDE Identifier LPAREN RPAREN blockStatement SEMI?
 	;
 
 constructorDeclaration
-	: Identifier LPAREN parameterList? RPAREN blockStatement SEMI?
+	: attributeList* Identifier LPAREN parameterList? RPAREN blockStatement SEMI?
 	;
 
 structField
@@ -88,7 +96,7 @@ parameterList
 	;
 
 parameter
-	: type Identifier
+	: attributeList* type Identifier
 	;
 
 externParameterList

@@ -37,13 +37,13 @@ public abstract class AstRewriterBase
 		if (node is FunctionDeclarationSyntax func)
 		{
 			var rewrittenBody = (BlockStatementSyntax)Rewrite(func.Body);
-			return new FunctionDeclarationSyntax(func.Span, func.ReturnType, func.Name, func.GenericParameters, func.Parameters, rewrittenBody);
+			return new FunctionDeclarationSyntax(func.Span, func.ReturnType, func.Name, func.GenericParameters, func.Parameters, rewrittenBody, func.Attributes);
 		}
 
 		if (node is DestructorDeclarationSyntax dtor)
 		{
 			var rewrittenDtorBody = (BlockStatementSyntax)Rewrite(dtor.Body);
-			return new DestructorDeclarationSyntax(dtor.Span, dtor.StructName, rewrittenDtorBody);
+			return new DestructorDeclarationSyntax(dtor.Span, dtor.StructName, rewrittenDtorBody, dtor.Attributes);
 		}
 
 		if (node is GlobalVariableDeclarationSyntax globalDecl)
@@ -54,9 +54,9 @@ public abstract class AstRewriterBase
 
 		if (node is ConstructorDeclarationSyntax ctor)
 		{
-			var rewrittenCtorParams = ctor.Parameters.Select(p => new ParameterSyntax(p.Span, p.Type, p.Name)).ToList();
+			var rewrittenCtorParams = ctor.Parameters.Select(p => new ParameterSyntax(p.Span, p.Type, p.Name, p.Attributes)).ToList();
 			var rewrittenCtorBody = (BlockStatementSyntax)Rewrite(ctor.Body);
-			return new ConstructorDeclarationSyntax(ctor.Span, ctor.StructName, rewrittenCtorParams, rewrittenCtorBody);
+			return new ConstructorDeclarationSyntax(ctor.Span, ctor.StructName, rewrittenCtorParams, rewrittenCtorBody, ctor.Attributes);
 		}
 
 		if (node is BlockStatementSyntax block)

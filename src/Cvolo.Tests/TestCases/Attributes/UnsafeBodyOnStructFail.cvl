@@ -1,0 +1,10 @@
+[UnsafeBody]
+struct Widget
+{
+    int Value;
+}
+
+int main()
+{
+    return 0;
+}

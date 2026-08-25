@@ -57,6 +57,9 @@ public sealed class DeclarationPass(BindingContext context)
 			return;
 		}
 
+		// No intrinsic targets structs; verify so unknown/misapplied attributes still surface.
+		_ = VerifyAttributes(structDecl.Attributes, "Struct");
+
 		// If this is a generic struct template (e.g. struct Point<T>)
 		if (structDecl.GenericParameters.Count > 0)
 		{
@@ -168,15 +171,14 @@ public sealed class DeclarationPass(BindingContext context)
 		var parameters = new List<ParameterSymbol>();
 		foreach (var param in func.Parameters)
 		{
-			var paramType = context.ResolveType(param.Type);
-			if (paramType is null)
+			var paramSymbol = CreateParameter(param);
+			if (paramSymbol is null)
 			{
-				var currentFileContext = context.FileContexts[context.CurrentUnit!];
-				context.Diagnostics.Report(currentFileContext, param.Span, $"Unknown parameter type '{param.Type}'");
+				ReportDeclarationDiagnostic(param, $"Unknown parameter type '{param.Type}'");
 				continue;
 			}
 
-			parameters.Add(new ParameterSymbol(param.Name, paramType));
+			parameters.Add(paramSymbol);
 		}
 
 		var overloadedMangledName = context.GetOverloadedMangledName(mangledName, parameters.Select(p => p.Type).ToList());
@@ -190,6 +192,7 @@ public sealed class DeclarationPass(BindingContext context)
 		}
 
 		var newSymbol = new FunctionSymbol(overloadedMangledName, type, parameters);
+		ApplyFunctionAttributes(VerifyAttributes(func.Attributes, "Function"), newSymbol);
 		context.Globals.Declare(newSymbol);
 
 		if (!context.OverloadedFunctions.TryGetValue(mangledName, out var candidates))
@@ -199,6 +202,86 @@ public sealed class DeclarationPass(BindingContext context)
 		}
 
 		candidates.Add(newSymbol);
+	}
+
+	// M1 attribute model: only System.* intrinsics exist. Their [AttributeUsage]-style rules
+	// (syntactic target x safety context, per spec section 4) are modeled compiler-side until
+	// the language has enums/inheritance to declare them in source. Attributes are erased
+	// before emission - they never reach LLVM IR.
+	private static readonly Dictionary<string, (string[] Targets, string[] Contexts)> IntrinsicAttributes = new()
+	{
+		["UnsafeBody"] = (["Function", "Method", "Constructor", "Destructor"], ["Safe", "Unbound", "Unsafe"]),
+		["NoAlias"] = (["Function", "Method", "Parameter"], ["Unbound", "Unsafe"])
+	};
+
+	private static string? NormalizeAttributeName(string attributeName)
+	{
+		var simple = attributeName.Contains('.') ? attributeName[(attributeName.LastIndexOf('.') + 1)..] : attributeName;
+		if (simple.EndsWith("Attribute", StringComparison.Ordinal))
+			simple = simple[..^"Attribute".Length];
+
+		return IntrinsicAttributes.ContainsKey(simple) ? simple : null;
+	}
+
+	/// <summary>Verifies each attribute against its syntactic attach point and returns the canonical keys that passed.</summary>
+	private List<string> VerifyAttributes(IReadOnlyList<AttributeSyntax> attributes, string syntacticTarget)
+	{
+		var applied = new List<string>();
+		foreach (var attr in attributes)
+		{
+			var key = NormalizeAttributeName(attr.Name);
+			if (key is null)
+			{
+				ReportDeclarationDiagnostic(attr, $"Unknown attribute '{attr.Name}'.");
+				continue;
+			}
+
+			var (targets, contexts) = IntrinsicAttributes[key];
+			if (!targets.Contains(syntacticTarget))
+			{
+				ReportDeclarationDiagnostic(attr, $"Attribute '[{key}]' cannot be applied to {syntacticTarget.ToLowerInvariant()} declarations.");
+				continue;
+			}
+
+			if (!contexts.Contains("Safe"))
+			{
+				ReportDeclarationDiagnostic(attr, $"Attribute '[{key}]' can only be applied inside Unbound or Unsafe contexts.");
+				continue;
+			}
+
+			applied.Add(key);
+		}
+
+		return applied;
+	}
+
+	private static void ApplyFunctionAttributes(List<string> appliedKeys, FunctionSymbol symbol)
+	{
+		if (appliedKeys.Contains("UnsafeBody"))
+			symbol.IsUnsafeBody = true;
+
+		if (appliedKeys.Contains("NoAlias"))
+			symbol.IsNoAlias = true;
+	}
+
+	/// <summary>Resolves a parameter's type, verifies its attributes, and returns null when the type is unknown.</summary>
+	private ParameterSymbol? CreateParameter(ParameterSyntax param)
+	{
+		var paramType = context.ResolveType(param.Type);
+		if (paramType is null)
+			return null;
+
+		var symbol = new ParameterSymbol(param.Name, paramType);
+		if (VerifyAttributes(param.Attributes, "Parameter").Contains("NoAlias"))
+			symbol.IsNoAlias = true;
+
+		return symbol;
+	}
+
+	private void ReportDeclarationDiagnostic(SyntaxNode node, string message)
+	{
+		var currentFileContext = context.FileContexts[context.CurrentUnit!];
+		context.Diagnostics.Report(currentFileContext, node.Span, message);
 	}
 
 	private void DeclareExternFunction(ExternDeclarationSyntax ext)
@@ -291,15 +374,14 @@ public sealed class DeclarationPass(BindingContext context)
 			var parameters = new List<ParameterSymbol> { thisParam };
 			foreach (var param in method.Parameters)
 			{
-				var paramType = context.ResolveType(param.Type);
-				if (paramType is null)
+				var paramSymbol = CreateParameter(param);
+				if (paramSymbol is null)
 				{
-					var currentFileContext = context.FileContexts[context.CurrentUnit!];
-					context.Diagnostics.Report(currentFileContext, param.Span, $"Unknown parameter type '{param.Type}'");
+					ReportDeclarationDiagnostic(param, $"Unknown parameter type '{param.Type}'");
 					continue;
 				}
 
-				parameters.Add(new ParameterSymbol(param.Name, paramType));
+				parameters.Add(paramSymbol);
 			}
 
 			var returnType = context.ResolveType(method.ReturnType);
@@ -314,6 +396,9 @@ public sealed class DeclarationPass(BindingContext context)
 			var overloadedName = context.GetOverloadedMangledName(baseMangledName, parameters.Select(p => p.Type).ToList());
 
 			var newSymbol = new FunctionSymbol(overloadedName, returnType, parameters);
+			ApplyFunctionAttributes(
+				VerifyAttributes(method.Attributes, method.Name.StartsWith('~') ? "Destructor" : "Method"),
+				newSymbol);
 			context.Globals.Declare(newSymbol);
 
 			if (!context.OverloadedFunctions.TryGetValue(baseMangledName, out var candidates))
@@ -357,16 +442,15 @@ public sealed class DeclarationPass(BindingContext context)
 			var hasBadParam = false;
 			foreach (var param in ctorDecl.Parameters)
 			{
-				var paramType = context.ResolveType(param.Type);
-				if (paramType is null)
+				var paramSymbol = CreateParameter(param);
+				if (paramSymbol is null)
 				{
-					var currentFileContext = context.FileContexts[context.CurrentUnit!];
-					context.Diagnostics.Report(currentFileContext, param.Span, $"Unknown parameter type '{param.Type}'");
+					ReportDeclarationDiagnostic(param, $"Unknown parameter type '{param.Type}'");
 					hasBadParam = true;
 					continue;
 				}
 
-				ctorParameters.Add(new ParameterSymbol(param.Name, paramType));
+				ctorParameters.Add(paramSymbol);
 			}
 
 			if (hasBadParam)
@@ -375,6 +459,7 @@ public sealed class DeclarationPass(BindingContext context)
 			// 2. Register under the struct's name so 'T(...)' call sites resolve via existing overload machinery
 			var ctorOverloadedName = context.GetOverloadedMangledName(ctorBaseMangledName, ctorParameters.Select(p => p.Type).ToList());
 			var ctorSymbol = new FunctionSymbol(ctorOverloadedName, ctorStructType, ctorParameters);
+			ApplyFunctionAttributes(VerifyAttributes(ctorDecl.Attributes, "Constructor"), ctorSymbol);
 			context.Globals.Declare(ctorSymbol);
 
 			if (!context.OverloadedFunctions.TryGetValue(ctorBaseMangledName, out var ctorCandidates))

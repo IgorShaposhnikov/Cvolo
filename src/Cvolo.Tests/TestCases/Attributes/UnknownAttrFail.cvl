@@ -1,0 +1,10 @@
+[Bogus]
+int Compute()
+{
+    return 1;
+}
+
+int main()
+{
+    return Compute();
+}

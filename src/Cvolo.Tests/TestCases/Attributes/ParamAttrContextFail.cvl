@@ -1,0 +1,9 @@
+int Id([NoAlias] int y)
+{
+    return y;
+}
+
+int main()
+{
+    return 0;
+}

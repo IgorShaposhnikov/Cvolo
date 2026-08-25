@@ -1,0 +1,10 @@
+[NoAlias]
+int Compute()
+{
+    return 5;
+}
+
+int main()
+{
+    return Compute();
+}

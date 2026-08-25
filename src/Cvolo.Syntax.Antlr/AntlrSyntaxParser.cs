@@ -125,7 +125,29 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		}
 
 		var body = BuildBlockStatement(context.blockStatement());
-		return new FunctionDeclarationSyntax(SpanOf(context), returnType, name, generics, parameters, body);
+		var attributes = BuildAttributeList(context.attributeList());
+		return new FunctionDeclarationSyntax(SpanOf(context), returnType, name, generics, parameters, body, attributes);
+	}
+
+	private List<AttributeSyntax> BuildAttributeList(IEnumerable<CvoloParser.AttributeListContext> contexts)
+	{
+		var attributes = new List<AttributeSyntax>();
+		foreach (var listCtx in contexts)
+		{
+			foreach (var attrCtx in listCtx.attribute())
+			{
+				var args = new List<ExpressionSyntax>();
+				if (attrCtx.argumentList() is { } argList)
+				{
+					foreach (var arg in argList.expression())
+						args.Add(BuildExpression(arg));
+				}
+
+				attributes.Add(new AttributeSyntax(SpanOf(attrCtx), attrCtx.qualifiedName().GetText(), args));
+			}
+		}
+
+		return attributes;
 	}
 
 	private StructDeclarationSyntax BuildStructDeclaration(CvoloParser.StructDeclarationContext context)
@@ -143,14 +165,16 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		var fields = new List<StructFieldSyntax>();
 		foreach (var field in context.structField())
 			fields.Add(new StructFieldSyntax(SpanOf(field), GetTypeName(field.type()), field.Identifier().GetText()));
-		return new StructDeclarationSyntax(SpanOf(context), name, generics, fields);
+		var structAttributes = BuildAttributeList(context.attributeList());
+		return new StructDeclarationSyntax(SpanOf(context), name, generics, fields, structAttributes);
 	}
 
 	private ParameterSyntax BuildParameter(CvoloParser.ParameterContext context)
 	{
 		var type = GetTypeName(context.type());
 		var name = context.Identifier().GetText();
-		return new ParameterSyntax(SpanOf(context), type, name);
+		var attributes = BuildAttributeList(context.attributeList());
+		return new ParameterSyntax(SpanOf(context), type, name, attributes);
 	}
 
 	private BlockStatementSyntax BuildBlockStatement(CvoloParser.BlockStatementContext context)
@@ -627,7 +651,8 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		var destructors = new List<DestructorDeclarationSyntax>();
 		foreach (var dtorCtx in context.destructorDeclaration())
 		{
-			destructors.Add(new DestructorDeclarationSyntax(SpanOf(dtorCtx), dtorCtx.Identifier().GetText(), BuildBlockStatement(dtorCtx.blockStatement())));
+			var dtorAttributes = BuildAttributeList(dtorCtx.attributeList());
+			destructors.Add(new DestructorDeclarationSyntax(SpanOf(dtorCtx), dtorCtx.Identifier().GetText(), BuildBlockStatement(dtorCtx.blockStatement()), dtorAttributes));
 		}
 
 		var constructors = new List<ConstructorDeclarationSyntax>();
@@ -637,7 +662,8 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			foreach (var param in ctorCtx.parameterList().parameter())
 				ctorParams.Add(BuildParameter(param));
 
-			constructors.Add(new ConstructorDeclarationSyntax(SpanOf(ctorCtx), ctorCtx.Identifier().GetText(), ctorParams, BuildBlockStatement(ctorCtx.blockStatement())));
+			var ctorAttributes = BuildAttributeList(ctorCtx.attributeList());
+			constructors.Add(new ConstructorDeclarationSyntax(SpanOf(ctorCtx), ctorCtx.Identifier().GetText(), ctorParams, BuildBlockStatement(ctorCtx.blockStatement()), ctorAttributes));
 		}
 
 		return new ExtensionDeclarationSyntax(SpanOf(context), extendedTypeName, methods, destructors, constructors);

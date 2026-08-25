@@ -13,4 +13,10 @@ public sealed class FunctionSymbol(
 	public IReadOnlyList<ParameterSymbol> Parameters { get; } = parameters;
 	public bool IsExtern { get; } = isExtern;
 	public bool IsVariadic { get; } = isVariadic;
+
+	/// <summary>Intrinsic [UnsafeBody] marker - SafetyPass treats the body as unsafe (consumed by the unmanaged milestone).</summary>
+	public bool IsUnsafeBody { get; set; }
+
+	/// <summary>Intrinsic [NoAlias] marker - emitter attaches LLVM noalias to reference params (unbound/unsafe tiers).</summary>
+	public bool IsNoAlias { get; set; }
 }

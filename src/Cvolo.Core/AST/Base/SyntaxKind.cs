@@ -3,6 +3,7 @@ namespace Cvolo.Core.AST.Base;
 public enum SyntaxKind
 {
 	CompilationUnit,
+	Attribute,
 	FunctionDeclaration,
 	ExternDeclaration,
 	Parameter,

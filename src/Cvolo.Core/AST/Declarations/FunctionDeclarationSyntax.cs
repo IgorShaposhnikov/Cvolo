@@ -10,7 +10,8 @@ public sealed class FunctionDeclarationSyntax(
 	string name,
 	IReadOnlyList<string> genericParameters,
 	IReadOnlyList<ParameterSyntax> parameters,
-	BlockStatementSyntax body) : SyntaxNode(span)
+	BlockStatementSyntax body,
+	IReadOnlyList<AttributeSyntax>? attributes = null) : SyntaxNode(span)
 {
 	public override SyntaxKind Kind => SyntaxKind.FunctionDeclaration;
 
@@ -19,6 +20,7 @@ public sealed class FunctionDeclarationSyntax(
 	public IReadOnlyList<string> GenericParameters { get; } = genericParameters;
 	public IReadOnlyList<ParameterSyntax> Parameters { get; } = parameters;
 	public BlockStatementSyntax Body { get; } = body;
+	public IReadOnlyList<AttributeSyntax> Attributes { get; } = attributes ?? [];
 
 	public override IEnumerable<SyntaxNode> GetChildren()
 	{
