@@ -68,7 +68,20 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			return BuildStructDeclaration(structDecl);
 		if (context.extensionDeclaration() is { } extensionDecl)
 			return BuildExtensionDeclaration(extensionDecl);
+		if (context.globalVariableDeclaration() is { } globalDecl)
+			return BuildGlobalVariableDeclaration(globalDecl);
 		return null;
+	}
+
+	private GlobalVariableDeclarationSyntax BuildGlobalVariableDeclaration(CvoloParser.GlobalVariableDeclarationContext context)
+	{
+		var isMutable = context.VAR() is not null;
+		var type = GetTypeName(context.type());
+		var name = context.Identifier().GetText();
+		ExpressionSyntax? initializer = null;
+		if (context.expression() is { } exprCtx)
+			initializer = BuildExpression(exprCtx);
+		return new GlobalVariableDeclarationSyntax(SpanOf(context), type, name, initializer, isMutable);
 	}
 
 	private ExternDeclarationSyntax BuildExternDeclaration(CvoloParser.ExternDeclarationContext context)

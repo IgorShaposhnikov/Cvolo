@@ -32,6 +32,8 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	private readonly Dictionary<string, ExternDeclarationSyntax> _astExterns = [];
 	private readonly Dictionary<string, List<TypeSymbol>> _functionParameterTypes = [];
 	private readonly Dictionary<string, TypeSymbol> _functionReturnTypes = [];
+	private readonly Dictionary<string, LLVMValueRef> _globalVariables = [];
+	private readonly Dictionary<string, TypeSymbol> _globalVariableTypes = [];
 	private BindingContext? _bindingContext;
 	private CompilationContext? _compilationContext; // Renamed to avoid LLVM _context conflict
 	private CompilationUnitSyntax? _currentUnit;
@@ -83,6 +85,21 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			var llvmStruct = _llvmStructTypes[structType.Name];
 			var fieldTypes = structType.Fields.Select(f => GetLLVMType(f.Type)).ToArray();
 			llvmStruct.StructSetBody(fieldTypes, false);
+		}
+
+		// Pass B2: Emit data-segment globals ('global T name = <const>;')
+		foreach (var (globalNode, globalSymbol) in bindingContext.GlobalVariables)
+		{
+			if (_globalVariables.ContainsKey(globalNode.Name))
+				continue;
+
+			var llvmType = GetLLVMType(globalSymbol.Type);
+			var globalRef = _module.AddGlobal(llvmType, globalNode.Name);
+			globalRef.IsGlobalConstant = !globalSymbol.IsMutable;
+			globalRef.Linkage = LLVMLinkage.LLVMInternalLinkage;
+			globalRef.Initializer = BuildGlobalInitializer(globalSymbol.Type, globalNode.Initializer, llvmType);
+			_globalVariables[globalNode.Name] = globalRef;
+			_globalVariableTypes[globalNode.Name] = globalSymbol.Type;
 		}
 
 		// Pass C: Declare Extern functions and custom user-defined function signatures
@@ -327,6 +344,20 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		_heapAllocatedVars.Clear();
 		_movedVars.Clear();
 		_disposedVars.Clear();
+
+		// Seed data-segment globals into the local symbol table: a GlobalVariable IS a pointer,
+		// so loads/stores/field GEPs work through the ordinary machinery (locals shadow on redeclare).
+		foreach (var (globalName, globalRef) in _globalVariables)
+		{
+			if (!_locals.ContainsKey(globalName))
+				_locals[globalName] = globalRef;
+		}
+
+		foreach (var (globalName, globalType) in _globalVariableTypes)
+		{
+			if (!_variableTypes.ContainsKey(globalName))
+				_variableTypes[globalName] = globalType;
+		}
 
 		if (_bindingContext!.Globals.Lookup(mangledName) is FunctionSymbol sym)
 		{
@@ -1400,6 +1431,54 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		_builder.BuildCall2(exitType, exitFunc, new LLVMValueRef[] { LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1) }, "");
 		_builder.BuildUnreachable();
 	}
+
+	private LLVMValueRef BuildGlobalInitializer(TypeSymbol typeSymbol, ExpressionSyntax? initializer, LLVMTypeRef llvmType)
+	{
+		if (initializer is null)
+			return LLVMValueRef.CreateConstNull(llvmType);
+
+		switch (initializer)
+		{
+			case IntegerLiteralExpressionSyntax intLit:
+				return LLVMValueRef.CreateConstInt(llvmType, unchecked((ulong)intLit.Value));
+			case DoubleLiteralExpressionSyntax dblLit:
+				return LLVMValueRef.CreateConstReal(llvmType, dblLit.Value);
+			case BooleanLiteralExpressionSyntax boolLit:
+				return LLVMValueRef.CreateConstInt(LLVMTypeRef.Int1, boolLit.Value ? 1UL : 0UL);
+			case CharacterLiteralExpressionSyntax charLit:
+				return LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, charLit.Value);
+			case UnaryExpressionSyntax { Operator: "-" } unary:
+				switch (unary.Operand)
+				{
+					case IntegerLiteralExpressionSyntax negInt:
+						return LLVMValueRef.CreateConstInt(llvmType, unchecked((ulong)(long)-negInt.Value));
+					case DoubleLiteralExpressionSyntax negDbl:
+						return LLVMValueRef.CreateConstReal(llvmType, -negDbl.Value);
+					default:
+						return LLVMValueRef.CreateConstNull(llvmType);
+				}
+			case StructInitializationExpressionSyntax structInit when typeSymbol is StructTypeSymbol initStruct
+				&& _llvmStructTypes.TryGetValue(initStruct.Name, out var namedStruct):
+			{
+				var fieldValues = new List<LLVMValueRef>();
+				foreach (var field in initStruct.Fields)
+				{
+					var memberInit = structInit.Initializers.FirstOrDefault(m => m.MemberName == field.Name);
+					if (memberInit is not null && IsSimpleConstant(memberInit.Expression))
+						fieldValues.Add(BuildGlobalInitializer(field.Type, memberInit.Expression, GetLLVMType(field.Type)));
+					else
+						fieldValues.Add(LLVMValueRef.CreateConstNull(GetLLVMType(field.Type)));
+				}
+
+				return LLVMValueRef.CreateConstNamedStruct(namedStruct, [.. fieldValues]);
+			}
+			default:
+				return LLVMValueRef.CreateConstNull(llvmType);
+		}
+	}
+
+	private static bool IsSimpleConstant(ExpressionSyntax expr) =>
+		expr is IntegerLiteralExpressionSyntax or DoubleLiteralExpressionSyntax or BooleanLiteralExpressionSyntax or CharacterLiteralExpressionSyntax;
 
 	private LLVMTypeRef GetLLVMType(TypeSymbol t)
 	{

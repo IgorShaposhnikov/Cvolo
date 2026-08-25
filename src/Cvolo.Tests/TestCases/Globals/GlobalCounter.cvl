@@ -1,0 +1,17 @@
+using System;
+
+global var int Counter = 0;
+
+void Increment()
+{
+    Counter += 1;
+}
+
+int main()
+{
+    Increment();
+    Increment();
+    Increment();
+    Console.WriteLine($"Count: {Counter}");
+    return 0;
+}

@@ -23,6 +23,11 @@ declaration
 	| externDeclaration
 	| structDeclaration
 	| extensionDeclaration
+	| globalVariableDeclaration
+	;
+
+globalVariableDeclaration
+	: GLOBAL (VAL | VAR)? type Identifier (ASSIGN expression)? SEMI
 	;
 
 functionDeclaration

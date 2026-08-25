@@ -1,0 +1,5 @@
+int GetSeed() { return 42; }
+
+global int Bad = GetSeed();
+
+int main() { return 0; }

@@ -32,6 +32,8 @@ public sealed class BindingContext
 	public Dictionary<CallExpressionSyntax, FunctionSymbol> ResolvedCalls { get; } = [];
 	// Destructors registered via '~T()' extension members, keyed by the extended type name
 	public Dictionary<string, FunctionSymbol> Destructors { get; } = [];
+	// Data-segment globals in declaration order
+	public List<(GlobalVariableDeclarationSyntax Node, VariableSymbol Symbol)> GlobalVariables { get; } = [];
 	// Constructors registered via 'T(...)' extension members, keyed by the struct type name
 	public Dictionary<string, List<FunctionSymbol>> Constructors { get; } = [];
 

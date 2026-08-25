@@ -3,7 +3,7 @@ using Cvolo.Analysis.Symbols.Base;
 using Cvolo.Analysis.Symbols.Structs;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
-using static System.Net.Mime.MediaTypeNames;
+using Cvolo.Core.AST.Expressions;
 
 namespace Cvolo.Analysis.Passes;
 
@@ -40,6 +40,8 @@ public sealed class DeclarationPass(BindingContext context)
 					DeclareExternFunction(ext);
 				else if (member is ExtensionDeclarationSyntax extDecl)
 					DeclareExtension(extDecl);
+				else if (member is GlobalVariableDeclarationSyntax globalDecl)
+					DeclareGlobalVariable(globalDecl);
 			}
 		}
 	}
@@ -391,5 +393,52 @@ public sealed class DeclarationPass(BindingContext context)
 			}
 			registeredCtors.Add(ctorSymbol);
 		}
+	}
+
+	private void DeclareGlobalVariable(GlobalVariableDeclarationSyntax globalDecl)
+	{
+		var type = context.ResolveType(globalDecl.Type);
+		if (type is null)
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, globalDecl.Span, $"Unknown type '{globalDecl.Type}' in global variable '{globalDecl.Name}'.");
+			return;
+		}
+
+		if (context.Globals.Lookup(globalDecl.Name) is not null)
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, globalDecl.Span, $"Duplicate definition of global variable '{globalDecl.Name}'.");
+			return;
+		}
+
+		if (!IsCompileTimeConstant(globalDecl.Initializer))
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, globalDecl.Span, $"Global variable '{globalDecl.Name}' must be initialized with a compile-time constant.");
+			return;
+		}
+
+		var symbol = new VariableSymbol(globalDecl.Name, type, isMutable: globalDecl.IsMutable)
+		{
+			IsInitialized = true,
+			IsGlobal = true
+		};
+		context.Globals.Declare(symbol);
+		context.GlobalVariables.Add((globalDecl, symbol));
+	}
+
+	private static bool IsCompileTimeConstant(ExpressionSyntax? expr)
+	{
+		if (expr is null)
+			return true; // zero-initialized
+
+		return expr switch
+		{
+			IntegerLiteralExpressionSyntax or DoubleLiteralExpressionSyntax or BooleanLiteralExpressionSyntax or CharacterLiteralExpressionSyntax => true,
+			UnaryExpressionSyntax { Operator: "-" } unary => IsCompileTimeConstant(unary.Operand),
+			StructInitializationExpressionSyntax structInit => structInit.Initializers.All(static m => IsCompileTimeConstant(m.Expression)),
+			_ => false
+		};
 	}
 }

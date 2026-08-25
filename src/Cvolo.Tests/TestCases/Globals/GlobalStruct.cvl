@@ -1,0 +1,20 @@
+using System;
+
+struct Point {
+    int X;
+    int Y;
+}
+
+extension Point {
+    void Print() {
+        Console.WriteLine($"X={X}, Y={Y}");
+    }
+}
+
+global Point origin = Point { X: 100, Y: 200 };
+
+int main()
+{
+    origin.Print();
+    return 0;
+}

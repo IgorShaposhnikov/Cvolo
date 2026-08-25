@@ -46,6 +46,12 @@ public abstract class AstRewriterBase
 			return new DestructorDeclarationSyntax(dtor.Span, dtor.StructName, rewrittenDtorBody);
 		}
 
+		if (node is GlobalVariableDeclarationSyntax globalDecl)
+		{
+			var rewrittenInit = globalDecl.Initializer != null ? (ExpressionSyntax)Rewrite(globalDecl.Initializer) : null;
+			return new GlobalVariableDeclarationSyntax(globalDecl.Span, globalDecl.Type, globalDecl.Name, rewrittenInit, globalDecl.IsMutable);
+		}
+
 		if (node is ConstructorDeclarationSyntax ctor)
 		{
 			var rewrittenCtorParams = ctor.Parameters.Select(p => new ParameterSyntax(p.Span, p.Type, p.Name)).ToList();

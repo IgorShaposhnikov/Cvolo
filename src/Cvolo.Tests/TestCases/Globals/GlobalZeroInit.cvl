@@ -1,0 +1,9 @@
+using System;
+
+global int Unset;
+
+int main()
+{
+    Console.WriteLine($"Unset: {Unset}");
+    return 0;
+}

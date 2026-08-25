@@ -28,6 +28,7 @@ PANIC: 'panic';
 EXTENSION: 'extension';
 NAMESPACE: 'namespace';
 USING: 'using';
+GLOBAL: 'global';
 
 // Punctuation
 LPAREN: '(';

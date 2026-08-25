@@ -1,0 +1,14 @@
+using System;
+
+global int ReadOnly = 10;
+
+void TryWrite()
+{
+    ReadOnly += 1;
+}
+
+int main()
+{
+    Console.WriteLine($"Value: {ReadOnly}");
+    return 0;
+}
