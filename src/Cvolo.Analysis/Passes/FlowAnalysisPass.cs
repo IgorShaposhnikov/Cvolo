@@ -33,7 +33,7 @@ public sealed class FlowAnalysisPass(BindingContext context)
 		foreach (var param in func.Parameters)
 		{
 			var type = context.ResolveType(param.Type);
-			if (type != null) scope.Declare(new VariableSymbol(param.Name, type, false) { IsInitialized = true });
+			if (type != null) scope.Declare(new VariableSymbol(param.Name, type, false) { IsInitialized = true, Origin = OriginKind.Parameter });
 		}
 
 		AnalyzeBlock(func.Body, scope);

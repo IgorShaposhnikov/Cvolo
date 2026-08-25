@@ -1,0 +1,9 @@
+struct Point {
+    int X;
+    int Y;
+}
+
+ref Point GetDangling() {
+    var Point p = Point { X: 10, Y: 20 };
+    return ref p;
+}

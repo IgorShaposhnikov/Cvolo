@@ -587,7 +587,8 @@ public sealed class DeclarationPass(BindingContext context)
 		var symbol = new VariableSymbol(globalDecl.Name, type, isMutable: globalDecl.IsMutable)
 		{
 			IsInitialized = true,
-			IsGlobal = true
+			IsGlobal = true,
+			Origin = OriginKind.Global
 		};
 		context.Globals.Declare(symbol);
 		context.GlobalVariables.Add((globalDecl, symbol));

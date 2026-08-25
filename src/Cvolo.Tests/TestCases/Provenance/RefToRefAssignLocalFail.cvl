@@ -1,0 +1,11 @@
+struct Point {
+    int X;
+    int Y;
+}
+
+ref Point TwoHopDangling() {
+    var Point p = Point { X: 10, Y: 20 };
+    refvar r1 = ref p;
+    refvar r2 = r1;
+    return ref r2;
+}

@@ -39,7 +39,7 @@ public sealed class SafetyPass(BindingContext context)
 		foreach (var param in func.Parameters)
 		{
 			var type = context.ResolveType(param.Type);
-			if (type != null) scope.Declare(new VariableSymbol(param.Name, type, false) { IsInitialized = true });
+			if (type != null) scope.Declare(new VariableSymbol(param.Name, type, false) { IsInitialized = true, Origin = OriginKind.Parameter });
 		}
 		CheckBlockSafety(func.Body, scope, func);
 	}
@@ -58,19 +58,27 @@ public sealed class SafetyPass(BindingContext context)
 	{
 		switch (stmt)
 		{
-			case VariableDeclarationSyntax v:
-				if (context.VariableSymbols.TryGetValue(v, out var sym))
+		case VariableDeclarationSyntax v:
+			if (context.VariableSymbols.TryGetValue(v, out var sym))
+			{
+				scope.Declare(sym);
+				if (v.Initializer != null)
 				{
-					scope.Declare(sym);
-					if (v.Initializer != null)
-					{
-						CheckExpressionSafety(v.Initializer, scope);
-						EmitLargeCopyWarningIfNeeded(v.Initializer, scope);
-					}
-					VerifyBorrowRules(v, scope);
-				}
+					CheckExpressionSafety(v.Initializer, scope);
+					EmitLargeCopyWarningIfNeeded(v.Initializer, scope);
 
-				break;
+					// Propagate origin through ref/refvar declarations
+					if (v.Type is "ref" or "refvar" && v.Initializer is BorrowExpressionSyntax borrowExpr)
+					{
+						var borrowedName = GetBaseIdentifierName(borrowExpr.Expression);
+						if (borrowedName != null && scope.Lookup(borrowedName) is VariableSymbol borrowed)
+							sym.Origin = borrowed.Origin;
+					}
+				}
+				VerifyBorrowRules(v, scope);
+			}
+
+			break;
 
 			case ReturnStatementSyntax r:
 				if (r.Expression != null) CheckExpressionSafety(r.Expression, scope);
@@ -124,22 +132,37 @@ public sealed class SafetyPass(BindingContext context)
 
 				break;
 
-			case BinaryExpressionSyntax bin:
-				CheckExpressionSafety(bin.Right, scope);
-				if (bin.Operator == "=" && bin.Left is IdentifierExpressionSyntax leftId)
+		case BinaryExpressionSyntax bin:
+			CheckExpressionSafety(bin.Right, scope);
+			if (bin.Operator == "=" && bin.Left is IdentifierExpressionSyntax leftId)
+			{
+				if (scope.Lookup(leftId.Name) is VariableSymbol leftSymbol)
 				{
-					if (scope.Lookup(leftId.Name) is VariableSymbol leftSymbol)
+					leftSymbol.IsMoved = false;
+					HandleCopyAssignment(bin.Right, scope);
+
+					// Propagate origin on ref/refvar reassignment
+					if (leftSymbol.Type is PointerTypeSymbol)
 					{
-						leftSymbol.IsMoved = false;
-						HandleCopyAssignment(bin.Right, scope);
+						if (bin.Right is BorrowExpressionSyntax rb)
+						{
+							var rightName = GetBaseIdentifierName(rb.Expression);
+							if (rightName != null && scope.Lookup(rightName) is VariableSymbol rightSym)
+								leftSymbol.Origin = rightSym.Origin;
+						}
+						else if (bin.Right is IdentifierExpressionSyntax rightId && scope.Lookup(rightId.Name) is VariableSymbol rightSym2 && rightSym2.Type is PointerTypeSymbol)
+						{
+							leftSymbol.Origin = rightSym2.Origin;
+						}
 					}
 				}
-				else
-				{
-					CheckExpressionSafety(bin.Left, scope);
-				}
+			}
+			else
+			{
+				CheckExpressionSafety(bin.Left, scope);
+			}
 
-				break;
+			break;
 		}
 	}
 
@@ -251,9 +274,22 @@ public sealed class SafetyPass(BindingContext context)
 
 	private void VerifyReturnLifetime(ReturnStatementSyntax ret, FunctionDeclarationSyntax func, SymbolTable scope)
 	{
-		if (ret.Expression is BorrowExpressionSyntax borrow && borrow.Expression is IdentifierExpressionSyntax id)
+		if (ret.Expression == null) return;
+
+		// Case 1: return ref expr; — BorrowExpressionSyntax wrapping an identifier
+		if (ret.Expression is BorrowExpressionSyntax borrow && borrow.Expression is IdentifierExpressionSyntax bid)
 		{
-			if (!func.Parameters.Any(p => p.Name == id.Name))
+			if (scope.Lookup(bid.Name) is VariableSymbol sym && sym.Origin == OriginKind.Local)
+			{
+				context.Diagnostics.Report(context.CurrentUnit!.Context, ret.Expression.Span, $"Cannot return reference to local variable '{bid.Name}' (dangling reference)");
+			}
+			return;
+		}
+
+		// Case 2: return r; where r is a ref/refvar variable (PointerTypeSymbol)
+		if (ret.Expression is IdentifierExpressionSyntax id)
+		{
+			if (scope.Lookup(id.Name) is VariableSymbol idSym && idSym.Type is PointerTypeSymbol && idSym.Origin == OriginKind.Local)
 			{
 				context.Diagnostics.Report(context.CurrentUnit!.Context, ret.Expression.Span, $"Cannot return reference to local variable '{id.Name}' (dangling reference)");
 			}

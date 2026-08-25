@@ -1,0 +1,20 @@
+using System;
+
+struct Point {
+    int X;
+    int Y;
+}
+
+ref Point ChooseMax(ref Point a, ref Point b) {
+    if (a.X > b.X) {
+        return a;
+    }
+    return b;
+}
+
+int main() {
+    var Point p1 = Point { X: 10, Y: 20 };
+    var Point p2 = Point { X: 30, Y: 40 };
+    ChooseMax(ref p1, ref p2);
+    return 0;
+}

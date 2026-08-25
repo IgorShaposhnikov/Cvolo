@@ -1,0 +1,18 @@
+using System;
+
+struct Point {
+    int X;
+    int Y;
+}
+
+global Point globalPoint = Point { X: 100, Y: 200 };
+
+ref Point GetGlobalPoint() {
+    return ref globalPoint;
+}
+
+int main() {
+    GetGlobalPoint();
+    Console.WriteLine(globalPoint.X);
+    return 0;
+}
