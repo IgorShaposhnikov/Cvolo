@@ -19,7 +19,7 @@ internal sealed class CompilerDriver : ICompilerDriver
 {
 	private static readonly string[] _linkerCandidates = ["clang", "gcc", "g++"];
 
-	public int Compile(string path, bool llvmOnly, bool isShared, bool emitIr, string optLevel, bool checkOnly = false, bool runAfterCompile = false, bool verbose = false, bool emitLowered = false, string? noWarn = null)
+	public int Compile(string path, bool llvmOnly, bool isShared, bool emitIr, string optLevel, bool checkOnly = false, bool runAfterCompile = false, bool verbose = false, bool emitLowered = false, string? noWarn = null, bool suppressWarnings = false)
 	{
 		// Diagnostics whose ids appear here are dropped from the warning stream entirely.
 		var noWarnIds = noWarn?
@@ -141,16 +141,19 @@ internal sealed class CompilerDriver : ICompilerDriver
 		}
 
 		// Warnings never fail compilation; they are printed and the pipeline continues.
-		foreach (var diag in binder.Diagnostics.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Warning))
+		if (!suppressWarnings)
 		{
-			if (diag.Id is not null && noWarnIds?.Contains(diag.Id) == true)
-				continue;
-
-			var label = diag.Id is null ? "Analysis Warning" : $"Analysis Warning {diag.Id}";
-			var warningLines = diag.Context.FormatDiagnostic(label, diag.Message, diag.Span);
-			foreach (var line in warningLines)
+			foreach (var diag in binder.Diagnostics.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Warning))
 			{
-				Console.Error.WriteLine(line);
+				if (diag.Id is not null && noWarnIds?.Contains(diag.Id) == true)
+					continue;
+
+				var label = diag.Id is null ? "Analysis Warning" : $"Analysis Warning {diag.Id}";
+				var warningLines = diag.Context.FormatDiagnostic(label, diag.Message, diag.Span, compact: true);
+				foreach (var line in warningLines)
+				{
+					Console.Error.WriteLine(line);
+				}
 			}
 		}
 

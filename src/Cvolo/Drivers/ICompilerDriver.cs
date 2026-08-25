@@ -18,6 +18,7 @@ public interface ICompilerDriver
 	/// <param name="verbose">If set to <c>true</c>, prints detailed compiler instrumentation, targets, and linkage diagnostic details.</param>
 	/// <param name="emitLowered">If set to <c>true</c>, prints the compiler-lowered (desugared) Cvolo source directly to stdout and exits early.</param>
 	/// <param name="noWarn">Comma-separated diagnostic ids (e.g. "CVL1001") whose warnings are suppressed.</param>
+	/// <param name="suppressWarnings">If set to <c>true</c>, all warnings are suppressed from output (used by <c>run</c> by default).</param>
 	/// <returns>The exit status code of the compilation pass (0 for success, non-zero for failures).</returns>
-	int Compile(string path, bool llvmOnly, bool isShared, bool emitIr, string optLevel, bool checkOnly = false, bool runAfterCompile = false, bool verbose = false, bool emitLowered = false, string? noWarn = null);
+	int Compile(string path, bool llvmOnly, bool isShared, bool emitIr, string optLevel, bool checkOnly = false, bool runAfterCompile = false, bool verbose = false, bool emitLowered = false, string? noWarn = null, bool suppressWarnings = false);
 }

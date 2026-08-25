@@ -23,21 +23,36 @@ public sealed class CompilationContext(string source, string filePath)
 		return lineIndex >= 1 && lineIndex <= lines.Length ? lines[lineIndex - 1].TrimEnd('\r') : "";
 	}
 
-	public List<string> FormatDiagnostic(string header, string message, TextSpan span, bool prependNewLine = false, bool appendNewLine = true)
+	public List<string> FormatDiagnostic(string header, string message, TextSpan span, bool prependNewLine = false, bool appendNewLine = true, bool compact = false)
 	{
 		var (lineNum, colNum) = GetCoordinates(span.Start);
-		var originalLine = GetSourceLine(lineNum);
-		var lineText = originalLine.TrimStart();
-		var trimmedCount = originalLine.Length - lineText.Length;
 
 		// ANSI Color Codes mapping to standard C# ConsoleColors
 		var red = "\x1b[31m";       // ConsoleColor.Red
 		var gray = "\x1b[90m";      // ConsoleColor.DarkGray
+		var reset = "\x1b[0m";      // Console.ResetColor()
+
+		if (compact)
+		{
+			var yellow = "\x1b[33m";  // ConsoleColor.Yellow
+
+			return
+			[
+				..(prependNewLine ? [""] : Array.Empty<string>()),
+				$"{yellow}[{header}]:{reset}",
+				$"{gray}  1. [Line {lineNum}, Col {colNum}]: {message}{reset}",
+				..(appendNewLine ? [""] : Array.Empty<string>()),
+			];
+		}
+
+		var originalLine = GetSourceLine(lineNum);
+		var lineText = originalLine.TrimStart();
+		var trimmedCount = originalLine.Length - lineText.Length;
+
 		var darkCyan = "\x1b[36m";  // ConsoleColor.DarkCyan
 		var cyan = "\x1b[96m";      // ConsoleColor.Cyan
 		var blue = "\x1b[94m";      // ConsoleColor.Blue
 		var white = "\x1b[37m";     // ConsoleColor.White
-		var reset = "\x1b[0m";      // Console.ResetColor()
 
 		var coordStr = $"({lineNum},{colNum})";
 		var paddedCoordStr = coordStr.PadRight(16); // Aligns the file paths nicely
