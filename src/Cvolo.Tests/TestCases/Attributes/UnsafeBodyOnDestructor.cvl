@@ -1,0 +1,30 @@
+using System;
+
+struct Session
+{
+    int Id;
+}
+
+extension Session
+{
+    Session(int id)
+    {
+        Id = id;
+    }
+
+    [UnsafeBody]
+    [SuppressWarning("UnsafeBodyNoEffect")]
+    ~Session()
+    {
+        Console.WriteLine($"Closing session {Id}");
+    }
+}
+
+int main()
+{
+    {
+        var Session s = Session(7);
+        Console.WriteLine("inside block");
+    }
+    return 0;
+}

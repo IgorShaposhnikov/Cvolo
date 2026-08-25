@@ -192,7 +192,9 @@ public sealed class DeclarationPass(BindingContext context)
 		}
 
 		var newSymbol = new FunctionSymbol(overloadedMangledName, type, parameters);
-		ApplyFunctionAttributes(VerifyAttributes(func.Attributes, "Function"), newSymbol);
+		var suppressedWarnings = new List<string>();
+		ApplyFunctionAttributes(VerifyAttributes(func.Attributes, "Function", suppressedWarnings), newSymbol, suppressedWarnings);
+		WarnIfUnsafeBodyUnused(func.Span, func.Body, newSymbol, suppressedWarnings);
 		context.Globals.Declare(newSymbol);
 
 		if (!context.OverloadedFunctions.TryGetValue(mangledName, out var candidates))
@@ -211,8 +213,11 @@ public sealed class DeclarationPass(BindingContext context)
 	private static readonly Dictionary<string, (string[] Targets, string[] Contexts)> IntrinsicAttributes = new()
 	{
 		["UnsafeBody"] = (["Function", "Method", "Constructor", "Destructor"], ["Safe", "Unbound", "Unsafe"]),
-		["NoAlias"] = (["Function", "Method", "Parameter"], ["Unbound", "Unsafe"])
+		["NoAlias"] = (["Function", "Method", "Parameter"], ["Unbound", "Unsafe"]),
+		["SuppressWarning"] = (["Function", "Method", "Constructor", "Destructor"], ["Safe", "Unbound", "Unsafe"])
 	};
+
+	private static readonly HashSet<string> KnownWarningIds = ["UnsafeBodyNoEffect"];
 
 	private static string? NormalizeAttributeName(string attributeName)
 	{
@@ -224,15 +229,22 @@ public sealed class DeclarationPass(BindingContext context)
 	}
 
 	/// <summary>Verifies each attribute against its syntactic attach point and returns the canonical keys that passed.</summary>
-	private List<string> VerifyAttributes(IReadOnlyList<AttributeSyntax> attributes, string syntacticTarget)
+	private List<string> VerifyAttributes(IReadOnlyList<AttributeSyntax> attributes, string syntacticTarget, List<string>? suppressedWarnings = null)
 	{
 		var applied = new List<string>();
+		var seen = new HashSet<string>();
 		foreach (var attr in attributes)
 		{
 			var key = NormalizeAttributeName(attr.Name);
 			if (key is null)
 			{
 				ReportDeclarationDiagnostic(attr, $"Unknown attribute '{attr.Name}'.");
+				continue;
+			}
+
+			if (!seen.Add(key))
+			{
+				ReportDeclarationDiagnostic(attr, $"Duplicate attribute '[{key}]'.");
 				continue;
 			}
 
@@ -249,19 +261,61 @@ public sealed class DeclarationPass(BindingContext context)
 				continue;
 			}
 
+			if (key == "SuppressWarning")
+			{
+				ApplySuppressWarning(attr, suppressedWarnings);
+				continue;
+			}
+
 			applied.Add(key);
 		}
 
 		return applied;
 	}
 
-	private static void ApplyFunctionAttributes(List<string> appliedKeys, FunctionSymbol symbol)
+	private void ApplySuppressWarning(AttributeSyntax attr, List<string>? suppressedWarnings)
+	{
+		if (attr.Arguments.Count != 1 || attr.Arguments[0] is not StringLiteralExpressionSyntax literal)
+		{
+			ReportDeclarationDiagnostic(attr, "Attribute '[SuppressWarning]' requires exactly one string literal argument.");
+			return;
+		}
+
+		var warningId = literal.Value;
+		if (!KnownWarningIds.Contains(warningId))
+		{
+			ReportDeclarationDiagnostic(attr, $"Unknown warning id '{warningId}'.");
+			return;
+		}
+
+		suppressedWarnings?.Add(warningId);
+	}
+
+	private static void ApplyFunctionAttributes(List<string> appliedKeys, FunctionSymbol symbol, List<string> suppressedWarnings)
 	{
 		if (appliedKeys.Contains("UnsafeBody"))
 			symbol.IsUnsafeBody = true;
 
 		if (appliedKeys.Contains("NoAlias"))
 			symbol.IsNoAlias = true;
+
+		foreach (var warningId in suppressedWarnings)
+			symbol.SuppressedWarnings.Add(warningId);
+	}
+
+	/// <summary>Flags [UnsafeBody] declarations whose bodies contain nothing unsafe; suppressible via [SuppressWarning].</summary>
+	private void WarnIfUnsafeBodyUnused(Core.Diagnostics.TextSpan declarationSpan, SyntaxNode body, FunctionSymbol symbol, List<string> suppressedWarnings)
+	{
+		if (!symbol.IsUnsafeBody || suppressedWarnings.Contains("UnsafeBodyNoEffect"))
+			return;
+
+		if (UnsafeOperationScanner.ContainsUnsafeOperations(body))
+			return;
+
+		context.Diagnostics.ReportWarning(
+			context.FileContexts[context.CurrentUnit!],
+			declarationSpan,
+			"'[UnsafeBody]' attribute has no effect because function contains no unsafe operations.");
 	}
 
 	/// <summary>Resolves a parameter's type, verifies its attributes, and returns null when the type is unknown.</summary>
@@ -396,9 +450,12 @@ public sealed class DeclarationPass(BindingContext context)
 			var overloadedName = context.GetOverloadedMangledName(baseMangledName, parameters.Select(p => p.Type).ToList());
 
 			var newSymbol = new FunctionSymbol(overloadedName, returnType, parameters);
+			var methodSuppressedWarnings = new List<string>();
 			ApplyFunctionAttributes(
-				VerifyAttributes(method.Attributes, method.Name.StartsWith('~') ? "Destructor" : "Method"),
-				newSymbol);
+				VerifyAttributes(method.Attributes, method.Name.StartsWith('~') ? "Destructor" : "Method", methodSuppressedWarnings),
+				newSymbol,
+				methodSuppressedWarnings);
+			WarnIfUnsafeBodyUnused(method.Span, method.Body, newSymbol, methodSuppressedWarnings);
 			context.Globals.Declare(newSymbol);
 
 			if (!context.OverloadedFunctions.TryGetValue(baseMangledName, out var candidates))
@@ -459,7 +516,9 @@ public sealed class DeclarationPass(BindingContext context)
 			// 2. Register under the struct's name so 'T(...)' call sites resolve via existing overload machinery
 			var ctorOverloadedName = context.GetOverloadedMangledName(ctorBaseMangledName, ctorParameters.Select(p => p.Type).ToList());
 			var ctorSymbol = new FunctionSymbol(ctorOverloadedName, ctorStructType, ctorParameters);
-			ApplyFunctionAttributes(VerifyAttributes(ctorDecl.Attributes, "Constructor"), ctorSymbol);
+			var ctorSuppressedWarnings = new List<string>();
+			ApplyFunctionAttributes(VerifyAttributes(ctorDecl.Attributes, "Constructor", ctorSuppressedWarnings), ctorSymbol, ctorSuppressedWarnings);
+			WarnIfUnsafeBodyUnused(ctorDecl.Span, ctorDecl.Body, ctorSymbol, ctorSuppressedWarnings);
 			context.Globals.Declare(ctorSymbol);
 
 			if (!context.OverloadedFunctions.TryGetValue(ctorBaseMangledName, out var ctorCandidates))

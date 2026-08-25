@@ -1,0 +1,23 @@
+using System;
+
+struct Gauge
+{
+    int Level;
+}
+
+extension Gauge
+{
+    [UnsafeBody]
+    [SuppressWarning("UnsafeBodyNoEffect")]
+    Gauge(int level)
+    {
+        Level = level;
+    }
+}
+
+int main()
+{
+    var Gauge g = Gauge(9);
+    Console.WriteLine($"Level: {g.Level}");
+    return 0;
+}

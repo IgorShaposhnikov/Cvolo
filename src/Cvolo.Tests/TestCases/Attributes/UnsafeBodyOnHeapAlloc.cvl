@@ -1,0 +1,15 @@
+using System;
+
+[UnsafeBody]
+int FirstElement()
+{
+    var int[] data = heap int[4];
+    data[0] = 42;
+    return data[0];
+}
+
+int main()
+{
+    Console.WriteLine($"First: {FirstElement()}");
+    return 0;
+}

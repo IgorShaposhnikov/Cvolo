@@ -1,0 +1,17 @@
+[UnsafeBody]
+[UnsafeBody]
+int Compute()
+{
+    return 1;
+}
+
+[NoAlias, NoAlias]
+int Other()
+{
+    return 2;
+}
+
+int main()
+{
+    return Compute();
+}

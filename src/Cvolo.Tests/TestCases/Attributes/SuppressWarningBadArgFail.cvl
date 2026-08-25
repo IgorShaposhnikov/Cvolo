@@ -1,0 +1,10 @@
+[SuppressWarning(42)]
+int Compute()
+{
+    return 1;
+}
+
+int main()
+{
+    return Compute();
+}

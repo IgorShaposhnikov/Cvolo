@@ -135,6 +135,16 @@ internal sealed class CompilerDriver : ICompilerDriver
 			return 1;
 		}
 
+		// Warnings never fail compilation; they are printed and the pipeline continues.
+		foreach (var diag in binder.Diagnostics.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Warning))
+		{
+			var warningLines = diag.Context.FormatDiagnostic("Analysis Warning", diag.Message, diag.Span);
+			foreach (var line in warningLines)
+			{
+				Console.Error.WriteLine(line);
+			}
+		}
+
 		// 5. Short-circuit immediately if in rapid syntax/semantic check mode
 		if (checkOnly)
 		{
