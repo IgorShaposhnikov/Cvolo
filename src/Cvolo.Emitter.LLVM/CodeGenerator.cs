@@ -455,25 +455,24 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 	private void EmitReturnStatement(ReturnStatementSyntax ret)
 	{
-		EmitCleanup([.. _locals.Keys]);
-
 		if (ret.Expression is not null)
 		{
 			var value = EmitExpression(ret.Expression);
 			var type = GetExprType(ret.Expression);
 
-			if (type is StructTypeSymbol structType)
+			// Materialize memory-resident return values (structs living in allocas/heap
+			// slots) BEFORE scope cleanup frees them - the loaded register is what survives.
+			LLVMValueRef? materialized = null;
+			if (type is StructTypeSymbol structType && value.TypeOf.Kind == LLVMTypeKind.LLVMPointerTypeKind)
 			{
-				// If the evaluated value is a memory pointer, load the struct before returning
-				if (value.TypeOf.Kind == LLVMTypeKind.LLVMPointerTypeKind)
-				{
-					var valReg = _builder.BuildLoad2(GetLLVMType(structType), value, "struct_ret_val");
-					_builder.BuildRet(valReg);
-				}
-				else
-				{
-					_builder.BuildRet(value);
-				}
+				materialized = _builder.BuildLoad2(GetLLVMType(structType), value, "struct_ret_val");
+			}
+
+			EmitCleanup([.. _locals.Keys]);
+
+			if (materialized is not null)
+			{
+				_builder.BuildRet(materialized.Value);
 			}
 			else
 			{
@@ -482,6 +481,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		}
 		else
 		{
+			EmitCleanup([.. _locals.Keys]);
 			_builder.BuildRetVoid();
 		}
 	}
