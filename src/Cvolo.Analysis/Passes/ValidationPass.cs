@@ -617,6 +617,7 @@ public sealed class ValidationPass(BindingContext context)
 			IntegerLiteralExpressionSyntax => TypeSymbol.Int,
 			DoubleLiteralExpressionSyntax => TypeSymbol.Double,
 			BooleanLiteralExpressionSyntax => TypeSymbol.Bool,
+			NullLiteralExpressionSyntax n => CheckNullLiteral(n),
 			StringLiteralExpressionSyntax => TypeSymbol.String,
 			CharacterLiteralExpressionSyntax => TypeSymbol.Char,
 			CallExpressionSyntax call when call.FunctionName == "sizeof" => TypeSymbol.Int,
@@ -1126,6 +1127,21 @@ public sealed class ValidationPass(BindingContext context)
 		}
 
 		CheckBlock(method.Body, localScope, method);
+	}
+
+	private readonly HashSet<NullLiteralExpressionSyntax> _checkedNullLiterals = new();
+
+	private TypeSymbol CheckNullLiteral(NullLiteralExpressionSyntax expr)
+	{
+		// GetExpressionType is consulted from several check paths; report each null
+		// literal only once regardless of how many times its type is inferred.
+		if (_checkedNullLiterals.Add(expr))
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, expr.Span, "The 'null' literal requires a pointer type and is not valid in safe code.");
+		}
+
+		return TypeSymbol.Int;
 	}
 
 	private bool DetectFieldMutation(SyntaxNode node, StructTypeSymbol structType)

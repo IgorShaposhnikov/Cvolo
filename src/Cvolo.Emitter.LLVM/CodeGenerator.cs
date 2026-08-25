@@ -500,6 +500,9 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				return EmitStringLiteral(strLit.Value);
 			case CharacterLiteralExpressionSyntax charLit:
 				return LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, charLit.Value);
+			case NullLiteralExpressionSyntax:
+				// Defensive: the binder rejects 'null' in safe code before emission.
+				return LLVMValueRef.CreateConstPointerNull(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0));
 			case IdentifierExpressionSyntax id:
 				return Load(id.Name);
 			case MemberAccessExpressionSyntax m:

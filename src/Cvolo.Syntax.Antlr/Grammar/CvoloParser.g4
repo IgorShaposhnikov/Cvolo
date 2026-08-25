@@ -184,6 +184,7 @@ expression
 	| CharLiteral																		# charLiteralExpression
 	| TRUE                                                  							# booleanLiteralExpression
 	| FALSE                                                 							# booleanLiteralExpression
+	| NULL                                                  							# nullLiteralExpression
 	| LPAREN expression RPAREN                              							# parenthesizedExpression
 	;
 

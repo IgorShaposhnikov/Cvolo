@@ -28,6 +28,7 @@ public enum SyntaxKind
 	ConstructorDeclaration,
 	DoubleLiteralExpression,
 	BooleanLiteralExpression,
+	NullLiteralExpression,
 	MemberAccessExpression,
 	StructInitializationExpression,
 	BorrowExpression,

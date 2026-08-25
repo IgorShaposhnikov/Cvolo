@@ -16,6 +16,7 @@ WHILE: 'while';
 FOR: 'for';
 TRUE: 'true';
 FALSE: 'false';
+NULL: 'null';
 VOID: 'void';
 INT: 'int';
 DOUBLE: 'double';
