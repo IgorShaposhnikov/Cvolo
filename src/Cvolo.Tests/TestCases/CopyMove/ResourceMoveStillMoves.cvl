@@ -1,0 +1,22 @@
+using System;
+
+struct Resource {
+    int Handle;
+}
+
+extension Resource {
+    ~Resource() {
+        Console.WriteLine($"Disposing {Handle}");
+    }
+}
+
+void Consume(Resource r) {
+    Console.WriteLine($"Consumed {r.Handle}");
+}
+
+int Main() {
+    var Resource r1 = Resource { Handle: 42 };
+    Consume(r1);
+    var int x = r1.Handle;
+    return 0;
+}

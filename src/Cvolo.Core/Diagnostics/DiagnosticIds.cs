@@ -19,4 +19,7 @@ public static class DiagnosticIds
 
 	/// <summary>Attribute name is not a known intrinsic; accepted and erased, but flagged for likely typos.</summary>
 	public const string UnknownAttribute = "CVL1002";
+
+	/// <summary>Large struct (&gt;16 bytes) passed by value; payload is duplicated. Consider passing by ref.</summary>
+	public const string LargeCopyWarning = "CVL1003";
 }

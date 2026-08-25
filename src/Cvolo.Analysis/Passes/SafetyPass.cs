@@ -1,4 +1,5 @@
 using Cvolo.Analysis.Symbols;
+using Cvolo.Analysis.Symbols.Base;
 using Cvolo.Analysis.Symbols.Borrowing;
 using Cvolo.Analysis.Symbols.Collections;
 using Cvolo.Analysis.Symbols.Structs;
@@ -6,12 +7,16 @@ using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
 using Cvolo.Core.AST.Expressions;
 using Cvolo.Core.AST.Statements;
+using Cvolo.Core.Diagnostics;
 
 namespace Cvolo.Analysis.Passes;
 
 public sealed class SafetyPass(BindingContext context)
 {
 	private readonly List<BorrowSymbol> _activeBorrows = [];
+	private ClassificationAnalyzer? _classification;
+
+	private ClassificationAnalyzer Classification => _classification ??= new ClassificationAnalyzer(context);
 
 	public void Process(IEnumerable<CompilationUnitSyntax> units)
 	{
@@ -31,7 +36,6 @@ public sealed class SafetyPass(BindingContext context)
 	{
 		_activeBorrows.Clear();
 		var scope = new SymbolTable(context.Globals);
-		// Parameters are always valid on entry
 		foreach (var param in func.Parameters)
 		{
 			var type = context.ResolveType(param.Type);
@@ -55,11 +59,14 @@ public sealed class SafetyPass(BindingContext context)
 		switch (stmt)
 		{
 			case VariableDeclarationSyntax v:
-				// CRITICAL: Retrieve the ALREADY EXISTING symbol from the context map
 				if (context.VariableSymbols.TryGetValue(v, out var sym))
 				{
 					scope.Declare(sym);
-					if (v.Initializer != null) CheckExpressionSafety(v.Initializer, scope);
+					if (v.Initializer != null)
+					{
+						CheckExpressionSafety(v.Initializer, scope);
+						EmitLargeCopyWarningIfNeeded(v.Initializer, scope);
+					}
 					VerifyBorrowRules(v, scope);
 				}
 
@@ -112,13 +119,7 @@ public sealed class SafetyPass(BindingContext context)
 				foreach (var arg in call.Arguments)
 				{
 					CheckExpressionSafety(arg, scope);
-					if (arg is IdentifierExpressionSyntax argId)
-					{
-						var argSymbol = scope.Lookup(argId.Name) as VariableSymbol;
-						// If we pass a struct by value, it is a MOVE
-						if (argSymbol != null && (argSymbol.Type is StructTypeSymbol || argSymbol.Type is SliceTypeSymbol))
-							argSymbol.IsMoved = true;
-					}
+					HandleByValueArgument(arg, scope);
 				}
 
 				break;
@@ -127,7 +128,11 @@ public sealed class SafetyPass(BindingContext context)
 				CheckExpressionSafety(bin.Right, scope);
 				if (bin.Operator == "=" && bin.Left is IdentifierExpressionSyntax leftId)
 				{
-					if (scope.Lookup(leftId.Name) is VariableSymbol leftSymbol) leftSymbol.IsMoved = false; // Re-initialize
+					if (scope.Lookup(leftId.Name) is VariableSymbol leftSymbol)
+					{
+						leftSymbol.IsMoved = false;
+						HandleCopyAssignment(bin.Right, scope);
+					}
 				}
 				else
 				{
@@ -135,6 +140,90 @@ public sealed class SafetyPass(BindingContext context)
 				}
 
 				break;
+		}
+	}
+
+	private void HandleByValueArgument(ExpressionSyntax arg, SymbolTable scope)
+	{
+		if (arg is StructInitializationExpressionSyntax or BorrowExpressionSyntax)
+			return;
+
+		var type = ResolveExpressionType(arg, scope);
+
+		if (type is StructTypeSymbol argStruct)
+		{
+			var kind = Classification.Classify(argStruct);
+			switch (kind)
+			{
+				case CopyKind.ResourceMove:
+					if (arg is IdentifierExpressionSyntax aid && scope.Lookup(aid.Name) is VariableSymbol av)
+						av.IsMoved = true;
+					break;
+				case CopyKind.LargeCopy:
+					var size = Classification.CalculateByteSize(argStruct);
+					context.Diagnostics.ReportWarning(
+						context.CurrentUnit!.Context, arg.Span,
+						$"'{argStruct.Name}' is {size} bytes. Copying by value duplicates the payload. Consider passing by 'ref'.",
+						DiagnosticIds.LargeCopyWarning);
+					break;
+			}
+		}
+		else if (type is SliceTypeSymbol)
+		{
+			if (arg is IdentifierExpressionSyntax sid && scope.Lookup(sid.Name) is VariableSymbol sv)
+				sv.IsMoved = true;
+		}
+	}
+
+	private void EmitLargeCopyWarningIfNeeded(ExpressionSyntax expr, SymbolTable scope)
+	{
+		if (expr is StructInitializationExpressionSyntax)
+			return;
+
+		var type = ResolveExpressionType(expr, scope);
+		if (type is StructTypeSymbol st)
+		{
+			var kind = Classification.Classify(st);
+			if (kind == CopyKind.LargeCopy)
+			{
+				var size = Classification.CalculateByteSize(st);
+				context.Diagnostics.ReportWarning(
+					context.CurrentUnit!.Context, expr.Span,
+					$"'{st.Name}' is {size} bytes. Copying by value duplicates the payload. Consider passing by 'ref'.",
+					DiagnosticIds.LargeCopyWarning);
+			}
+		}
+	}
+
+	private TypeSymbol? ResolveExpressionType(ExpressionSyntax expr, SymbolTable scope)
+	{
+		return expr switch
+		{
+			IdentifierExpressionSyntax id => scope.Lookup(id.Name) is VariableSymbol v ? v.Type : null,
+			CallExpressionSyntax call => context.ResolvedCalls.TryGetValue(call, out var func) ? func.ReturnType : null,
+			StructInitializationExpressionSyntax init => context.ResolveType(init.StructTypeName),
+			BorrowExpressionSyntax borrow => ResolveExpressionType(borrow.Expression, scope),
+			_ => null
+		};
+	}
+
+	private void HandleCopyAssignment(ExpressionSyntax rightExpr, SymbolTable scope)
+	{
+		if (rightExpr is not IdentifierExpressionSyntax rightId)
+			return;
+
+		var rightSymbol = scope.Lookup(rightId.Name) as VariableSymbol;
+		if (rightSymbol == null || rightSymbol.Type is not StructTypeSymbol rightStruct)
+			return;
+
+		var kind = Classification.Classify(rightStruct);
+		if (kind == CopyKind.LargeCopy)
+		{
+			var size = Classification.CalculateByteSize(rightStruct);
+			context.Diagnostics.ReportWarning(
+				context.CurrentUnit!.Context, rightId.Span,
+				$"'{rightId.Name}' is {size} bytes. Copying by value duplicates the payload. Consider passing by 'ref'.",
+				DiagnosticIds.LargeCopyWarning);
 		}
 	}
 

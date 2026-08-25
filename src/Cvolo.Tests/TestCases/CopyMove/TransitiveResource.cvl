@@ -1,0 +1,26 @@
+using System;
+
+struct Inner {
+    int Value;
+}
+
+extension Inner {
+    ~Inner() {
+        Console.WriteLine($"Disposing inner {Value}");
+    }
+}
+
+struct Outer {
+    Inner I;
+}
+
+void Consume(Outer o) {
+    Console.WriteLine($"Consumed {o.I.Value}");
+}
+
+int Main() {
+    var Outer o1 = Outer { I: Inner { Value: 99 } };
+    Consume(o1);
+    var int x = o1.I.Value;
+    return 0;
+}

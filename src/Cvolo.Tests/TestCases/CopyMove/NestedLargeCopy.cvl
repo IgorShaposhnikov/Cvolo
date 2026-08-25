@@ -1,0 +1,21 @@
+using System;
+
+struct Small {
+    double A;
+    double B;
+}
+
+struct Container {
+    Small S;
+    double Extra;
+}
+
+void Process(Container c) {
+    Console.WriteLine($"{c.Extra}");
+}
+
+int Main() {
+    var Container c1 = Container { S: Small { A: 1.0, B: 2.0 }, Extra: 3.0 };
+    Process(c1);
+    return 0;
+}

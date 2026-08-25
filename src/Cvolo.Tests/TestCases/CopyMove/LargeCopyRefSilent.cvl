@@ -1,0 +1,18 @@
+using System;
+
+struct BigStruct {
+    double A;
+    double B;
+    double C;
+    double D;
+}
+
+void Process(ref BigStruct b) {
+    Console.WriteLine($"{b.A}");
+}
+
+int Main() {
+    var BigStruct s = BigStruct { A: 1.0, B: 2.0, C: 3.0, D: 4.0 };
+    Process(ref s);
+    return 0;
+}
