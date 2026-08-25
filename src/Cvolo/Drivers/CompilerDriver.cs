@@ -19,8 +19,13 @@ internal sealed class CompilerDriver : ICompilerDriver
 {
 	private static readonly string[] _linkerCandidates = ["clang", "gcc", "g++"];
 
-	public int Compile(string path, bool llvmOnly, bool isShared, bool emitIr, string optLevel, bool checkOnly = false, bool runAfterCompile = false, bool verbose = false, bool emitLowered = false)
+	public int Compile(string path, bool llvmOnly, bool isShared, bool emitIr, string optLevel, bool checkOnly = false, bool runAfterCompile = false, bool verbose = false, bool emitLowered = false, string? noWarn = null)
 	{
+		// Diagnostics whose ids appear here are dropped from the warning stream entirely.
+		var noWarnIds = noWarn?
+			.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+			.Select(id => id.ToUpperInvariant())
+			.ToHashSet();
 		// 1. Load the project configuration (automatically walks up directory tree to locate standard libraries)
 		CompilationProject project;
 		try
@@ -138,7 +143,11 @@ internal sealed class CompilerDriver : ICompilerDriver
 		// Warnings never fail compilation; they are printed and the pipeline continues.
 		foreach (var diag in binder.Diagnostics.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Warning))
 		{
-			var warningLines = diag.Context.FormatDiagnostic("Analysis Warning", diag.Message, diag.Span);
+			if (diag.Id is not null && noWarnIds?.Contains(diag.Id) == true)
+				continue;
+
+			var label = diag.Id is null ? "Analysis Warning" : $"Analysis Warning {diag.Id}";
+			var warningLines = diag.Context.FormatDiagnostic(label, diag.Message, diag.Span);
 			foreach (var line in warningLines)
 			{
 				Console.Error.WriteLine(line);

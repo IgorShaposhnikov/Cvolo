@@ -4,6 +4,7 @@ using Cvolo.Analysis.Symbols.Structs;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
 using Cvolo.Core.AST.Expressions;
+using Cvolo.Core.Diagnostics;
 
 namespace Cvolo.Analysis.Passes;
 
@@ -217,7 +218,7 @@ public sealed class DeclarationPass(BindingContext context)
 		["SuppressWarning"] = (["Function", "Method", "Constructor", "Destructor"], ["Safe", "Unbound", "Unsafe"])
 	};
 
-	private static readonly HashSet<string> KnownWarningIds = ["UnsafeBodyNoEffect"];
+	private static readonly HashSet<string> KnownWarningIds = [DiagnosticIds.UnsafeBodyNoEffect];
 
 	private static string? NormalizeAttributeName(string attributeName)
 	{
@@ -306,7 +307,7 @@ public sealed class DeclarationPass(BindingContext context)
 	/// <summary>Flags [UnsafeBody] declarations whose bodies contain nothing unsafe; suppressible via [SuppressWarning].</summary>
 	private void WarnIfUnsafeBodyUnused(Core.Diagnostics.TextSpan declarationSpan, SyntaxNode body, FunctionSymbol symbol, List<string> suppressedWarnings)
 	{
-		if (!symbol.IsUnsafeBody || suppressedWarnings.Contains("UnsafeBodyNoEffect"))
+		if (!symbol.IsUnsafeBody || suppressedWarnings.Contains(DiagnosticIds.UnsafeBodyNoEffect))
 			return;
 
 		if (UnsafeOperationScanner.ContainsUnsafeOperations(body))
@@ -315,7 +316,8 @@ public sealed class DeclarationPass(BindingContext context)
 		context.Diagnostics.ReportWarning(
 			context.FileContexts[context.CurrentUnit!],
 			declarationSpan,
-			"'[UnsafeBody]' attribute has no effect because function contains no unsafe operations.");
+			"'[UnsafeBody]' attribute has no effect because function contains no unsafe operations.",
+			DiagnosticIds.UnsafeBodyNoEffect);
 	}
 
 	/// <summary>Resolves a parameter's type, verifies its attributes, and returns null when the type is unknown.</summary>

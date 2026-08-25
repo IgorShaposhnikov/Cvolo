@@ -27,11 +27,46 @@ public sealed class AttributesTests : CompilerTestBase
 		var (exitCode, stdout, stderr) = RunCompiler(fileName);
 
 		Assert.Equal(0, exitCode);
+		Assert.Contains("Analysis Warning CVL1001", stderr);
 		Assert.Contains("'[UnsafeBody]' attribute has no effect because function contains no unsafe operations.", stderr);
 
 		var (runCode, runStdout) = ExecuteBinary("UnsafeBodyNoEffectWarn", "Attributes");
 		Assert.Equal(0, runCode);
 		Assert.Contains("Answer: 42", runStdout);
+	}
+
+	[Fact]
+	public void Nowarn_Flag_Suppresses_Warning()
+	{
+		var fileName = "Attributes/UnsafeBodyNoEffectWarn.cvl";
+		var (exitCode, stdout, stderr) = RunCompiler(fileName, "--nowarn", "CVL1001");
+
+		Assert.Equal(0, exitCode);
+		Assert.DoesNotContain("has no effect", stderr);
+
+		var (runCode, runStdout) = ExecuteBinary("UnsafeBodyNoEffectWarn", "Attributes");
+		Assert.Equal(0, runCode);
+		Assert.Contains("Answer: 42", runStdout);
+	}
+
+	[Fact]
+	public void Nowarn_List_With_Unknown_Ids_Still_Suppresses_Match()
+	{
+		var fileName = "Attributes/UnsafeBodyNoEffectWarn.cvl";
+		var (exitCode, _, stderr) = RunCompiler(fileName, "--nowarn", "CVL9999,cvl1001");
+
+		Assert.Equal(0, exitCode);
+		Assert.DoesNotContain("has no effect", stderr);
+	}
+
+	[Fact]
+	public void Nowarn_Wrong_Id_Keeps_Warning()
+	{
+		var fileName = "Attributes/UnsafeBodyNoEffectWarn.cvl";
+		var (exitCode, _, stderr) = RunCompiler(fileName, "--nowarn", "CVL9999");
+
+		Assert.Equal(0, exitCode);
+		Assert.Contains("'[UnsafeBody]' attribute has no effect because function contains no unsafe operations.", stderr);
 	}
 
 	[Theory]

@@ -17,6 +17,7 @@ internal sealed class BuildCommand : Command
 		var verboseOption = new Option<bool>("--verbose", "-v") { Description = "Show verbose compiler debug and linkage information." };
 		var optOption = new Option<string>("--optimize", "-O", "Os") { Description = "Select optimization level (O0, O1, O2, O3, Os, Oz)" };
 		var emitLoweredOption = new Option<bool>("--emit-lowered", "-l") { Description = "Print lowered Cvolo source code directly to stdout" };
+		var nowarnOption = new Option<string>("--nowarn") { Description = "Comma-separated diagnostic ids whose warnings are suppressed (e.g. CVL1001)" };
 
 		Add(pathArg);
 		Add(llvmOption);
@@ -25,6 +26,7 @@ internal sealed class BuildCommand : Command
 		Add(optOption);
 		Add(verboseOption);
 		Add(emitLoweredOption);
+		Add(nowarnOption);
 
 		SetAction((ParseResult parseResult) =>
 		{
@@ -34,8 +36,9 @@ internal sealed class BuildCommand : Command
 			var emitIrVal = parseResult.GetValue(emitIrOption);
 			var optLevel = parseResult.GetValue(optOption) ?? "Os";
 			var emitLoweredVal = parseResult.GetValue(emitLoweredOption);
+			var noWarnVal = parseResult.GetValue(nowarnOption);
 
-			var exitCode = _compilerDriver.Compile(path, llvmOnly, isShared, emitIrVal, optLevel, emitLowered: emitLoweredVal);
+			var exitCode = _compilerDriver.Compile(path, llvmOnly, isShared, emitIrVal, optLevel, emitLowered: emitLoweredVal, noWarn: noWarnVal);
 			Environment.Exit(exitCode);
 		});
 	}

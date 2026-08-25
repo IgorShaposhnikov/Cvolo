@@ -8,7 +8,7 @@ struct Gauge
 extension Gauge
 {
     [UnsafeBody]
-    [SuppressWarning("UnsafeBodyNoEffect")]
+    [SuppressWarning("CVL1001")]
     Gauge(int level)
     {
         Level = level;

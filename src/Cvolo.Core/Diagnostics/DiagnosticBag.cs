@@ -13,9 +13,9 @@ public class DiagnosticBag
 		_diagnostics.Add(new Diagnostic(context, span, message));
 	}
 
-	public void ReportWarning(CompilationContext context, TextSpan span, string message)
+	public void ReportWarning(CompilationContext context, TextSpan span, string message, string? id = null)
 	{
-		_diagnostics.Add(new Diagnostic(context, span, message, DiagnosticSeverity.Warning));
+		_diagnostics.Add(new Diagnostic(context, span, message, DiagnosticSeverity.Warning, id));
 	}
 
 	public void AddRange(DiagnosticBag other)

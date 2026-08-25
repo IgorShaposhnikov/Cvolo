@@ -13,7 +13,7 @@ extension Session
     }
 
     [UnsafeBody]
-    [SuppressWarning("UnsafeBodyNoEffect")]
+    [SuppressWarning("CVL1001")]
     ~Session()
     {
         Console.WriteLine($"Closing session {Id}");

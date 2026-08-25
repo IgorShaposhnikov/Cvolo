@@ -1,7 +1,7 @@
 using System;
 
 [UnsafeBody]
-[SuppressWarning("UnsafeBodyNoEffect")]
+[SuppressWarning("CVL1001")]
 int Compute()
 {
     return 6 * 7;

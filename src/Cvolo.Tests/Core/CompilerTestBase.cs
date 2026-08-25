@@ -38,7 +38,7 @@ public abstract class CompilerTestBase
 		return (asts, binder.Context);
 	}
 
-	protected (int ExitCode, string StdOut, string StdErr) RunCompiler(string sourcePath)
+	protected (int ExitCode, string StdOut, string StdErr) RunCompiler(string sourcePath, params string[] extraArgs)
 	{
 		var assemblyDir = Path.GetDirectoryName(typeof(CompilerTestBase).Assembly.Location)!;
 		var compilerExe = Path.Combine(assemblyDir, OperatingSystem.IsWindows() ? "Cvolo.exe" : "Cvolo");
@@ -56,7 +56,7 @@ public abstract class CompilerTestBase
 		var psi = new ProcessStartInfo
 		{
 			FileName = compilerExe,
-			Arguments = $"build \"{fullSourcePath}\"",
+			Arguments = $"build \"{fullSourcePath}\" {string.Join(" ", extraArgs)}",
 			RedirectStandardOutput = true,
 			RedirectStandardError = true,
 			UseShellExecute = false,
