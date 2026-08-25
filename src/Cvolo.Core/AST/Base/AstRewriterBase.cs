@@ -29,13 +29,20 @@ public abstract class AstRewriterBase
 		if (node is ExtensionDeclarationSyntax extDecl)
 		{
 			var rewrittenMethods = extDecl.Methods.Select(Rewrite).Cast<FunctionDeclarationSyntax>().ToList();
-			return new ExtensionDeclarationSyntax(extDecl.Span, extDecl.ExtendedTypeName, rewrittenMethods);
+			var rewrittenDestructors = extDecl.Destructors.Select(Rewrite).Cast<DestructorDeclarationSyntax>().ToList();
+			return new ExtensionDeclarationSyntax(extDecl.Span, extDecl.ExtendedTypeName, rewrittenMethods, rewrittenDestructors);
 		}
 
 		if (node is FunctionDeclarationSyntax func)
 		{
 			var rewrittenBody = (BlockStatementSyntax)Rewrite(func.Body);
 			return new FunctionDeclarationSyntax(func.Span, func.ReturnType, func.Name, func.GenericParameters, func.Parameters, rewrittenBody);
+		}
+
+		if (node is DestructorDeclarationSyntax dtor)
+		{
+			var rewrittenDtorBody = (BlockStatementSyntax)Rewrite(dtor.Body);
+			return new DestructorDeclarationSyntax(dtor.Span, dtor.StructName, rewrittenDtorBody);
 		}
 
 		if (node is BlockStatementSyntax block)

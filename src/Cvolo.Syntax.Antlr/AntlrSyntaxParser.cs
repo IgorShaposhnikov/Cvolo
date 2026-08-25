@@ -609,6 +609,12 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			methods.Add(BuildFunctionDeclaration(funcCtx));
 		}
 
-		return new ExtensionDeclarationSyntax(SpanOf(context), extendedTypeName, methods);
+		var destructors = new List<DestructorDeclarationSyntax>();
+		foreach (var dtorCtx in context.destructorDeclaration())
+		{
+			destructors.Add(new DestructorDeclarationSyntax(SpanOf(dtorCtx), dtorCtx.Identifier().GetText(), BuildBlockStatement(dtorCtx.blockStatement())));
+		}
+
+		return new ExtensionDeclarationSyntax(SpanOf(context), extendedTypeName, methods, destructors);
 	}
 }

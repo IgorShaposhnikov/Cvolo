@@ -5,7 +5,7 @@ struct Resource {
 }
 
 extension Resource {
-    void Dispose() {
+    ~Resource() {
         Console.WriteLine($"Disposing resource handle: {Handle}");
     }
 }
@@ -14,13 +14,13 @@ int main() {
     // 1. Test stack-allocated auto-destruction at block exits
     {
         var Resource r1(Handle: 100);
-        // r1.Dispose() should be automatically called right here!
+        // ~Resource() for r1 should be automatically called right here!
     }
 
     // 2. Test heap-allocated auto-destruction + allocation free
     {
         var Resource r2 = heap Resource { Handle: 200 };
-        // r2.Dispose() should be called, and then free(r2) called here!
+        // ~Resource() should be called, and then free(r2) called here!
     }
 
     Console.WriteLine("Done!");

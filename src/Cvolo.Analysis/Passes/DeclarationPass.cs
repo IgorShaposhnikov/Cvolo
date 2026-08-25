@@ -261,8 +261,23 @@ public sealed class DeclarationPass(BindingContext context)
 			return;
 		}
 
-		foreach (var method in extDecl.Methods)
+		// Destructors register as ordinary extension methods named "~T" (void, this-only)
+		foreach (var method in extDecl.Methods.Concat(extDecl.Destructors.Select(static d => d.ToFunctionDeclaration())))
 		{
+			if (method.Name.StartsWith('~') && method.Name[1..] != extDecl.ExtendedTypeName)
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, method.Span, $"Destructor name '{method.Name}' does not match extended type '{extDecl.ExtendedTypeName}'.");
+				continue;
+			}
+
+			if (method.Name.StartsWith('~') && context.Destructors.ContainsKey(extDecl.ExtendedTypeName))
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, method.Span, $"Duplicate destructor definition for type '{extDecl.ExtendedTypeName}'.");
+				continue;
+			}
+
 			// Mangled name represents the scoped path, e.g., "MyNamespace.Point.Move"
 			var baseMangledName = context.GetMangledName($"{extDecl.ExtendedTypeName}.{method.Name}", context.CurrentNamespace);
 
@@ -307,6 +322,11 @@ public sealed class DeclarationPass(BindingContext context)
 			candidates.Add(newSymbol);
 
 			context.SymbolUnits[overloadedName] = context.CurrentUnit!;
+
+			if (method.Name.StartsWith('~'))
+			{
+				context.Destructors[extDecl.ExtendedTypeName] = newSymbol;
+			}
 		}
 	}
 }

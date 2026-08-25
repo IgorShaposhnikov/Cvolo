@@ -8,7 +8,7 @@
 // </auto-generated>
 //------------------------------------------------------------------------------
 
-// Generated from Grammar/CvoloParser.g4 by ANTLR 4.13.1
+// Generated from D:/opencode-container/projects/Cvolo/src/Cvolo.Syntax.Antlr/Grammar/CvoloParser.g4 by ANTLR 4.13.1
 
 // Unreachable code detected
 #pragma warning disable 0162
@@ -38,6 +38,24 @@ public interface ICvoloParserVisitor<Result> : IParseTreeVisitor<Result> {
 	/// <return>The visitor result.</return>
 	Result VisitCompilationUnit([NotNull] CvoloParser.CompilationUnitContext context);
 	/// <summary>
+	/// Visit a parse tree produced by <see cref="CvoloParser.usingDirective"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitUsingDirective([NotNull] CvoloParser.UsingDirectiveContext context);
+	/// <summary>
+	/// Visit a parse tree produced by <see cref="CvoloParser.namespaceDeclaration"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitNamespaceDeclaration([NotNull] CvoloParser.NamespaceDeclarationContext context);
+	/// <summary>
+	/// Visit a parse tree produced by <see cref="CvoloParser.qualifiedName"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitQualifiedName([NotNull] CvoloParser.QualifiedNameContext context);
+	/// <summary>
 	/// Visit a parse tree produced by <see cref="CvoloParser.declaration"/>.
 	/// </summary>
 	/// <param name="context">The parse tree.</param>
@@ -62,6 +80,18 @@ public interface ICvoloParserVisitor<Result> : IParseTreeVisitor<Result> {
 	/// <return>The visitor result.</return>
 	Result VisitStructDeclaration([NotNull] CvoloParser.StructDeclarationContext context);
 	/// <summary>
+	/// Visit a parse tree produced by <see cref="CvoloParser.extensionDeclaration"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitExtensionDeclaration([NotNull] CvoloParser.ExtensionDeclarationContext context);
+	/// <summary>
+	/// Visit a parse tree produced by <see cref="CvoloParser.destructorDeclaration"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitDestructorDeclaration([NotNull] CvoloParser.DestructorDeclarationContext context);
+	/// <summary>
 	/// Visit a parse tree produced by <see cref="CvoloParser.structField"/>.
 	/// </summary>
 	/// <param name="context">The parse tree.</param>
@@ -74,11 +104,61 @@ public interface ICvoloParserVisitor<Result> : IParseTreeVisitor<Result> {
 	/// <return>The visitor result.</return>
 	Result VisitReturnType([NotNull] CvoloParser.ReturnTypeContext context);
 	/// <summary>
-	/// Visit a parse tree produced by <see cref="CvoloParser.type"/>.
+	/// Visit a parse tree produced by the <c>qualifiedType</c>
+	/// labeled alternative in <see cref="CvoloParser.type"/>.
 	/// </summary>
 	/// <param name="context">The parse tree.</param>
 	/// <return>The visitor result.</return>
-	Result VisitType([NotNull] CvoloParser.TypeContext context);
+	Result VisitQualifiedType([NotNull] CvoloParser.QualifiedTypeContext context);
+	/// <summary>
+	/// Visit a parse tree produced by the <c>arrayType</c>
+	/// labeled alternative in <see cref="CvoloParser.type"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitArrayType([NotNull] CvoloParser.ArrayTypeContext context);
+	/// <summary>
+	/// Visit a parse tree produced by the <c>refVarType</c>
+	/// labeled alternative in <see cref="CvoloParser.type"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitRefVarType([NotNull] CvoloParser.RefVarTypeContext context);
+	/// <summary>
+	/// Visit a parse tree produced by the <c>readOnlyRefType</c>
+	/// labeled alternative in <see cref="CvoloParser.type"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitReadOnlyRefType([NotNull] CvoloParser.ReadOnlyRefTypeContext context);
+	/// <summary>
+	/// Visit a parse tree produced by the <c>identifierType</c>
+	/// labeled alternative in <see cref="CvoloParser.type"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitIdentifierType([NotNull] CvoloParser.IdentifierTypeContext context);
+	/// <summary>
+	/// Visit a parse tree produced by the <c>genericInstantiationType</c>
+	/// labeled alternative in <see cref="CvoloParser.type"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitGenericInstantiationType([NotNull] CvoloParser.GenericInstantiationTypeContext context);
+	/// <summary>
+	/// Visit a parse tree produced by the <c>sliceType</c>
+	/// labeled alternative in <see cref="CvoloParser.type"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitSliceType([NotNull] CvoloParser.SliceTypeContext context);
+	/// <summary>
+	/// Visit a parse tree produced by the <c>baseType</c>
+	/// labeled alternative in <see cref="CvoloParser.type"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitBaseType([NotNull] CvoloParser.BaseTypeContext context);
 	/// <summary>
 	/// Visit a parse tree produced by <see cref="CvoloParser.primitiveType"/>.
 	/// </summary>
@@ -165,6 +245,13 @@ public interface ICvoloParserVisitor<Result> : IParseTreeVisitor<Result> {
 	/// <return>The visitor result.</return>
 	Result VisitLogicalNotExpression([NotNull] CvoloParser.LogicalNotExpressionContext context);
 	/// <summary>
+	/// Visit a parse tree produced by the <c>postfixIncrementExpression</c>
+	/// labeled alternative in <see cref="CvoloParser.expression"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitPostfixIncrementExpression([NotNull] CvoloParser.PostfixIncrementExpressionContext context);
+	/// <summary>
 	/// Visit a parse tree produced by the <c>additiveExpression</c>
 	/// labeled alternative in <see cref="CvoloParser.expression"/>.
 	/// </summary>
@@ -186,19 +273,131 @@ public interface ICvoloParserVisitor<Result> : IParseTreeVisitor<Result> {
 	/// <return>The visitor result.</return>
 	Result VisitIdentifierExpression([NotNull] CvoloParser.IdentifierExpressionContext context);
 	/// <summary>
-	/// Visit a parse tree produced by the <c>assignmentExpression</c>
-	/// labeled alternative in <see cref="CvoloParser.expression"/>.
-	/// </summary>
-	/// <param name="context">The parse tree.</param>
-	/// <return>The visitor result.</return>
-	Result VisitAssignmentExpression([NotNull] CvoloParser.AssignmentExpressionContext context);
-	/// <summary>
 	/// Visit a parse tree produced by the <c>booleanLiteralExpression</c>
 	/// labeled alternative in <see cref="CvoloParser.expression"/>.
 	/// </summary>
 	/// <param name="context">The parse tree.</param>
 	/// <return>The visitor result.</return>
 	Result VisitBooleanLiteralExpression([NotNull] CvoloParser.BooleanLiteralExpressionContext context);
+	/// <summary>
+	/// Visit a parse tree produced by the <c>heapArrayAllocationExpression</c>
+	/// labeled alternative in <see cref="CvoloParser.expression"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitHeapArrayAllocationExpression([NotNull] CvoloParser.HeapArrayAllocationExpressionContext context);
+	/// <summary>
+	/// Visit a parse tree produced by the <c>prefixIncrementExpression</c>
+	/// labeled alternative in <see cref="CvoloParser.expression"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitPrefixIncrementExpression([NotNull] CvoloParser.PrefixIncrementExpressionContext context);
+	/// <summary>
+	/// Visit a parse tree produced by the <c>castExpression</c>
+	/// labeled alternative in <see cref="CvoloParser.expression"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitCastExpression([NotNull] CvoloParser.CastExpressionContext context);
+	/// <summary>
+	/// Visit a parse tree produced by the <c>doubleLiteralExpression</c>
+	/// labeled alternative in <see cref="CvoloParser.expression"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitDoubleLiteralExpression([NotNull] CvoloParser.DoubleLiteralExpressionContext context);
+	/// <summary>
+	/// Visit a parse tree produced by the <c>parenthesizedExpression</c>
+	/// labeled alternative in <see cref="CvoloParser.expression"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitParenthesizedExpression([NotNull] CvoloParser.ParenthesizedExpressionContext context);
+	/// <summary>
+	/// Visit a parse tree produced by the <c>borrowExpression</c>
+	/// labeled alternative in <see cref="CvoloParser.expression"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitBorrowExpression([NotNull] CvoloParser.BorrowExpressionContext context);
+	/// <summary>
+	/// Visit a parse tree produced by the <c>bitwiseAndExpression</c>
+	/// labeled alternative in <see cref="CvoloParser.expression"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitBitwiseAndExpression([NotNull] CvoloParser.BitwiseAndExpressionContext context);
+	/// <summary>
+	/// Visit a parse tree produced by the <c>integerLiteralExpression</c>
+	/// labeled alternative in <see cref="CvoloParser.expression"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitIntegerLiteralExpression([NotNull] CvoloParser.IntegerLiteralExpressionContext context);
+	/// <summary>
+	/// Visit a parse tree produced by the <c>logicalAndExpression</c>
+	/// labeled alternative in <see cref="CvoloParser.expression"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitLogicalAndExpression([NotNull] CvoloParser.LogicalAndExpressionContext context);
+	/// <summary>
+	/// Visit a parse tree produced by the <c>memberAccessExpression</c>
+	/// labeled alternative in <see cref="CvoloParser.expression"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitMemberAccessExpression([NotNull] CvoloParser.MemberAccessExpressionContext context);
+	/// <summary>
+	/// Visit a parse tree produced by the <c>indexExpression</c>
+	/// labeled alternative in <see cref="CvoloParser.expression"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitIndexExpression([NotNull] CvoloParser.IndexExpressionContext context);
+	/// <summary>
+	/// Visit a parse tree produced by the <c>bitwiseXorExpression</c>
+	/// labeled alternative in <see cref="CvoloParser.expression"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitBitwiseXorExpression([NotNull] CvoloParser.BitwiseXorExpressionContext context);
+	/// <summary>
+	/// Visit a parse tree produced by the <c>interpolatedStringExpression</c>
+	/// labeled alternative in <see cref="CvoloParser.expression"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitInterpolatedStringExpression([NotNull] CvoloParser.InterpolatedStringExpressionContext context);
+	/// <summary>
+	/// Visit a parse tree produced by the <c>shiftExpression</c>
+	/// labeled alternative in <see cref="CvoloParser.expression"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitShiftExpression([NotNull] CvoloParser.ShiftExpressionContext context);
+	/// <summary>
+	/// Visit a parse tree produced by the <c>postfixDecrementExpression</c>
+	/// labeled alternative in <see cref="CvoloParser.expression"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitPostfixDecrementExpression([NotNull] CvoloParser.PostfixDecrementExpressionContext context);
+	/// <summary>
+	/// Visit a parse tree produced by the <c>prefixDecrementExpression</c>
+	/// labeled alternative in <see cref="CvoloParser.expression"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitPrefixDecrementExpression([NotNull] CvoloParser.PrefixDecrementExpressionContext context);
+	/// <summary>
+	/// Visit a parse tree produced by the <c>assignmentExpression</c>
+	/// labeled alternative in <see cref="CvoloParser.expression"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitAssignmentExpression([NotNull] CvoloParser.AssignmentExpressionContext context);
 	/// <summary>
 	/// Visit a parse tree produced by the <c>multiplicativeExpression</c>
 	/// labeled alternative in <see cref="CvoloParser.expression"/>.
@@ -214,19 +413,26 @@ public interface ICvoloParserVisitor<Result> : IParseTreeVisitor<Result> {
 	/// <return>The visitor result.</return>
 	Result VisitLogicalOrExpression([NotNull] CvoloParser.LogicalOrExpressionContext context);
 	/// <summary>
+	/// Visit a parse tree produced by the <c>parenthesizedStructInitializer</c>
+	/// labeled alternative in <see cref="CvoloParser.expression"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitParenthesizedStructInitializer([NotNull] CvoloParser.ParenthesizedStructInitializerContext context);
+	/// <summary>
+	/// Visit a parse tree produced by the <c>structInitializationExpression</c>
+	/// labeled alternative in <see cref="CvoloParser.expression"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitStructInitializationExpression([NotNull] CvoloParser.StructInitializationExpressionContext context);
+	/// <summary>
 	/// Visit a parse tree produced by the <c>stringLiteralExpression</c>
 	/// labeled alternative in <see cref="CvoloParser.expression"/>.
 	/// </summary>
 	/// <param name="context">The parse tree.</param>
 	/// <return>The visitor result.</return>
 	Result VisitStringLiteralExpression([NotNull] CvoloParser.StringLiteralExpressionContext context);
-	/// <summary>
-	/// Visit a parse tree produced by the <c>castExpression</c>
-	/// labeled alternative in <see cref="CvoloParser.expression"/>.
-	/// </summary>
-	/// <param name="context">The parse tree.</param>
-	/// <return>The visitor result.</return>
-	Result VisitCastExpression([NotNull] CvoloParser.CastExpressionContext context);
 	/// <summary>
 	/// Visit a parse tree produced by the <c>unaryMinusExpression</c>
 	/// labeled alternative in <see cref="CvoloParser.expression"/>.
@@ -235,12 +441,12 @@ public interface ICvoloParserVisitor<Result> : IParseTreeVisitor<Result> {
 	/// <return>The visitor result.</return>
 	Result VisitUnaryMinusExpression([NotNull] CvoloParser.UnaryMinusExpressionContext context);
 	/// <summary>
-	/// Visit a parse tree produced by the <c>doubleLiteralExpression</c>
+	/// Visit a parse tree produced by the <c>bitwiseOrExpression</c>
 	/// labeled alternative in <see cref="CvoloParser.expression"/>.
 	/// </summary>
 	/// <param name="context">The parse tree.</param>
 	/// <return>The visitor result.</return>
-	Result VisitDoubleLiteralExpression([NotNull] CvoloParser.DoubleLiteralExpressionContext context);
+	Result VisitBitwiseOrExpression([NotNull] CvoloParser.BitwiseOrExpressionContext context);
 	/// <summary>
 	/// Visit a parse tree produced by the <c>callExpression</c>
 	/// labeled alternative in <see cref="CvoloParser.expression"/>.
@@ -249,19 +455,26 @@ public interface ICvoloParserVisitor<Result> : IParseTreeVisitor<Result> {
 	/// <return>The visitor result.</return>
 	Result VisitCallExpression([NotNull] CvoloParser.CallExpressionContext context);
 	/// <summary>
-	/// Visit a parse tree produced by the <c>parenthesizedExpression</c>
+	/// Visit a parse tree produced by the <c>heapAllocationExpression</c>
 	/// labeled alternative in <see cref="CvoloParser.expression"/>.
 	/// </summary>
 	/// <param name="context">The parse tree.</param>
 	/// <return>The visitor result.</return>
-	Result VisitParenthesizedExpression([NotNull] CvoloParser.ParenthesizedExpressionContext context);
+	Result VisitHeapAllocationExpression([NotNull] CvoloParser.HeapAllocationExpressionContext context);
 	/// <summary>
-	/// Visit a parse tree produced by the <c>integerLiteralExpression</c>
+	/// Visit a parse tree produced by the <c>compoundAssignmentExpression</c>
 	/// labeled alternative in <see cref="CvoloParser.expression"/>.
 	/// </summary>
 	/// <param name="context">The parse tree.</param>
 	/// <return>The visitor result.</return>
-	Result VisitIntegerLiteralExpression([NotNull] CvoloParser.IntegerLiteralExpressionContext context);
+	Result VisitCompoundAssignmentExpression([NotNull] CvoloParser.CompoundAssignmentExpressionContext context);
+	/// <summary>
+	/// Visit a parse tree produced by the <c>bitwiseNotExpression</c>
+	/// labeled alternative in <see cref="CvoloParser.expression"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitBitwiseNotExpression([NotNull] CvoloParser.BitwiseNotExpressionContext context);
 	/// <summary>
 	/// Visit a parse tree produced by the <c>equalityExpression</c>
 	/// labeled alternative in <see cref="CvoloParser.expression"/>.
@@ -270,16 +483,54 @@ public interface ICvoloParserVisitor<Result> : IParseTreeVisitor<Result> {
 	/// <return>The visitor result.</return>
 	Result VisitEqualityExpression([NotNull] CvoloParser.EqualityExpressionContext context);
 	/// <summary>
-	/// Visit a parse tree produced by the <c>logicalAndExpression</c>
+	/// Visit a parse tree produced by the <c>charLiteralExpression</c>
 	/// labeled alternative in <see cref="CvoloParser.expression"/>.
 	/// </summary>
 	/// <param name="context">The parse tree.</param>
 	/// <return>The visitor result.</return>
-	Result VisitLogicalAndExpression([NotNull] CvoloParser.LogicalAndExpressionContext context);
+	Result VisitCharLiteralExpression([NotNull] CvoloParser.CharLiteralExpressionContext context);
+	/// <summary>
+	/// Visit a parse tree produced by the <c>ternaryExpression</c>
+	/// labeled alternative in <see cref="CvoloParser.expression"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitTernaryExpression([NotNull] CvoloParser.TernaryExpressionContext context);
+	/// <summary>
+	/// Visit a parse tree produced by the <c>arrayInitializationExpression</c>
+	/// labeled alternative in <see cref="CvoloParser.expression"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitArrayInitializationExpression([NotNull] CvoloParser.ArrayInitializationExpressionContext context);
 	/// <summary>
 	/// Visit a parse tree produced by <see cref="CvoloParser.argumentList"/>.
 	/// </summary>
 	/// <param name="context">The parse tree.</param>
 	/// <return>The visitor result.</return>
 	Result VisitArgumentList([NotNull] CvoloParser.ArgumentListContext context);
+	/// <summary>
+	/// Visit a parse tree produced by <see cref="CvoloParser.structInitializerList"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitStructInitializerList([NotNull] CvoloParser.StructInitializerListContext context);
+	/// <summary>
+	/// Visit a parse tree produced by <see cref="CvoloParser.structMemberInitializer"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitStructMemberInitializer([NotNull] CvoloParser.StructMemberInitializerContext context);
+	/// <summary>
+	/// Visit a parse tree produced by <see cref="CvoloParser.genericParameterList"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitGenericParameterList([NotNull] CvoloParser.GenericParameterListContext context);
+	/// <summary>
+	/// Visit a parse tree produced by <see cref="CvoloParser.typeList"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitTypeList([NotNull] CvoloParser.TypeListContext context);
 }

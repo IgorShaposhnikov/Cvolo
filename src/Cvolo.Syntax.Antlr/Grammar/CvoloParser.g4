@@ -38,7 +38,11 @@ structDeclaration
 	;
 
 extensionDeclaration
-	: EXTENSION Identifier LBRACE functionDeclaration* RBRACE SEMI?
+	: EXTENSION Identifier LBRACE (functionDeclaration | destructorDeclaration)* RBRACE SEMI?
+	;
+
+destructorDeclaration
+	: TILDE Identifier LPAREN RPAREN blockStatement SEMI?
 	;
 
 structField

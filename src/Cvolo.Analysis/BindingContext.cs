@@ -30,6 +30,8 @@ public sealed class BindingContext
 	public Dictionary<string, CompilationUnitSyntax> SymbolUnits { get; } = [];
 	public Dictionary<string, List<FunctionSymbol>> OverloadedFunctions { get; } = [];
 	public Dictionary<CallExpressionSyntax, FunctionSymbol> ResolvedCalls { get; } = [];
+	// Destructors registered via '~T()' extension members, keyed by the extended type name
+	public Dictionary<string, FunctionSymbol> Destructors { get; } = [];
 
 	public CompilationUnitSyntax? CurrentUnit { get; set; }
 	public string? CurrentNamespace { get; set; }

@@ -23,6 +23,7 @@ public enum SyntaxKind
 	ForStatement,
 	StructDeclaration,
 	ExtensionDeclaration,
+	DestructorDeclaration,
 	DoubleLiteralExpression,
 	BooleanLiteralExpression,
 	MemberAccessExpression,

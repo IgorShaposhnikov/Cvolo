@@ -113,7 +113,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 						DeclareFunction(func, overloadedMangledName);
 						break;
 					case ExtensionDeclarationSyntax extDecl:
-						foreach (var method in extDecl.Methods)
+						foreach (var method in extDecl.Methods.Concat(extDecl.Destructors.Select(static d => d.ToFunctionDeclaration())))
 						{
 							var baseMangledName = bindingContext.GetMangledName($"{extDecl.ExtendedTypeName}.{method.Name}", ns);
 							if (bindingContext.OverloadedFunctions.TryGetValue(baseMangledName, out var candidates))
@@ -172,7 +172,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				}
 				else if (member is ExtensionDeclarationSyntax extDecl)
 				{
-					foreach (var method in extDecl.Methods)
+					foreach (var method in extDecl.Methods.Concat(extDecl.Destructors.Select(static d => d.ToFunctionDeclaration())))
 					{
 						var baseMangledName = bindingContext.GetMangledName($"{extDecl.ExtendedTypeName}.{method.Name}", ns);
 						if (bindingContext.OverloadedFunctions.TryGetValue(baseMangledName, out var candidates))
@@ -1251,10 +1251,10 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			var ptrAlloc = _locals[name];
 			var type = _variableTypes[name];
 
-			// 1. Call custom 'Dispose()' destructor ONLY for owned StructTypeSymbol variables
+			// 1. Call the type's '~T()' destructor ONLY for owned StructTypeSymbol variables
 			if (type is StructTypeSymbol structType)
 			{
-				var disposeBaseName = $"{structType.Name}.Dispose";
+				var disposeBaseName = $"{structType.Name}.~{structType.Name}";
 
 				if (_bindingContext!.OverloadedFunctions.TryGetValue(disposeBaseName, out var candidates) && candidates.Count > 0)
 				{

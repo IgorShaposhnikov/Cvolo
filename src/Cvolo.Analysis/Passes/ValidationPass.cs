@@ -42,7 +42,7 @@ public sealed class ValidationPass(BindingContext context)
 				}
 				else if (member is ExtensionDeclarationSyntax extDecl)
 				{
-					foreach (var method in extDecl.Methods)
+					foreach (var method in extDecl.Methods.Concat(extDecl.Destructors.Select(static d => d.ToFunctionDeclaration())))
 					{
 						CheckExtensionMethodBody(extDecl.ExtendedTypeName, method);
 					}
