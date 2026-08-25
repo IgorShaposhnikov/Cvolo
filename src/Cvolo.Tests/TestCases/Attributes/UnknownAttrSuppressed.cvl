@@ -1,0 +1,14 @@
+using System;
+
+[Bogus]
+[SuppressWarning("CVL1002")]
+int Compute()
+{
+    return 5;
+}
+
+int main()
+{
+    Console.WriteLine($"Answer: {Compute()}");
+    return 0;
+}

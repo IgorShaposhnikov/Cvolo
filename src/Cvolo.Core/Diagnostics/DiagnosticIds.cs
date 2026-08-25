@@ -16,4 +16,7 @@ public static class DiagnosticIds
 {
 	/// <summary>'[UnsafeBody]' applied to a body without any unsafe operations.</summary>
 	public const string UnsafeBodyNoEffect = "CVL1001";
+
+	/// <summary>Attribute name is not a known intrinsic; accepted and erased, but flagged for likely typos.</summary>
+	public const string UnknownAttribute = "CVL1002";
 }

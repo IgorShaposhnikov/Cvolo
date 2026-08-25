@@ -69,8 +69,36 @@ public sealed class AttributesTests : CompilerTestBase
 		Assert.Contains("'[UnsafeBody]' attribute has no effect because function contains no unsafe operations.", stderr);
 	}
 
+	[Fact]
+	public void Unknown_Attribute_Warns_But_Still_Compiles_And_Runs()
+	{
+		var fileName = "Attributes/UnknownAttrWarn.cvl";
+		var (exitCode, stdout, stderr) = RunCompiler(fileName);
+
+		Assert.Equal(0, exitCode);
+		Assert.Contains("Analysis Warning CVL1002", stderr);
+		Assert.Contains("Unknown attribute 'Bogus'; it will be ignored.", stderr);
+
+		var (runCode, runStdout) = ExecuteBinary("UnknownAttrWarn", "Attributes");
+		Assert.Equal(0, runCode);
+		Assert.Contains("Answer: 5", runStdout);
+	}
+
+	[Fact]
+	public void Unknown_Attribute_Suppressed_Per_Declaration_Regardless_Of_Order()
+	{
+		var fileName = "Attributes/UnknownAttrSuppressed.cvl";
+		var (exitCode, _, stderr) = RunCompiler(fileName);
+
+		Assert.Equal(0, exitCode);
+		Assert.DoesNotContain("Unknown attribute", stderr);
+
+		var (runCode, runStdout) = ExecuteBinary("UnknownAttrSuppressed", "Attributes");
+		Assert.Equal(0, runCode);
+		Assert.Contains("Answer: 5", runStdout);
+	}
+
 	[Theory]
-	[InlineData("UnknownAttrFail", "Unknown attribute 'Bogus'.")]
 	[InlineData("NoAliasOnFunctionFail", "Attribute '[NoAlias]' can only be applied inside Unbound or Unsafe contexts.")]
 	[InlineData("ParamAttrContextFail", "Attribute '[NoAlias]' can only be applied inside Unbound or Unsafe contexts.")]
 	[InlineData("UnsafeBodyOnStructFail", "Attribute '[UnsafeBody]' cannot be applied to struct declarations.")]

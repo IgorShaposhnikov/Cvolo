@@ -59,7 +59,7 @@ public sealed class DeclarationPass(BindingContext context)
 		}
 
 		// No intrinsic targets structs; verify so unknown/misapplied attributes still surface.
-		_ = VerifyAttributes(structDecl.Attributes, "Struct");
+		_ = VerifyAttributes(structDecl.Attributes, "Struct", new List<string>());
 
 		// If this is a generic struct template (e.g. struct Point<T>)
 		if (structDecl.GenericParameters.Count > 0)
@@ -215,10 +215,10 @@ public sealed class DeclarationPass(BindingContext context)
 	{
 		["UnsafeBody"] = (["Function", "Method", "Constructor", "Destructor"], ["Safe", "Unbound", "Unsafe"]),
 		["NoAlias"] = (["Function", "Method", "Parameter"], ["Unbound", "Unsafe"]),
-		["SuppressWarning"] = (["Function", "Method", "Constructor", "Destructor"], ["Safe", "Unbound", "Unsafe"])
+		["SuppressWarning"] = (["Struct", "Function", "Method", "Constructor", "Destructor", "Parameter"], ["Safe", "Unbound", "Unsafe"])
 	};
 
-	private static readonly HashSet<string> KnownWarningIds = [DiagnosticIds.UnsafeBodyNoEffect];
+	private static readonly HashSet<string> KnownWarningIds = [DiagnosticIds.UnsafeBodyNoEffect, DiagnosticIds.UnknownAttribute];
 
 	private static string? NormalizeAttributeName(string attributeName)
 	{
@@ -234,12 +234,16 @@ public sealed class DeclarationPass(BindingContext context)
 	{
 		var applied = new List<string>();
 		var seen = new HashSet<string>();
+		var unknownAttributes = new List<AttributeSyntax>();
 		foreach (var attr in attributes)
 		{
 			var key = NormalizeAttributeName(attr.Name);
 			if (key is null)
 			{
-				ReportDeclarationDiagnostic(attr, $"Unknown attribute '{attr.Name}'.");
+				// Hybrid stance: unknown names are accepted and erased at codegen, but
+				// flagged so typos stay visible. Reported after the loop so a
+				// [SuppressWarning] anywhere in the same list silences it regardless of order.
+				unknownAttributes.Add(attr);
 				continue;
 			}
 
@@ -269,6 +273,14 @@ public sealed class DeclarationPass(BindingContext context)
 			}
 
 			applied.Add(key);
+		}
+
+		foreach (var unknown in unknownAttributes)
+		{
+			if (suppressedWarnings?.Contains(DiagnosticIds.UnknownAttribute) == true)
+				continue;
+
+			ReportDeclarationWarning(unknown, $"Unknown attribute '{unknown.Name}'; it will be ignored.", DiagnosticIds.UnknownAttribute);
 		}
 
 		return applied;
@@ -328,7 +340,8 @@ public sealed class DeclarationPass(BindingContext context)
 			return null;
 
 		var symbol = new ParameterSymbol(param.Name, paramType);
-		if (VerifyAttributes(param.Attributes, "Parameter").Contains("NoAlias"))
+		var paramSuppressedWarnings = new List<string>();
+		if (VerifyAttributes(param.Attributes, "Parameter", paramSuppressedWarnings).Contains("NoAlias"))
 			symbol.IsNoAlias = true;
 
 		return symbol;
@@ -338,6 +351,12 @@ public sealed class DeclarationPass(BindingContext context)
 	{
 		var currentFileContext = context.FileContexts[context.CurrentUnit!];
 		context.Diagnostics.Report(currentFileContext, node.Span, message);
+	}
+
+	private void ReportDeclarationWarning(SyntaxNode node, string message, string id)
+	{
+		var currentFileContext = context.FileContexts[context.CurrentUnit!];
+		context.Diagnostics.ReportWarning(currentFileContext, node.Span, message, id);
 	}
 
 	private void DeclareExternFunction(ExternDeclarationSyntax ext)

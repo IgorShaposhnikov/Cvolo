@@ -1,0 +1,13 @@
+using System;
+
+[Bogus]
+int Compute()
+{
+    return 5;
+}
+
+int main()
+{
+    Console.WriteLine($"Answer: {Compute()}");
+    return 0;
+}
