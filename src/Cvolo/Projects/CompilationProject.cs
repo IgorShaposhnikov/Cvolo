@@ -71,15 +71,24 @@ public sealed class CompilationProject
 		}
 		else if (File.Exists(inputPath))
 		{
-			var dir = Path.GetDirectoryName(Path.GetFullPath(inputPath))!;
-			var files = Directory.GetFiles(dir, "*.cvl", SearchOption.AllDirectories).ToList();
-			foreach (var file in files)
-			{
-				if (!sourceFiles.Contains(file))
-					sourceFiles.Add(file);
-			}
-
 			outputName = Path.GetFileNameWithoutExtension(inputPath);
+
+			// An explicit .cvl file compiles on its own (plus the standard library).
+			// Only directory / .cvlproj inputs pull in sibling sources recursively.
+			if (string.Equals(Path.GetExtension(inputPath), ".cvl", StringComparison.OrdinalIgnoreCase))
+			{
+				sourceFiles.Add(Path.GetFullPath(inputPath));
+			}
+			else
+			{
+				var dir = Path.GetDirectoryName(Path.GetFullPath(inputPath))!;
+				var files = Directory.GetFiles(dir, "*.cvl", SearchOption.AllDirectories).ToList();
+				foreach (var file in files)
+				{
+					if (!sourceFiles.Contains(file))
+						sourceFiles.Add(file);
+				}
+			}
 		}
 		else
 		{
