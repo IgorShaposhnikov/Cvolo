@@ -1,0 +1,17 @@
+struct Resource
+{
+	int Value;
+}
+
+extension Resource {
+	~Resource() { }
+}
+
+int Main() {
+    var Resource r = Resource { Value: 42 };
+    ref vr = ref r.Value;
+    var int v = vr;
+    r = Resource { Value: 99 }; // reassign while borrow active — vr still active below
+    var int x = vr;
+    return 0;
+}

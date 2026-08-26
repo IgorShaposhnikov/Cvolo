@@ -1,0 +1,19 @@
+using System;
+
+struct Point
+{
+	int X;
+	int Y;
+}
+
+global var ref Point gRef;
+
+void StoreLocalRef() {
+	Point local = Point { X: 10, Y: 20 };
+	gRef = ref local; // FAIL: local-origin ref assigned to global
+}
+
+int Main() {
+	StoreLocalRef();
+	return 0;
+}

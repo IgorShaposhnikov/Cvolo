@@ -1,0 +1,21 @@
+using System;
+
+struct Resource
+{
+	int Value;
+}
+
+extension Resource {
+	~Resource() { }
+}
+
+void ConsumeResource(Resource r) { }
+
+int Main() {
+    var Resource r = Resource { Value: 42 };
+    ref vr = ref r.Value;
+    var int v = vr;
+    ConsumeResource(r); // move while borrow active — vr still active below
+    var int x = vr;
+    return 0;
+}

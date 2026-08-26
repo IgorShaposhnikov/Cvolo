@@ -6,6 +6,7 @@ struct Point
 int Main() {
     var Point p = Point { X: 10 };
     ref r1 = ref p;
-    refvar r2 = ref p; // INTENTIONAL ERROR: Aliasing conflict!
-    return 0;
+    refvar r2 = ref p; // INTENTIONAL ERROR: Aliasing conflict! r1 is still active because it is used below.
+    var int x = r1.X;
+    return x;
 }

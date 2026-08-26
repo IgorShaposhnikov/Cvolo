@@ -798,8 +798,17 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				var type = _variableTypes[id.Name];
 				if (type is PointerTypeSymbol)
 				{
-					var actualPtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), ptr, "target_ptr");
-					_builder.BuildStore(right, actualPtr);
+					if (bin.Right is BorrowExpressionSyntax)
+					{
+						// §3G: refvar reassignment (`a = ref expr`) stores the new pointer into the alloca
+						_builder.BuildStore(right, ptr);
+					}
+					else
+					{
+						// Write-through (`a = b` or `a = value`): load current pointer, store value through it
+						var actualPtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), ptr, "target_ptr");
+						_builder.BuildStore(right, actualPtr);
+					}
 				}
 				else
 				{

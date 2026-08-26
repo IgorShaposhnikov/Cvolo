@@ -1,0 +1,11 @@
+using System;
+
+int Main() {
+    int[3] arr = { 10, 20, 30 };
+    ref elem = ref arr[0];
+    var int v = elem;
+    // LUA releases 'elem' after this line (no more uses of 'elem').
+    var int v2 = arr[1]; // OK: first borrow already released.
+    Console.WriteLine(v2);
+    return 0;
+}

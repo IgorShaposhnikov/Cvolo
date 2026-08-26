@@ -1,0 +1,18 @@
+struct Point
+{
+	int X;
+	int Y;
+}
+
+void ConsumePoint(Point p) {
+    var int x = p.X;
+}
+
+int Main() {
+    var Point p = Point { X: 10, Y: 20 };
+    ref px = ref p.X;
+    var int v = px;
+    // INTENTIONAL ERROR: Cannot move 'p' while a field borrow is still active.
+    ConsumePoint(p);
+    return 0;
+}

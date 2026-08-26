@@ -1,0 +1,18 @@
+struct Resource
+{
+	int Value;
+}
+
+extension Resource {
+	~Resource() { }
+}
+
+Resource ConsumeAndReturn(Resource r, int extra) { return r; }
+
+int Main() {
+    var Resource r = Resource { Value: 42 };
+    ref vr = ref r.Value;
+    var int v = vr;
+    Resource result = ConsumeAndReturn(r, vr); // r passed by value while vr active
+    return 0;
+}

@@ -1,0 +1,23 @@
+using System;
+
+struct Node
+{
+	int Value;
+}
+
+int Main() {
+	var Node n1 = Node { Value: 10 };
+	var Node n2 = Node { Value: 20 };
+	var Node n3 = Node { Value: 30 };
+
+	refvar curr = ref n1;
+	Console.WriteLine(curr.Value);
+
+	curr = ref n2;
+	Console.WriteLine(curr.Value);
+
+	curr = ref n3;
+	Console.WriteLine(curr.Value);
+
+	return 0;
+}

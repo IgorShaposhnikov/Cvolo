@@ -14,6 +14,9 @@ namespace Cvolo.Analysis.Passes;
 public sealed class SafetyPass(BindingContext context)
 {
 	private readonly List<BorrowSymbol> _activeBorrows = [];
+	private readonly Dictionary<string, (string BorrowedName, bool IsMutable, int LastUseEnd, TextSpan DeclSpan)> _activeRefs = [];
+	private readonly Dictionary<string, HashSet<string>> _parentLocks = []; // parentVar -> set of refVar names
+	private readonly Dictionary<string, HashSet<string>> _structRefTargets = []; // structVar -> set of variable names that ref fields point to
 	private ClassificationAnalyzer? _classification;
 
 	private ClassificationAnalyzer Classification => _classification ??= new ClassificationAnalyzer(context);
@@ -35,6 +38,9 @@ public sealed class SafetyPass(BindingContext context)
 	private void CheckFunctionSafety(FunctionDeclarationSyntax func)
 	{
 		_activeBorrows.Clear();
+		_activeRefs.Clear();
+		_parentLocks.Clear();
+		_structRefTargets.Clear();
 		var scope = new SymbolTable(context.Globals);
 		foreach (var param in func.Parameters)
 		{
@@ -47,11 +53,107 @@ public sealed class SafetyPass(BindingContext context)
 	private void CheckBlockSafety(BlockStatementSyntax block, SymbolTable scope, FunctionDeclarationSyntax func)
 	{
 		var borrowCountBefore = _activeBorrows.Count;
-		foreach (var stmt in block.Statements)
+		var refsAtEntry = new HashSet<string>(_activeRefs.Keys);
+		var stmts = block.Statements;
+		for (var i = 0; i < stmts.Count; i++)
+		{
+			var stmt = stmts[i];
+			ReleaseExpiredBorrows(stmt.Span.Start, block, i);
 			CheckStatementSafety(stmt, scope, func);
+		}
 
+		// Release all borrows and refs taken in this block at block exit.
 		if (_activeBorrows.Count > borrowCountBefore)
 			_activeBorrows.RemoveRange(borrowCountBefore, _activeBorrows.Count - borrowCountBefore);
+		var refsToRemove = _activeRefs.Keys.Where(k => !refsAtEntry.Contains(k)).ToList();
+		foreach (var name in refsToRemove)
+		{
+			_activeRefs.Remove(name);
+			ReleaseParentLock(name);
+			_structRefTargets.Remove(name);
+		}
+	}
+
+	/// <summary>
+	/// For each active ref, check if it has any uses in statements from startIndex onward.
+	/// If a ref has no uses in remaining statements, release its borrow early.
+	/// </summary>
+	private void ReleaseExpiredBorrows(int currentStatementStart, BlockStatementSyntax block, int startIndex)
+	{
+		var stmts = block.Statements;
+		var toRelease = new List<string>();
+
+		foreach (var kv in _activeRefs)
+		{
+			var refName = kv.Key;
+			var hasUseAfterCurrent = false;
+
+			for (var j = startIndex; j < stmts.Count; j++)
+			{
+				if (NodeContainsRefUse(stmts[j], refName))
+				{
+					hasUseAfterCurrent = true;
+					break;
+				}
+			}
+
+			if (!hasUseAfterCurrent)
+				toRelease.Add(refName);
+		}
+
+		foreach (var refName in toRelease)
+		{
+			_activeRefs.Remove(refName);
+			_activeBorrows.RemoveAll(b => b.BorrowerName == refName);
+			ReleaseParentLock(refName);
+		}
+	}
+
+	/// <summary>
+	/// Check whether a syntax node (recursively, including branches and loops)
+	/// contains any use of the given identifier name.
+	/// </summary>
+	private static bool NodeContainsRefUse(SyntaxNode node, string refName)
+	{
+		return node switch
+		{
+			BlockStatementSyntax block => block.Statements.Any(s => NodeContainsRefUse(s, refName)),
+			IfStatementSyntax ifStmt =>
+				NodeContainsRefUse(ifStmt.Condition, refName) ||
+				NodeContainsRefUse(ifStmt.ThenStatement, refName) ||
+				(ifStmt.ElseClause != null && NodeContainsRefUse(ifStmt.ElseClause.Body, refName)),
+			WhileStatementSyntax whileStmt =>
+				NodeContainsRefUse(whileStmt.Condition, refName) ||
+				NodeContainsRefUse(whileStmt.Body, refName),
+			ForStatementSyntax forStmt =>
+				(forStmt.Initializer != null && NodeContainsRefUse(forStmt.Initializer, refName)) ||
+				NodeContainsRefUse(forStmt.Condition, refName) ||
+				NodeContainsRefUse(forStmt.Increment, refName) ||
+				NodeContainsRefUse(forStmt.Body, refName),
+			ReturnStatementSyntax ret => ret.Expression != null && ExprContainsRefUse(ret.Expression, refName),
+			ExpressionStatementSyntax exprStmt => ExprContainsRefUse(exprStmt.Expression, refName),
+			VariableDeclarationSyntax varDecl => varDecl.Initializer != null && ExprContainsRefUse(varDecl.Initializer, refName),
+			ExpressionSyntax expr => ExprContainsRefUse(expr, refName),
+			_ => false
+		};
+	}
+
+	/// <summary>
+	/// Check whether an expression (recursively) references the given identifier name.
+	/// </summary>
+	private static bool ExprContainsRefUse(ExpressionSyntax expr, string refName)
+	{
+		return expr switch
+		{
+			IdentifierExpressionSyntax id => id.Name == refName,
+			MemberAccessExpressionSyntax m => ExprContainsRefUse(m.Expression, refName),
+			IndexExpressionSyntax idx => ExprContainsRefUse(idx.Left, refName) || ExprContainsRefUse(idx.Index, refName),
+			BorrowExpressionSyntax borrow => ExprContainsRefUse(borrow.Expression, refName),
+			CallExpressionSyntax call => call.Arguments.Any(a => ExprContainsRefUse(a, refName)),
+			BinaryExpressionSyntax bin => ExprContainsRefUse(bin.Left, refName) || ExprContainsRefUse(bin.Right, refName),
+			StructInitializationExpressionSyntax init => init.Initializers.Any(f => ExprContainsRefUse(f.Expression, refName)),
+			_ => false
+		};
 	}
 
 	private void CheckStatementSafety(SyntaxNode stmt, SymbolTable scope, FunctionDeclarationSyntax func)
@@ -74,6 +176,10 @@ public sealed class SafetyPass(BindingContext context)
 						if (borrowedName != null && scope.Lookup(borrowedName) is VariableSymbol borrowed)
 							sym.Origin = borrowed.Origin;
 					}
+
+					// Track ref field targets for struct variables (§3C)
+					if (v.Type is not "ref" and not "refvar" && sym.Type is StructTypeSymbol)
+						TrackStructRefTargets(v.Name, v.Initializer, scope);
 				}
 				VerifyBorrowRules(v, scope);
 			}
@@ -97,6 +203,24 @@ public sealed class SafetyPass(BindingContext context)
 
 			case BlockStatementSyntax b:
 				CheckBlockSafety(b, new SymbolTable(scope), func);
+				break;
+
+			case WhileStatementSyntax w:
+				CheckExpressionSafety(w.Condition, scope);
+				if (w.Body is BlockStatementSyntax wBlock)
+					CheckBlockSafety(wBlock, new SymbolTable(scope), func);
+				else
+					CheckStatementSafety(w.Body, scope, func);
+				break;
+
+			case ForStatementSyntax f:
+				if (f.Initializer != null) CheckStatementSafety(f.Initializer, scope, func);
+				CheckExpressionSafety(f.Condition, scope);
+				CheckExpressionSafety(f.Increment, scope);
+				if (f.Body is BlockStatementSyntax fBlock)
+					CheckBlockSafety(fBlock, new SymbolTable(scope), func);
+				else
+					CheckStatementSafety(f.Body, scope, func);
 				break;
 		}
 	}
@@ -138,8 +262,13 @@ public sealed class SafetyPass(BindingContext context)
 			{
 				if (scope.Lookup(leftId.Name) is VariableSymbol leftSymbol)
 				{
+					VerifyBorrowLock(bin.Left, scope, "reassign");
 					leftSymbol.IsMoved = false;
 					HandleCopyAssignment(bin.Right, scope);
+
+					// Track ref field targets for struct reassignment (§3C)
+					if (leftSymbol.Type is StructTypeSymbol)
+						TrackStructRefTargets(leftId.Name, bin.Right, scope);
 
 					// Propagate origin on ref/refvar reassignment
 					if (leftSymbol.Type is PointerTypeSymbol)
@@ -148,11 +277,27 @@ public sealed class SafetyPass(BindingContext context)
 						{
 							var rightName = GetBaseIdentifierName(rb.Expression);
 							if (rightName != null && scope.Lookup(rightName) is VariableSymbol rightSym)
+							{
 								leftSymbol.Origin = rightSym.Origin;
+
+								// §3F Global Lifetime Inequality: only global-origin refs may be stored in globals
+								if (leftSymbol.IsGlobal && rightSym.Origin != OriginKind.Global)
+								{
+									context.Diagnostics.Report(context.CurrentUnit!.Context, bin.Span,
+										$"Cannot assign {rightSym.Origin.ToString().ToLower()}-origin reference to global variable '{leftId.Name}': only global-origin references may be stored in globals");
+								}
+							}
 						}
 						else if (bin.Right is IdentifierExpressionSyntax rightId && scope.Lookup(rightId.Name) is VariableSymbol rightSym2 && rightSym2.Type is PointerTypeSymbol)
 						{
 							leftSymbol.Origin = rightSym2.Origin;
+
+							// §3F Global Lifetime Inequality
+							if (leftSymbol.IsGlobal && rightSym2.Origin != OriginKind.Global)
+							{
+								context.Diagnostics.Report(context.CurrentUnit!.Context, bin.Span,
+									$"Cannot assign {rightSym2.Origin.ToString().ToLower()}-origin reference to global variable '{leftId.Name}': only global-origin references may be stored in globals");
+							}
 						}
 					}
 				}
@@ -180,7 +325,10 @@ public sealed class SafetyPass(BindingContext context)
 			{
 				case CopyKind.ResourceMove:
 					if (arg is IdentifierExpressionSyntax aid && scope.Lookup(aid.Name) is VariableSymbol av)
+					{
+						VerifyBorrowLock(arg, scope, "move");
 						av.IsMoved = true;
+					}
 					break;
 				case CopyKind.LargeCopy:
 					var size = Classification.CalculateByteSize(argStruct);
@@ -194,7 +342,10 @@ public sealed class SafetyPass(BindingContext context)
 		else if (type is SliceTypeSymbol)
 		{
 			if (arg is IdentifierExpressionSyntax sid && scope.Lookup(sid.Name) is VariableSymbol sv)
+			{
+				VerifyBorrowLock(arg, scope, "move");
 				sv.IsMoved = true;
+			}
 		}
 	}
 
@@ -258,6 +409,16 @@ public sealed class SafetyPass(BindingContext context)
 			if (borrowedName != null)
 			{
 				var isMutable = varDecl.Type == "refvar";
+
+				// Array Index Locking: borrowing any element blocks all other element borrows
+				var isIndexBorrow = borrow.Expression is IndexExpressionSyntax;
+				if (isIndexBorrow && _parentLocks.ContainsKey(borrowedName))
+				{
+					context.Diagnostics.Report(context.CurrentUnit!.Context, varDecl.Span,
+						$"'{borrowedName}' is already borrowed; cannot borrow multiple elements of the same array");
+				}
+
+				// Exclusive Mutability: check parent-level conflicts
 				var conflicts = _activeBorrows.Where(b => b.BorrowedName == borrowedName).ToList();
 				if (conflicts.Count > 0)
 				{
@@ -268,6 +429,8 @@ public sealed class SafetyPass(BindingContext context)
 				}
 
 				_activeBorrows.Add(new BorrowSymbol(varDecl.Name, borrowedName, isMutable, varDecl.Span));
+				_activeRefs[varDecl.Name] = (borrowedName, isMutable, varDecl.Span.End, varDecl.Span);
+				RegisterParentLock(borrowedName, varDecl.Name);
 			}
 		}
 	}
@@ -293,6 +456,159 @@ public sealed class SafetyPass(BindingContext context)
 			{
 				context.Diagnostics.Report(context.CurrentUnit!.Context, ret.Expression.Span, $"Cannot return reference to local variable '{id.Name}' (dangling reference)");
 			}
+
+			// Case 3: return by value of a variable whose fields are currently borrowed
+			if (_parentLocks.ContainsKey(id.Name))
+			{
+				context.Diagnostics.Report(context.CurrentUnit!.Context, ret.Expression.Span,
+					$"Cannot return '{id.Name}' by value while a field borrow is still active");
+			}
+
+			// Case 4: return by value of a struct whose ref fields point to locals (§3C)
+			if (scope.Lookup(id.Name) is VariableSymbol retSym && retSym.Type is StructTypeSymbol retStruct)
+			{
+				VerifyStructByValueReturn(retStruct, id.Name, ret.Expression.Span, scope);
+			}
+		}
+	}
+
+	/// <summary>
+	/// Verify that a struct being returned by value doesn't have ref fields pointing to local-origin variables (§3C).
+	/// Uses cycle detection to handle self-referential structs.
+	/// </summary>
+	private void VerifyStructByValueReturn(StructTypeSymbol structType, string varName, TextSpan span, SymbolTable scope)
+	{
+		VerifyStructByValueReturnCore(structType, varName, span, [], scope);
+	}
+
+	private void VerifyStructByValueReturnCore(StructTypeSymbol structType, string varName, TextSpan span, HashSet<string> visited, SymbolTable scope)
+	{
+		if (!visited.Add(structType.Name))
+			return; // cycle-cut: already visited this type, stop recursion
+
+		foreach (var field in structType.Fields)
+		{
+			if (field.IsCycleCut) continue;
+
+			if (field.Type is PointerTypeSymbol ptr && ptr.ReferencedType is StructTypeSymbol innerStruct)
+			{
+				// Ref field pointing to a struct: recurse into that struct's fields
+				if (_structRefTargets.TryGetValue(varName, out var targets))
+				{
+					foreach (var target in targets)
+					{
+						if (scope.Lookup(target) is VariableSymbol targetSym && targetSym.Origin == OriginKind.Local)
+						{
+							context.Diagnostics.Report(context.CurrentUnit!.Context, span,
+								$"Cannot return '{varName}' by value: reference field '{field.Name}' targets local variable '{target}' (dangling reference)");
+							return;
+						}
+					}
+				}
+
+				VerifyStructByValueReturnCore(innerStruct, varName, span, visited, scope);
+			}
+			else if (field.Type is PointerTypeSymbol ptrScalar && ptrScalar.ReferencedType is not StructTypeSymbol)
+			{
+				// Ref field pointing to a scalar: check tracked targets
+				if (_structRefTargets.TryGetValue(varName, out var targets))
+				{
+					foreach (var target in targets)
+					{
+						if (scope.Lookup(target) is VariableSymbol targetSym && targetSym.Origin == OriginKind.Local)
+						{
+							context.Diagnostics.Report(context.CurrentUnit!.Context, span,
+								$"Cannot return '{varName}' by value: reference field '{field.Name}' targets local variable '{target}' (dangling reference)");
+							return;
+						}
+					}
+				}
+			}
+		}
+	}
+
+	/// <summary>
+	/// When a struct variable is initialized (struct literal or function call),
+	/// scan ref fields and record what each ref field points to in _structRefTargets.
+	/// </summary>
+	private void TrackStructRefTargets(string varName, ExpressionSyntax initializer, SymbolTable scope)
+	{
+		var type = ResolveExpressionType(initializer, scope);
+		if (type is not StructTypeSymbol structType) return;
+
+		var refTargets = new HashSet<string>();
+		CollectRefTargets(structType, initializer, scope, refTargets, []);
+
+		if (refTargets.Count > 0)
+			_structRefTargets[varName] = refTargets;
+	}
+
+	private void CollectRefTargets(StructTypeSymbol structType, ExpressionSyntax expr, SymbolTable scope,
+		HashSet<string> targets, HashSet<string> visited)
+	{
+		if (!visited.Add(structType.Name)) return; // cycle-cut
+
+		if (expr is StructInitializationExpressionSyntax init)
+		{
+			foreach (var memberInit in init.Initializers)
+			{
+				var field = structType.FindField(memberInit.MemberName);
+				if (field == null || field.Type is not PointerTypeSymbol ptrType) continue;
+
+				var fieldExpr = memberInit.Expression;
+				var borrowedName = GetBaseIdentifierName(fieldExpr);
+				if (borrowedName != null)
+					targets.Add(borrowedName);
+
+				// Recurse into nested struct fields
+				if (ptrType.ReferencedType is StructTypeSymbol innerStruct && fieldExpr is StructInitializationExpressionSyntax innerInit)
+					CollectRefTargets(innerStruct, innerInit, scope, targets, visited);
+			}
+		}
+		else if (expr is CallExpressionSyntax call && context.ResolvedCalls.TryGetValue(call, out var callee))
+		{
+			// Function call returning a struct: we can't track per-field origins without interprocedural analysis.
+			// Record the function parameters as potential ref targets (conservative).
+			for (var i = 0; i < call.Arguments.Count && i < callee.Parameters.Count; i++)
+			{
+				if (callee.Parameters[i].Type is PointerTypeSymbol)
+				{
+					var argName = GetBaseIdentifierName(call.Arguments[i]);
+					if (argName != null)
+						targets.Add(argName);
+				}
+			}
+		}
+	}
+
+	private void RegisterParentLock(string parentName, string refName)
+	{
+		if (!_parentLocks.TryGetValue(parentName, out var refs))
+		{
+			refs = [];
+			_parentLocks[parentName] = refs;
+		}
+		refs.Add(refName);
+	}
+
+	private void ReleaseParentLock(string refName)
+	{
+		var parentKeys = _parentLocks.Where(kv => kv.Value.Contains(refName)).Select(kv => kv.Key).ToList();
+		foreach (var parent in parentKeys)
+		{
+			_parentLocks[parent].Remove(refName);
+			if (_parentLocks[parent].Count == 0)
+				_parentLocks.Remove(parent);
+		}
+	}
+
+	private void VerifyBorrowLock(ExpressionSyntax expr, SymbolTable scope, string verb)
+	{
+		var name = GetBaseIdentifierName(expr);
+		if (name != null && _parentLocks.ContainsKey(name))
+		{
+			context.Diagnostics.Report(context.CurrentUnit!.Context, expr.Span,
+				$"Cannot {verb} '{name}' while a field borrow is still active");
 		}
 	}
 
@@ -300,6 +616,8 @@ public sealed class SafetyPass(BindingContext context)
 	{
 		if (expr is IdentifierExpressionSyntax id) return id.Name;
 		if (expr is MemberAccessExpressionSyntax m) return GetBaseIdentifierName(m.Expression);
+		if (expr is IndexExpressionSyntax idx) return GetBaseIdentifierName(idx.Left);
+		if (expr is BorrowExpressionSyntax b) return GetBaseIdentifierName(b.Expression);
 		return null;
 	}
 }

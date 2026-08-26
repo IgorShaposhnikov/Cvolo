@@ -1,0 +1,23 @@
+using System;
+
+struct Inner
+{
+	int Value;
+}
+
+struct Outer
+{
+	int Id;
+	refvar Inner Ref;
+}
+
+int GetValue(Outer o) {
+	return o.Id;
+}
+
+int Main() {
+	var Inner i = Inner { Value: 99 };
+	Outer o = Outer { Id: 5, Ref: refvar i };
+	var int v = GetValue(o);
+	return 0;
+}

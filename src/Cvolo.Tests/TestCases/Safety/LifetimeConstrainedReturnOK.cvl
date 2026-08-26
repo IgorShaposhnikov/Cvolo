@@ -1,0 +1,23 @@
+using System;
+
+struct Point
+{
+	int X;
+	int Y;
+}
+
+struct Wrapper
+{
+	ref Point p;
+}
+
+Wrapper WrapPoint(ref Point r) {
+	Wrapper w = Wrapper { p: r };
+	return w; // OK: w.p targets parameter 'r'
+}
+
+int Main() {
+	Point p = Point { X: 10, Y: 20 };
+	WrapPoint(ref p);
+	return 0;
+}

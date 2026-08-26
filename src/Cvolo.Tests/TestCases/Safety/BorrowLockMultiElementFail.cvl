@@ -1,0 +1,9 @@
+int Main() {
+    int[3] arr = { 10, 20, 30 };
+    refvar elem0 = ref arr[0];
+    var int v0 = elem0;
+    ref elem1 = ref arr[1]; // INTENTIONAL ERROR: incompatible borrow already active on 'arr'
+    var int v1 = elem1;
+    var int sum = v0 + v1 + elem0;
+    return sum;
+}

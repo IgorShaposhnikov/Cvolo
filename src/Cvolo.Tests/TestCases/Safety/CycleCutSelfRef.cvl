@@ -1,0 +1,23 @@
+using System;
+
+struct Node
+{
+	int Value;
+}
+
+struct SelfRef
+{
+	int Id;
+	refvar Node Next;
+}
+
+int GetId(SelfRef s) {
+	return s.Id;
+}
+
+int Main() {
+	var Node n = Node { Value: 42 };
+	SelfRef s = SelfRef { Id: 1, Next: refvar n };
+	var int v = GetId(s);
+	return 0;
+}

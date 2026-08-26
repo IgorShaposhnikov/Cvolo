@@ -1,0 +1,26 @@
+using System;
+
+struct Point
+{
+	int X;
+	int Y;
+}
+
+int SumFields(ref Point p) {
+	return p.X + p.Y;
+}
+
+int Main() {
+	var Point a = Point { X: 10, Y: 20 };
+	var Point b = Point { X: 30, Y: 40 };
+
+	refvar cursor = ref a;
+	int sumA = SumFields(cursor);
+
+	cursor = ref b;
+	int sumB = SumFields(cursor);
+
+	Console.WriteLine(sumA);
+	Console.WriteLine(sumB);
+	return 0;
+}
