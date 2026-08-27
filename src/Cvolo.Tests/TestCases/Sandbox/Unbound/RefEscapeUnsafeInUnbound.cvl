@@ -1,0 +1,16 @@
+using System;
+
+global refvar int gRef;
+
+unbound void Escape(refvar int x) {
+    unsafe {
+        refvar int local = x;
+        gRef = local;
+    }
+}
+
+int Main() {
+    var num = 42;
+    Escape(refvar num);
+    return 0;
+}

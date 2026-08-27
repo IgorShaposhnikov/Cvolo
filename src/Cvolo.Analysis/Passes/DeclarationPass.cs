@@ -581,6 +581,15 @@ public sealed class DeclarationPass(BindingContext context)
 
 	private void DeclareGlobalVariable(GlobalVariableDeclarationSyntax globalDecl)
 	{
+		// Reject 'global var ref/refvar ...' — reference types use ref/refvar directly, not var
+		if (globalDecl.IsMutable && globalDecl.Type is not null && globalDecl.Type.StartsWith("ref"))
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, globalDecl.Span,
+				$"Cannot use 'var' with reference type in global declaration. Use 'global ref' or 'global refvar' instead.");
+			return;
+		}
+
 		var type = context.ResolveType(globalDecl.Type);
 		if (type is null)
 		{
@@ -603,7 +612,9 @@ public sealed class DeclarationPass(BindingContext context)
 			return;
 		}
 
-		var symbol = new VariableSymbol(globalDecl.Name, type, isMutable: globalDecl.IsMutable)
+		// ref/refvar globals are inherently re-assignable (mutable references)
+		var isRefType = globalDecl.Type is not null && globalDecl.Type.StartsWith("ref");
+		var symbol = new VariableSymbol(globalDecl.Name, type, isMutable: globalDecl.IsMutable || isRefType)
 		{
 			IsInitialized = true,
 			IsGlobal = true,

@@ -18,6 +18,7 @@ public sealed class SafetyPass(BindingContext context)
 	private readonly Dictionary<string, HashSet<string>> _parentLocks = []; // parentVar -> set of refVar names
 	private readonly Dictionary<string, HashSet<string>> _structRefTargets = []; // structVar -> set of variable names that ref fields point to
 	private readonly Stack<SafetyTier> _currentTierStack = [];
+	private readonly HashSet<string> _localRefsInUnboundScope = []; // refvar/ref variables declared inside the current unbound scope (including nested unsafe blocks)
 	private ClassificationAnalyzer? _classification;
 
 	private ClassificationAnalyzer Classification => _classification ??= new ClassificationAnalyzer(context);
@@ -43,6 +44,7 @@ public sealed class SafetyPass(BindingContext context)
 		_activeRefs.Clear();
 		_parentLocks.Clear();
 		_structRefTargets.Clear();
+		_localRefsInUnboundScope.Clear();
 
 		// Look up the resolved function symbol to get the actual tier
 		var baseName = func.Name == "main" ? "main" : context.GetMangledName(func.Name, context.CurrentNamespace);
@@ -196,6 +198,11 @@ public sealed class SafetyPass(BindingContext context)
 							sym.Origin = borrowed.Origin;
 					}
 
+					// Track refvar/ref declarations inside unbound scope for CVL1008
+					// Uses stack check (not CurrentTier) so nested unsafe blocks inside unbound are still tracked
+					if (v.Type is not null && v.Type.StartsWith("ref") && _currentTierStack.Contains(SafetyTier.Unbound))
+						_localRefsInUnboundScope.Add(v.Name);
+
 			// Track ref field targets for struct variables (§3C)
 				if (v.Type is not "ref" and not "refvar" && sym.Type is StructTypeSymbol)
 					TrackStructRefTargets(v.Name, v.Initializer, scope);
@@ -308,6 +315,13 @@ public sealed class SafetyPass(BindingContext context)
 					VerifyBorrowLock(bin.Left, scope, "reassign");
 					leftSymbol.IsMoved = false;
 					HandleCopyAssignment(bin.Right, scope);
+
+					// CVL1008: Escape prevention — local refvar cannot escape unbound scope to globals
+					if (_currentTierStack.Contains(SafetyTier.Unbound) && leftSymbol.IsGlobal && IsLocalUnboundRef(bin.Right, scope))
+					{
+						context.Diagnostics.Report(context.CurrentUnit!.Context, bin.Span,
+							$"Reference cannot escape unbound scope: cannot assign local reference to global variable '{leftId.Name}'");
+					}
 
 					// Track ref field targets for struct reassignment (§3C)
 					if (leftSymbol.Type is StructTypeSymbol)
@@ -670,5 +684,16 @@ public sealed class SafetyPass(BindingContext context)
 		if (expr is IndexExpressionSyntax idx) return GetBaseIdentifierName(idx.Left);
 		if (expr is BorrowExpressionSyntax b) return GetBaseIdentifierName(b.Expression);
 		return null;
+	}
+
+	/// <summary>
+	/// Returns true if the expression resolves to a refvar/ref variable declared locally inside the current unbound scope.
+	/// </summary>
+	private bool IsLocalUnboundRef(ExpressionSyntax expr, SymbolTable scope)
+	{
+		var name = GetBaseIdentifierName(expr);
+		if (name == null) return false;
+		if (!_localRefsInUnboundScope.Contains(name)) return false;
+		return scope.Lookup(name) is VariableSymbol sym && sym.Type is PointerTypeSymbol;
 	}
 }

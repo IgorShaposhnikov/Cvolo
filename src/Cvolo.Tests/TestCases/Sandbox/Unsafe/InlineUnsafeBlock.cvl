@@ -1,7 +1,7 @@
 using System;
 
 int Process(int x) {
-    int result = 0;
+    var result = 0;
     unsafe {
         int* p = &x;
         result = *p;

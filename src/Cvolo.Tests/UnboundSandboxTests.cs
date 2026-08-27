@@ -30,4 +30,22 @@ public sealed class UnboundSandboxTests : CompilerTestBase
 		Assert.Equal(0, runCode);
 		Assert.Contains("30", runStdout);
 	}
+
+	[Fact]
+	public void RefEscapeToGlobal_Rejected()
+	{
+		var fileName = "Sandbox/Unbound/RefEscapeToGlobal.cvl";
+		var (exitCode, stdout, stderr) = RunCompiler(fileName);
+		Assert.NotEqual(0, exitCode);
+		Assert.Contains("Reference cannot escape unbound scope", stderr);
+	}
+
+	[Fact]
+	public void RefEscapeUnsafeInUnbound_Rejected()
+	{
+		var fileName = "Sandbox/Unbound/RefEscapeUnsafeInUnbound.cvl";
+		var (exitCode, stdout, stderr) = RunCompiler(fileName);
+		Assert.NotEqual(0, exitCode);
+		Assert.Contains("Reference cannot escape unbound scope", stderr);
+	}
 }

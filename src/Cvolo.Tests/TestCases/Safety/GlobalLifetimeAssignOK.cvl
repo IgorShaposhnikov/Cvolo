@@ -7,7 +7,7 @@ struct Point
 }
 
 global Point gPoint = Point { X: 100, Y: 200 };
-global var ref Point gRef;
+global ref Point gRef;
 
 void StoreGlobalRef() {
 	gRef = ref gPoint; // OK: global-origin ref assigned to global

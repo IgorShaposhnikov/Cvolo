@@ -6,7 +6,7 @@ struct Point
 	int Y;
 }
 
-global var ref Point gRef;
+global ref Point gRef;
 
 void StoreLocalRef() {
 	Point local = Point { X: 10, Y: 20 };

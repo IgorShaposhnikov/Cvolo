@@ -183,6 +183,9 @@ public sealed class ValidationPass(BindingContext context)
 					CheckStatement(forStmt.Body, forScope, currentFunc);
 					break;
 				}
+			case UnsafeBlockStatementSyntax unsafeBlock:
+				CheckBlock(unsafeBlock.Body, new SymbolTable(scope), currentFunc);
+				break;
 		}
 	}
 
