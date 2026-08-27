@@ -1,0 +1,27 @@
+using System;
+
+union Option<T>
+{
+	T Some;
+	void None;
+}
+
+extension Option<T> {
+	bool IsSome()
+	{
+		return true;
+	}
+}
+
+int main()
+{
+	Option<int> opt = Option<int> { Some: 100 };
+	var int y = opt.Some;
+	var bool b = opt.IsSome();
+	var int bVal = b ? 1 : 0;
+	Console.WriteLine($"Some: {y}, IsSome: {bVal}");
+
+	Option<string> empty = Option<string> { None: void };
+	Console.WriteLine("Empty option created.");
+	return 0;
+}

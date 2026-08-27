@@ -23,6 +23,8 @@ public sealed class DeclarationPass(BindingContext context)
 			{
 				if (member is StructDeclarationSyntax structDecl)
 					DeclareStruct(structDecl);
+				else if (member is UnionDeclarationSyntax unionDecl)
+					DeclareUnion(unionDecl);
 			}
 		}
 
@@ -440,14 +442,14 @@ public sealed class DeclarationPass(BindingContext context)
 			return;
 		}
 
-		if (context.GenericStructTemplates.ContainsKey(extendedType.Name))
+		// DEFER: Check if this is a generic struct OR generic union template
+		if (context.GenericStructTemplates.ContainsKey(extendedType.Name) || context.GenericUnionTemplates.ContainsKey(extendedType.Name))
 		{
 			if (!context.GenericExtensionTemplates.TryGetValue(extendedType.Name, out var templates))
 			{
 				templates = [];
 				context.GenericExtensionTemplates[extendedType.Name] = templates;
 			}
-
 			templates.Add(extDecl);
 			return;
 		}
@@ -580,7 +582,10 @@ public sealed class DeclarationPass(BindingContext context)
 			}
 			ctorCandidates.Add(ctorSymbol);
 
-			context.SymbolUnits[ctorOverloadedName] = context.CurrentUnit!;
+			if (context.CurrentUnit is not null)
+			{
+				context.SymbolUnits[ctorOverloadedName] = context.CurrentUnit;
+			}
 
 			if (!context.Constructors.TryGetValue(extDecl.ExtendedTypeName, out var registeredCtors))
 			{
@@ -648,5 +653,64 @@ public sealed class DeclarationPass(BindingContext context)
 			StructInitializationExpressionSyntax structInit => structInit.Initializers.All(static m => IsCompileTimeConstant(m.Expression)),
 			_ => false
 		};
+	}
+
+	private void DeclareUnion(UnionDeclarationSyntax unionDecl)
+	{
+		var mangledName = context.GetMangledName(unionDecl.Name, context.CurrentNamespace);
+
+		if (context.UnionTypes.ContainsKey(mangledName) || context.StructTypes.ContainsKey(mangledName) || TypeSymbol.FromName(unionDecl.Name) is not null)
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, unionDecl.Span, $"Duplicate type definition '{unionDecl.Name}'");
+			return;
+		}
+
+		if (unionDecl.GenericParameters.Count > 0)
+		{
+			context.SymbolUnits[mangledName] = context.CurrentUnit!;
+			context.GenericUnionTemplates[mangledName] = unionDecl;
+
+			var placeholderFields = new List<UnionFieldSymbol>();
+			var templateSymbol = new UnionTypeSymbol(mangledName, placeholderFields);
+			context.UnionTypes[mangledName] = templateSymbol;
+			return;
+		}
+
+		context.SymbolUnits[mangledName] = context.CurrentUnit!;
+		var fields = new List<UnionFieldSymbol>();
+		var fieldNames = new HashSet<string>();
+
+		foreach (var field in unionDecl.Fields)
+		{
+			if (!fieldNames.Add(field.Name))
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, field.Span, $"Duplicate field '{field.Name}' in union '{unionDecl.Name}'");
+				continue;
+			}
+
+			TypeSymbol fieldType;
+			var isVoidVariant = field.Type == "void";
+			if (isVoidVariant)
+			{
+				fieldType = TypeSymbol.Void;
+			}
+			else
+			{
+				fieldType = context.ResolveType(field.Type ?? "");
+				if (fieldType is null)
+				{
+					var currentFileContext = context.FileContexts[context.CurrentUnit!];
+					context.Diagnostics.Report(currentFileContext, field.Span, $"Unknown type '{field.Type}' of field '{field.Name}' in union '{unionDecl.Name}'");
+					continue;
+				}
+			}
+
+			fields.Add(new UnionFieldSymbol(field.Name, fieldType, isVoidVariant));
+		}
+
+		var unionSymbol = new UnionTypeSymbol(mangledName, fields);
+		context.UnionTypes[mangledName] = unionSymbol;
 	}
 }

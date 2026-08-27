@@ -1,6 +1,3 @@
-using Cvolo.Core.Diagnostics;
-using Cvolo.Projects;
-using Cvolo.Syntax.Antlr;
 using Cvolo.Tests.Core;
 
 namespace Cvolo.Tests;
@@ -8,23 +5,29 @@ namespace Cvolo.Tests;
 public sealed class UnionsTests : CompilerTestBase
 {
 	[Theory]
-	[InlineData("UnionDecl.cvl")]
-	public void Parser_Unions_Should_Parse(string caseName)
+	[InlineData("UnionDecl", "Integer: 42")]
+	[InlineData("UnionFieldAccess", "Ok: 42")]
+	[InlineData("UnionExtension", "Some: 100, IsSome: 1\nEmpty option created.")]
+	public void Execution_Success(string caseName, string expected)
 	{
-		var assemblyDir = Path.GetDirectoryName(typeof(UnionsTests).Assembly.Location)!;
-		var fullPath = Path.Combine(assemblyDir, "TestCases", $"Unions/{caseName}");
+		var fileName = $"Unions/{caseName}.cvl";
+		var (exitCode, stdout, stderr) = RunCompiler(fileName);
+		AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
 
-		var project = CompilationProject.Load(fullPath);
-		var parser = new AntlrSyntaxParser();
+		var (runCode, runStdout) = ExecuteBinary(caseName, "Unions");
+		Assert.Equal(0, runCode);
+		Assert.Contains(expected.Replace("\r\n", "\n").Trim(), runStdout.Replace("\r\n", "\n").Trim());
+	}
 
-		foreach (var file in project.SourceFiles)
-		{
-			var sourceCode = File.ReadAllText(file);
-			var context = new CompilationContext(sourceCode, file);
-			var ast = parser.Parse(context);
+	[Theory]
+	[InlineData("UnionDuplicateFieldFail", "Duplicate field 'Active'")]
+	[InlineData("UnionFieldAccessFail", "does not contain variant 'Missing'")]
+	public void Semantic_Rejections(string caseName, string expectedError)
+	{
+		var fileName = $"Unions/{caseName}.cvl";
+		var (exitCode, stdout, stderr) = RunCompiler(fileName);
 
-			Assert.NotNull(ast);
-			Assert.False(parser.Diagnostics.HasErrors, $"Expected parser to successfully parse union '{caseName}'.");
-		}
+		Assert.Equal(1, exitCode);
+		Assert.Contains(expectedError, stderr);
 	}
 }

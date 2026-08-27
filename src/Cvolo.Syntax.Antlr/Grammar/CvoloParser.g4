@@ -213,10 +213,11 @@ expression
 	| StringLiteral                                         							# stringLiteralExpression
 	| InterpolatedStringLiteral															# interpolatedStringExpression
 	| CharLiteral																		# charLiteralExpression
-	| TRUE                                                  							# booleanLiteralExpression
-	| FALSE                                                 							# booleanLiteralExpression
-	| NULL                                                  							# nullLiteralExpression
-	| LPAREN expression RPAREN                              							# parenthesizedExpression
+	| TRUE																				# booleanLiteralExpression
+	| FALSE																				# booleanLiteralExpression
+	| NULL																				# nullLiteralExpression
+	| VOID																				# voidLiteralExpression
+	| LPAREN expression RPAREN															# parenthesizedExpression
 	;
 
 argumentList

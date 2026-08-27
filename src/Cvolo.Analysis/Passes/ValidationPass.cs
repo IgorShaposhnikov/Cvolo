@@ -43,7 +43,7 @@ public sealed class ValidationPass(BindingContext context)
 				else if (member is ExtensionDeclarationSyntax extDecl)
 				{
 					var extendedType = context.ResolveType(extDecl.ExtendedTypeName);
-					if (extendedType != null && context.GenericStructTemplates.ContainsKey(extendedType.Name))
+					if (extendedType != null && (context.GenericStructTemplates.ContainsKey(extendedType.Name) || context.GenericUnionTemplates.ContainsKey(extendedType.Name)))
 					{
 						continue;
 					}
@@ -470,6 +470,8 @@ public sealed class ValidationPass(BindingContext context)
 			case UnaryExpressionSyntax unary:
 				CheckExpression(unary.Operand, scope);
 				break;
+			case VoidLiteralExpressionSyntax:
+				break;
 		}
 	}
 
@@ -479,22 +481,32 @@ public sealed class ValidationPass(BindingContext context)
 		var leftType = GetExpressionType(expr.Expression, scope);
 		if (leftType is null) return null;
 
-		// Automatically dereference references to access underlying struct fields
 		if (leftType is PointerTypeSymbol pointerType)
 		{
 			leftType = pointerType.ReferencedType;
 		}
 
-		// Slices have a built-in read-only 'Length' field of type 'int'
 		if (leftType.Name.EndsWith("[]") && expr.MemberName == "Length")
 		{
 			return TypeSymbol.Int;
 		}
 
+		if (leftType is UnionTypeSymbol unionType)
+		{
+			var variantField = unionType.FindField(expr.MemberName);
+			if (variantField is null)
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, expr.Span, $"Union '{unionType.Name}' does not contain variant '{expr.MemberName}'");
+				return null;
+			}
+			return variantField.Type;
+		}
+
 		if (leftType is not StructTypeSymbol structType)
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.Report(currentFileContext, expr.Span, $"Type '{leftType.Name}' is not a struct; cannot access member '{expr.MemberName}'");
+			context.Diagnostics.Report(currentFileContext, expr.Span, $"Type '{leftType.Name}' is not a struct or union; cannot access member '{expr.MemberName}'");
 			return null;
 		}
 
@@ -517,6 +529,44 @@ public sealed class ValidationPass(BindingContext context)
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
 			context.Diagnostics.Report(currentFileContext, expr.Span, $"Unknown type '{expr.StructTypeName}'");
 			return null;
+		}
+
+		if (type is UnionTypeSymbol unionType)
+		{
+			if (expr.Initializers.Count != 1)
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, expr.Span, $"Union initialization of '{unionType.Name}' must specify exactly one variant.");
+				return unionType;
+			}
+
+			var init = expr.Initializers[0];
+			var field = unionType.FindField(init.MemberName);
+			if (field is null)
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, init.Span, $"Union '{unionType.Name}' does not contain variant '{init.MemberName}'");
+				return unionType;
+			}
+
+			if (init.Expression is ParenthesizedStructInitializerExpressionSyntax nested)
+			{
+				nested.ResolvedStructTypeName = field.Type.Name;
+				CheckParenthesizedStructInitialization(nested, scope);
+			}
+			else
+			{
+				CheckExpression(init.Expression, scope);
+			}
+
+			var initType = GetExpressionType(init.Expression, scope);
+			if (initType is not null && !initType.Equals(field.Type))
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, init.Span, $"Cannot initialize variant '{init.MemberName}' of type '{field.Type.Name}' with value of type '{initType.Name}'");
+			}
+
+			return unionType;
 		}
 
 		if (type is not StructTypeSymbol structType)
@@ -544,7 +594,6 @@ public sealed class ValidationPass(BindingContext context)
 				continue;
 			}
 
-			// Propagate target type expectations down into parenthesized blocks recursively
 			if (init.Expression is ParenthesizedStructInitializerExpressionSyntax nested)
 			{
 				nested.ResolvedStructTypeName = field.Type.Name;
@@ -688,6 +737,7 @@ public sealed class ValidationPass(BindingContext context)
 			ArrayReplicationExpressionSyntax r => CheckArrayReplication(r, scope),
 			ParenthesizedStructInitializerExpressionSyntax p => p.ResolvedStructTypeName is not null ? context.ResolveType(p.ResolvedStructTypeName) : null,
 			TernaryExpressionSyntax t => CheckTernaryExpression(t, scope),
+			VoidLiteralExpressionSyntax => TypeSymbol.Void,
 			_ => null
 		};
 	}
@@ -959,17 +1009,17 @@ public sealed class ValidationPass(BindingContext context)
 
 			if (scope.Lookup(receiverName) is VariableSymbol receiverSymbol)
 			{
-				var structType = receiverSymbol.Type as StructTypeSymbol;
-				if (structType is null && receiverSymbol.Type is PointerTypeSymbol ptr)
-					structType = ptr.ReferencedType as StructTypeSymbol;
+				var receiverType = receiverSymbol.Type;
+				if (receiverType is PointerTypeSymbol ptr)
+					receiverType = ptr.ReferencedType;
 
-				if (structType is not null)
+				if (receiverType is StructTypeSymbol or UnionTypeSymbol)
 				{
-					// Resolve using "Point.Move" as the base name
-					baseName = $"{structType.Name}.{methodName}";
+					// Resolve using "Option<int>.IsSome" as the base name
+					baseName = $"{receiverType.Name}.{methodName}";
 
 					// Prepend the receiver's reference type as the first argument!
-					var receiverRefType = new PointerTypeSymbol(structType, isMutable: receiverSymbol.IsMutable);
+					var receiverRefType = new PointerTypeSymbol(receiverType, isMutable: receiverSymbol.IsMutable);
 					adjustedArgTypes.Insert(0, receiverRefType);
 				}
 			}
@@ -1152,11 +1202,11 @@ public sealed class ValidationPass(BindingContext context)
 
 	private void CheckExtensionMethodBody(string extendedTypeName, FunctionDeclarationSyntax method, bool forceMutableThis = false)
 	{
-		var extendedType = context.ResolveType(extendedTypeName) as StructTypeSymbol;
-		if (extendedType is null) return;
+		var extendedType = context.ResolveType(extendedTypeName);
+		if (extendedType is not (StructTypeSymbol or UnionTypeSymbol)) return;
 
 		// 1. Static AST Mutation Scan: Infer if the method modifies any fields
-		var isMutating = forceMutableThis || DetectFieldMutation(method.Body, extendedType);
+		var isMutating = forceMutableThis || (extendedType is StructTypeSymbol structType && DetectFieldMutation(method.Body, structType));
 
 		// 2. Locate the registered function symbol using the unmutated base registration
 		var baseMangledName = context.GetMangledName($"{extendedTypeName}.{method.Name}", context.CurrentNamespace);
@@ -1180,11 +1230,21 @@ public sealed class ValidationPass(BindingContext context)
 			}
 		}
 
-		// 3. Populate local scope with fields so they can be written as flat local variables
+		// 3. Populate local scope with fields/variants so they can be written as flat local variables
 		var localScope = new SymbolTable(context.Globals);
-		foreach (var field in extendedType.Fields)
+		if (extendedType is StructTypeSymbol st)
 		{
-			localScope.Declare(new VariableSymbol(field.Name, field.Type, isMutable: true) { IsInitialized = true });
+			foreach (var field in st.Fields)
+			{
+				localScope.Declare(new VariableSymbol(field.Name, field.Type, isMutable: true) { IsInitialized = true });
+			}
+		}
+		else if (extendedType is UnionTypeSymbol ut)
+		{
+			foreach (var field in ut.Fields)
+			{
+				localScope.Declare(new VariableSymbol(field.Name, field.Type, isMutable: true) { IsInitialized = true });
+			}
 		}
 
 		foreach (var param in method.Parameters)

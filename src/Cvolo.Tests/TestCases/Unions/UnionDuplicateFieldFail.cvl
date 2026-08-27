@@ -1,0 +1,8 @@
+union Duplicate {
+    int Active;
+    double Active; // Fail: Duplicate field 'Active'
+}
+
+int main() {
+    return 0;
+}

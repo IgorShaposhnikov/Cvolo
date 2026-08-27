@@ -455,6 +455,8 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 					var elseExpr = BuildExpression(ternaryCtx.expression(2));
 					return new TernaryExpressionSyntax(SpanOf(ternaryCtx), cond, thenExpr, elseExpr);
 				}
+			case CvoloParser.VoidLiteralExpressionContext voidCtx:
+				return new VoidLiteralExpressionSyntax(SpanOf(voidCtx));
 			default:
 				return new IdentifierExpressionSyntax(SpanOf(context), context.GetText());
 		}

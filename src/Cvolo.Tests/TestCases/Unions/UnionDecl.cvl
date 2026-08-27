@@ -1,10 +1,14 @@
-union Option<T>
-{
-	T Some;
-	void None;
+using System;
+
+union MyUnion {
+    int Integer;
+    double Real;
+    void Empty;
 }
 
-int main()
-{
-	return 0;
+int main() {
+    MyUnion u = MyUnion { Integer: 42 };
+    var int x = u.Integer;
+    Console.WriteLine($"Integer: {x}");
+    return 0;
 }

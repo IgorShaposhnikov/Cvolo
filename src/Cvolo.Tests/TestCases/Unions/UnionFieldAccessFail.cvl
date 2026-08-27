@@ -1,0 +1,9 @@
+union MyUnion {
+    int Some;
+}
+
+int main() {
+    MyUnion u = MyUnion { Some: 42 };
+    var double x = u.Missing; // Fail: Union 'MyUnion' does not contain variant 'Missing'
+    return 0;
+}

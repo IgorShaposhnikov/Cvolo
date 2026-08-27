@@ -99,6 +99,9 @@ public sealed class CvoloSourcePrinter
 			case TernaryExpressionSyntax t:
 				return $"{Print(t.Condition)} ? {Print(t.ThenExpression)} : {Print(t.ElseExpression)}";
 
+			case VoidLiteralExpressionSyntax:
+				return "void";
+
 			case UnionDeclarationSyntax u:
 				var uGenerics = u.GenericParameters.Count > 0 ? $"<{string.Join(", ", u.GenericParameters)}>" : "";
 				var uFields = string.Join("\n", u.Fields.Select(f => $"{ind}    {f.Type} {f.Name};"));

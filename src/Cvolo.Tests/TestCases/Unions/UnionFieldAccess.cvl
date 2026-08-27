@@ -1,0 +1,13 @@
+using System;
+
+union Result<T> {
+    T Ok;
+    string Err;
+}
+
+int main() {
+    Result<int> res = Result<int> { Ok: 42 };
+    var int x = res.Ok;
+    Console.WriteLine($"Ok: {x}");
+    return 0;
+}

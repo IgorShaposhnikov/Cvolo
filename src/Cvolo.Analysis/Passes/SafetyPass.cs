@@ -375,9 +375,9 @@ public sealed class SafetyPass(BindingContext context)
 
 		var type = ResolveExpressionType(arg, scope);
 
-		if (type is StructTypeSymbol argStruct)
+		if (type is StructTypeSymbol or UnionTypeSymbol)
 		{
-			var kind = Classification.Classify(argStruct);
+			var kind = Classification.Classify(type);
 			switch (kind)
 			{
 				case CopyKind.ResourceMove:
@@ -388,10 +388,10 @@ public sealed class SafetyPass(BindingContext context)
 					}
 					break;
 				case CopyKind.LargeCopy:
-					var size = Classification.CalculateByteSize(argStruct);
+					var size = Classification.CalculateByteSize(type);
 					context.Diagnostics.ReportWarning(
 						context.CurrentUnit!.Context, arg.Span,
-						$"'{argStruct.Name}' is {size} bytes. Copying by value duplicates the payload. Consider passing by 'ref'.",
+						$"'{type.Name}' is {size} bytes. Copying by value duplicates the payload. Consider passing by 'ref'.",
 						DiagnosticIds.LargeCopyWarning);
 					break;
 			}

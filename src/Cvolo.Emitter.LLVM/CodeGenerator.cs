@@ -79,12 +79,27 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			}
 		}
 
+		foreach (var unionType in bindingContext.UnionTypes.Values)
+		{
+			if (!_llvmStructTypes.ContainsKey(unionType.Name))
+			{
+				_llvmStructTypes[unionType.Name] = _context.CreateNamedStruct(unionType.Name);
+			}
+		}
+
 		// Pass B: Define Struct Bodies recursively
 		foreach (var structType in bindingContext.StructTypes.Values)
 		{
 			var llvmStruct = _llvmStructTypes[structType.Name];
 			var fieldTypes = structType.Fields.Select(f => GetLLVMType(f.Type)).ToArray();
 			llvmStruct.StructSetBody(fieldTypes, false);
+		}
+
+		foreach (var unionType in bindingContext.UnionTypes.Values)
+		{
+			var llvmUnion = _llvmStructTypes[unionType.Name];
+			var maxPayloadSize = unionType.Fields.Where(f => !f.IsVoidVariant).Select(f => GetByteSize(f.Type)).DefaultIfEmpty(0).Max();
+			llvmUnion.StructSetBody([LLVMTypeRef.Int8, LLVMTypeRef.CreateArray(LLVMTypeRef.Int8, (uint)maxPayloadSize)], false);
 		}
 
 		// Pass B2: Emit data-segment globals ('global T name = <const>;')
@@ -1422,6 +1437,13 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				return field.Type;
 		}
 
+		if (parentType is UnionTypeSymbol unionType)
+		{
+			var field = unionType.FindField(m.MemberName);
+			if (field is not null)
+				return field.Type;
+		}
+
 		return TypeSymbol.Int;
 	}
 
@@ -1638,7 +1660,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			return LLVMTypeRef.CreateArray(GetLLVMType(arr.ElementType), (uint)arr.Size);
 		}
 
-		if (t is StructTypeSymbol)
+		if (t is StructTypeSymbol || t is UnionTypeSymbol)
 		{
 			if (_llvmStructTypes.TryGetValue(t.Name, out var typeRef))
 				return typeRef;
@@ -1701,6 +1723,21 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		else if (expr is MemberAccessExpressionSyntax m)
 		{
 			var (parentPtr, parentType) = GetFieldPointer(m.Expression);
+
+			if (parentType is UnionTypeSymbol unionType)
+			{
+				var fieldIndex = GetFieldIndex(unionType, m.MemberName);
+				var fieldType = unionType.Fields[fieldIndex].Type;
+
+				var structLayoutTy = GetLLVMType(parentType);
+				var payloadPtr = _builder.BuildGEP2(structLayoutTy, parentPtr, new LLVMValueRef[] {
+					LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
+					LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1)
+				}, "union_payload_ptr");
+
+				var castPtr = _builder.BuildBitCast(payloadPtr, LLVMTypeRef.CreatePointer(GetLLVMType(fieldType), 0), "payload_cast_ptr");
+				return (castPtr, fieldType);
+			}
 
 			if (parentType is SliceTypeSymbol sliceType && m.MemberName == "Length")
 			{
@@ -1791,6 +1828,19 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		throw new KeyNotFoundException($"Field {name} not found in struct {type.Name}");
 	}
 
+	private int GetFieldIndex(UnionTypeSymbol type, string name)
+	{
+		for (var i = 0; i < type.Fields.Count; i++)
+		{
+			if (type.Fields[i].Name == name)
+			{
+				return i;
+			}
+		}
+
+		throw new KeyNotFoundException($"Variant {name} not found in union {type.Name}");
+	}
+
 	private LLVMValueRef EmitStructInitialization(StructInitializationExpressionSyntax expr)
 	{
 		var typeSymbol = _bindingContext!.ResolveType(expr.StructTypeName) as StructTypeSymbol;
@@ -1802,12 +1852,45 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 	private void EmitStructInitializationInPlace(StructInitializationExpressionSyntax expr, LLVMValueRef destPtr)
 	{
-		var typeSymbol = _bindingContext!.ResolveType(expr.StructTypeName) as StructTypeSymbol;
-		var structLayout = GetLLVMType(typeSymbol!);
+		var typeSymbol = _bindingContext!.ResolveType(expr.StructTypeName);
+
+		if (typeSymbol is UnionTypeSymbol unionType)
+		{
+			var unionLayout = GetLLVMType(unionType);
+			var init = expr.Initializers[0];
+			var fieldIndex = GetFieldIndex(unionType, init.MemberName);
+			var field = unionType.Fields[fieldIndex];
+
+			// 1. Store the active variant index into the i8 tag field (Index 0)
+			var tagPtr = _builder.BuildGEP2(unionLayout, destPtr, new LLVMValueRef[] {
+				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
+				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0)
+			}, "union_tag_ptr");
+			_builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, (ulong)fieldIndex), tagPtr);
+
+			// 2. Store the variant value into the payload field (Index 1) if not void
+			if (!field.IsVoidVariant)
+			{
+				var payloadPtr = _builder.BuildGEP2(unionLayout, destPtr, new LLVMValueRef[] {
+					LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
+					LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1)
+				}, "union_payload_ptr");
+
+				var castPtr = _builder.BuildBitCast(payloadPtr, LLVMTypeRef.CreatePointer(GetLLVMType(field.Type), 0), "payload_cast_ptr");
+				var value = EmitExpression(init.Expression);
+				_builder.BuildStore(value, castPtr);
+			}
+
+			return;
+		}
+
+		// Struct fallback: Cast the resolved typeSymbol to StructTypeSymbol
+		var structType = (StructTypeSymbol)typeSymbol!;
+		var structLayout = GetLLVMType(structType);
 
 		foreach (var init in expr.Initializers)
 		{
-			var fieldIndex = GetFieldIndex(typeSymbol!, init.MemberName);
+			var fieldIndex = GetFieldIndex(structType, init.MemberName);
 			var targetFieldPtr = _builder.BuildGEP2(structLayout, destPtr, new LLVMValueRef[]
 			{
 				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0), LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)fieldIndex)

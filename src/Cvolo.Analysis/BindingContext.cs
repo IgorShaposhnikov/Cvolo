@@ -48,6 +48,8 @@ public sealed class BindingContext
 
 	// Maps monomorphized extension node to its unique overloaded mangled name
 	public Dictionary<SyntaxNode, string> MonomorphizedExtensionNames { get; } = [];
+	public Dictionary<string, UnionTypeSymbol> UnionTypes { get; } = [];
+	public Dictionary<string, UnionDeclarationSyntax> GenericUnionTemplates { get; } = [];
 
 
 	public CompilationUnitSyntax? CurrentUnit { get; set; }
@@ -56,6 +58,9 @@ public sealed class BindingContext
 	/// <summary>Current safety tier used during attribute validation in DeclarationPass.</summary>
 	public SafetyTier CurrentSafetyTier { get; set; }
 
+	/// <summary>
+	/// Resolves a string type name to its canonical, immutable TypeSymbol object.
+	/// </summary>
 	/// <summary>
 	/// Resolves a string type name to its canonical, immutable TypeSymbol object.
 	/// </summary>
@@ -93,7 +98,7 @@ public sealed class BindingContext
 			return ptrType;
 		}
 
-		// 3. Resolve Static Array Types (e.g., int[5])
+		// 4. Resolve Static Array Types (e.g., int[5])
 		if (name.EndsWith(']'))
 		{
 			var openBracket = name.LastIndexOf('[');
@@ -108,7 +113,7 @@ public sealed class BindingContext
 			}
 		}
 
-		// 4. Resolve Dynamic Slice Types (e.g., int[])
+		// 5. Resolve Dynamic Slice Types (e.g., int[])
 		if (name.EndsWith("[]") && !name.StartsWith("ref"))
 		{
 			var inner = name[..^2];
@@ -121,7 +126,35 @@ public sealed class BindingContext
 			}
 		}
 
-		// 5. Check Primitives
+		// 5b. Resolve Generic Instantiations (e.g., Point<int>, Option<int>)
+		if (name.Contains('<'))
+		{
+			if (_typeCache.TryGetValue(name, out var cachedType)) return cachedType;
+
+			var openBracket = name.IndexOf('<');
+			var baseName = name.Substring(0, openBracket);
+			var argsPart = name.Substring(openBracket + 1, name.Length - openBracket - 2);
+
+			var baseType = ResolveType(baseName);
+			if (baseType is StructTypeSymbol baseStruct && GenericStructTemplates.TryGetValue(baseStruct.Name, out var templateDecl))
+			{
+				var typeArgs = argsPart.Split(',').Select(s => ResolveType(s.Trim())!).ToList();
+				var instantiatedType = InstantiateGenericStruct(templateDecl, baseType.Name, typeArgs!);
+				StructTypes[name] = instantiatedType;
+				_typeCache[name] = instantiatedType;
+				return instantiatedType;
+			}
+			else if (baseType is UnionTypeSymbol baseUnion && GenericUnionTemplates.TryGetValue(baseUnion.Name, out var unionTemplateDecl))
+			{
+				var typeArgs = argsPart.Split(',').Select(s => ResolveType(s.Trim())!).ToList();
+				var instantiatedType = InstantiateGenericUnion(unionTemplateDecl, baseUnion.Name, typeArgs!);
+				UnionTypes[name] = instantiatedType;
+				_typeCache[name] = instantiatedType;
+				return instantiatedType;
+			}
+		}
+
+		// 5c. Check Primitives
 		var primitive = TypeSymbol.FromName(name);
 		if (primitive is not null)
 		{
@@ -129,16 +162,20 @@ public sealed class BindingContext
 			return primitive;
 		}
 
-		// 6. Resolve Namespaced/Imported Structures nominal match
-		var candidates = new List<StructTypeSymbol>();
+		// 6. Resolve Namespaced/Imported Structures/Unions nominal match
+		var candidates = new List<TypeSymbol>();
 		if (StructTypes.TryGetValue(name, out var exactMatch))
 			candidates.Add(exactMatch);
+		if (UnionTypes.TryGetValue(name, out var exactUnionMatch))
+			candidates.Add(exactUnionMatch);
 
 		if (CurrentNamespace != null)
 		{
 			var localMangled = GetMangledName(name, CurrentNamespace);
 			if (StructTypes.TryGetValue(localMangled, out var localStruct))
 				candidates.Add(localStruct);
+			if (UnionTypes.TryGetValue(localMangled, out var localUnion))
+				candidates.Add(localUnion);
 		}
 
 		if (CurrentUnit is not null)
@@ -152,30 +189,8 @@ public sealed class BindingContext
 				var candidateMangled = GetMangledName(name, ns);
 				if (StructTypes.TryGetValue(candidateMangled, out var match))
 					candidates.Add(match);
-			}
-		}
-
-		// Resolve Generic Instantiations (e.g., Point<int>)
-		if (name.Contains('<'))
-		{
-			if (_typeCache.TryGetValue(name, out var cachedType)) return cachedType;
-
-			var openBracket = name.IndexOf('<');
-			var baseName = name.Substring(0, openBracket);
-			var argsPart = name.Substring(openBracket + 1, name.Length - openBracket - 2);
-
-			var baseType = ResolveType(baseName) as StructTypeSymbol;
-			if (baseType is not null && GenericStructTemplates.TryGetValue(baseType.Name, out var templateDecl))
-			{
-				var typeArgs = argsPart.Split(',').Select(s => ResolveType(s.Trim())!).ToList();
-
-				// Pass baseType.Name (which is the fully qualified template name) to the instantiator
-				var instantiatedType = InstantiateGenericStruct(templateDecl, baseType.Name, typeArgs!);
-
-				// Register the concrete layout in our global type table!
-				StructTypes[name] = instantiatedType;
-				_typeCache[name] = instantiatedType;
-				return instantiatedType;
+				if (UnionTypes.TryGetValue(candidateMangled, out var unionMatch))
+					candidates.Add(unionMatch);
 			}
 		}
 
@@ -280,16 +295,29 @@ public sealed class BindingContext
 				   .Replace("ref", "ref");
 	}
 
-	public void MonomorphizeExtensionsForType(StructTypeSymbol instantiatedType, List<TypeSymbol> typeArgs, string templateMangledName)
+	public void MonomorphizeExtensionsForType(TypeSymbol instantiatedType, List<TypeSymbol> typeArgs, string templateMangledName)
 	{
 		if (!GenericExtensionTemplates.TryGetValue(templateMangledName, out var templates))
 			return;
 
-		var templateDecl = GenericStructTemplates[templateMangledName];
-		var substitutionMap = new Dictionary<string, TypeSymbol>();
-		for (int i = 0; i < templateDecl.GenericParameters.Count; i++)
+		IReadOnlyList<string> genericParams;
+		if (GenericStructTemplates.TryGetValue(templateMangledName, out var structTemplate))
 		{
-			substitutionMap[templateDecl.GenericParameters[i]] = typeArgs[i];
+			genericParams = structTemplate.GenericParameters;
+		}
+		else if (GenericUnionTemplates.TryGetValue(templateMangledName, out var unionTemplate))
+		{
+			genericParams = unionTemplate.GenericParameters;
+		}
+		else
+		{
+			return;
+		}
+
+		var substitutionMap = new Dictionary<string, TypeSymbol>();
+		for (var i = 0; i < genericParams.Count; i++)
+		{
+			substitutionMap[genericParams[i]] = typeArgs[i];
 		}
 
 		TypeSymbol ResolveSubstitutedType(string typeName)
@@ -376,7 +404,8 @@ public sealed class BindingContext
 					return new UnaryExpressionSyntax(unary.Span, newOp, SubstituteExpressionGenerics(unary.Operand));
 
 				case CallExpressionSyntax call:
-					var newTypeArgs = call.TypeArguments.Select(t => {
+					var newTypeArgs = call.TypeArguments.Select(t =>
+					{
 						var substituted = t;
 						foreach (var kv in substitutionMap)
 						{
@@ -421,7 +450,7 @@ public sealed class BindingContext
 
 		foreach (var extDecl in templates)
 		{
-			var originalUnit = SymbolUnits.TryGetValue(templateMangledName, out var u) ? u : null;
+			SymbolUnits.TryGetValue(templateMangledName, out var originalUnit);
 
 			// Monomorphize Methods & Destructors
 			foreach (var method in extDecl.Methods.Concat(extDecl.Destructors.Select(static d => d.ToFunctionDeclaration())))
@@ -527,5 +556,61 @@ public sealed class BindingContext
 				MonomorphizedExtensionNames[instDecl] = ctorOverloadedName;
 			}
 		}
+	}
+
+	private UnionTypeSymbol InstantiateGenericUnion(UnionDeclarationSyntax templateDecl, string templateMangledName, List<TypeSymbol> typeArgs)
+	{
+		var instName = $"{templateMangledName}<{string.Join(", ", typeArgs.Select(t => t.Name))}>";
+
+		var prevUnit = CurrentUnit;
+		var prevNamespace = CurrentNamespace;
+
+		var originalUnit = SymbolUnits.TryGetValue(templateMangledName, out var u) ? u : null;
+		CurrentUnit = originalUnit;
+		CurrentNamespace = originalUnit?.NamespaceDeclaration?.Name;
+
+		var substitutionMap = new Dictionary<string, TypeSymbol>();
+		for (int i = 0; i < templateDecl.GenericParameters.Count; i++)
+		{
+			substitutionMap[templateDecl.GenericParameters[i]] = typeArgs[i];
+		}
+
+		var fields = new List<UnionFieldSymbol>();
+		foreach (var field in templateDecl.Fields)
+		{
+			var substitutedTypeName = field.Type;
+			foreach (var kv in substitutionMap)
+			{
+				substitutedTypeName = System.Text.RegularExpressions.Regex.Replace(substitutedTypeName, $@"\b{kv.Key}\b", kv.Value.Name);
+			}
+
+			TypeSymbol fieldType;
+			var isVoidVariant = substitutedTypeName == "void";
+			if (isVoidVariant)
+			{
+				fieldType = TypeSymbol.Void;
+			}
+			else
+			{
+				fieldType = ResolveType(substitutedTypeName);
+				if (fieldType is null)
+				{
+					var currentFileContext = FileContexts[CurrentUnit!];
+					Diagnostics.Report(currentFileContext, field.Span, $"Could not resolve field type '{substitutedTypeName}' during generic instantiation of '{instName}'");
+					continue;
+				}
+			}
+
+			fields.Add(new UnionFieldSymbol(field.Name, fieldType, isVoidVariant));
+		}
+
+		var instantiatedType = new UnionTypeSymbol(instName, fields);
+
+		CurrentUnit = prevUnit;
+		CurrentNamespace = prevNamespace;
+
+		MonomorphizeExtensionsForType(instantiatedType, typeArgs, templateMangledName);
+
+		return instantiatedType;
 	}
 }
