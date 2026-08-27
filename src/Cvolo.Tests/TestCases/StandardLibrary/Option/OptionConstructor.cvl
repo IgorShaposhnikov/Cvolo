@@ -1,0 +1,8 @@
+using System;
+
+int main() {
+    Option<int> opt = Option<int>(42);
+    var int x = opt.Some;
+    Console.WriteLine($"Some: {x}");
+    return 0;
+}

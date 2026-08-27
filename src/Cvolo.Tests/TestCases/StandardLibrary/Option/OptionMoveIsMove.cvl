@@ -1,0 +1,22 @@
+using System;
+
+struct Resource {
+    int Handle;
+}
+
+extension Resource {
+    ~Resource() {
+        // Custom destructor forces ResourceMove classification
+    }
+}
+
+void Consume(Option<Resource> opt) {
+    // Consumes the option by value
+}
+
+int main() {
+    var Option<Resource> opt1 = Option<Resource> { Some: Resource { Handle: 42 } };
+    Consume(opt1); // Ownership is moved (opt1 becomes inactive)
+    var Option<Resource> opt2 = opt1; // INTENTIONAL ERROR: Use of moved variable 'opt1'
+    return 0;
+}

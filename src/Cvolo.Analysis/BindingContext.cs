@@ -163,12 +163,10 @@ public sealed class BindingContext
 		}
 
 		// 6. Resolve Namespaced/Imported Structures/Unions nominal match
+		// 6. Resolve Namespaced/Imported Structures/Unions nominal match (Hierarchical Scoping)
 		var candidates = new List<TypeSymbol>();
-		if (StructTypes.TryGetValue(name, out var exactMatch))
-			candidates.Add(exactMatch);
-		if (UnionTypes.TryGetValue(name, out var exactUnionMatch))
-			candidates.Add(exactUnionMatch);
 
+		// Priority 1: Local Namespace Match (Highest Priority)
 		if (CurrentNamespace != null)
 		{
 			var localMangled = GetMangledName(name, CurrentNamespace);
@@ -178,6 +176,27 @@ public sealed class BindingContext
 				candidates.Add(localUnion);
 		}
 
+		// Priority 2: Exact/Global Match (Only used if no local namespace match is found)
+		if (candidates.Count == 0)
+		{
+			if (StructTypes.TryGetValue(name, out var exactMatch))
+				candidates.Add(exactMatch);
+			if (UnionTypes.TryGetValue(name, out var exactUnionMatch))
+				candidates.Add(exactUnionMatch);
+		}
+
+		if (candidates.Count == 1)
+		{
+			_typeCache[name] = candidates[0];
+			return candidates[0];
+		}
+		else if (candidates.Count > 1)
+		{
+			// Ambiguous local declaration match
+			return null;
+		}
+
+		// Priority 3: Imported usings (Consulted only if no local or global match was found)
 		if (CurrentUnit is not null)
 		{
 			var activeUsings = new List<string>(CurrentUnit.Usings.Select(u => u.NamespaceName));
@@ -257,7 +276,10 @@ public sealed class BindingContext
 		CurrentUnit = prevUnit;
 		CurrentNamespace = prevNamespace;
 
-		// Call the monomorphizer to instantiate all extension methods/constructors
+		// CRITICAL: Register in cache BEFORE calling the monomorphizer to break recursion cycles
+		StructTypes[instName] = instantiatedType;
+		_typeCache[instName] = instantiatedType;
+
 		MonomorphizeExtensionsForType(instantiatedType, typeArgs, templateMangledName);
 
 		return instantiatedType;
@@ -608,6 +630,10 @@ public sealed class BindingContext
 
 		CurrentUnit = prevUnit;
 		CurrentNamespace = prevNamespace;
+
+		// CRITICAL: Register in cache BEFORE calling the monomorphizer to break recursion cycles
+		UnionTypes[instName] = instantiatedType;
+		_typeCache[instName] = instantiatedType;
 
 		MonomorphizeExtensionsForType(instantiatedType, typeArgs, templateMangledName);
 

@@ -627,34 +627,40 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		return _builder.BuildGlobalStringPtr(value, "str");
 	}
 
-	private bool IsConstructorCall(CallExpressionSyntax call, TypeSymbol targetType)
-	{
-		if (call.FunctionName.Contains('.'))
-			return false;
+    private bool IsConstructorCall(CallExpressionSyntax call, TypeSymbol targetType)
+    {
+        // Strip generics from the target type name to match the call's function name (e.g. Point<int> -> Point)
+        var targetTypeName = targetType.Name;
+        if (targetTypeName.Contains('<'))
+        {
+            targetTypeName = targetTypeName.Substring(0, targetTypeName.IndexOf('<'));
+        }
 
-		// Strip generics from the target type name to match the call's function name (e.g. Point<int> -> Point)
-		var targetTypeName = targetType.Name;
-		if (targetTypeName.Contains('<'))
-		{
-			targetTypeName = targetTypeName.Substring(0, targetTypeName.IndexOf('<'));
-		}
+        // Get short names to ignore namespace differences
+        var shortTargetTypeName = targetTypeName.Contains('.')
+            ? targetTypeName.Substring(targetTypeName.LastIndexOf('.') + 1)
+            : targetTypeName;
 
-		if (!string.Equals(call.FunctionName, targetTypeName, StringComparison.Ordinal))
-			return false;
+        var shortCallName = call.FunctionName.Contains('.')
+            ? call.FunctionName.Substring(call.FunctionName.LastIndexOf('.') + 1)
+            : call.FunctionName;
 
-		// Look up either the concrete instantiated constructor or the base template constructor
-		if (!_bindingContext!.Constructors.TryGetValue(targetType.Name, out var ctors) &&
-			!_bindingContext.Constructors.TryGetValue(targetTypeName, out ctors))
-		{
-			return false;
-		}
+        if (!string.Equals(shortCallName, shortTargetTypeName, StringComparison.Ordinal))
+            return false;
 
-		return _bindingContext.ResolvedCalls.TryGetValue(call, out var resolved) &&
-			   resolved.Parameters.Count > 0 &&
-			   resolved.Parameters[0].Name == "this";
-	}
+        // Look up either the concrete instantiated constructor or the base template constructor
+        if (!_bindingContext!.Constructors.TryGetValue(targetType.Name, out var ctors) &&
+            !_bindingContext.Constructors.TryGetValue(targetTypeName, out ctors))
+        {
+            return false;
+        }
 
-	private LLVMValueRef EmitCallExpression(CallExpressionSyntax call, LLVMValueRef? implicitThisPtr = null)
+        return _bindingContext.ResolvedCalls.TryGetValue(call, out var resolved) &&
+               resolved.Parameters.Count > 0 &&
+               resolved.Parameters[0].Name == "this";
+    }
+
+    private LLVMValueRef EmitCallExpression(CallExpressionSyntax call, LLVMValueRef? implicitThisPtr = null)
 	{
 		var paramOffset = implicitThisPtr is not null ? 1 : 0;
 		return EmitCallExpressionCore(call, implicitThisPtr, paramOffset);
@@ -910,13 +916,27 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			else if (_locals.TryGetValue("this", out var thisPtr))
 			{
 				var thisType = _variableTypes["this"] as PointerTypeSymbol;
-				var structType = thisType!.ReferencedType as StructTypeSymbol;
-				var field = structType!.FindField(id.Name);
-				if (field is not null)
+				var refType = thisType!.ReferencedType;
+
+				if (refType is StructTypeSymbol structType)
 				{
-					var (fieldPtr, _) = GetFieldPointer(id);
-					_builder.BuildStore(right, fieldPtr);
-					return right;
+					var field = structType.FindField(id.Name);
+					if (field is not null)
+					{
+						var (fieldPtr, _) = GetFieldPointer(id);
+						_builder.BuildStore(right, fieldPtr);
+						return right;
+					}
+				}
+				else if (refType is UnionTypeSymbol unionType)
+				{
+					var field = unionType.FindField(id.Name);
+					if (field is not null)
+					{
+						var (fieldPtr, _) = GetFieldPointer(id);
+						_builder.BuildStore(right, fieldPtr);
+						return right;
+					}
 				}
 			}
 
@@ -1684,23 +1704,47 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		{
 			if (!_locals.TryGetValue(id.Name, out var structPtr))
 			{
-				// If the identifier is a field of 'this' in an extension block, resolve its pointer implicitly!
+				// If the identifier is a field/variant of 'this' in an extension block, resolve its pointer implicitly!
 				if (_locals.TryGetValue("this", out var thisPtr))
 				{
 					var thisType = _variableTypes["this"] as PointerTypeSymbol;
-					var structType = thisType!.ReferencedType as StructTypeSymbol;
-					var field = structType!.FindField(id.Name);
-					if (field is not null)
+					var refType = thisType!.ReferencedType;
+
+					if (refType is StructTypeSymbol structType)
 					{
-						var actualThisPtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), thisPtr, "loaded_this_ptr");
+						var field = structType.FindField(id.Name);
+						if (field is not null)
+						{
+							var actualThisPtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), thisPtr, "loaded_this_ptr");
 
-						var fieldIndex = GetFieldIndex(structType, id.Name);
-						var structLayoutTy = GetLLVMType(structType);
-						var zero = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0);
-						var index = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)fieldIndex);
+							var fieldIndex = GetFieldIndex(structType, id.Name);
+							var structLayoutTy = GetLLVMType(structType);
+							var zero = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0);
+							var index = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)fieldIndex);
 
-						var fieldPtr = _builder.BuildGEP2(structLayoutTy, actualThisPtr, new LLVMValueRef[] { zero, index }, "this_field_ptr");
-						return (fieldPtr, field.Type);
+							var fieldPtr = _builder.BuildGEP2(structLayoutTy, actualThisPtr, new LLVMValueRef[] { zero, index }, "this_field_ptr");
+							return (fieldPtr, field.Type);
+						}
+					}
+					else if (refType is UnionTypeSymbol unionType)
+					{
+						var field = unionType.FindField(id.Name);
+						if (field is not null)
+						{
+							var actualThisPtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), thisPtr, "loaded_this_ptr");
+
+							var fieldIndex = GetFieldIndex(unionType, id.Name);
+							var structLayoutTy = GetLLVMType(unionType);
+
+							// For unions, access the payload (index 1 of the struct) and cast it to the variant's concrete type
+							var payloadPtr = _builder.BuildGEP2(structLayoutTy, actualThisPtr, new LLVMValueRef[] {
+								LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
+								LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1)
+							}, "union_payload_ptr");
+
+							var castPtr = _builder.BuildBitCast(payloadPtr, LLVMTypeRef.CreatePointer(GetLLVMType(field.Type), 0), "payload_cast_ptr");
+							return (castPtr, field.Type);
+						}
 					}
 				}
 

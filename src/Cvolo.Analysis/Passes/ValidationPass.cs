@@ -373,14 +373,14 @@ public sealed class ValidationPass(BindingContext context)
 
 					if (call.TypeArguments.Count > 0)
 					{
-						// Reconstruct and resolve the struct instantiation name to check if this is a generic constructor call
+						// Reconstruct and resolve the struct/union instantiation name to check if this is a generic constructor call
 						var structNameWithArgs = $"{call.FunctionName}<{string.Join(", ", call.TypeArguments)}>";
-						var resolvedStructType = context.ResolveType(structNameWithArgs) as StructTypeSymbol;
+						var resolvedType = context.ResolveType(structNameWithArgs);
 
-						if (resolvedStructType is not null)
+						if (resolvedType is StructTypeSymbol or UnionTypeSymbol)
 						{
 							// This is a generic constructor call! Use the fully qualified resolved type name for overload resolution
-							func = ResolveOverloadedFunction(resolvedStructType.Name, argTypes, scope);
+							func = ResolveOverloadedFunction(resolvedType.Name, argTypes, scope, call);
 						}
 						else
 						{
@@ -1000,6 +1000,8 @@ public sealed class ValidationPass(BindingContext context)
 		var baseName = name;
 		var adjustedArgTypes = new List<TypeSymbol>(argTypes);
 
+		var isDottedExtension = false;
+
 		// Detect dotted extension method call
 		if (name.Contains('.'))
 		{
@@ -1015,6 +1017,7 @@ public sealed class ValidationPass(BindingContext context)
 
 				if (receiverType is StructTypeSymbol or UnionTypeSymbol)
 				{
+					isDottedExtension = true;
 					// Resolve using "Option<int>.IsSome" as the base name
 					baseName = $"{receiverType.Name}.{methodName}";
 
@@ -1024,10 +1027,11 @@ public sealed class ValidationPass(BindingContext context)
 				}
 			}
 		}
-		else
+
+		if (!isDottedExtension)
 		{
 			var constructorName = name;
-			if (call != null && call.TypeArguments.Count > 0)
+			if (call != null && call.TypeArguments.Count > 0 && !name.Contains('<'))
 			{
 				var concreteTypeName = $"{name}<{string.Join(", ", call.TypeArguments)}>";
 				var resolvedType = context.ResolveType(concreteTypeName);
@@ -1037,11 +1041,20 @@ public sealed class ValidationPass(BindingContext context)
 				}
 			}
 
-			if (context.Constructors.ContainsKey(constructorName))
+			// Dual-Name Lookup: Support both fully-qualified namespace name and short name
+			var shortConstructorName = constructorName;
+			if (shortConstructorName.Contains('.'))
 			{
-				baseName = constructorName;
-				if (context.StructTypes.TryGetValue(constructorName, out var ctorStruct))
-					adjustedArgTypes.Insert(0, new PointerTypeSymbol(ctorStruct, isMutable: true));
+				shortConstructorName = shortConstructorName.Substring(shortConstructorName.LastIndexOf('.') + 1);
+			}
+
+			if (context.Constructors.ContainsKey(constructorName) || context.Constructors.ContainsKey(shortConstructorName))
+			{
+				baseName = context.Constructors.ContainsKey(constructorName) ? constructorName : shortConstructorName;
+				var ctorType = context.ResolveType(baseName);
+
+				if (ctorType is not null)
+					adjustedArgTypes.Insert(0, new PointerTypeSymbol(ctorType, isMutable: true));
 			}
 		}
 

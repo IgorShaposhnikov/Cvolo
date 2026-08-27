@@ -1,0 +1,36 @@
+namespace System;
+
+/// <summary>
+/// Represents an optional value: a type-safe discriminated union that contains 
+/// either an active value of type T (Some) or represents the absence of a value (None). 
+/// This is Cvolo's safe, zero-cost alternative to unmanaged null pointers.
+/// </summary>
+union Option<T> {
+    /// <summary>
+    /// Contains the active, safe, non-nullable value of type T.
+    /// </summary>
+    T Some;
+
+    /// <summary>
+    /// Represents the empty, void variant indicating the absence of a value.
+    /// </summary>
+    void None;
+}
+
+extension Option<T> {
+    /// <summary>
+    /// Standard constructor to safely initialize the Option with an active value.
+    /// </summary>
+    Option(T value) {
+        Some = value;
+    }
+
+    /// <summary>
+    /// Returns true if the option contains an active value (Some); otherwise, false.
+    /// Note: This is currently a temporary bootstrap stub that will be fully implemented 
+    /// using the pattern-matching switch statement in Phase 5.
+    /// </summary>
+    bool IsSome() {
+        return true;
+    }
+}

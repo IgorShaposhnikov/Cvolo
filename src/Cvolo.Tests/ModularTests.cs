@@ -7,11 +7,15 @@ public sealed class ModularTests : CompilerTestBase
 	[Fact]
 	public void Compiler_MultiFile_Should_Compile_With_Namespaces()
 	{
-		// Analyze the entire 'App' directory
+		// Analyze the entire 'App' directory (auto-includes standard library)
 		var (ast, context) = AnalyzeProject("Modular/App");
 
 		Assert.NotNull(ast);
-		Assert.Equal(3, ast.Count);
+
+		// Future-proof: Ensure core project files compiled successfully, ignoring standard library size
+		Assert.Contains(ast, a => a.Context.FilePath.EndsWith("Geometry.cvl", StringComparison.OrdinalIgnoreCase));
+		Assert.Contains(ast, a => a.Context.FilePath.EndsWith("Main.cvl", StringComparison.OrdinalIgnoreCase));
+
 		Assert.False(context.Diagnostics.HasErrors, "Expected successful cross-file namespace compilation.");
 	}
 

@@ -20,11 +20,35 @@ public sealed class UnionsTests : CompilerTestBase
 	}
 
 	[Theory]
+	[InlineData("OptionConstructor", "Some: 42")]
+	public void StdLib_Option_Success(string caseName, string expected)
+	{
+		var fileName = $"StandardLibrary/Option/{caseName}.cvl";
+		var (exitCode, stdout, stderr) = RunCompiler(fileName);
+		AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
+
+		var (runCode, runStdout) = ExecuteBinary(caseName, "StandardLibrary/Option");
+		Assert.Equal(0, runCode);
+		Assert.Contains(expected.Replace("\r\n", "\n").Trim(), runStdout.Replace("\r\n", "\n").Trim());
+	}
+
+	[Theory]
 	[InlineData("UnionDuplicateFieldFail", "Duplicate field 'Active'")]
 	[InlineData("UnionFieldAccessFail", "does not contain variant 'Missing'")]
 	public void Semantic_Rejections(string caseName, string expectedError)
 	{
 		var fileName = $"Unions/{caseName}.cvl";
+		var (exitCode, stdout, stderr) = RunCompiler(fileName);
+
+		Assert.Equal(1, exitCode);
+		Assert.Contains(expectedError, stderr);
+	}
+
+	[Theory]
+	[InlineData("OptionMoveIsMove", "Use of moved variable 'opt1'")]
+	public void StdLib_Option_Rejections(string caseName, string expectedError)
+	{
+		var fileName = $"StandardLibrary/Option/{caseName}.cvl";
 		var (exitCode, stdout, stderr) = RunCompiler(fileName);
 
 		Assert.Equal(1, exitCode);
