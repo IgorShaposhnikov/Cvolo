@@ -8,7 +8,8 @@ public sealed class ExtensionDeclarationSyntax(
 	string extendedTypeName,
 	IReadOnlyList<FunctionDeclarationSyntax> methods,
 	IReadOnlyList<DestructorDeclarationSyntax>? destructors = null,
-	IReadOnlyList<ConstructorDeclarationSyntax>? constructors = null) : SyntaxNode(span)
+	IReadOnlyList<ConstructorDeclarationSyntax>? constructors = null,
+	IReadOnlyList<string>? genericParameters = null) : SyntaxNode(span)
 {
 	public override SyntaxKind Kind => SyntaxKind.ExtensionDeclaration;
 
@@ -16,6 +17,7 @@ public sealed class ExtensionDeclarationSyntax(
 	public IReadOnlyList<FunctionDeclarationSyntax> Methods { get; } = methods;
 	public IReadOnlyList<DestructorDeclarationSyntax> Destructors { get; } = destructors ?? [];
 	public IReadOnlyList<ConstructorDeclarationSyntax> Constructors { get; } = constructors ?? [];
+	public IReadOnlyList<string> GenericParameters { get; } = genericParameters ?? [];
 
 	public override IEnumerable<SyntaxNode> GetChildren() => [.. Methods, .. Destructors, .. Constructors];
 }

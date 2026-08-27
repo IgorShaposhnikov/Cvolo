@@ -171,6 +171,20 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			DeclareFunction(instDecl, instDecl.Name);
 		}
 
+		// Pass D2: Declare Monomorphized Extension Methods and Constructors
+		foreach (var decl in bindingContext.MonomorphizedExtensionDecls)
+		{
+			var emitName = bindingContext.MonomorphizedExtensionNames[decl];
+			if (decl is FunctionDeclarationSyntax func)
+			{
+				DeclareFunction(func, emitName);
+			}
+			else if (decl is ConstructorDeclarationSyntax ctor)
+			{
+				DeclareFunction(ctor.ToFunctionDeclaration(), emitName);
+			}
+		}
+
 		// Pass E: Generate bodies of Regular and Monomorphized functions
 		var emittedFunctionNames = new HashSet<string>();
 
@@ -248,6 +262,28 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				_currentUnit = originalUnit;
 
 				EmitFunctionBody(instDecl, instDecl.Name);
+			}
+		}
+
+		// Emit monomorphized extension methods and constructors
+		foreach (var decl in bindingContext.MonomorphizedExtensionDecls)
+		{
+			var emitName = bindingContext.MonomorphizedExtensionNames[decl];
+			if (emittedFunctionNames.Add(emitName))
+			{
+				var originalUnit = (bindingContext.SymbolUnits.TryGetValue(emitName, out var u) ? u : null) ?? units[0];
+				bindingContext.CurrentUnit = originalUnit;
+				bindingContext.CurrentNamespace = originalUnit?.NamespaceDeclaration?.Name;
+				_currentUnit = originalUnit;
+
+				if (decl is FunctionDeclarationSyntax func)
+				{
+					EmitFunctionBody(func, emitName);
+				}
+				else if (decl is ConstructorDeclarationSyntax ctor)
+				{
+					EmitFunctionBody(ctor.ToFunctionDeclaration(), emitName);
+				}
 			}
 		}
 
@@ -578,14 +614,25 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 	private bool IsConstructorCall(CallExpressionSyntax call, TypeSymbol targetType)
 	{
-		if (call.TypeArguments.Count != 0 || call.FunctionName.Contains('.'))
+		if (call.FunctionName.Contains('.'))
 			return false;
 
-		if (!string.Equals(call.FunctionName, targetType.Name, StringComparison.Ordinal))
+		// Strip generics from the target type name to match the call's function name (e.g. Point<int> -> Point)
+		var targetTypeName = targetType.Name;
+		if (targetTypeName.Contains('<'))
+		{
+			targetTypeName = targetTypeName.Substring(0, targetTypeName.IndexOf('<'));
+		}
+
+		if (!string.Equals(call.FunctionName, targetTypeName, StringComparison.Ordinal))
 			return false;
 
-		if (!_bindingContext!.Constructors.TryGetValue(targetType.Name, out var ctors) || ctors.Count == 0)
+		// Look up either the concrete instantiated constructor or the base template constructor
+		if (!_bindingContext!.Constructors.TryGetValue(targetType.Name, out var ctors) &&
+			!_bindingContext.Constructors.TryGetValue(targetTypeName, out ctors))
+		{
 			return false;
+		}
 
 		return _bindingContext.ResolvedCalls.TryGetValue(call, out var resolved) &&
 			   resolved.Parameters.Count > 0 &&

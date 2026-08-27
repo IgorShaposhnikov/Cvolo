@@ -1,0 +1,19 @@
+using System;
+
+struct Point<T> {
+    T X;
+    T Y;
+}
+
+extension Point<T> {
+    Point(T x, T y) {
+        X = x;
+        Y = y;
+    }
+}
+
+int main() {
+    Point<int> p = Point<int>(30, 40);
+    Console.WriteLine($"X: {p.X}, Y: {p.Y}");
+    return 0;
+}

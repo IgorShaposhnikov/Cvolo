@@ -1,0 +1,27 @@
+using System;
+
+struct Pair<T, U> {
+    T First;
+    U Second;
+}
+
+extension Pair<T, U> {
+    T FirstValue() {
+        return First;
+    }
+    U SecondValue() {
+        return Second;
+    }
+}
+
+int main() {
+    Pair<int, double> p = Pair<int, double> {
+        First: 7,
+        Second: 2.5
+    };
+
+    var int f = p.FirstValue();
+    var double s = p.SecondValue();
+    Console.WriteLine($"First: {f}, Second: {s}");
+    return 0;
+}

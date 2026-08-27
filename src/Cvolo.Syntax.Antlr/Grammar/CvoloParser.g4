@@ -56,7 +56,7 @@ structDeclaration
 	;
 
 extensionDeclaration
-	: EXTENSION Identifier LBRACE (functionDeclaration | destructorDeclaration | constructorDeclaration)* RBRACE SEMI?
+	: EXTENSION Identifier (LT genericParameterList GT)? LBRACE (functionDeclaration | destructorDeclaration | constructorDeclaration)* RBRACE SEMI?
 	;
 
 destructorDeclaration

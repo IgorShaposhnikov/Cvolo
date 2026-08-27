@@ -440,6 +440,18 @@ public sealed class DeclarationPass(BindingContext context)
 			return;
 		}
 
+		if (context.GenericStructTemplates.ContainsKey(extendedType.Name))
+		{
+			if (!context.GenericExtensionTemplates.TryGetValue(extendedType.Name, out var templates))
+			{
+				templates = [];
+				context.GenericExtensionTemplates[extendedType.Name] = templates;
+			}
+
+			templates.Add(extDecl);
+			return;
+		}
+
 		// Destructors register as ordinary extension methods named "~T" (void, this-only)
 		foreach (var method in extDecl.Methods.Concat(extDecl.Destructors.Select(static d => d.ToFunctionDeclaration())))
 		{

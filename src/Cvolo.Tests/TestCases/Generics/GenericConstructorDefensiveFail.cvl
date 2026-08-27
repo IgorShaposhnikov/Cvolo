@@ -1,0 +1,16 @@
+struct Box<T> {
+    T Item;
+    int Weight;
+}
+
+extension Box<T> {
+    Box(T item) {
+        Item = item;
+        // Weight is intentionally left uninitialized -> Should fail compiling!
+    }
+}
+
+int Main() {
+    var Box<int> b = Box<int>(5);
+    return 0;
+}

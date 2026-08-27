@@ -1,4 +1,4 @@
-﻿using System.Globalization;
+using System.Globalization;
 using Antlr4.Runtime;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
@@ -682,13 +682,23 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		foreach (var ctorCtx in context.constructorDeclaration())
 		{
 			var ctorParams = new List<ParameterSyntax>();
-			foreach (var param in ctorCtx.parameterList().parameter())
-				ctorParams.Add(BuildParameter(param));
+			if (ctorCtx.parameterList() is { } paramListCtx)
+			{
+				foreach (var param in paramListCtx.parameter())
+					ctorParams.Add(BuildParameter(param));
+			}
 
 			var ctorAttributes = BuildAttributeList(ctorCtx.attributeList());
 			constructors.Add(new ConstructorDeclarationSyntax(SpanOf(ctorCtx), ctorCtx.Identifier().GetText(), ctorParams, BuildBlockStatement(ctorCtx.blockStatement()), ctorAttributes));
 		}
 
-		return new ExtensionDeclarationSyntax(SpanOf(context), extendedTypeName, methods, destructors, constructors);
+		var generics = new List<string>();
+		if (context.genericParameterList() is { } genList)
+		{
+			foreach (var id in genList.Identifier())
+				generics.Add(id.GetText());
+		}
+
+		return new ExtensionDeclarationSyntax(SpanOf(context), extendedTypeName, methods, destructors, constructors, generics);
 	}
 }

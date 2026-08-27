@@ -1,0 +1,25 @@
+using System;
+
+struct Container<T> {
+    T Value;
+    int Id;
+}
+
+extension Container<T> {
+    Container(T valueVal, int id) {
+        Value = valueVal;
+        Id = id;
+    }
+
+    void Show() {
+        Console.WriteLine($"Id: {Id}");
+    }
+}
+
+int Main() {
+    var Container<double> c = Container<double>(99.9, 101);
+    c.Show();
+    var double valueVal = c.Value;
+    Console.WriteLine($"Value: {valueVal}");
+    return 0;
+}

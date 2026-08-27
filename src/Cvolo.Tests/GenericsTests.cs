@@ -11,6 +11,10 @@ public sealed class GenericsTests : CompilerTestBase
 	[InlineData("GenericStruct.cvl")]
 	[InlineData("GenericFunction.cvl")]
 	[InlineData("GenericComplex.cvl")]
+	[InlineData("GenericExtension.cvl")]
+	[InlineData("GenericConstructor.cvl")]
+	[InlineData("GenericExtensionComplex.cvl")]
+	[InlineData("GenericConstructorComplex.cvl")]
 	public void Parser_Generics_Should_Parse(string caseName)
 	{
 		var assemblyDir = Path.GetDirectoryName(typeof(GenericsTests).Assembly.Location)!;
@@ -25,7 +29,6 @@ public sealed class GenericsTests : CompilerTestBase
 			var context = new CompilationContext(sourceCode, file);
 			var ast = parser.Parse(context);
 
-			// Assert that the parser successfully processes all generic definitions and usages
 			Assert.NotNull(ast);
 			Assert.False(parser.Diagnostics.HasErrors, $"Expected parser to successfully parse '{caseName}'.");
 		}
@@ -35,6 +38,10 @@ public sealed class GenericsTests : CompilerTestBase
 	[InlineData("GenericStruct", "First: 42, Second: 3.140000")]
 	[InlineData("GenericFunction", "X: 200, Y: 100")]
 	[InlineData("GenericComplex", "X: 20, Y: 10")]
+	[InlineData("GenericExtension", "First: 7, Second: 2.5")]
+	[InlineData("GenericConstructor", "X: 30, Y: 40")]
+	[InlineData("GenericExtensionComplex", "[Pair] First is active, Second is active\np1: 42, 3.140000\n[Pair] First is active, Second is active\np2: C, 1")]
+	[InlineData("GenericConstructorComplex", "Id: 101\nValue: 99.9")]
 	public void Generics_Execution(string caseName, string expected)
 	{
 		var fileName = $"Generics/{caseName}.cvl";
@@ -43,6 +50,17 @@ public sealed class GenericsTests : CompilerTestBase
 
 		var (runCode, runStdout) = ExecuteBinary(caseName, "Generics");
 		Assert.Equal(0, runCode);
-		Assert.Contains(expected, runStdout);
+		Assert.Contains(expected.Replace("\r\n", "\n").Trim(), runStdout.Replace("\r\n", "\n").Trim());
+	}
+
+	[Theory]
+	[InlineData("GenericConstructorDefensiveFail", "does not initialize field 'Weight'")]
+	public void Generics_Rejections(string caseName, string expectedError)
+	{
+		var fileName = $"Generics/{caseName}.cvl";
+		var (exitCode, stdout, stderr) = RunCompiler(fileName);
+
+		Assert.Equal(1, exitCode);
+		Assert.Contains(expectedError, stderr);
 	}
 }

@@ -1,0 +1,37 @@
+using System;
+
+struct Pair<T, U> {
+    T First;
+    U Second;
+}
+
+extension Pair<T, U> {
+    void PrintPair() {
+        Console.WriteLine("[Pair] First is active, Second is active");
+    }
+
+    T GetFirst() {
+        return First;
+    }
+
+    U GetSecond() {
+        return Second;
+    }
+}
+
+int Main() {
+    Pair<int, double> p1 = Pair<int, double> { First: 42, Second: 3.14 };
+    p1.PrintPair();
+    var int f1 = p1.GetFirst();
+    var double s1 = p1.GetSecond();
+    Console.WriteLine($"p1: {f1}, {s1}");
+
+    Pair<char, bool> p2 = Pair<char, bool> { First: 'C', Second: true };
+    p2.PrintPair();
+    var char f2 = p2.GetFirst();
+    var bool s2 = p2.GetSecond();
+    var int s2Val = s2 ? 1 : 0;
+    Console.WriteLine($"p2: {f2}, {s2Val}");
+
+    return 0;
+}

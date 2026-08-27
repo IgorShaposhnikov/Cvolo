@@ -5,6 +5,7 @@ using Cvolo.Analysis.Symbols.Structs;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
 using Cvolo.Core.AST.Expressions;
+using Cvolo.Core.AST.Statements;
 using Cvolo.Core.Diagnostics;
 
 namespace Cvolo.Analysis;
@@ -36,6 +37,18 @@ public sealed class BindingContext
 	public List<(GlobalVariableDeclarationSyntax Node, VariableSymbol Symbol)> GlobalVariables { get; } = [];
 	// Constructors registered via 'T(...)' extension members, keyed by the struct type name
 	public Dictionary<string, List<FunctionSymbol>> Constructors { get; } = [];
+	// Store generic extension templates, keyed by the extended template struct name (mangled)
+	public Dictionary<string, List<ExtensionDeclarationSyntax>> GenericExtensionTemplates { get; } = [];
+
+	// Store monomorphized extension method/constructor declarations
+	public List<SyntaxNode> MonomorphizedExtensionDecls { get; } = [];
+
+	// Maps monomorphized extension function/constructor name to the concrete extended type name (e.g., Pair<int, double>)
+	public Dictionary<string, string> MonomorphizedExtensionExtendedTypes { get; } = [];
+
+	// Maps monomorphized extension node to its unique overloaded mangled name
+	public Dictionary<SyntaxNode, string> MonomorphizedExtensionNames { get; } = [];
+
 
 	public CompilationUnitSyntax? CurrentUnit { get; set; }
 	public string? CurrentNamespace { get; set; }
@@ -196,7 +209,7 @@ public sealed class BindingContext
 
 		// Map placeholders to concrete type arguments (e.g., T -> int)
 		var substitutionMap = new Dictionary<string, TypeSymbol>();
-		for (int i = 0; i < templateDecl.GenericParameters.Count; i++)
+		for (var i = 0; i < templateDecl.GenericParameters.Count; i++)
 		{
 			substitutionMap[templateDecl.GenericParameters[i]] = typeArgs[i];
 		}
@@ -223,11 +236,16 @@ public sealed class BindingContext
 			fields.Add(new StructFieldSymbol(field.Name, fieldType));
 		}
 
+		var instantiatedType = new StructTypeSymbol(instName, fields);
+
 		// Restore active contexts back to previous state
 		CurrentUnit = prevUnit;
 		CurrentNamespace = prevNamespace;
 
-		return new StructTypeSymbol(instName, fields);
+		// Call the monomorphizer to instantiate all extension methods/constructors
+		MonomorphizeExtensionsForType(instantiatedType, typeArgs, templateMangledName);
+
+		return instantiatedType;
 	}
 
 	public string NormalizeGenericName(string name)
@@ -260,5 +278,254 @@ public sealed class BindingContext
 				   .Replace("*", "Ptr")
 				   .Replace("refvar", "refvar")
 				   .Replace("ref", "ref");
+	}
+
+	public void MonomorphizeExtensionsForType(StructTypeSymbol instantiatedType, List<TypeSymbol> typeArgs, string templateMangledName)
+	{
+		if (!GenericExtensionTemplates.TryGetValue(templateMangledName, out var templates))
+			return;
+
+		var templateDecl = GenericStructTemplates[templateMangledName];
+		var substitutionMap = new Dictionary<string, TypeSymbol>();
+		for (int i = 0; i < templateDecl.GenericParameters.Count; i++)
+		{
+			substitutionMap[templateDecl.GenericParameters[i]] = typeArgs[i];
+		}
+
+		TypeSymbol ResolveSubstitutedType(string typeName)
+		{
+			var substitutedTypeName = typeName;
+			foreach (var kv in substitutionMap)
+			{
+				substitutedTypeName = System.Text.RegularExpressions.Regex.Replace(substitutedTypeName, $@"\b{kv.Key}\b", kv.Value.Name);
+			}
+
+			if (substitutedTypeName.StartsWith("refvar ") || substitutedTypeName.StartsWith("ref "))
+			{
+				var isMutable = substitutedTypeName.StartsWith("refvar ");
+				var innerName = isMutable ? substitutedTypeName.Substring(7) : substitutedTypeName.Substring(4);
+				var innerType = ResolveSubstitutedType(innerName);
+				return new PointerTypeSymbol(innerType, isMutable);
+			}
+
+			return ResolveType(substitutedTypeName)!;
+		}
+
+		BlockStatementSyntax SubstituteBlockGenerics(BlockStatementSyntax block)
+		{
+			var statements = new List<SyntaxNode>();
+			foreach (var stmt in block.Statements)
+				statements.Add(SubstituteStatementGenerics(stmt));
+			return new BlockStatementSyntax(block.Span, statements);
+		}
+
+		SyntaxNode SubstituteStatementGenerics(SyntaxNode stmt)
+		{
+			switch (stmt)
+			{
+				case VariableDeclarationSyntax v:
+					var newType = v.Type;
+					if (newType != null)
+					{
+						foreach (var kv in substitutionMap)
+						{
+							newType = System.Text.RegularExpressions.Regex.Replace(newType, $@"\b{kv.Key}\b", kv.Value.Name);
+						}
+					}
+					return new VariableDeclarationSyntax(v.Span, v.IsMutable, newType, v.Name, v.Initializer != null ? SubstituteExpressionGenerics(v.Initializer) : null);
+
+				case BlockStatementSyntax b:
+					return SubstituteBlockGenerics(b);
+
+				case IfStatementSyntax i:
+					return new IfStatementSyntax(i.Span, SubstituteExpressionGenerics(i.Condition), SubstituteStatementGenerics(i.ThenStatement), i.ElseClause != null ? new ElseClauseSyntax(i.ElseClause.Span, SubstituteBlockGenerics(i.ElseClause.Body)) : null);
+
+				case WhileStatementSyntax w:
+					return new WhileStatementSyntax(w.Span, SubstituteExpressionGenerics(w.Condition), SubstituteStatementGenerics(w.Body));
+
+				case ForStatementSyntax f:
+					return new ForStatementSyntax(f.Span, SubstituteStatementGenerics(f.Initializer) as VariableDeclarationSyntax ?? f.Initializer, SubstituteExpressionGenerics(f.Condition), SubstituteExpressionGenerics(f.Increment), SubstituteStatementGenerics(f.Body));
+
+				case ReturnStatementSyntax r:
+					return new ReturnStatementSyntax(r.Span, r.Expression != null ? SubstituteExpressionGenerics(r.Expression) : null);
+
+				case ExpressionStatementSyntax e:
+					return new ExpressionStatementSyntax(e.Span, SubstituteExpressionGenerics(e.Expression));
+
+				default:
+					return stmt;
+			}
+		}
+
+		ExpressionSyntax SubstituteExpressionGenerics(ExpressionSyntax expr)
+		{
+			switch (expr)
+			{
+				case BinaryExpressionSyntax bin:
+					return new BinaryExpressionSyntax(bin.Span, SubstituteExpressionGenerics(bin.Left), bin.Operator, SubstituteExpressionGenerics(bin.Right));
+
+				case UnaryExpressionSyntax unary:
+					var newOp = unary.Operator;
+					if (newOp.StartsWith("(") && newOp.EndsWith(")"))
+					{
+						foreach (var kv in substitutionMap)
+						{
+							newOp = System.Text.RegularExpressions.Regex.Replace(newOp, $@"\b{kv.Key}\b", kv.Value.Name);
+						}
+					}
+					return new UnaryExpressionSyntax(unary.Span, newOp, SubstituteExpressionGenerics(unary.Operand));
+
+				case CallExpressionSyntax call:
+					var newTypeArgs = call.TypeArguments.Select(t => {
+						var substituted = t;
+						foreach (var kv in substitutionMap)
+						{
+							substituted = System.Text.RegularExpressions.Regex.Replace(substituted, $@"\b{kv.Key}\b", kv.Value.Name);
+						}
+						return substituted;
+					}).ToList();
+					var newArgs = call.Arguments.Select(a => SubstituteExpressionGenerics(a)).ToList();
+					return new CallExpressionSyntax(call.Span, call.FunctionName, newTypeArgs, newArgs);
+
+				case StructInitializationExpressionSyntax structInit:
+					var newTypeName = structInit.StructTypeName;
+					foreach (var kv in substitutionMap)
+					{
+						newTypeName = System.Text.RegularExpressions.Regex.Replace(newTypeName, $@"\b{kv.Key}\b", kv.Value.Name);
+					}
+					var newInits = structInit.Initializers.Select(i => new MemberInitializerSyntax(i.Span, i.MemberName, SubstituteExpressionGenerics(i.Expression))).ToList();
+					return new StructInitializationExpressionSyntax(structInit.Span, newTypeName, newInits);
+
+				case MemberAccessExpressionSyntax m:
+					return new MemberAccessExpressionSyntax(m.Span, SubstituteExpressionGenerics(m.Expression), m.MemberName);
+
+				case IndexExpressionSyntax idx:
+					return new IndexExpressionSyntax(idx.Span, SubstituteExpressionGenerics(idx.Left), SubstituteExpressionGenerics(idx.Index));
+
+				case BorrowExpressionSyntax b:
+					return new BorrowExpressionSyntax(b.Span, SubstituteExpressionGenerics(b.Expression), b.IsMutable);
+
+				case HeapAllocationExpressionSyntax h:
+					return new HeapAllocationExpressionSyntax(h.Span, SubstituteExpressionGenerics(h.Expression));
+
+				case ArrayInitializationExpressionSyntax arr:
+					return new ArrayInitializationExpressionSyntax(arr.Span, arr.Elements.Select(e => SubstituteExpressionGenerics(e)).ToList());
+
+				case TernaryExpressionSyntax t:
+					return new TernaryExpressionSyntax(t.Span, SubstituteExpressionGenerics(t.Condition), SubstituteExpressionGenerics(t.ThenExpression), SubstituteExpressionGenerics(t.ElseExpression));
+
+				default:
+					return expr;
+			}
+		}
+
+		foreach (var extDecl in templates)
+		{
+			var originalUnit = SymbolUnits.TryGetValue(templateMangledName, out var u) ? u : null;
+
+			// Monomorphize Methods & Destructors
+			foreach (var method in extDecl.Methods.Concat(extDecl.Destructors.Select(static d => d.ToFunctionDeclaration())))
+			{
+				var substitutedReturnTypeName = method.ReturnType;
+				foreach (var kv in substitutionMap)
+				{
+					substitutedReturnTypeName = System.Text.RegularExpressions.Regex.Replace(substitutedReturnTypeName, $@"\b{kv.Key}\b", kv.Value.Name);
+				}
+
+				var returnType = ResolveSubstitutedType(substitutedReturnTypeName);
+				if (returnType is null) continue;
+
+				var baseMangledName = $"{instantiatedType.Name}.{method.Name}";
+
+				var thisParamType = new PointerTypeSymbol(instantiatedType, isMutable: false);
+				var thisParam = new ParameterSymbol("this", thisParamType);
+
+				var parameters = new List<ParameterSymbol> { thisParam };
+				var instParams = new List<ParameterSyntax>();
+
+				foreach (var param in method.Parameters)
+				{
+					var paramType = ResolveSubstitutedType(param.Type);
+					parameters.Add(new ParameterSymbol(param.Name, paramType));
+					instParams.Add(new ParameterSyntax(param.Span, paramType.Name, param.Name));
+				}
+
+				var overloadedName = GetOverloadedMangledName(baseMangledName, parameters.Select(p => p.Type).ToList());
+
+				var newSymbol = new FunctionSymbol(overloadedName, returnType, parameters);
+				Globals.Declare(newSymbol);
+
+				if (!OverloadedFunctions.TryGetValue(baseMangledName, out var candidates))
+				{
+					candidates = [];
+					OverloadedFunctions[baseMangledName] = candidates;
+				}
+				candidates.Add(newSymbol);
+
+				if (originalUnit is not null)
+				{
+					SymbolUnits[overloadedName] = originalUnit;
+				}
+
+				if (method.Name.StartsWith('~'))
+				{
+					Destructors[instantiatedType.Name] = newSymbol;
+				}
+
+				var instBody = SubstituteBlockGenerics(method.Body);
+				var instDecl = new FunctionDeclarationSyntax(method.Span, returnType.Name, overloadedName, [], instParams, instBody, method.Attributes, method.Modifier);
+
+				MonomorphizedExtensionDecls.Add(instDecl);
+				MonomorphizedExtensionExtendedTypes[overloadedName] = instantiatedType.Name;
+				MonomorphizedExtensionNames[instDecl] = overloadedName;
+			}
+
+			// Monomorphize Constructors
+			foreach (var ctorDecl in extDecl.Constructors)
+			{
+				var baseMangledName = instantiatedType.Name;
+
+				var ctorThisParamType = new PointerTypeSymbol(instantiatedType, isMutable: true);
+				var ctorParameters = new List<ParameterSymbol> { new ParameterSymbol("this", ctorThisParamType) };
+				var instParams = new List<ParameterSyntax>();
+
+				foreach (var param in ctorDecl.Parameters)
+				{
+					var paramType = ResolveSubstitutedType(param.Type);
+					ctorParameters.Add(new ParameterSymbol(param.Name, paramType));
+					instParams.Add(new ParameterSyntax(param.Span, paramType.Name, param.Name));
+				}
+
+				var ctorOverloadedName = GetOverloadedMangledName(baseMangledName, ctorParameters.Select(p => p.Type).ToList());
+				var ctorSymbol = new FunctionSymbol(ctorOverloadedName, instantiatedType, ctorParameters);
+				Globals.Declare(ctorSymbol);
+
+				if (!OverloadedFunctions.TryGetValue(baseMangledName, out var ctorCandidates))
+				{
+					ctorCandidates = [];
+					OverloadedFunctions[baseMangledName] = ctorCandidates;
+				}
+				ctorCandidates.Add(ctorSymbol);
+
+				if (originalUnit is not null)
+				{
+					SymbolUnits[ctorOverloadedName] = originalUnit;
+				}
+
+				if (!Constructors.TryGetValue(instantiatedType.Name, out var registeredCtors))
+				{
+					registeredCtors = [];
+					Constructors[instantiatedType.Name] = registeredCtors;
+				}
+				registeredCtors.Add(ctorSymbol);
+
+				var instBody = SubstituteBlockGenerics(ctorDecl.Body);
+				var instDecl = new ConstructorDeclarationSyntax(ctorDecl.Span, instantiatedType.Name, instParams, instBody, ctorDecl.Attributes);
+
+				MonomorphizedExtensionDecls.Add(instDecl);
+				MonomorphizedExtensionExtendedTypes[ctorOverloadedName] = instantiatedType.Name;
+				MonomorphizedExtensionNames[instDecl] = ctorOverloadedName;
+			}
+		}
 	}
 }

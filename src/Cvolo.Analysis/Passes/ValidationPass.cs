@@ -42,6 +42,12 @@ public sealed class ValidationPass(BindingContext context)
 				}
 				else if (member is ExtensionDeclarationSyntax extDecl)
 				{
+					var extendedType = context.ResolveType(extDecl.ExtendedTypeName);
+					if (extendedType != null && context.GenericStructTemplates.ContainsKey(extendedType.Name))
+					{
+						continue;
+					}
+
 					foreach (var method in extDecl.Methods.Concat(extDecl.Destructors.Select(static d => d.ToFunctionDeclaration())))
 					{
 						CheckExtensionMethodBody(extDecl.ExtendedTypeName, method);
@@ -51,6 +57,41 @@ public sealed class ValidationPass(BindingContext context)
 					{
 						CheckConstructorBody(extDecl.ExtendedTypeName, ctorDecl);
 					}
+				}
+			}
+		}
+
+		// Validate monomorphized extension methods and constructors
+		var validatedMonomorphized = new HashSet<string>();
+		while (true)
+		{
+			var pending = context.MonomorphizedExtensionDecls.Where(d => {
+				var name = context.MonomorphizedExtensionNames[d];
+				return !validatedMonomorphized.Contains(name);
+			}).ToList();
+
+			if (pending.Count == 0) break;
+
+			foreach (var decl in pending)
+			{
+				var emitName = context.MonomorphizedExtensionNames[decl];
+				validatedMonomorphized.Add(emitName);
+
+				if (context.SymbolUnits.TryGetValue(emitName, out var unit))
+				{
+					context.CurrentUnit = unit;
+					context.CurrentNamespace = unit.NamespaceDeclaration?.Name;
+				}
+
+				var extendedTypeName = context.MonomorphizedExtensionExtendedTypes[emitName];
+
+				if (decl is FunctionDeclarationSyntax func)
+				{
+					CheckExtensionMethodBody(extendedTypeName, func);
+				}
+				else if (decl is ConstructorDeclarationSyntax ctor)
+				{
+					CheckConstructorBody(extendedTypeName, ctor);
 				}
 			}
 		}
@@ -332,16 +373,29 @@ public sealed class ValidationPass(BindingContext context)
 
 					if (call.TypeArguments.Count > 0)
 					{
-						var templateName = ResolveFunctionTemplateName(call.FunctionName, scope);
-						if (templateName != null && context.GenericFunctionTemplates.TryGetValue(templateName, out var templateDecl))
+						// Reconstruct and resolve the struct instantiation name to check if this is a generic constructor call
+						var structNameWithArgs = $"{call.FunctionName}<{string.Join(", ", call.TypeArguments)}>";
+						var resolvedStructType = context.ResolveType(structNameWithArgs) as StructTypeSymbol;
+
+						if (resolvedStructType is not null)
 						{
-							var typeArgs = call.TypeArguments.Select(t => context.ResolveType(t)!).ToList();
-							func = InstantiateGenericFunction(templateDecl, typeArgs, scope);
+							// This is a generic constructor call! Use the fully qualified resolved type name for overload resolution
+							func = ResolveOverloadedFunction(resolvedStructType.Name, argTypes, scope);
+						}
+						else
+						{
+							// Fallback to standard generic function monomorphization
+							var templateName = ResolveFunctionTemplateName(call.FunctionName, scope);
+							if (templateName != null && context.GenericFunctionTemplates.TryGetValue(templateName, out var templateDecl))
+							{
+								var typeArgs = call.TypeArguments.Select(t => context.ResolveType(t)!).ToList();
+								func = InstantiateGenericFunction(templateDecl, typeArgs, scope);
+							}
 						}
 					}
 					else
 					{
-						// Use overload resolution logic
+						// Use overload resolution logic for standard non-generic functions / constructors
 						func = ResolveOverloadedFunction(call.FunctionName, argTypes, scope);
 					}
 
@@ -890,7 +944,7 @@ public sealed class ValidationPass(BindingContext context)
 		_ => false,
 	};
 
-	private FunctionSymbol? ResolveOverloadedFunction(string name, IReadOnlyList<TypeSymbol> argTypes, SymbolTable scope)
+	private FunctionSymbol? ResolveOverloadedFunction(string name, IReadOnlyList<TypeSymbol> argTypes, SymbolTable scope, CallExpressionSyntax? call = null)
 	{
 		var candidates = new List<FunctionSymbol>();
 		var baseName = name;
@@ -920,12 +974,25 @@ public sealed class ValidationPass(BindingContext context)
 				}
 			}
 		}
-		else if (context.Constructors.ContainsKey(name))
+		else
 		{
-			// Bare constructor call 'T(args)': prepend the implicit destination-storage
-			// receiver so ctor candidates match like extension methods.
-			if (context.StructTypes.TryGetValue(name, out var ctorStruct))
-				adjustedArgTypes.Insert(0, new PointerTypeSymbol(ctorStruct, isMutable: true));
+			var constructorName = name;
+			if (call != null && call.TypeArguments.Count > 0)
+			{
+				var concreteTypeName = $"{name}<{string.Join(", ", call.TypeArguments)}>";
+				var resolvedType = context.ResolveType(concreteTypeName);
+				if (resolvedType != null)
+				{
+					constructorName = resolvedType.Name;
+				}
+			}
+
+			if (context.Constructors.ContainsKey(constructorName))
+			{
+				baseName = constructorName;
+				if (context.StructTypes.TryGetValue(constructorName, out var ctorStruct))
+					adjustedArgTypes.Insert(0, new PointerTypeSymbol(ctorStruct, isMutable: true));
+			}
 		}
 
 		// 1. Gather all candidates matching the resolved base name

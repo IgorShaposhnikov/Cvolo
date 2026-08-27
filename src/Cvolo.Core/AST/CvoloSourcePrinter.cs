@@ -33,8 +33,9 @@ public sealed class CvoloSourcePrinter
 				return $"\n{ind}{f.ReturnType} {f.Name}{generics}({parms}) {Print(f.Body, indent)}";
 
 			case ExtensionDeclarationSyntax ext:
+				var extGenerics = ext.GenericParameters.Count > 0 ? $"<{string.Join(", ", ext.GenericParameters)}>" : "";
 				var extMembers = string.Join("\n", ext.Methods.Select(m => Print(m, indent + 1)));
-				return $"\n{ind}extension {ext.ExtendedTypeName} {{\n{extMembers}\n{ind}}}";
+				return $"\n{ind}extension {ext.ExtendedTypeName}{extGenerics} {{\n{extMembers}\n{ind}}}";
 
 			case BlockStatementSyntax b:
 				var stmts = string.Join("", b.Statements.Select(s => Print(s, indent + 1)));
