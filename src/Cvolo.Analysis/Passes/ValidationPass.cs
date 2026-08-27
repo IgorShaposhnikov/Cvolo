@@ -747,7 +747,7 @@ public sealed class ValidationPass(BindingContext context)
 		context.MonomorphizedFunctions[instName] = instSymbol;
 
 		var instBody = SubstituteBlockGenerics(templateDecl.Body, substitutionMap);
-		var instDecl = new FunctionDeclarationSyntax(templateDecl.Span, returnType.Name, instName, [], instParameters, instBody);
+		var instDecl = new FunctionDeclarationSyntax(templateDecl.Span, returnType.Name, instName, [], instParameters, instBody, modifier: templateDecl.Modifier);
 
 		context.MonomorphizedFunctionDecls.Add(instDecl);
 

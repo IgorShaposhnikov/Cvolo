@@ -1,0 +1,12 @@
+using System;
+
+int Main() {
+    var int x = 42;
+    int result = 0;
+    unsafe {
+        int* p = &x;
+        result = *p;
+    }
+    Console.WriteLine($"Result: {result}");
+    return 0;
+}

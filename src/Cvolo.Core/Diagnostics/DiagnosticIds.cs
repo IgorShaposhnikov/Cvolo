@@ -22,4 +22,22 @@ public static class DiagnosticIds
 
 	/// <summary>Large struct (&gt;16 bytes) passed by value; payload is duplicated. Consider passing by ref.</summary>
 	public const string LargeCopyWarning = "CVL1003";
+
+	/// <summary>Attribute cannot be applied in the current safety tier.</summary>
+	public const string AttributeWrongTier = "CVL1004";
+
+	/// <summary>Raw pointer T* used outside an unsafe context.</summary>
+	public const string RawPointerOutsideUnsafe = "CVL1005";
+
+	/// <summary>Dereference '*' used outside an unsafe context.</summary>
+	public const string DereferenceOutsideUnsafe = "CVL1006";
+
+	/// <summary>Address-of '&' used outside an unsafe context.</summary>
+	public const string AddressOfOutsideUnsafe = "CVL1007";
+
+	/// <summary>Reference cannot escape an unbound scope.</summary>
+	public const string RefEscapesUnboundScope = "CVL1008";
+
+	/// <summary>'unbound' modifier on a function with no ref/refvar parameters.</summary>
+	public const string UnboundNoRefParams = "CVL1010";
 }

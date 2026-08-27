@@ -1,0 +1,11 @@
+using System;
+
+unsafe int Compute(int a, int b) {
+    return a + b;
+}
+
+int Main() {
+    int result = Compute(10, 20);
+    Console.WriteLine(result);
+    return 0;
+}

@@ -327,6 +327,31 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			llvmFunc.Linkage = LLVMLinkage.LLVMInternalLinkage;
 		}
 
+		// Attach noalias attributes if [NoAlias] is present on the function or individual parameters
+		if (_bindingContext!.Globals.Lookup(emitName) is FunctionSymbol funcSym)
+		{
+			for (var i = 0; i < funcSym.Parameters.Count; i++)
+			{
+				if (funcSym.IsNoAlias || funcSym.Parameters[i].IsNoAlias)
+				{
+					if (funcSym.Parameters[i].Type is PointerTypeSymbol or RawPointerTypeSymbol)
+					{
+						var nameBytes = System.Text.Encoding.UTF8.GetBytes("noalias\0");
+						var emptyBytes = System.Text.Encoding.UTF8.GetBytes("\0");
+						unsafe
+						{
+							fixed (byte* namePtr = nameBytes)
+							fixed (byte* valPtr = emptyBytes)
+							{
+								var noAliasAttr = LLVMSharp.Interop.LLVM.CreateStringAttribute(_context, (sbyte*)namePtr, 7, (sbyte*)valPtr, 0);
+								llvmFunc.AddAttributeAtIndex((LLVMAttributeIndex)(i + 1), noAliasAttr);
+							}
+						}
+					}
+				}
+			}
+		}
+
 		_globals[emitName] = llvmFunc;
 		_functionTypes[emitName] = funcType;
 	}
@@ -449,6 +474,9 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				break;
 			case ForStatementSyntax forStmt:
 				EmitForStatement(forStmt);
+				break;
+			case UnsafeBlockStatementSyntax unsafeBlock:
+				EmitBlock(unsafeBlock.Body);
 				break;
 		}
 	}
@@ -897,13 +925,43 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			return _builder.BuildBitCast(operand, targetType, "cast_bitcast");
 		}
 
-		return unary.Operator switch
+		switch (unary.Operator)
 		{
-			"-" => _builder.BuildNeg(operand),
-			"!" => _builder.BuildNot(operand),
-			"~" => _builder.BuildXor(operand, LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, unchecked((ulong)-1))),
-			_ => throw new InvalidOperationException($"Unknown unary operator '{unary.Operator}'"),
-		};
+			case "-":
+				return _builder.BuildNeg(operand);
+			case "!":
+				return _builder.BuildNot(operand);
+			case "~":
+				return _builder.BuildXor(operand, LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, unchecked((ulong)-1)));
+			case "*":
+			{
+				var operandType = GetExprType(unary.Operand);
+				if (operandType is RawPointerTypeSymbol rawPtr)
+				{
+					var elemLlvmType = GetLLVMType(rawPtr.ElementType);
+					return _builder.BuildLoad2(elemLlvmType, operand, "deref_val");
+				}
+				return _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), operand, "deref_val");
+			}
+			case "&":
+			{
+				if (unary.Operand is IdentifierExpressionSyntax id && _locals.TryGetValue(id.Name, out var ptr))
+					return ptr;
+				if (unary.Operand is MemberAccessExpressionSyntax memberAccess)
+				{
+					var (fieldPtr, _) = GetFieldPointer(memberAccess);
+					return fieldPtr;
+				}
+				if (unary.Operand is IndexExpressionSyntax indexExpr)
+				{
+					var (elementPtr, _) = GetFieldPointer(indexExpr);
+					return elementPtr;
+				}
+				return operand;
+			}
+			default:
+				throw new InvalidOperationException($"Unknown unary operator '{unary.Operator}'");
+		}
 	}
 
 	private void EmitVariableDeclaration(VariableDeclarationSyntax varDecl)
@@ -1240,7 +1298,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			IndexExpressionSyntax idx => GetIndexExpressionType(idx),
 			BorrowExpressionSyntax b => new PointerTypeSymbol(GetExprType(b.Expression), false),
 			StructInitializationExpressionSyntax s => _bindingContext!.ResolveType(s.StructTypeName)!,
-			UnaryExpressionSyntax u => GetExprType(u.Operand),
+			UnaryExpressionSyntax u => ResolveUnaryExprType(u),
 			TernaryExpressionSyntax t => GetExprType(t.ThenExpression),
 			CallExpressionSyntax call => ResolveCallReturnType(call),
 			BinaryExpressionSyntax bin => ResolveBinaryExpressionType(bin),
@@ -1249,6 +1307,25 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			ArrayInitializationExpressionSyntax a => new ArrayTypeSymbol(a.Elements.Count > 0 ? GetExprType(a.Elements[0]) : TypeSymbol.Int, a.Elements.Count),
 			_ => TypeSymbol.Int
 		};
+	}
+
+	private TypeSymbol ResolveUnaryExprType(UnaryExpressionSyntax u)
+	{
+		if (u.Operator == "*")
+		{
+			var innerType = GetExprType(u.Operand);
+			if (innerType is RawPointerTypeSymbol rawPtr)
+				return rawPtr.ElementType;
+			return TypeSymbol.Int;
+		}
+		if (u.Operator == "&")
+			return new RawPointerTypeSymbol(GetExprType(u.Operand));
+		if (u.Operator.StartsWith("(") && u.Operator.EndsWith(")"))
+		{
+			var typeName = u.Operator.Substring(1, u.Operator.Length - 2);
+			return _bindingContext!.ResolveType(typeName)!;
+		}
+		return GetExprType(u.Operand);
 	}
 
 	private TypeSymbol ResolveCallReturnType(CallExpressionSyntax call)
@@ -1500,6 +1577,9 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		if (t is PointerTypeSymbol)
 			return LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0);
 
+		if (t is RawPointerTypeSymbol rawPtr)
+			return LLVMTypeRef.CreatePointer(GetLLVMType(rawPtr.ElementType), 0);
+
 		if (t is SliceTypeSymbol)
 		{
 			var opaquePtr = LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0);
@@ -1582,16 +1662,32 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				return (lengthPtr, TypeSymbol.Int);
 			}
 
-			var structType = (StructTypeSymbol)parentType;
-			var fieldIndex = GetFieldIndex(structType, m.MemberName);
-			var fieldType = structType.Fields[fieldIndex].Type;
+			// Arrow operator: parentPtr is a pointer to a struct pointer; load it first
+			if (m.Operator == "->")
+			{
+				var rawPtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), parentPtr, "arrow_load");
+				var structType = (StructTypeSymbol)parentType;
+				var fieldIndex = GetFieldIndex(structType, m.MemberName);
+				var fieldType = structType.Fields[fieldIndex].Type;
 
-			var structLayoutTy = GetLLVMType(parentType);
-			var zero = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0);
-			var index = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)fieldIndex);
+				var structLayoutTy = GetLLVMType(parentType);
+				var zero = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0);
+				var index = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)fieldIndex);
 
-			var fieldPtr = _builder.BuildGEP2(structLayoutTy, parentPtr, new LLVMValueRef[] { zero, index }, "member_ptr");
-			return (fieldPtr, fieldType);
+				var fieldPtr = _builder.BuildGEP2(structLayoutTy, rawPtr, new LLVMValueRef[] { zero, index }, "arrow_field_ptr");
+				return (fieldPtr, fieldType);
+			}
+
+			var dotStructType = (StructTypeSymbol)parentType;
+			var dotFieldIndex = GetFieldIndex(dotStructType, m.MemberName);
+			var dotFieldType = dotStructType.Fields[dotFieldIndex].Type;
+
+			var dotStructLayoutTy = GetLLVMType(parentType);
+			var dotZero = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0);
+			var dotIndex = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)dotFieldIndex);
+
+			var dotFieldPtr = _builder.BuildGEP2(dotStructLayoutTy, parentPtr, new LLVMValueRef[] { dotZero, dotIndex }, "member_ptr");
+			return (dotFieldPtr, dotFieldType);
 		}
 		else if (expr is IndexExpressionSyntax idx)
 		{

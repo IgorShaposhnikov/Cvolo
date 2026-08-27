@@ -1,0 +1,16 @@
+using System;
+
+int Process(int x) {
+    int result = 0;
+    unsafe {
+        int* p = &x;
+        result = *p;
+    }
+    return result;
+}
+
+int Main() {
+    int result = Process(42);
+    Console.WriteLine($"Result: {result}");
+    return 0;
+}

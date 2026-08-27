@@ -37,7 +37,7 @@ public abstract class AstRewriterBase
 		if (node is FunctionDeclarationSyntax func)
 		{
 			var rewrittenBody = (BlockStatementSyntax)Rewrite(func.Body);
-			return new FunctionDeclarationSyntax(func.Span, func.ReturnType, func.Name, func.GenericParameters, func.Parameters, rewrittenBody, func.Attributes);
+			return new FunctionDeclarationSyntax(func.Span, func.ReturnType, func.Name, func.GenericParameters, func.Parameters, rewrittenBody, func.Attributes, func.Modifier);
 		}
 
 		if (node is DestructorDeclarationSyntax dtor)
@@ -132,6 +132,12 @@ public abstract class AstRewriterBase
 			var then = (ExpressionSyntax)Rewrite(ternary.ThenExpression);
 			var elseExpr = (ExpressionSyntax)Rewrite(ternary.ElseExpression);
 			return new TernaryExpressionSyntax(ternary.Span, cond, then, elseExpr);
+		}
+
+		if (node is UnsafeBlockStatementSyntax unsafeBlock)
+		{
+			var rewrittenBody = (BlockStatementSyntax)Rewrite(unsafeBlock.Body);
+			return new UnsafeBlockStatementSyntax(unsafeBlock.Span, rewrittenBody);
 		}
 
 		return node;

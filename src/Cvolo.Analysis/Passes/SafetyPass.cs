@@ -17,9 +17,11 @@ public sealed class SafetyPass(BindingContext context)
 	private readonly Dictionary<string, (string BorrowedName, bool IsMutable, int LastUseEnd, TextSpan DeclSpan)> _activeRefs = [];
 	private readonly Dictionary<string, HashSet<string>> _parentLocks = []; // parentVar -> set of refVar names
 	private readonly Dictionary<string, HashSet<string>> _structRefTargets = []; // structVar -> set of variable names that ref fields point to
+	private readonly Stack<SafetyTier> _currentTierStack = [];
 	private ClassificationAnalyzer? _classification;
 
 	private ClassificationAnalyzer Classification => _classification ??= new ClassificationAnalyzer(context);
+	private SafetyTier CurrentTier => _currentTierStack.Count > 0 ? _currentTierStack.Peek() : SafetyTier.Safe;
 
 	public void Process(IEnumerable<CompilationUnitSyntax> units)
 	{
@@ -41,12 +43,29 @@ public sealed class SafetyPass(BindingContext context)
 		_activeRefs.Clear();
 		_parentLocks.Clear();
 		_structRefTargets.Clear();
+
+		// Look up the resolved function symbol to get the actual tier
+		var baseName = func.Name == "main" ? "main" : context.GetMangledName(func.Name, context.CurrentNamespace);
+		var paramTypes = func.Parameters.Select(p => context.ResolveType(p.Type) ?? TypeSymbol.Int).ToList();
+		var overloadedName = context.GetOverloadedMangledName(baseName, paramTypes);
+		var funcSymbol = context.Globals.Lookup(overloadedName) as FunctionSymbol;
+		var tier = funcSymbol?.SafetyTier ?? SafetyTier.Safe;
+
+		_currentTierStack.Clear();
+		_currentTierStack.Push(tier);
+
+		// Unsafe tier: skip all safety checks entirely
+		if (tier == SafetyTier.Unsafe)
+			return;
+
 		var scope = new SymbolTable(context.Globals);
 		foreach (var param in func.Parameters)
 		{
 			var type = context.ResolveType(param.Type);
 			if (type != null) scope.Declare(new VariableSymbol(param.Name, type, false) { IsInitialized = true, Origin = OriginKind.Parameter });
 		}
+
+		// Unbound tier: relaxed checks (skip borrow exclusivity, but still do basic flow)
 		CheckBlockSafety(func.Body, scope, func);
 	}
 
@@ -177,11 +196,19 @@ public sealed class SafetyPass(BindingContext context)
 							sym.Origin = borrowed.Origin;
 					}
 
-					// Track ref field targets for struct variables (§3C)
-					if (v.Type is not "ref" and not "refvar" && sym.Type is StructTypeSymbol)
-						TrackStructRefTargets(v.Name, v.Initializer, scope);
-				}
-				VerifyBorrowRules(v, scope);
+			// Track ref field targets for struct variables (§3C)
+				if (v.Type is not "ref" and not "refvar" && sym.Type is StructTypeSymbol)
+					TrackStructRefTargets(v.Name, v.Initializer, scope);
+			}
+
+			// CVL1005: Raw pointer variables cannot be declared outside unsafe
+			if (sym.Type is RawPointerTypeSymbol && CurrentTier != SafetyTier.Unsafe)
+			{
+				context.Diagnostics.Report(context.CurrentUnit!.Context, v.Span,
+					"Raw pointer variables cannot be declared outside unsafe context.");
+			}
+
+			VerifyBorrowRules(v, scope);
 			}
 
 			break;
@@ -222,6 +249,12 @@ public sealed class SafetyPass(BindingContext context)
 				else
 					CheckStatementSafety(f.Body, scope, func);
 				break;
+
+			case UnsafeBlockStatementSyntax unsafeBlock:
+				_currentTierStack.Push(SafetyTier.Unsafe);
+				CheckBlockSafety(unsafeBlock.Body, new SymbolTable(scope), func);
+				_currentTierStack.Pop();
+				break;
 		}
 	}
 
@@ -245,6 +278,16 @@ public sealed class SafetyPass(BindingContext context)
 
 			case BorrowExpressionSyntax b:
 				CheckExpressionSafety(b.Expression, scope);
+				break;
+
+			case UnaryExpressionSyntax u:
+				CheckExpressionSafety(u.Operand, scope);
+				// CVL1006: Dereference only in unsafe
+				if (u.Operator == "*" && CurrentTier != SafetyTier.Unsafe)
+					context.Diagnostics.Report(context.CurrentUnit!.Context, u.Span, "Cannot dereference outside unsafe context.");
+				// CVL1007: Address-of only in unsafe
+				if (u.Operator == "&" && CurrentTier != SafetyTier.Unsafe)
+					context.Diagnostics.Report(context.CurrentUnit!.Context, u.Span, "Cannot take address outside unsafe context.");
 				break;
 
 			case CallExpressionSyntax call:
@@ -403,6 +446,10 @@ public sealed class SafetyPass(BindingContext context)
 
 	private void VerifyBorrowRules(VariableDeclarationSyntax varDecl, SymbolTable scope)
 	{
+		// Borrow exclusivity checks are disabled in unbound and unsafe tiers
+		if (CurrentTier != SafetyTier.Safe)
+			return;
+
 		if ((varDecl.Type == "refvar" || varDecl.Type == "ref") && varDecl.Initializer is BorrowExpressionSyntax borrow)
 		{
 			var borrowedName = GetBaseIdentifierName(borrow.Expression);
@@ -438,6 +485,10 @@ public sealed class SafetyPass(BindingContext context)
 	private void VerifyReturnLifetime(ReturnStatementSyntax ret, FunctionDeclarationSyntax func, SymbolTable scope)
 	{
 		if (ret.Expression == null) return;
+
+		// Lifetime checks are disabled in unsafe tier
+		if (CurrentTier == SafetyTier.Unsafe)
+			return;
 
 		// Case 1: return ref expr; — BorrowExpressionSyntax wrapping an identifier
 		if (ret.Expression is BorrowExpressionSyntax borrow && borrow.Expression is IdentifierExpressionSyntax bid)

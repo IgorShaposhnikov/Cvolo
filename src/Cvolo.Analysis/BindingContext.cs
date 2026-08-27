@@ -40,6 +40,9 @@ public sealed class BindingContext
 	public CompilationUnitSyntax? CurrentUnit { get; set; }
 	public string? CurrentNamespace { get; set; }
 
+	/// <summary>Current safety tier used during attribute validation in DeclarationPass.</summary>
+	public SafetyTier CurrentSafetyTier { get; set; }
+
 	/// <summary>
 	/// Resolves a string type name to its canonical, immutable TypeSymbol object.
 	/// </summary>
@@ -51,7 +54,20 @@ public sealed class BindingContext
 		if (_typeCache.TryGetValue(name, out var cached))
 			return cached;
 
-		// 2. Resolve Pointer/Reference Types (ref / refvar)
+		// 2. Resolve Raw Pointer Types (e.g., int*, char*) — must check before ref/refvar
+		if (name.EndsWith('*') && !name.StartsWith("ref"))
+		{
+			var innerName = name[..^1];
+			var innerType = ResolveType(innerName);
+			if (innerType is not null)
+			{
+				var ptrType = new RawPointerTypeSymbol(innerType);
+				_typeCache[name] = ptrType;
+				return ptrType;
+			}
+		}
+
+		// 3. Resolve Pointer/Reference Types (ref / refvar)
 		if (name.StartsWith("refvar ") || name.StartsWith("ref "))
 		{
 			var isMutable = name.StartsWith("refvar ");

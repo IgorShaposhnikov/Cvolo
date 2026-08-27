@@ -1,8 +1,7 @@
 {
   "profiles": {
     "Cvolo.Tests": {
-      "commandName": "Project",
-      "commandLineArgs": "run D:\\opencode-container\\projects\\Cvolo\\src\\Cvolo.Tests\\TestCases\\StandardLibrary\\Console\\ConsoleReadExplicit.cvl"
+      "commandName": "Project"
     }
   }
 }

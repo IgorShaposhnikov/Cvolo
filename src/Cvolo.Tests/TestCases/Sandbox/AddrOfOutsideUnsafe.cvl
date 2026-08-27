@@ -1,0 +1,9 @@
+using System;
+
+void TakeAddress(int x) {
+    int* p = &x;
+}
+
+int Main() {
+    return 0;
+}

@@ -1,0 +1,12 @@
+using System;
+
+[NoAlias]
+unbound int Sum(int a, int b) {
+    return a + b;
+}
+
+int Main() {
+    int result = Sum(10, 20);
+    Console.WriteLine(result);
+    return 0;
+}

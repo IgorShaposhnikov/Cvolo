@@ -11,4 +11,5 @@ public sealed class VariableSymbol(string name, TypeSymbol type, bool isMutable)
 	public bool IsHeapAllocated { get; set; } = false;
 	public bool IsInitialized { get; set; } = false;
 	public bool IsGlobal { get; set; } = false;
+	public bool IsRawPointer { get; set; } = false;
 }

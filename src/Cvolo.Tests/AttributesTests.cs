@@ -99,8 +99,8 @@ public sealed class AttributesTests : CompilerTestBase
 	}
 
 	[Theory]
-	[InlineData("NoAliasOnFunctionFail", "Attribute '[NoAlias]' can only be applied inside Unbound or Unsafe contexts.")]
-	[InlineData("ParamAttrContextFail", "Attribute '[NoAlias]' can only be applied inside Unbound or Unsafe contexts.")]
+	[InlineData("NoAliasOnFunctionFail", "Attribute '[NoAlias]' cannot be applied in Safe context.")]
+	[InlineData("ParamAttrContextFail", "Attribute '[NoAlias]' cannot be applied in Safe context.")]
 	[InlineData("UnsafeBodyOnStructFail", "Attribute '[UnsafeBody]' cannot be applied to struct declarations.")]
 	[InlineData("DuplicateAttrFail", "Duplicate attribute '[UnsafeBody]'.")]
 	[InlineData("SuppressWarningBadArgFail", "Attribute '[SuppressWarning]' requires exactly one string literal argument.")]

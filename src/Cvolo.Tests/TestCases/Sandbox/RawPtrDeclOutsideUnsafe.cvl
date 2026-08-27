@@ -1,0 +1,10 @@
+using System;
+
+void DeclareRawPtr() {
+    int x = 42;
+    int* p = &x;
+}
+
+int Main() {
+    return 0;
+}

@@ -1,4 +1,5 @@
 using Cvolo.Analysis.Symbols.Base;
+using Cvolo.Core.AST.Base;
 
 namespace Cvolo.Analysis.Symbols;
 
@@ -22,4 +23,7 @@ public sealed class FunctionSymbol(
 
 	/// <summary>Warning ids suppressed via [SuppressWarning("id")] on this declaration.</summary>
 	public List<string> SuppressedWarnings { get; } = [];
+
+	/// <summary>Safety tier: Safe (default), Unbound, or Unsafe. Set from function modifier or [UnsafeBody] attribute.</summary>
+	public SafetyTier SafetyTier { get; set; }
 }

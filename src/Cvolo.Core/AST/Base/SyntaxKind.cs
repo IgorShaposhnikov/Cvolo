@@ -43,4 +43,5 @@ public enum SyntaxKind
 	TernaryExpression,
 	UsingDirective,
 	NamespaceDeclaration,
+	UnsafeBlockStatement,
 }

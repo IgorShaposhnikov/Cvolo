@@ -126,7 +126,13 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 
 		var body = BuildBlockStatement(context.blockStatement());
 		var attributes = BuildAttributeList(context.attributeList());
-		return new FunctionDeclarationSyntax(SpanOf(context), returnType, name, generics, parameters, body, attributes);
+
+		// Extract optional function modifier (unsafe / unbound)
+		SafetyTier? modifier = null;
+		if (context.functionModifier() is { } modCtx)
+			modifier = modCtx.GetText() == "unsafe" ? SafetyTier.Unsafe : SafetyTier.Unbound;
+
+		return new FunctionDeclarationSyntax(SpanOf(context), returnType, name, generics, parameters, body, attributes, modifier);
 	}
 
 	private List<AttributeSyntax> BuildAttributeList(IEnumerable<CvoloParser.AttributeListContext> contexts)
@@ -209,6 +215,8 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			return BuildWhileStatement(whileStmt);
 		if (context.forStatement() is { } forStmt)
 			return BuildForStatement(forStmt);
+		if (context.unsafeBlockStatement() is { } unsafeBlock)
+			return new UnsafeBlockStatementSyntax(SpanOf(unsafeBlock), BuildBlockStatement(unsafeBlock.blockStatement()));
 		return null;
 	}
 
@@ -378,6 +386,16 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 					var memberName = memberCtx.Identifier().GetText();
 					return new MemberAccessExpressionSyntax(SpanOf(memberCtx), left, memberName);
 				}
+			case CvoloParser.ArrowMemberAccessExpressionContext arrowCtx:
+				{
+					var left = BuildExpression(arrowCtx.expression());
+					var memberName = arrowCtx.Identifier().GetText();
+					return new MemberAccessExpressionSyntax(SpanOf(arrowCtx), left, memberName, "->");
+				}
+			case CvoloParser.DereferenceExpressionContext derefCtx:
+				return new UnaryExpressionSyntax(SpanOf(derefCtx), "*", BuildExpression(derefCtx.expression()));
+			case CvoloParser.AddressOfExpressionContext addrCtx:
+				return new UnaryExpressionSyntax(SpanOf(addrCtx), "&", BuildExpression(addrCtx.expression()));
 			case CvoloParser.BorrowExpressionContext borrowCtx:
 				{
 					var expr = BuildExpression(borrowCtx.expression());
@@ -573,6 +591,11 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		if (context is CvoloParser.ReadOnlyRefTypeContext refCtx)
 		{
 			return $"ref {GetTypeName(refCtx.type())}";
+		}
+
+		if (context is CvoloParser.PointerTypeContext ptrCtx)
+		{
+			return $"{GetTypeName(ptrCtx.type())}*";
 		}
 
 		if (context is CvoloParser.ArrayTypeContext arrCtx)

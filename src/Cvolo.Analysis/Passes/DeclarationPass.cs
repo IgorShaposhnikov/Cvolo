@@ -148,7 +148,7 @@ public sealed class DeclarationPass(BindingContext context)
 				var instSymbol = new FunctionSymbol(instName, returnType!, specParameters);
 				context.MonomorphizedFunctions[instName] = instSymbol;
 
-				var instDecl = new FunctionDeclarationSyntax(func.Span, func.ReturnType, instName, [], func.Parameters, func.Body);
+				var instDecl = new FunctionDeclarationSyntax(func.Span, func.ReturnType, instName, [], func.Parameters, func.Body, modifier: func.Modifier);
 				context.MonomorphizedFunctionDecls.Add(instDecl);
 				return;
 			}
@@ -192,10 +192,29 @@ public sealed class DeclarationPass(BindingContext context)
 			return;
 		}
 
-		var newSymbol = new FunctionSymbol(overloadedMangledName, type, parameters);
+		// Determine safety tier from function modifier
+		var safetyTier = func.Modifier ?? SafetyTier.Safe;
+
+		var newSymbol = new FunctionSymbol(overloadedMangledName, type, parameters) { SafetyTier = safetyTier };
 		var suppressedWarnings = new List<string>();
-		ApplyFunctionAttributes(VerifyAttributes(func.Attributes, "Function", suppressedWarnings), newSymbol, suppressedWarnings);
+		ApplyFunctionAttributes(VerifyAttributes(func.Attributes, "Function", suppressedWarnings, safetyTier), newSymbol, suppressedWarnings);
+
+		// [UnsafeBody] promotes to Unsafe tier even without the unsafe modifier
+		if (newSymbol.IsUnsafeBody)
+			newSymbol.SafetyTier = SafetyTier.Unsafe;
+
 		WarnIfUnsafeBodyUnused(func.Span, func.Body, newSymbol, suppressedWarnings);
+
+		// Warn if 'unbound' is used but no ref/refvar parameters exist
+		if (safetyTier == SafetyTier.Unbound && !suppressedWarnings.Contains(DiagnosticIds.UnboundNoRefParams))
+		{
+			var hasRefParams = parameters.Any(p => p.Type is PointerTypeSymbol { IsMutable: true } or PointerTypeSymbol { IsMutable: false });
+			if (!hasRefParams)
+			{
+				ReportDeclarationWarning(func, "'unbound' modifier has no effect because function has no ref/refvar parameters.", DiagnosticIds.UnboundNoRefParams);
+			}
+		}
+
 		context.Globals.Declare(newSymbol);
 
 		if (!context.OverloadedFunctions.TryGetValue(mangledName, out var candidates))
@@ -211,14 +230,14 @@ public sealed class DeclarationPass(BindingContext context)
 	// (syntactic target x safety context, per spec section 4) are modeled compiler-side until
 	// the language has enums/inheritance to declare them in source. Attributes are erased
 	// before emission - they never reach LLVM IR.
-	private static readonly Dictionary<string, (string[] Targets, string[] Contexts)> IntrinsicAttributes = new()
+	private static readonly Dictionary<string, (string[] Targets, SafetyTier[] Contexts)> IntrinsicAttributes = new()
 	{
-		["UnsafeBody"] = (["Function", "Method", "Constructor", "Destructor"], ["Safe", "Unbound", "Unsafe"]),
-		["NoAlias"] = (["Function", "Method", "Parameter"], ["Unbound", "Unsafe"]),
-		["SuppressWarning"] = (["Struct", "Function", "Method", "Constructor", "Destructor", "Parameter"], ["Safe", "Unbound", "Unsafe"])
+		["UnsafeBody"] = (["Function", "Method", "Constructor", "Destructor"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
+		["NoAlias"] = (["Function", "Method", "Parameter"], [SafetyTier.Unbound, SafetyTier.Unsafe]),
+		["SuppressWarning"] = (["Struct", "Function", "Method", "Constructor", "Destructor", "Parameter"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe])
 	};
 
-	private static readonly HashSet<string> KnownWarningIds = [DiagnosticIds.UnsafeBodyNoEffect, DiagnosticIds.UnknownAttribute];
+	private static readonly HashSet<string> KnownWarningIds = [DiagnosticIds.UnsafeBodyNoEffect, DiagnosticIds.UnknownAttribute, DiagnosticIds.UnboundNoRefParams];
 
 	private static string? NormalizeAttributeName(string attributeName)
 	{
@@ -230,7 +249,7 @@ public sealed class DeclarationPass(BindingContext context)
 	}
 
 	/// <summary>Verifies each attribute against its syntactic attach point and returns the canonical keys that passed.</summary>
-	private List<string> VerifyAttributes(IReadOnlyList<AttributeSyntax> attributes, string syntacticTarget, List<string>? suppressedWarnings = null)
+	private List<string> VerifyAttributes(IReadOnlyList<AttributeSyntax> attributes, string syntacticTarget, List<string>? suppressedWarnings = null, SafetyTier safetyTier = SafetyTier.Safe)
 	{
 		var applied = new List<string>();
 		var seen = new HashSet<string>();
@@ -260,9 +279,9 @@ public sealed class DeclarationPass(BindingContext context)
 				continue;
 			}
 
-			if (!contexts.Contains("Safe"))
+			if (!contexts.Contains(safetyTier))
 			{
-				ReportDeclarationDiagnostic(attr, $"Attribute '[{key}]' can only be applied inside Unbound or Unsafe contexts.");
+				ReportDeclarationDiagnostic(attr, $"Attribute '[{key}]' cannot be applied in {safetyTier} context.");
 				continue;
 			}
 

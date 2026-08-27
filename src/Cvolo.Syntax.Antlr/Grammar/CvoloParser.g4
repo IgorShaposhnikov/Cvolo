@@ -38,8 +38,13 @@ attribute
 	: qualifiedName (LPAREN argumentList? RPAREN)?
 	;
 
+functionModifier
+	: UNSAFE
+	| UNBOUND
+	;
+
 functionDeclaration
-	: attributeList* returnType Identifier (LT typeList GT)? LPAREN parameterList? RPAREN blockStatement
+	: attributeList* functionModifier? returnType Identifier (LT typeList GT)? LPAREN parameterList? RPAREN blockStatement
 	;
 
 externDeclaration
@@ -78,6 +83,7 @@ type
 	| type LBRACK RBRACK                                # sliceType
 	| type LBRACK IntegerLiteral RBRACK                 # arrayType
 	| type LT typeList GT                               # genericInstantiationType
+	| type STAR                                         # pointerType
 	| REFVAR type                                       # refVarType
 	| REF type                                          # readOnlyRefType
 	;
@@ -119,7 +125,12 @@ statement
 	| ifStatement
 	| whileStatement
 	| forStatement
+	| unsafeBlockStatement
 	| blockStatement
+	;
+
+unsafeBlockStatement
+	: UNSAFE blockStatement
 	;
 
 returnStatement
@@ -155,11 +166,14 @@ forStatement
 
 expression
 	: expression DOT Identifier                             							# memberAccessExpression
+	| expression ARROW Identifier                          							# arrowMemberAccessExpression
 	| expression LBRACK expression RBRACK												# indexExpression
 	| (REF | REFVAR) expression                                        					# borrowExpression
 	| expression INC                                        							# postfixIncrementExpression
 	| expression DEC                                        							# postfixDecrementExpression
 	| LPAREN type RPAREN expression                         							# castExpression
+	| STAR expression                                       							# dereferenceExpression
+	| AMPERSAND expression                                  							# addressOfExpression
 	| MINUS expression                                      							# unaryMinusExpression
 	| EXCLAMATION expression                                							# logicalNotExpression
 	| TILDE expression																	# bitwiseNotExpression

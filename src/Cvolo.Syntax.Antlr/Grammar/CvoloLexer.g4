@@ -25,6 +25,7 @@ STRING: 'string';
 CHAR: 'char';
 STRUCT: 'struct';
 UNSAFE: 'unsafe';
+UNBOUND: 'unbound';
 PANIC: 'panic';
 EXTENSION: 'extension';
 NAMESPACE: 'namespace';
