@@ -181,44 +181,48 @@ public sealed class SafetyPass(BindingContext context)
 	{
 		switch (stmt)
 		{
-		case VariableDeclarationSyntax v:
-			if (context.VariableSymbols.TryGetValue(v, out var sym))
-			{
-				scope.Declare(sym);
-				if (v.Initializer != null)
+			case VariableDeclarationSyntax v:
+				if (context.VariableSymbols.TryGetValue(v, out var sym))
 				{
-					CheckExpressionSafety(v.Initializer, scope);
-					EmitLargeCopyWarningIfNeeded(v.Initializer, scope);
-
-					// Propagate origin through ref/refvar declarations
-					if (v.Type is "ref" or "refvar" && v.Initializer is BorrowExpressionSyntax borrowExpr)
+					scope.Declare(sym);
+					if (v.Initializer != null)
 					{
-						var borrowedName = GetBaseIdentifierName(borrowExpr.Expression);
-						if (borrowedName != null && scope.Lookup(borrowedName) is VariableSymbol borrowed)
-							sym.Origin = borrowed.Origin;
+						CheckExpressionSafety(v.Initializer, scope);
+						EmitLargeCopyWarningIfNeeded(v.Initializer, scope);
+
+						// Propagate origin through ref/refvar declarations
+						if (v.Type is "ref" or "refvar" && v.Initializer is BorrowExpressionSyntax borrowExpr)
+						{
+							var borrowedName = GetBaseIdentifierName(borrowExpr.Expression);
+							if (borrowedName != null && scope.Lookup(borrowedName) is VariableSymbol borrowed)
+								sym.Origin = borrowed.Origin;
+						}
+
+						// Track refvar/ref declarations inside unbound scope for CVL1008
+						// Uses stack check (not CurrentTier) so nested unsafe blocks inside unbound are still tracked
+						if (v.Type is not null && v.Type.StartsWith("ref") && _currentTierStack.Contains(SafetyTier.Unbound))
+							_localRefsInUnboundScope.Add(v.Name);
+
+						// Track ref field targets for struct variables (§3C)
+						if (v.Type is not "ref" and not "refvar" && sym.Type is StructTypeSymbol)
+							TrackStructRefTargets(v.Name, v.Initializer, scope);
 					}
 
-					// Track refvar/ref declarations inside unbound scope for CVL1008
-					// Uses stack check (not CurrentTier) so nested unsafe blocks inside unbound are still tracked
-					if (v.Type is not null && v.Type.StartsWith("ref") && _currentTierStack.Contains(SafetyTier.Unbound))
-						_localRefsInUnboundScope.Add(v.Name);
+					// CVL1005: Raw pointer variables cannot be declared outside unsafe
+					if (sym.Type is RawPointerTypeSymbol && CurrentTier != SafetyTier.Unsafe)
+					{
+						context.Diagnostics.Report(context.CurrentUnit!.Context, v.Span,
+							"Raw pointer variables cannot be declared outside unsafe context.");
+					}
 
-			// Track ref field targets for struct variables (§3C)
-				if (v.Type is not "ref" and not "refvar" && sym.Type is StructTypeSymbol)
-					TrackStructRefTargets(v.Name, v.Initializer, scope);
-			}
+					VerifyBorrowRules(v, scope);
+				}
 
-			// CVL1005: Raw pointer variables cannot be declared outside unsafe
-			if (sym.Type is RawPointerTypeSymbol && CurrentTier != SafetyTier.Unsafe)
-			{
-				context.Diagnostics.Report(context.CurrentUnit!.Context, v.Span,
-					"Raw pointer variables cannot be declared outside unsafe context.");
-			}
+				break;
 
-			VerifyBorrowRules(v, scope);
-			}
-
-			break;
+			case SwitchStatementSyntax sw:
+				CheckSwitchStatementSafety(sw, scope, func);
+				break;
 
 			case ReturnStatementSyntax r:
 				if (r.Expression != null) CheckExpressionSafety(r.Expression, scope);
@@ -306,65 +310,65 @@ public sealed class SafetyPass(BindingContext context)
 
 				break;
 
-		case BinaryExpressionSyntax bin:
-			CheckExpressionSafety(bin.Right, scope);
-			if (bin.Operator == "=" && bin.Left is IdentifierExpressionSyntax leftId)
-			{
-				if (scope.Lookup(leftId.Name) is VariableSymbol leftSymbol)
+			case BinaryExpressionSyntax bin:
+				CheckExpressionSafety(bin.Right, scope);
+				if (bin.Operator == "=" && bin.Left is IdentifierExpressionSyntax leftId)
 				{
-					VerifyBorrowLock(bin.Left, scope, "reassign");
-					leftSymbol.IsMoved = false;
-					HandleCopyAssignment(bin.Right, scope);
-
-					// CVL1008: Escape prevention — local refvar cannot escape unbound scope to globals
-					if (_currentTierStack.Contains(SafetyTier.Unbound) && leftSymbol.IsGlobal && IsLocalUnboundRef(bin.Right, scope))
+					if (scope.Lookup(leftId.Name) is VariableSymbol leftSymbol)
 					{
-						context.Diagnostics.Report(context.CurrentUnit!.Context, bin.Span,
-							$"Reference cannot escape unbound scope: cannot assign local reference to global variable '{leftId.Name}'");
-					}
+						VerifyBorrowLock(bin.Left, scope, "reassign");
+						leftSymbol.IsMoved = false;
+						HandleCopyAssignment(bin.Right, scope);
 
-					// Track ref field targets for struct reassignment (§3C)
-					if (leftSymbol.Type is StructTypeSymbol)
-						TrackStructRefTargets(leftId.Name, bin.Right, scope);
-
-					// Propagate origin on ref/refvar reassignment
-					if (leftSymbol.Type is PointerTypeSymbol)
-					{
-						if (bin.Right is BorrowExpressionSyntax rb)
+						// CVL1008: Escape prevention — local refvar cannot escape unbound scope to globals
+						if (_currentTierStack.Contains(SafetyTier.Unbound) && leftSymbol.IsGlobal && IsLocalUnboundRef(bin.Right, scope))
 						{
-							var rightName = GetBaseIdentifierName(rb.Expression);
-							if (rightName != null && scope.Lookup(rightName) is VariableSymbol rightSym)
-							{
-								leftSymbol.Origin = rightSym.Origin;
+							context.Diagnostics.Report(context.CurrentUnit!.Context, bin.Span,
+								$"Reference cannot escape unbound scope: cannot assign local reference to global variable '{leftId.Name}'");
+						}
 
-								// §3F Global Lifetime Inequality: only global-origin refs may be stored in globals
-								if (leftSymbol.IsGlobal && rightSym.Origin != OriginKind.Global)
+						// Track ref field targets for struct reassignment (§3C)
+						if (leftSymbol.Type is StructTypeSymbol)
+							TrackStructRefTargets(leftId.Name, bin.Right, scope);
+
+						// Propagate origin on ref/refvar reassignment
+						if (leftSymbol.Type is PointerTypeSymbol)
+						{
+							if (bin.Right is BorrowExpressionSyntax rb)
+							{
+								var rightName = GetBaseIdentifierName(rb.Expression);
+								if (rightName != null && scope.Lookup(rightName) is VariableSymbol rightSym)
 								{
-									context.Diagnostics.Report(context.CurrentUnit!.Context, bin.Span,
-										$"Cannot assign {rightSym.Origin.ToString().ToLower()}-origin reference to global variable '{leftId.Name}': only global-origin references may be stored in globals");
+									leftSymbol.Origin = rightSym.Origin;
+
+									// §3F Global Lifetime Inequality: only global-origin refs may be stored in globals
+									if (leftSymbol.IsGlobal && rightSym.Origin != OriginKind.Global)
+									{
+										context.Diagnostics.Report(context.CurrentUnit!.Context, bin.Span,
+											$"Cannot assign {rightSym.Origin.ToString().ToLower()}-origin reference to global variable '{leftId.Name}': only global-origin references may be stored in globals");
+									}
 								}
 							}
-						}
-						else if (bin.Right is IdentifierExpressionSyntax rightId && scope.Lookup(rightId.Name) is VariableSymbol rightSym2 && rightSym2.Type is PointerTypeSymbol)
-						{
-							leftSymbol.Origin = rightSym2.Origin;
-
-							// §3F Global Lifetime Inequality
-							if (leftSymbol.IsGlobal && rightSym2.Origin != OriginKind.Global)
+							else if (bin.Right is IdentifierExpressionSyntax rightId && scope.Lookup(rightId.Name) is VariableSymbol rightSym2 && rightSym2.Type is PointerTypeSymbol)
 							{
-								context.Diagnostics.Report(context.CurrentUnit!.Context, bin.Span,
-									$"Cannot assign {rightSym2.Origin.ToString().ToLower()}-origin reference to global variable '{leftId.Name}': only global-origin references may be stored in globals");
+								leftSymbol.Origin = rightSym2.Origin;
+
+								// §3F Global Lifetime Inequality
+								if (leftSymbol.IsGlobal && rightSym2.Origin != OriginKind.Global)
+								{
+									context.Diagnostics.Report(context.CurrentUnit!.Context, bin.Span,
+										$"Cannot assign {rightSym2.Origin.ToString().ToLower()}-origin reference to global variable '{leftId.Name}': only global-origin references may be stored in globals");
+								}
 							}
 						}
 					}
 				}
-			}
-			else
-			{
-				CheckExpressionSafety(bin.Left, scope);
-			}
+				else
+				{
+					CheckExpressionSafety(bin.Left, scope);
+				}
 
-			break;
+				break;
 		}
 	}
 
@@ -433,7 +437,8 @@ public sealed class SafetyPass(BindingContext context)
 			IdentifierExpressionSyntax id => scope.Lookup(id.Name) is VariableSymbol v ? v.Type : null,
 			CallExpressionSyntax call => context.ResolvedCalls.TryGetValue(call, out var func) ? func.ReturnType : null,
 			StructInitializationExpressionSyntax init => context.ResolveType(init.StructTypeName),
-			BorrowExpressionSyntax borrow => ResolveExpressionType(borrow.Expression, scope),
+			BorrowExpressionSyntax borrow => new PointerTypeSymbol(ResolveExpressionType(borrow.Expression, scope) ?? TypeSymbol.Int, borrow.IsMutable),
+
 			_ => null
 		};
 	}
@@ -695,5 +700,34 @@ public sealed class SafetyPass(BindingContext context)
 		if (name == null) return false;
 		if (!_localRefsInUnboundScope.Contains(name)) return false;
 		return scope.Lookup(name) is VariableSymbol sym && sym.Type is PointerTypeSymbol;
+	}
+
+	private void CheckSwitchStatementSafety(SwitchStatementSyntax sw, SymbolTable scope, FunctionDeclarationSyntax func)
+	{
+		CheckExpressionSafety(sw.Expression, scope);
+		var parentName = GetBaseIdentifierName(sw.Expression);
+
+		foreach (var c in sw.Cases)
+		{
+			var targetType = ResolveExpressionType(sw.Expression, scope);
+			var hasRefPromotion = c.VariableName is not null && targetType is PointerTypeSymbol;
+
+			if (hasRefPromotion && parentName is not null)
+			{
+				var isMutable = targetType is PointerTypeSymbol targetPtr && targetPtr.IsMutable;
+				_activeBorrows.Add(new BorrowSymbol(c.VariableName!, parentName, isMutable, c.Span));
+				_activeRefs[c.VariableName!] = (parentName, isMutable, c.Span.End, c.Span);
+				RegisterParentLock(parentName, c.VariableName!);
+			}
+
+			CheckBlockSafety(new BlockStatementSyntax(c.Span, c.Body), new SymbolTable(scope), func);
+
+			if (hasRefPromotion && parentName is not null)
+			{
+				_activeRefs.Remove(c.VariableName!);
+				_activeBorrows.RemoveAll(b => b.BorrowerName == c.VariableName);
+				ReleaseParentLock(c.VariableName!);
+			}
+		}
 	}
 }

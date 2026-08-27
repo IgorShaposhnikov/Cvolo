@@ -227,6 +227,9 @@ public sealed class ValidationPass(BindingContext context)
 			case UnsafeBlockStatementSyntax unsafeBlock:
 				CheckBlock(unsafeBlock.Body, new SymbolTable(scope), currentFunc);
 				break;
+			case SwitchStatementSyntax sw:
+				CheckSwitchStatement(sw, scope, currentFunc);
+				break;
 		}
 	}
 
@@ -738,6 +741,7 @@ public sealed class ValidationPass(BindingContext context)
 			ParenthesizedStructInitializerExpressionSyntax p => p.ResolvedStructTypeName is not null ? context.ResolveType(p.ResolvedStructTypeName) : null,
 			TernaryExpressionSyntax t => CheckTernaryExpression(t, scope),
 			VoidLiteralExpressionSyntax => TypeSymbol.Void,
+			UnaryExpressionSyntax unary => GetUnaryExpressionType(unary, scope),
 			_ => null
 		};
 	}
@@ -1305,5 +1309,107 @@ public sealed class ValidationPass(BindingContext context)
 		}
 
 		return false;
+	}
+
+	private void CheckSwitchStatement(SwitchStatementSyntax sw, SymbolTable scope, FunctionDeclarationSyntax currentFunc)
+	{
+		CheckExpression(sw.Expression, scope);
+		var exprType = GetExpressionType(sw.Expression, scope);
+		if (exprType is null) return;
+
+		if (exprType is PointerTypeSymbol ptr)
+		{
+			exprType = ptr.ReferencedType;
+		}
+
+		if (exprType is not UnionTypeSymbol unionType)
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, sw.Expression.Span, "Switch statement target must be a union type.");
+			return;
+		}
+
+		var matchedVariants = new HashSet<string>();
+		var hasDefault = false;
+
+		foreach (var c in sw.Cases)
+		{
+			if (c.IsDefault || c.VariantName == "_")
+			{
+				hasDefault = true;
+				CheckBlock(new BlockStatementSyntax(c.Span, c.Body), new SymbolTable(scope), currentFunc);
+				continue;
+			}
+
+			matchedVariants.Add(c.VariantName);
+			var variant = unionType.FindField(c.VariantName);
+			if (variant is null)
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, c.Span, $"Union '{unionType.Name}' does not contain variant '{c.VariantName}'");
+				continue;
+			}
+
+			var caseScope = new SymbolTable(scope);
+
+			if (c.VariableName is not null)
+			{
+				if (variant.IsVoidVariant)
+				{
+					var currentFileContext = context.FileContexts[context.CurrentUnit!];
+					context.Diagnostics.Report(currentFileContext, c.Span, $"Void variant '{c.VariantName}' cannot carry a promoted variable.");
+					continue;
+				}
+
+				// Type Promotion (Reference targets promote to pointers; value targets copy/move)
+				TypeSymbol promotedType;
+				if (GetExpressionType(sw.Expression, scope) is PointerTypeSymbol targetPtr)
+				{
+					promotedType = new PointerTypeSymbol(variant.Type, isMutable: targetPtr.IsMutable);
+				}
+				else
+				{
+					promotedType = variant.Type;
+				}
+
+				caseScope.Declare(new VariableSymbol(c.VariableName, promotedType, isMutable: false) { IsInitialized = true });
+			}
+
+			CheckBlock(new BlockStatementSyntax(c.Span, c.Body), caseScope, currentFunc);
+		}
+
+		// Exhaustive Switch-Matching check
+		if (!hasDefault)
+		{
+			foreach (var variant in unionType.Fields)
+			{
+				if (!matchedVariants.Contains(variant.Name))
+				{
+					var currentFileContext = context.FileContexts[context.CurrentUnit!];
+					context.Diagnostics.Report(currentFileContext, sw.Span, $"Switch statement is not exhaustive. Missing case for variant '{variant.Name}'.");
+				}
+			}
+		}
+	}
+
+	private TypeSymbol? GetUnaryExpressionType(UnaryExpressionSyntax unary, SymbolTable scope)
+	{
+		if (unary.Operator == "&")
+		{
+			var opType = GetExpressionType(unary.Operand, scope);
+			return opType is not null ? new RawPointerTypeSymbol(opType) : null;
+		}
+
+		if (unary.Operator == "*")
+		{
+			var opType = GetExpressionType(unary.Operand, scope);
+			if (opType is RawPointerTypeSymbol rawPtr)
+				return rawPtr.ElementType;
+			if (opType is PointerTypeSymbol ptr)
+				return ptr.ReferencedType;
+			return null;
+		}
+
+		return GetExpressionType(unary.Operand, scope);
 	}
 }

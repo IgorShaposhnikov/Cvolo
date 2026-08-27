@@ -8,6 +8,7 @@ public sealed class UnionsTests : CompilerTestBase
 	[InlineData("UnionDecl", "Integer: 42")]
 	[InlineData("UnionFieldAccess", "Ok: 42")]
 	[InlineData("UnionExtension", "Some: 100, IsSome: 1\nEmpty option created.")]
+	[InlineData("OptionSwitchPromotion", "Some: 99")]
 	public void Execution_Success(string caseName, string expected)
 	{
 		var fileName = $"Unions/{caseName}.cvl";
@@ -35,6 +36,8 @@ public sealed class UnionsTests : CompilerTestBase
 	[Theory]
 	[InlineData("UnionDuplicateFieldFail", "Duplicate field 'Active'")]
 	[InlineData("UnionFieldAccessFail", "does not contain variant 'Missing'")]
+	[InlineData("UnionSwitchBorrowLockFail", "Cannot reassign 'opt' while a field borrow is still active")] // Fixed "stil" to "still active"
+	[InlineData("UnionSwitchExhaustiveFail", "Switch statement is not exhaustive. Missing case for variant 'B'")]
 	public void Semantic_Rejections(string caseName, string expectedError)
 	{
 		var fileName = $"Unions/{caseName}.cvl";

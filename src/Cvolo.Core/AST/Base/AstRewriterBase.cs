@@ -151,6 +151,13 @@ public abstract class AstRewriterBase
 			return new UnionFieldSyntax(unionField.Span, unionField.Type, unionField.Name);
 		}
 
+		if (node is SwitchStatementSyntax sw)
+		{
+			var cond = (ExpressionSyntax)Rewrite(sw.Expression);
+			var rewrittenCases = sw.Cases.Select(c => new SwitchCaseSyntax(c.Span, c.VariantName, c.VariableName, c.IsDefault, c.Body.Select(Rewrite).ToList())).ToList();
+			return new SwitchStatementSyntax(sw.Span, cond, rewrittenCases);
+		}
+
 		return node;
 	}
 }

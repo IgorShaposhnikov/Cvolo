@@ -520,6 +520,9 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			case IfStatementSyntax ifStmt:
 				EmitIfStatement(ifStmt);
 				break;
+			case SwitchStatementSyntax sw:
+				EmitSwitchStatement(sw);
+				break;
 			case WhileStatementSyntax whileStmt:
 				EmitWhileStatement(whileStmt);
 				break;
@@ -1768,21 +1771,6 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		{
 			var (parentPtr, parentType) = GetFieldPointer(m.Expression);
 
-			if (parentType is UnionTypeSymbol unionType)
-			{
-				var fieldIndex = GetFieldIndex(unionType, m.MemberName);
-				var fieldType = unionType.Fields[fieldIndex].Type;
-
-				var structLayoutTy = GetLLVMType(parentType);
-				var payloadPtr = _builder.BuildGEP2(structLayoutTy, parentPtr, new LLVMValueRef[] {
-					LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
-					LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1)
-				}, "union_payload_ptr");
-
-				var castPtr = _builder.BuildBitCast(payloadPtr, LLVMTypeRef.CreatePointer(GetLLVMType(fieldType), 0), "payload_cast_ptr");
-				return (castPtr, fieldType);
-			}
-
 			if (parentType is SliceTypeSymbol sliceType && m.MemberName == "Length")
 			{
 				var structLayout = GetLLVMType(sliceType);
@@ -1804,6 +1792,21 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 				var fieldPtr = _builder.BuildGEP2(structLayoutTy, rawPtr, new LLVMValueRef[] { zero, index }, "arrow_field_ptr");
 				return (fieldPtr, fieldType);
+			}
+
+			if (parentType is UnionTypeSymbol unionType)
+			{
+				var fieldIndex = GetFieldIndex(unionType, m.MemberName);
+				var fieldType = unionType.Fields[fieldIndex].Type;
+
+				var structLayoutTy = GetLLVMType(parentType);
+				var payloadPtr = _builder.BuildGEP2(structLayoutTy, parentPtr, new LLVMValueRef[] {
+					LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
+					LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1)
+				}, "union_payload_ptr");
+
+				var castPtr = _builder.BuildBitCast(payloadPtr, LLVMTypeRef.CreatePointer(GetLLVMType(fieldType), 0), "payload_cast_ptr");
+				return (castPtr, fieldType);
 			}
 
 			var dotStructType = (StructTypeSymbol)parentType;
@@ -1853,7 +1856,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		}
 		else if (expr is BorrowExpressionSyntax b)
 		{
-			return (EmitExpression(b), GetExprType(b));
+			return GetFieldPointer(b.Expression); // Unpack the inner expression pointer recursively
 		}
 
 		throw new InvalidOperationException($"Unsupported {expr.GetType()} field pointer expression");
@@ -2199,5 +2202,109 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		}
 
 		return 4; // Fallback
+	}
+
+	private void EmitSwitchStatement(SwitchStatementSyntax sw)
+	{
+		var (targetVal, unionType) = GetFieldPointer(sw.Expression);
+		var isRefTarget = GetExprType(sw.Expression) is PointerTypeSymbol;
+		var isMutableRef = GetExprType(sw.Expression) is PointerTypeSymbol ptrSymbol && ptrSymbol.IsMutable; // Capture original reference mutability
+
+		if (unionType is PointerTypeSymbol ptr)
+		{
+			unionType = ptr.ReferencedType;
+		}
+
+		var unionLayout = GetLLVMType(unionType);
+
+		// 1. Load the active tag (Index 0 of the union struct)
+		var tagPtr = _builder.BuildGEP2(unionLayout, targetVal, new LLVMValueRef[] {
+			LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
+			LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0)
+		}, "tag_ptr");
+		var tagVal = _builder.BuildLoad2(LLVMTypeRef.Int8, tagPtr, "tag_val");
+
+		var currentFunc = _builder.InsertBlock.Parent;
+		var endBlock = currentFunc.AppendBasicBlock("sw_end");
+		var nextCheckBlock = _builder.InsertBlock;
+
+		for (int i = 0; i < sw.Cases.Count; i++)
+		{
+			var c = sw.Cases[i];
+			_builder.PositionAtEnd(nextCheckBlock);
+
+			if (c.IsDefault || c.VariantName == "_")
+			{
+				var bodyBlock = currentFunc.AppendBasicBlock("default_body");
+				_builder.BuildBr(bodyBlock);
+
+				_builder.PositionAtEnd(bodyBlock);
+				EmitSwitchCaseBody(c, targetVal, unionType, "", isDefault: true, isRefTarget, isMutableRef);
+				if (_builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
+					_builder.BuildBr(endBlock);
+
+				break;
+			}
+			else
+			{
+				var unionTypeSym = unionType as UnionTypeSymbol;
+				var fieldIndex = GetFieldIndex(unionTypeSym!, c.VariantName);
+
+				var caseBodyBlock = currentFunc.AppendBasicBlock($"case_{c.VariantName}_body");
+				nextCheckBlock = currentFunc.AppendBasicBlock($"case_{c.VariantName}_next");
+
+				var cond = _builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, tagVal, LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, (ulong)fieldIndex), "tag_match");
+				_builder.BuildCondBr(cond, caseBodyBlock, nextCheckBlock);
+
+				_builder.PositionAtEnd(caseBodyBlock);
+				EmitSwitchCaseBody(c, targetVal, unionType, c.VariantName, isDefault: false, isRefTarget, isMutableRef);
+				if (_builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
+					_builder.BuildBr(endBlock);
+			}
+		}
+
+		_builder.PositionAtEnd(nextCheckBlock);
+		if (_builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
+			_builder.BuildBr(endBlock);
+
+		_builder.PositionAtEnd(endBlock);
+	}
+
+	private void EmitSwitchCaseBody(SwitchCaseSyntax c, LLVMValueRef targetVal, TypeSymbol unionType, string variantName, bool isDefault, bool isRefTarget, bool isMutableRef)
+	{
+		var unionTypeSym = unionType as UnionTypeSymbol;
+
+		if (c.VariableName is not null && !isDefault)
+		{
+			var fieldIndex = GetFieldIndex(unionTypeSym!, variantName);
+			var field = unionTypeSym.Fields[fieldIndex];
+
+			var unionLayout = GetLLVMType(unionType);
+			var payloadPtr = _builder.BuildGEP2(unionLayout, targetVal, new LLVMValueRef[] {
+				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
+				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1)
+			}, "union_payload_ptr");
+
+			var castPtr = _builder.BuildBitCast(payloadPtr, LLVMTypeRef.CreatePointer(GetLLVMType(field.Type), 0), "payload_cast_ptr");
+
+			// Structurally mirror the target reference mutability
+			var varType = isRefTarget ? new PointerTypeSymbol(field.Type, isMutable: isMutableRef) : field.Type;
+
+			var alloca = _builder.BuildAlloca(GetLLVMType(varType), c.VariableName);
+			_locals[c.VariableName] = alloca;
+			_variableTypes[c.VariableName] = varType;
+
+			if (isRefTarget)
+			{
+				_builder.BuildStore(castPtr, alloca);
+			}
+			else
+			{
+				var val = _builder.BuildLoad2(GetLLVMType(field.Type), castPtr, "payload_val");
+				_builder.BuildStore(val, alloca);
+			}
+		}
+
+		EmitBlock(new BlockStatementSyntax(c.Span, c.Body));
 	}
 }

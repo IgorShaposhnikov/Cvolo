@@ -195,6 +195,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				statements.Add(node);
 		}
 
+
 		return new BlockStatementSyntax(SpanOf(context), statements);
 	}
 
@@ -213,6 +214,8 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			return BuildBlockStatement(block);
 		if (context.ifStatement() is { } ifStmt)
 			return BuildIfStatement(ifStmt);
+		if (context.switchStatement() is { } sw)
+			return BuildSwitchStatement(sw);
 		if (context.whileStatement() is { } whileStmt)
 			return BuildWhileStatement(whileStmt);
 		if (context.forStatement() is { } forStmt)
@@ -723,5 +726,51 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 
 		var unionAttributes = BuildAttributeList(context.attributeList());
 		return new UnionDeclarationSyntax(SpanOf(context), name, generics, fields, unionAttributes);
+	}
+
+	private SyntaxNode BuildSwitchStatement(CvoloParser.SwitchStatementContext context)
+	{
+		var expr = BuildExpression(context.expression());
+		var cases = new List<SwitchCaseSyntax>();
+		foreach (var caseCtx in context.switchCase())
+		{
+			if (caseCtx.DEFAULT() is not null)
+			{
+				var body = new List<SyntaxNode>();
+				foreach (var stmt in caseCtx.statement())
+				{
+					var stmtNode = BuildStatement(stmt);
+					if (stmtNode is not null) body.Add(stmtNode);
+				}
+				cases.Add(new SwitchCaseSyntax(SpanOf(caseCtx), "", null, isDefault: true, body));
+			}
+			else
+			{
+				var patternCtx = caseCtx.pattern();
+				string variantName = "";
+				string? variableName = null;
+
+				if (patternCtx is CvoloParser.VariantPatternContext varPat)
+				{
+					variantName = varPat.Identifier(0).GetText();
+					variableName = varPat.Identifier(1).GetText();
+				}
+				else if (patternCtx is CvoloParser.ConstantPatternContext constPat)
+				{
+					variantName = constPat.Identifier().GetText();
+				}
+
+				var body = new List<SyntaxNode>();
+				foreach (var stmt in caseCtx.statement())
+				{
+					var stmtNode = BuildStatement(stmt);
+					if (stmtNode is not null) body.Add(stmtNode);
+				}
+
+				cases.Add(new SwitchCaseSyntax(SpanOf(caseCtx), variantName, variableName, isDefault: false, body));
+			}
+		}
+
+		return new SwitchStatementSyntax(SpanOf(context), expr, cases);
 	}
 }

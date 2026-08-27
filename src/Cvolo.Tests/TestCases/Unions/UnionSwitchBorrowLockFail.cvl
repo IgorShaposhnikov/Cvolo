@@ -1,0 +1,16 @@
+union Option<T> {
+    T Some;
+    void None;
+}
+
+int main() {
+    var Option<int> opt = Option<int> { Some: 42 };
+    switch (refvar opt) {
+        case Some x:
+            // FAIL: cannot reassign 'opt' while 'x' is borrowing its payload!
+            opt = Option<int> { Some: 100 }; 
+            var int y = x; // Renamed 'val' to 'y'
+        case None:
+    }
+    return 0;
+}

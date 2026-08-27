@@ -46,5 +46,7 @@ public enum SyntaxKind
 	UnsafeBlockStatement,
 	UnionDeclaration,
 	UnionField,
-	VoidLiteralExpression
+	VoidLiteralExpression,
+	SwitchStatement,
+	SwitchCase,
 }

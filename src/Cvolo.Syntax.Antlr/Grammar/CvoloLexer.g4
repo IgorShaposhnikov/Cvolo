@@ -32,6 +32,9 @@ EXTENSION: 'extension';
 NAMESPACE: 'namespace';
 USING: 'using';
 GLOBAL: 'global';
+SWITCH: 'switch';
+CASE: 'case';
+DEFAULT: 'default';
 
 // Punctuation
 LPAREN: '(';

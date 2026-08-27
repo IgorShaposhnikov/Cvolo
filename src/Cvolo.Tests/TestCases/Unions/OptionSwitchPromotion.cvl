@@ -1,0 +1,22 @@
+using System;
+
+union Option<T> {
+    T Some;
+    void None;
+}
+
+int main() {
+    var Option<int> opt = Option<int> { Some: 42 };
+    
+    // Switch by mutable reference -> promotes 'x' to 'refvar int'!
+    switch (refvar opt) {
+        case Some x:
+            x = 99; // Mutate in-place
+        case None:
+    }
+
+    var int y = opt.Some; // Renamed 'val' to 'y'
+    Console.WriteLine($"Some: {y}");
+
+    return 0;
+}

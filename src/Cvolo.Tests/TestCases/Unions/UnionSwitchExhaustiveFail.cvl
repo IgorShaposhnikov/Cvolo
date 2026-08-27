@@ -1,0 +1,14 @@
+union MyUnion {
+    int A;
+    double B;
+}
+
+int main() {
+    var MyUnion u = MyUnion { A: 10 };
+    switch (u) {
+        case A x:
+            break;
+        // FAIL: Missing case for variant 'B'!
+    }
+    return 0;
+}

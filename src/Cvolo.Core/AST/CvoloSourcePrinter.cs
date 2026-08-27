@@ -107,6 +107,14 @@ public sealed class CvoloSourcePrinter
 				var uFields = string.Join("\n", u.Fields.Select(f => $"{ind}    {f.Type} {f.Name};"));
 				return $"\n{ind}union {u.Name}{uGenerics} {{\n{uFields}\n{ind}}}\n";
 
+			case SwitchStatementSyntax sw:
+				var casesStr = string.Join("", sw.Cases.Select(c => {
+					var patternStr = c.IsDefault ? "default" : (c.VariableName != null ? $"{c.VariantName} {c.VariableName}" : c.VariantName);
+					var bodyStr = string.Join("", c.Body.Select(s => Print(s, indent + 2)));
+					return $"{ind}    case {patternStr}:\n{bodyStr}";
+				}));
+				return $"{ind}switch ({Print(sw.Expression)}) {{\n{casesStr}{ind}}}\n";
+
 			default:
 				return node.ToString() ?? "";
 		}

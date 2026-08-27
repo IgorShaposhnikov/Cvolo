@@ -135,6 +135,7 @@ statement
 	| whileStatement
 	| forStatement
 	| unsafeBlockStatement
+	| switchStatement
 	| blockStatement
 	;
 
@@ -238,4 +239,18 @@ genericParameterList
 
 typeList
 	: type (COMMA type)*
+	;
+
+switchStatement
+	: SWITCH LPAREN expression RPAREN LBRACE switchCase* RBRACE
+	;
+
+switchCase
+	: CASE pattern COLON statement*
+	| DEFAULT COLON statement*
+	;
+
+pattern
+	: Identifier Identifier                                 # variantPattern
+	| Identifier                                            # constantPattern
 	;
