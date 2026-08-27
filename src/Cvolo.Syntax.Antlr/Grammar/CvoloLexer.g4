@@ -24,6 +24,7 @@ BOOL: 'bool';
 STRING: 'string';
 CHAR: 'char';
 STRUCT: 'struct';
+UNION: 'union';
 UNSAFE: 'unsafe';
 UNBOUND: 'unbound';
 PANIC: 'panic';

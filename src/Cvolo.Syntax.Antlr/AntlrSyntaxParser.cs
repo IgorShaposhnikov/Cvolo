@@ -66,6 +66,8 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			return BuildExternDeclaration(ext);
 		if (context.structDeclaration() is { } structDecl)
 			return BuildStructDeclaration(structDecl);
+		if (context.unionDeclaration() is { } unionDecl)
+			return BuildUnionDeclaration(unionDecl);
 		if (context.extensionDeclaration() is { } extensionDecl)
 			return BuildExtensionDeclaration(extensionDecl);
 		if (context.globalVariableDeclaration() is { } globalDecl)
@@ -700,5 +702,24 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		}
 
 		return new ExtensionDeclarationSyntax(SpanOf(context), extendedTypeName, methods, destructors, constructors, generics);
+	}
+
+	private UnionDeclarationSyntax BuildUnionDeclaration(CvoloParser.UnionDeclarationContext context)
+	{
+		var name = context.Identifier().GetText();
+
+		var generics = new List<string>();
+		if (context.genericParameterList() is { } genList)
+		{
+			foreach (var id in genList.Identifier())
+				generics.Add(id.GetText());
+		}
+
+		var fields = new List<UnionFieldSyntax>();
+		foreach (var field in context.unionField())
+			fields.Add(new UnionFieldSyntax(SpanOf(field), GetTypeName(field.type()), field.Identifier().GetText()));
+
+		var unionAttributes = BuildAttributeList(context.attributeList());
+		return new UnionDeclarationSyntax(SpanOf(context), name, generics, fields, unionAttributes);
 	}
 }

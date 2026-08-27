@@ -1,0 +1,10 @@
+union Option<T>
+{
+	T Some;
+	void None;
+}
+
+int main()
+{
+	return 0;
+}

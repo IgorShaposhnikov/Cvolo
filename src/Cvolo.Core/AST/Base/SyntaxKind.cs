@@ -44,4 +44,6 @@ public enum SyntaxKind
 	UsingDirective,
 	NamespaceDeclaration,
 	UnsafeBlockStatement,
+	UnionDeclaration,
+	UnionField,
 }

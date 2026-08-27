@@ -22,6 +22,7 @@ declaration
 	: functionDeclaration
 	| externDeclaration
 	| structDeclaration
+	| unionDeclaration
 	| extensionDeclaration
 	| globalVariableDeclaration
 	;
@@ -53,6 +54,14 @@ externDeclaration
 
 structDeclaration
 	: attributeList* STRUCT Identifier (LT genericParameterList GT)? LBRACE structField* RBRACE SEMI?
+	;
+
+unionDeclaration
+	: attributeList* UNION Identifier (LT genericParameterList GT)? LBRACE unionField* RBRACE SEMI?
+	;
+
+unionField
+	: type Identifier SEMI
 	;
 
 extensionDeclaration

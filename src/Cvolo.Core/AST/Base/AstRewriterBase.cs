@@ -140,6 +140,17 @@ public abstract class AstRewriterBase
 			return new UnsafeBlockStatementSyntax(unsafeBlock.Span, rewrittenBody);
 		}
 
+		if (node is UnionDeclarationSyntax unionDecl)
+		{
+			var rewrittenFields = unionDecl.Fields.Select(Rewrite).Cast<UnionFieldSyntax>().ToList();
+			return new UnionDeclarationSyntax(unionDecl.Span, unionDecl.Name, unionDecl.GenericParameters, rewrittenFields, unionDecl.Attributes);
+		}
+
+		if (node is UnionFieldSyntax unionField)
+		{
+			return new UnionFieldSyntax(unionField.Span, unionField.Type, unionField.Name);
+		}
+
 		return node;
 	}
 }
