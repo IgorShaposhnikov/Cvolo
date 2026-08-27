@@ -2,31 +2,28 @@ using Cvolo.Tests.Core;
 
 namespace Cvolo.Tests;
 
-public sealed class SandboxTests : CompilerTestBase
+public sealed class UnsafeSandboxTests : CompilerTestBase
 {
-	[Theory]
-	[InlineData("UnsafeModifierBasic", "30")]
-	[InlineData("UnboundModifierBasic", "30")]
-	[InlineData("NoAliasOnUnbound", "30")]
-	public void ModifierExecution(string caseName, string expected)
+	[Fact]
+	public void UnsafeModifierBasic_Compile_And_Run()
 	{
-		var fileName = $"Sandbox/{caseName}.cvl";
+		var fileName = "Sandbox/Unsafe/UnsafeModifierBasic.cvl";
 		var (exitCode, stdout, stderr) = RunCompiler(fileName);
 		AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
 
-		var (runCode, runStdout) = ExecuteBinary(caseName, "Sandbox");
+		var (runCode, runStdout) = ExecuteBinary("UnsafeModifierBasic", "Sandbox/Unsafe");
 		Assert.Equal(0, runCode);
-		Assert.Contains(expected, runStdout);
+		Assert.Contains("30", runStdout);
 	}
 
 	[Fact]
 	public void InlineUnsafeBlock_Compile_And_Run()
 	{
-		var fileName = "Sandbox/InlineUnsafeBlock.cvl";
+		var fileName = "Sandbox/Unsafe/InlineUnsafeBlock.cvl";
 		var (exitCode, stdout, stderr) = RunCompiler(fileName);
 		AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
 
-		var (runCode, runStdout) = ExecuteBinary("InlineUnsafeBlock", "Sandbox");
+		var (runCode, runStdout) = ExecuteBinary("InlineUnsafeBlock", "Sandbox/Unsafe");
 		Assert.Equal(0, runCode);
 		Assert.Contains("Result: 42", runStdout);
 	}
@@ -34,11 +31,11 @@ public sealed class SandboxTests : CompilerTestBase
 	[Fact]
 	public void UnsafePointerDeref_Compile_And_Run()
 	{
-		var fileName = "Sandbox/UnsafeFunctionCall.cvl";
+		var fileName = "Sandbox/Unsafe/UnsafeFunctionCall.cvl";
 		var (exitCode, stdout, stderr) = RunCompiler(fileName);
 		AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
 
-		var (runCode, runStdout) = ExecuteBinary("UnsafeFunctionCall", "Sandbox");
+		var (runCode, runStdout) = ExecuteBinary("UnsafeFunctionCall", "Sandbox/Unsafe");
 		Assert.Equal(0, runCode);
 		Assert.Contains("Result: 42", runStdout);
 	}
@@ -49,22 +46,9 @@ public sealed class SandboxTests : CompilerTestBase
 	[InlineData("RawPtrDeclOutsideUnsafe", "Raw pointer variables cannot be declared outside unsafe context.")]
 	public void SandboxViolations(string caseName, string expectedError)
 	{
-		var fileName = $"Sandbox/{caseName}.cvl";
+		var fileName = $"Sandbox/Unsafe/{caseName}.cvl";
 		var (exitCode, _, stderr) = RunCompiler(fileName);
 		Assert.Equal(1, exitCode);
 		Assert.Contains(expectedError, stderr);
-	}
-
-	[Fact]
-	public void UnboundNoRefParams_Warns_But_Still_Compile_And_Run()
-	{
-		var fileName = "Sandbox/UnboundNoRefParams.cvl";
-		var (exitCode, stdout, stderr) = RunCompiler(fileName);
-		Assert.Equal(0, exitCode);
-		Assert.Contains("'unbound' modifier has no effect because function has no ref/refvar parameters.", stderr);
-
-		var (runCode, runStdout) = ExecuteBinary("UnboundNoRefParams", "Sandbox");
-		Assert.Equal(0, runCode);
-		Assert.Contains("30", runStdout);
 	}
 }
