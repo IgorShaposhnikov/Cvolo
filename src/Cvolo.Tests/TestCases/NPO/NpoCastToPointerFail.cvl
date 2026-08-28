@@ -1,0 +1,11 @@
+using System;
+
+int main() {
+    var int inner = 42;
+    var Option<ref int> opt = Option<ref int> { Some: ref inner };
+    unsafe {
+        int* p = (int*)opt;
+        Console.WriteLine($"p: {*p}");
+    }
+    return 0;
+}

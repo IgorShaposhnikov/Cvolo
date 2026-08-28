@@ -1,0 +1,20 @@
+using System;
+
+struct Big {
+    int A;
+    int B;
+    int C;
+    int D;
+    int E;
+    int F;
+}
+
+Option<Big> makeBig() {
+    return Option<Big> { Some: Big { A: 1, B: 2, C: 3, D: 4, E: 5, F: 6 } };
+}
+
+int main() {
+    var Option<Big> o = makeBig();
+    Console.WriteLine($"got: {o.Some.A}");
+    return 0;
+}

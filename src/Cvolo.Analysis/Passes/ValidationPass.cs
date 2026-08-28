@@ -11,6 +11,9 @@ namespace Cvolo.Analysis.Passes;
 
 public sealed class ValidationPass(BindingContext context)
 {
+	private ClassificationAnalyzer? _classification;
+	private ClassificationAnalyzer Classification => _classification ??= new ClassificationAnalyzer(context);
+
 	public void Process(IEnumerable<CompilationUnitSyntax> units)
 	{
 		foreach (var unit in units)
@@ -379,16 +382,16 @@ public sealed class ValidationPass(BindingContext context)
 							context.Diagnostics.Report(currentFileContext, call.Span, "sizeof expects exactly 1 type argument.");
 						}
 
-						if (call.Arguments.Count != 0)
-						{
-							var currentFileContext = context.FileContexts[context.CurrentUnit!];
-							context.Diagnostics.Report(currentFileContext, call.Span, "sizeof does not accept value arguments.");
-						}
-
-						break;
+					if (call.Arguments.Count != 0)
+					{
+						var currentFileContext = context.FileContexts[context.CurrentUnit!];
+						context.Diagnostics.Report(currentFileContext, call.Span, "sizeof does not accept value arguments.");
 					}
 
-					if (call.TypeArguments.Count > 0)
+					break;
+				}
+
+				if (call.TypeArguments.Count > 0)
 					{
 						// Reconstruct and resolve the struct/union instantiation name to check if this is a generic constructor call
 						var structNameWithArgs = $"{call.FunctionName}<{string.Join(", ", call.TypeArguments)}>";
@@ -448,6 +451,16 @@ public sealed class ValidationPass(BindingContext context)
 						return;
 					}
 
+					if (!isVariadic)
+					{
+						for (var i = 0; i < call.Arguments.Count; i++)
+						{
+							var paramIndex = isExtensionCall ? i + 1 : i;
+							if (paramIndex >= func.Parameters.Count) break;
+							CheckLargeUnionByValueArgument(call.Arguments[i], func.Parameters[paramIndex].Type, scope);
+						}
+					}
+
 					break;
 				}
 			case BinaryExpressionSyntax bin:
@@ -486,6 +499,7 @@ public sealed class ValidationPass(BindingContext context)
 				}
 			case UnaryExpressionSyntax unary:
 				CheckExpression(unary.Operand, scope);
+				CheckUnaryCast(unary, scope);
 				break;
 			case VoidLiteralExpressionSyntax:
 				break;
@@ -736,6 +750,16 @@ public sealed class ValidationPass(BindingContext context)
 			if (actualType is PointerTypeSymbol ptr && expectedType is not PointerTypeSymbol)
 			{
 				actualType = ptr.ReferencedType;
+			}
+
+			// >16B union value-passing restriction (Memory spec §6 Rule 5)
+			if (expectedType is UnionTypeSymbol retUnion && !retUnion.IsNpoEligible &&
+				Classification.CalculateByteSize(retUnion) > 16)
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, ret.Expression.Span,
+					$"Union '{retUnion.Name}' is {Classification.CalculateByteSize(retUnion)} bytes. Returning by value is forbidden for unions larger than 16 bytes; return a 'ref'/'refvar' instead.");
+				return;
 			}
 
 			if (!actualType.Equals(expectedType))
@@ -1414,6 +1438,38 @@ public sealed class ValidationPass(BindingContext context)
 				}
 			}
 		}
+	}
+
+	private void CheckLargeUnionByValueArgument(ExpressionSyntax arg, TypeSymbol? paramType, SymbolTable scope)
+	{
+		if (paramType is PointerTypeSymbol)
+			return;
+
+		var type = GetExpressionType(arg, scope);
+		if (type is not UnionTypeSymbol unionType)
+			return;
+
+		var size = Classification.CalculateByteSize(unionType);
+		if (size > 16)
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, arg.Span,
+				$"Union '{unionType.Name}' is {size} bytes. Passing by value is forbidden for unions larger than 16 bytes; pass by 'ref'/'refvar' instead.");
+		}
+	}
+
+	private void CheckUnaryCast(UnaryExpressionSyntax unary, SymbolTable scope)
+	{
+		if (!unary.Operator.StartsWith("(") || !unary.Operator.EndsWith("*)") || unary.Operator.Length < 4)
+			return;
+
+		var operandType = GetExpressionType(unary.Operand, scope);
+		if (operandType is not UnionTypeSymbol optionUnion || !optionUnion.IsNpoEligible)
+			return;
+
+		var currentFileContext = context.FileContexts[context.CurrentUnit!];
+		context.Diagnostics.Report(currentFileContext, unary.Span,
+			$"Cannot cast nullable reference option '{optionUnion.Name}' directly to a raw pointer; pattern-match it (switch on 'ref'/'refvar') to extract a non-null reference first.");
 	}
 
 	private TypeSymbol? GetUnaryExpressionType(UnaryExpressionSyntax unary, SymbolTable scope)

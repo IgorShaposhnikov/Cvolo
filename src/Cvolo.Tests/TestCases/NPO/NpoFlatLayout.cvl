@@ -1,0 +1,15 @@
+using System;
+
+union Option<T> {
+    T Some;
+    void None;
+}
+
+int main() {
+    var int payload = 7;
+    var Option<ref int> slot = Option<ref int> { Some: ref payload };
+    var Option<ref int> empty = Option<ref int> { None: void };
+    var ref int viaSome = slot.Some;
+    Console.WriteLine($"val: {viaSome}");
+    return 0;
+}
