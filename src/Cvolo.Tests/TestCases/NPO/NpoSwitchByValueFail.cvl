@@ -1,0 +1,21 @@
+using System;
+
+union Option<T> {
+    T Some;
+    void None;
+}
+
+int main() {
+    var int inner = 42;
+    var Option<ref int> opt = Option<ref int> { Some: ref inner };
+
+    // This should be rejected: a by-value switch over a nullable reference option
+    // would copy the ref out of the borrow lock (unsound aliasing).
+    switch (opt) {
+        case Some x:
+            Console.WriteLine($"Some: {x}");
+        case None:
+    }
+
+    return 0;
+}

@@ -2338,12 +2338,23 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 		var unionLayout = GetLLVMType(unionType);
 
-		// 1. Load the active tag (Index 0 of the union struct)
-		var tagPtr = _builder.BuildGEP2(unionLayout, targetVal, new LLVMValueRef[] {
-			LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
-			LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0)
-		}, "tag_ptr");
-		var tagVal = _builder.BuildLoad2(LLVMTypeRef.Int8, tagPtr, "tag_val");
+		var isNpo = unionType is UnionTypeSymbol npoUt && npoUt.IsNpoEligible;
+
+		// 1. Load the discriminator: for NPO unions this is the flat pointer value
+		//    itself (None = null); for tagged unions it is the i8 tag at struct index 0.
+		LLVMValueRef discriminator;
+		if (isNpo)
+		{
+			discriminator = _builder.BuildLoad2(unionLayout, targetVal, "flat_ptr_val");
+		}
+		else
+		{
+			var tagPtr = _builder.BuildGEP2(unionLayout, targetVal, new LLVMValueRef[] {
+				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
+				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0)
+			}, "tag_ptr");
+			discriminator = _builder.BuildLoad2(LLVMTypeRef.Int8, tagPtr, "tag_val");
+		}
 
 		var currentFunc = _builder.InsertBlock.Parent;
 		var endBlock = currentFunc.AppendBasicBlock("sw_end");
@@ -2374,7 +2385,20 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				var caseBodyBlock = currentFunc.AppendBasicBlock($"case_{c.VariantName}_body");
 				nextCheckBlock = currentFunc.AppendBasicBlock($"case_{c.VariantName}_next");
 
-				var cond = _builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, tagVal, LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, (ulong)fieldIndex), "tag_match");
+				LLVMValueRef cond;
+				if (isNpo)
+				{
+					// NPO: Some (payload) matches non-null; None (void) matches null.
+					var isNone = unionTypeSym!.Fields[fieldIndex].IsVoidVariant;
+					var nullConst = LLVMValueRef.CreateConstPointerNull(unionLayout);
+					cond = isNone
+						? _builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, discriminator, nullConst, "npo_is_none")
+						: _builder.BuildICmp(LLVMIntPredicate.LLVMIntNE, discriminator, nullConst, "npo_is_some");
+				}
+				else
+				{
+					cond = _builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, discriminator, LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, (ulong)fieldIndex), "tag_match");
+				}
 				_builder.BuildCondBr(cond, caseBodyBlock, nextCheckBlock);
 
 				_builder.PositionAtEnd(caseBodyBlock);
@@ -2400,22 +2424,43 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			var fieldIndex = GetFieldIndex(unionTypeSym!, variantName);
 			var field = unionTypeSym.Fields[fieldIndex];
 
-			var unionLayout = GetLLVMType(unionType);
-			var payloadPtr = _builder.BuildGEP2(unionLayout, targetVal, new LLVMValueRef[] {
-				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
-				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1)
-			}, "union_payload_ptr");
+			var isNpo = unionTypeSym.IsNpoEligible;
 
-			var castPtr = _builder.BuildBitCast(payloadPtr, LLVMTypeRef.CreatePointer(GetLLVMType(field.Type), 0), "payload_cast_ptr");
+			LLVMValueRef payloadPtr;
+			LLVMValueRef castPtr;
+			if (isNpo)
+			{
+				// NPO: the payload IS the flat pointer slot itself (no {0,1} GEP, no bitcast).
+				payloadPtr = targetVal;
+				castPtr = targetVal;
+			}
+			else
+			{
+				var unionLayout = GetLLVMType(unionType);
+				payloadPtr = _builder.BuildGEP2(unionLayout, targetVal, new LLVMValueRef[] {
+					LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
+					LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1)
+				}, "union_payload_ptr");
 
-			// Structurally mirror the target reference mutability
-			var varType = isRefTarget ? new PointerTypeSymbol(field.Type, isMutable: isMutableRef) : field.Type;
+				castPtr = _builder.BuildBitCast(payloadPtr, LLVMTypeRef.CreatePointer(GetLLVMType(field.Type), 0), "payload_cast_ptr");
+			}
+
+			// Structurally mirror the target reference mutability. For NPO the payload is
+			// already the inner reference, so the promoted variable is that same reference.
+			var varType = isNpo ? field.Type : (isRefTarget ? new PointerTypeSymbol(field.Type, isMutable: isMutableRef) : field.Type);
 
 			var alloca = _builder.BuildAlloca(GetLLVMType(varType), c.VariableName);
 			_locals[c.VariableName] = alloca;
 			_variableTypes[c.VariableName] = varType;
 
-			if (isRefTarget)
+			if (isNpo)
+			{
+				// NPO: the promoted variable holds the inner reference itself (the flat pointer
+				// value), regardless of whether the target was taken by ref or by value.
+				var val = _builder.BuildLoad2(GetLLVMType(field.Type), targetVal, "flat_payload_val");
+				_builder.BuildStore(val, alloca);
+			}
+			else if (isRefTarget)
 			{
 				_builder.BuildStore(castPtr, alloca);
 			}

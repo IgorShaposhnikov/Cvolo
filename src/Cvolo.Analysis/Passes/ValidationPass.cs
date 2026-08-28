@@ -1365,7 +1365,29 @@ public sealed class ValidationPass(BindingContext context)
 
 				// Type Promotion (Reference targets promote to pointers; value targets copy/move)
 				TypeSymbol promotedType;
-				if (GetExpressionType(sw.Expression, scope) is PointerTypeSymbol targetPtr)
+				if (unionType.IsNpoEligible)
+				{
+					// NPO: the payload IS the reference already (flat pointer). Extracting it under
+					// a ref/refvar switch yields the inner reference directly, lock-protected.
+					if (variant.Type is not PointerTypeSymbol)
+					{
+						promotedType = variant.Type;
+					}
+					else if (GetExpressionType(sw.Expression, scope) is not PointerTypeSymbol)
+					{
+						// A by-value switch over an NPO reference option would copy the ref out of the
+						// borrow lock, creating an unsound aliased reference.
+						var currentFileContext = context.FileContexts[context.CurrentUnit!];
+						context.Diagnostics.Report(currentFileContext, c.Span,
+							$"Cannot pattern-match '{c.VariantName} {c.VariableName}' by value on a nullable reference option; switch on 'ref'/'refvar' to extract the reference safely.");
+						continue;
+					}
+					else
+					{
+						promotedType = variant.Type;
+					}
+				}
+				else if (GetExpressionType(sw.Expression, scope) is PointerTypeSymbol targetPtr)
 				{
 					promotedType = new PointerTypeSymbol(variant.Type, isMutable: targetPtr.IsMutable);
 				}

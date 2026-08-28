@@ -1,0 +1,29 @@
+using System;
+
+union Option<T> {
+    T Some;
+    void None;
+}
+
+int main() {
+    var int inner = 42;
+    var Option<ref int> opt = Option<ref int> { Some: ref inner };
+
+    // Switch by reference over an NPO option -> promotes 'x' to the inner 'ref int'.
+    switch (ref opt) {
+        case Some x:
+            Console.WriteLine($"Some: {x}");
+        case None:
+            Console.WriteLine("none");
+    }
+
+    var Option<ref int> none = Option<ref int> { None: void };
+    switch (ref none) {
+        case Some x:
+            Console.WriteLine($"unexpected: {x}");
+        case None:
+            Console.WriteLine("None path");
+    }
+
+    return 0;
+}
