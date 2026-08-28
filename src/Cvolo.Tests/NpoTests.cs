@@ -7,6 +7,9 @@ public sealed class NpoTests : CompilerTestBase
 	[Theory]
 	[InlineData("NpoFlatPtr", "Flat: 42\nNone created.")]
 	[InlineData("NpoSwitchRefPromotion", "Some: 42\nNone path")]
+	[InlineData("OptionMoveDtor", "Dropping: 1\nDone")]
+	[InlineData("OptionDropOnReassign", "start\nDropping: 10\nmiddle\nnow: 20\nDropping: 20")]
+	[InlineData("OptionMoveToParam", "in consume, some=7\nDropping: 7\nDone")]
 	public void Execution_Success(string caseName, string expected)
 	{
 		var fileName = $"NPO/{caseName}.cvl";

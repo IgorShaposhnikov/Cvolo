@@ -1,0 +1,20 @@
+using System;
+
+struct Resource {
+    int Handle;
+}
+
+extension Resource {
+    ~Resource() {
+        Console.WriteLine($"Dropping: {Handle}");
+    }
+}
+
+int main() {
+    var Option<Resource> o = Option<Resource> { Some: Resource { Handle: 10 } };
+    Console.WriteLine("start");
+    o = Option<Resource> { Some: Resource { Handle: 20 } };
+    Console.WriteLine("middle");
+    Console.WriteLine($"now: {o.Some.Handle}");
+    return 0;
+}

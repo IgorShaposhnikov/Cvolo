@@ -792,6 +792,19 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				val = EmitExpression(argExpr);
 			}
 
+			// Ownership transfer: passing a ResourceMove-style union by value transfers the
+			// resource to the callee. Exclude the source from caller cleanup so the callee's
+			// tag-checked destructor (and not a second drop here) releases it — no double free.
+			if (argExpr is IdentifierExpressionSyntax moveArg
+				&& !_disposedVars.Contains(moveArg.Name)
+				&& _variableTypes.TryGetValue(moveArg.Name, out var srcTy)
+				&& srcTy is UnionTypeSymbol srcUnion
+				&& UnionNeedsTagCheckedCleanup(srcUnion)
+				&& paramTy is UnionTypeSymbol paramUnion && paramUnion.Name == srcUnion.Name)
+			{
+				_movedVars.Add(moveArg.Name);
+			}
+
 			// Variadic promotion rules (promote Boolean and Char to i32)
 			var isVariadic = _astExterns.TryGetValue(emitName, out var ext) && ext.IsVariadic;
 			if (isVariadic && i + paramOffset >= _functionParameterTypes[emitName].Count)
@@ -972,7 +985,30 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				}
 				else
 				{
-					_builder.BuildStore(right, ptr);
+					// Drop-on-reassignment: overwriting a ResourceMove-style union local with a
+					// *fresh* value (struct initializer) must release the previously-active resource
+					// first. Guarded to the fresh-construction case so copy-assignment between two
+					// live option variables cannot free a resource the source still owns.
+					if (type is UnionTypeSymbol reassignedUnion
+						&& UnionNeedsTagCheckedCleanup(reassignedUnion)
+						&& bin.Right is StructInitializationExpressionSyntax
+						&& !_movedVars.Contains(id.Name)
+						&& !_disposedVars.Contains(id.Name))
+					{
+						EmitUnionTagCheckedCleanup(id.Name, ptr, reassignedUnion);
+					}
+
+					// A fresh union construction (struct initializer) must be materialized in place:
+					// EmitStructInitialization returns an alloca pointer, not an aggregate value, so
+					// a plain BuildStore would store a pointer into the slot and corrupt it.
+					if (type is UnionTypeSymbol && bin.Right is StructInitializationExpressionSyntax reinit)
+					{
+						EmitStructInitializationInPlace(reinit, ptr);
+					}
+					else
+					{
+						_builder.BuildStore(right, ptr);
+					}
 				}
 
 				return right;
@@ -998,7 +1034,10 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 					if (field is not null)
 					{
 						var (fieldPtr, _) = GetFieldPointer(id);
-						_builder.BuildStore(right, fieldPtr);
+						if (bin.Right is StructInitializationExpressionSyntax thisFieldReinit)
+							EmitStructInitializationInPlace(thisFieldReinit, fieldPtr);
+						else
+							_builder.BuildStore(right, fieldPtr);
 						return right;
 					}
 				}
@@ -1008,14 +1047,32 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		}
 		else if (bin.Left is MemberAccessExpressionSyntax m)
 		{
-			var (fieldPtr, _) = GetFieldPointer(m);
-			_builder.BuildStore(right, fieldPtr);
+			var (fieldPtr, fieldType) = GetFieldPointer(m);
+			if (fieldType is UnionTypeSymbol fieldUnion
+				&& UnionNeedsTagCheckedCleanup(fieldUnion)
+				&& bin.Right is StructInitializationExpressionSyntax)
+			{
+				EmitUnionTagCheckedCleanup(m.MemberName, fieldPtr, fieldUnion);
+			}
+			if (fieldType is UnionTypeSymbol && bin.Right is StructInitializationExpressionSyntax fieldReinit)
+				EmitStructInitializationInPlace(fieldReinit, fieldPtr);
+			else
+				_builder.BuildStore(right, fieldPtr);
 			return right;
 		}
 		else if (bin.Left is IndexExpressionSyntax idx)
 		{
-			var (elementPtr, _) = GetFieldPointer(idx);
-			_builder.BuildStore(right, elementPtr);
+			var (elementPtr, elementType) = GetFieldPointer(idx);
+			if (elementType is UnionTypeSymbol elemUnion
+				&& UnionNeedsTagCheckedCleanup(elemUnion)
+				&& bin.Right is StructInitializationExpressionSyntax)
+			{
+				EmitUnionTagCheckedCleanup("elem", elementPtr, elemUnion);
+			}
+			if (elementType is UnionTypeSymbol && bin.Right is StructInitializationExpressionSyntax elemReinit)
+				EmitStructInitializationInPlace(elemReinit, elementPtr);
+			else
+				_builder.BuildStore(right, elementPtr);
 			return right;
 		}
 
@@ -1170,6 +1227,20 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			var alloca = _builder.BuildAlloca(llvmType, varDecl.Name);
 			_locals[varDecl.Name] = alloca;
 			_variableTypes[varDecl.Name] = typeSymbol;
+
+			// Panic-safe zero-ing: a ResourceMove-style union local is pre-set to None so that if
+			// a panic occurs while its constructor/initializer is still running, the unwinder (and
+			// any tag-checked destructor) observes a None slot instead of uninitialized garbage.
+			if (typeSymbol is UnionTypeSymbol zeroUnion && UnionNeedsTagCheckedCleanup(zeroUnion))
+			{
+				var zeroNone = zeroUnion.NoneVariant is not null ? GetFieldIndex(zeroUnion, zeroUnion.NoneVariant.Name) : 0;
+				var zeroTagPtr = _builder.BuildGEP2(llvmType, alloca, new LLVMValueRef[] {
+					LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
+					LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0)
+				}, "union_tag_ptr");
+				_builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, (ulong)zeroNone), zeroTagPtr);
+			}
+
 
 			if (varDecl.Initializer is not null)
 			{
@@ -1638,6 +1709,14 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				}
 			}
 
+			// 1b. Tag-checked destructor for ResourceMove unions (Option<T> wrapping a move type):
+			//     run the inner ~T() only on the currently-active (Some) payload variant, with a
+			//     reset-before-drop volatile None store so a panic during ~T() never double-frees.
+			if (type is UnionTypeSymbol unionType)
+			{
+				EmitUnionTagCheckedCleanup(name, ptrAlloc, unionType);
+			}
+
 			// 2. Free heap memory if it was heap-allocated
 			if (_heapAllocatedVars.Contains(name))
 			{
@@ -1658,6 +1737,85 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				_builder.BuildCall2(freeType, freeFunc, new LLVMValueRef[] { actualHeapPtr }, "");
 			}
 		}
+	}
+
+	/// <summary>
+	/// True when a union carries at least one dtor-bearing payload variant (i.e. it can own a
+	/// runtime resource that must be released when the active variant is <c>Some</c>). Options
+	/// wrapping references (NPO) have no inner destructor and are naturally excluded.
+	/// </summary>
+	private bool UnionNeedsTagCheckedCleanup(UnionTypeSymbol unionType)
+	{
+		return unionType.Fields.Any(f => !f.IsVoidVariant
+			&& _bindingContext!.OverloadedFunctions.ContainsKey($"{f.Type.Name}.~{f.Type.Name}"));
+	}
+
+	/// <summary>
+	/// Branching tag-checked destructor for a ResourceMove-style union (e.g. <c>Option&lt;T&gt;</c>
+	/// wrapping a move type). Loads the active variant tag and, only for a payload variant whose
+	/// <c>~T()</c> is registered, resets the slot to <c>None</c> (reset-before-drop, volatile) and
+	/// invokes the inner destructor on the payload. A panic inside <c>~T()</c> therefore reads a
+	/// <c>None</c> slot and cannot double-free.
+	/// </summary>
+	private void EmitUnionTagCheckedCleanup(string name, LLVMValueRef ptrAlloc, UnionTypeSymbol unionType)
+	{
+		var dropped = unionType.Fields
+			.Where(f => !f.IsVoidVariant)
+			.Select(f => (Field: f, Index: GetFieldIndex(unionType, f!.Name)))
+			.Where(t => _bindingContext!.OverloadedFunctions.ContainsKey($"{t.Field.Type.Name}.~{t.Field.Type.Name}"))
+			.ToList();
+
+		if (dropped.Count == 0)
+			return;
+
+		var unionLayout = GetLLVMType(unionType);
+		var currentFunc = _builder.InsertBlock.Parent;
+
+		// Load the active tag (struct index 0).
+		var tagPtr = _builder.BuildGEP2(unionLayout, ptrAlloc, new LLVMValueRef[] {
+			LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
+			LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0)
+		}, "union_tag_ptr");
+		var tagVal = _builder.BuildLoad2(LLVMTypeRef.Int8, tagPtr, "union_tag_val");
+
+		var noneIndex = unionType.NoneVariant is not null ? GetFieldIndex(unionType, unionType.NoneVariant.Name) : 0;
+		var noneTag = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, (ulong)noneIndex);
+
+		// Forward if/else-if chain over each dtor-bearing variant, rejoining at `after`.
+		var after = currentFunc.AppendBasicBlock($"{name}_cleanup_after");
+
+		for (var i = 0; i < dropped.Count; i++)
+		{
+			var (field, fieldIndex) = dropped[i];
+			var isLast = i == dropped.Count - 1;
+
+			var failBlock = isLast ? after : currentFunc.AppendBasicBlock($"{name}_cleanup_chk_{i + 1}");
+			var dropBlock = currentFunc.AppendBasicBlock($"{name}_cleanup_drop_{i}");
+
+			var isMatch = _builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, tagVal, LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, (ulong)fieldIndex), "tag_match");
+			_builder.BuildCondBr(isMatch, dropBlock, failBlock);
+
+			// Drop body: reset-before-drop (store None tag) THEN call inner ~T() on payload so a
+			// panic during ~T() reads a None slot and cannot double-free. (LLVMSharp exposes no
+			// volatile-store primitive, but DSE cannot elide a store feeding the dtor call.)
+			_builder.PositionAtEnd(dropBlock);
+			_builder.BuildStore(noneTag, tagPtr);
+			var payloadPtr = _builder.BuildGEP2(unionLayout, ptrAlloc, new LLVMValueRef[] {
+				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
+				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1)
+			}, $"{name}_payload");
+			var castPtr = _builder.BuildBitCast(payloadPtr, LLVMTypeRef.CreatePointer(GetLLVMType(field.Type), 0), $"{name}_payload_ptr");
+			var disposeBase = $"{field.Type.Name}.~{field.Type.Name}";
+			var disposeSymbol = _bindingContext!.OverloadedFunctions[disposeBase].First();
+			var disposeCallee = _globals[disposeSymbol.Name];
+			var disposeType = _functionTypes[disposeSymbol.Name];
+			_builder.BuildCall2(disposeType, disposeCallee, new LLVMValueRef[] { castPtr }, "");
+			_builder.BuildBr(after);
+
+			_builder.PositionAtEnd(failBlock);
+		}
+
+		_builder.PositionAtEnd(after);
 	}
 
 	private void InjectBoundsCheck(IndexExpressionSyntax idx, LLVMValueRef indexVal, LLVMValueRef limitVal)
@@ -2034,8 +2192,22 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				}, "union_payload_ptr");
 
 				var castPtr = _builder.BuildBitCast(payloadPtr, LLVMTypeRef.CreatePointer(GetLLVMType(field.Type), 0), "payload_cast_ptr");
-				var value = EmitExpression(init.Expression);
-				_builder.BuildStore(value, castPtr);
+
+				// Aggregate variants are materialized in place (EmitStructInitialization returns an
+				// alloca pointer, not an aggregate value); store scalars by value.
+				if (init.Expression is StructInitializationExpressionSyntax structVariant)
+				{
+					EmitStructInitializationInPlace(structVariant, castPtr);
+				}
+				else if (init.Expression is ParenthesizedStructInitializerExpressionSyntax parenVariant)
+				{
+					EmitParenthesizedStructInitializationInPlace(parenVariant, castPtr);
+				}
+				else
+				{
+					var value = EmitExpression(init.Expression);
+					_builder.BuildStore(value, castPtr);
+				}
 			}
 
 			return;
@@ -2468,6 +2640,20 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			{
 				var val = _builder.BuildLoad2(GetLLVMType(field.Type), castPtr, "payload_val");
 				_builder.BuildStore(val, alloca);
+
+				// By-value switch over a ResourceMove-style union moves the payload into the case
+				// binding (the sole owner now); reset the source slot to None so its own tag-checked
+				// cleanup cannot drop the same resource a second time.
+				if (UnionNeedsTagCheckedCleanup(unionTypeSym!))
+				{
+					var srcLayout = GetLLVMType(unionType);
+					var srcTagPtr = _builder.BuildGEP2(srcLayout, targetVal, new LLVMValueRef[] {
+						LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
+						LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0)
+					}, "move_src_tag_ptr");
+					var moveNoneIdx = unionTypeSym.NoneVariant is not null ? GetFieldIndex(unionTypeSym, unionTypeSym.NoneVariant.Name) : 0;
+					_builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, (ulong)moveNoneIdx), srcTagPtr);
+				}
 			}
 		}
 

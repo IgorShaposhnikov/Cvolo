@@ -1,0 +1,22 @@
+using System;
+
+struct Resource {
+    int Handle;
+}
+
+extension Resource {
+    ~Resource() {
+        Console.WriteLine($"Dropping: {Handle}");
+    }
+}
+
+int main() {
+    {
+        var Option<Resource> some = Option<Resource> { Some: Resource { Handle: 1 } };
+    }
+    {
+        var Option<Resource> none = null;
+    }
+    Console.WriteLine("Done");
+    return 0;
+}

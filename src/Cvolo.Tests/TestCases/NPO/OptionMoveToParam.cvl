@@ -1,0 +1,22 @@
+using System;
+
+struct Resource {
+    int Handle;
+}
+
+extension Resource {
+    ~Resource() {
+        Console.WriteLine($"Dropping: {Handle}");
+    }
+}
+
+void consume(Option<Resource> opt) {
+    Console.WriteLine($"in consume, some={opt.Some.Handle}");
+}
+
+int main() {
+    var Option<Resource> a = Option<Resource> { Some: Resource { Handle: 7 } };
+    consume(a);
+    Console.WriteLine("Done");
+    return 0;
+}
