@@ -29,6 +29,7 @@ UNSAFE: 'unsafe';
 UNBOUND: 'unbound';
 PANIC: 'panic';
 EXTENSION: 'extension';
+INTERFACE: 'interface';
 NAMESPACE: 'namespace';
 USING: 'using';
 GLOBAL: 'global';

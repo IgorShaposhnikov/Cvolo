@@ -9,7 +9,8 @@ public sealed class ExtensionDeclarationSyntax(
 	IReadOnlyList<FunctionDeclarationSyntax> methods,
 	IReadOnlyList<DestructorDeclarationSyntax>? destructors = null,
 	IReadOnlyList<ConstructorDeclarationSyntax>? constructors = null,
-	IReadOnlyList<string>? genericParameters = null) : SyntaxNode(span)
+	IReadOnlyList<string>? genericParameters = null,
+	string? conformsTo = null) : SyntaxNode(span)
 {
 	public override SyntaxKind Kind => SyntaxKind.ExtensionDeclaration;
 
@@ -18,6 +19,9 @@ public sealed class ExtensionDeclarationSyntax(
 	public IReadOnlyList<DestructorDeclarationSyntax> Destructors { get; } = destructors ?? [];
 	public IReadOnlyList<ConstructorDeclarationSyntax> Constructors { get; } = constructors ?? [];
 	public IReadOnlyList<string> GenericParameters { get; } = genericParameters ?? [];
+
+	/// <summary>The nominal interface this extension makes its type conform to, if any.</summary>
+	public string? ConformsTo { get; } = conformsTo;
 
 	public override IEnumerable<SyntaxNode> GetChildren() => [.. Methods, .. Destructors, .. Constructors];
 }

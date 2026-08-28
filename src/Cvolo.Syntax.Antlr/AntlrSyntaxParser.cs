@@ -70,6 +70,8 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			return BuildUnionDeclaration(unionDecl);
 		if (context.extensionDeclaration() is { } extensionDecl)
 			return BuildExtensionDeclaration(extensionDecl);
+		if (context.interfaceDeclaration() is { } interfaceDecl)
+			return BuildInterfaceDeclaration(interfaceDecl);
 		if (context.globalVariableDeclaration() is { } globalDecl)
 			return BuildGlobalVariableDeclaration(globalDecl);
 		return null;
@@ -706,7 +708,42 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				generics.Add(id.GetText());
 		}
 
-		return new ExtensionDeclarationSyntax(SpanOf(context), extendedTypeName, methods, destructors, constructors, generics);
+		string? conformsTo = null;
+		if (context.qualifiedName() is { } conformsCtx)
+			conformsTo = conformsCtx.GetText();
+
+		return new ExtensionDeclarationSyntax(SpanOf(context), extendedTypeName, methods, destructors, constructors, generics, conformsTo);
+	}
+
+	private InterfaceDeclarationSyntax BuildInterfaceDeclaration(CvoloParser.InterfaceDeclarationContext context)
+	{
+		var name = context.Identifier().GetText();
+
+		var generics = new List<string>();
+		if (context.genericParameterList() is { } genList)
+		{
+			foreach (var id in genList.Identifier())
+				generics.Add(id.GetText());
+		}
+
+		var members = new List<InterfaceMethodDeclarationSyntax>();
+		foreach (var memberCtx in context.interfaceMember())
+		{
+			var returnType = GetReturnTypeName(memberCtx.returnType());
+			var memberName = memberCtx.Identifier().GetText();
+
+			var parameters = new List<ParameterSyntax>();
+			if (memberCtx.parameterList() is { } paramListCtx)
+			{
+				foreach (var param in paramListCtx.parameter())
+					parameters.Add(BuildParameter(param));
+			}
+
+			members.Add(new InterfaceMethodDeclarationSyntax(SpanOf(memberCtx), returnType, memberName, parameters));
+		}
+
+		var attributes = BuildAttributeList(context.attributeList());
+		return new InterfaceDeclarationSyntax(SpanOf(context), name, generics, members, attributes);
 	}
 
 	private UnionDeclarationSyntax BuildUnionDeclaration(CvoloParser.UnionDeclarationContext context)

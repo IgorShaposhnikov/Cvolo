@@ -24,6 +24,7 @@ declaration
 	| structDeclaration
 	| unionDeclaration
 	| extensionDeclaration
+	| interfaceDeclaration
 	| globalVariableDeclaration
 	;
 
@@ -65,7 +66,15 @@ unionField
 	;
 
 extensionDeclaration
-	: EXTENSION Identifier (LT genericParameterList GT)? LBRACE (functionDeclaration | destructorDeclaration | constructorDeclaration)* RBRACE SEMI?
+	: EXTENSION Identifier (LT genericParameterList GT)? (COLON qualifiedName)? LBRACE (functionDeclaration | destructorDeclaration | constructorDeclaration)* RBRACE SEMI?
+	;
+
+interfaceDeclaration
+	: attributeList* INTERFACE Identifier (LT genericParameterList GT)? LBRACE interfaceMember* RBRACE SEMI?
+	;
+
+interfaceMember
+	: returnType Identifier LPAREN parameterList? RPAREN SEMI
 	;
 
 destructorDeclaration

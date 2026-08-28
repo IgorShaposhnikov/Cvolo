@@ -49,4 +49,6 @@ public enum SyntaxKind
 	VoidLiteralExpression,
 	SwitchStatement,
 	SwitchCase,
+	InterfaceDeclaration,
+	InterfaceMember,
 }

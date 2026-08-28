@@ -25,6 +25,8 @@ public sealed class DeclarationPass(BindingContext context)
 					DeclareStruct(structDecl);
 				else if (member is UnionDeclarationSyntax unionDecl)
 					DeclareUnion(unionDecl);
+				else if (member is InterfaceDeclarationSyntax interfaceDecl)
+					DeclareInterface(interfaceDecl);
 			}
 		}
 
@@ -115,6 +117,22 @@ public sealed class DeclarationPass(BindingContext context)
 		// registered above, or later ResolveType("Node") would return a
 		// field-less Node even after this replacement.
 		context.ReplaceTypeInCache(mangledName, structSymbol);
+	}
+
+	private void DeclareInterface(InterfaceDeclarationSyntax interfaceDecl)
+	{
+		var mangledName = context.GetMangledName(interfaceDecl.Name, context.CurrentNamespace);
+
+		if (context.InterfaceTypes.ContainsKey(mangledName))
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, interfaceDecl.Span, $"Duplicate interface definition '{interfaceDecl.Name}'");
+			return;
+		}
+
+		context.SymbolUnits[mangledName] = context.CurrentUnit!;
+		context.InterfaceTemplates[mangledName] = interfaceDecl;
+		context.InterfaceTypes[mangledName] = new InterfaceTypeSymbol(mangledName);
 	}
 
 	private void DeclareFunction(FunctionDeclarationSyntax func)
@@ -466,6 +484,13 @@ public sealed class DeclarationPass(BindingContext context)
 			return;
 		}
 
+		// RETROACTIVE CONFORMANCE: "extension T : IName" records that the
+		// extended concrete type conforms to the named interface and validates
+		// that this extension provides every required method with a matching
+		// signature. (Generic conformance `extension Pair<T> : IFoo` is deferred.)
+		if (extDecl.ConformsTo is not null)
+			RegisterConformance(extDecl, extendedType);
+
 		// Destructors register as ordinary extension methods named "~T" (void, this-only)
 		foreach (var method in extDecl.Methods.Concat(extDecl.Destructors.Select(static d => d.ToFunctionDeclaration())))
 		{
@@ -607,6 +632,57 @@ public sealed class DeclarationPass(BindingContext context)
 			registeredCtors.Add(ctorSymbol);
 		}
 	}
+
+	private void RegisterConformance(ExtensionDeclarationSyntax extDecl, TypeSymbol extendedType)
+	{
+		// Resolve the interface within the extension's declaration context.
+		var prevUnit = context.CurrentUnit;
+		var prevNs = context.CurrentNamespace;
+		context.CurrentUnit = context.SymbolUnits.TryGetValue(extendedType.Name, out var extUnit) ? extUnit : context.CurrentUnit;
+		context.CurrentNamespace = context.CurrentUnit?.NamespaceDeclaration?.Name;
+
+		var interfaceType = context.ResolveType(extDecl.ConformsTo!);
+		context.CurrentUnit = prevUnit;
+		context.CurrentNamespace = prevNs;
+
+		if (interfaceType is not InterfaceTypeSymbol interfaceSymbol)
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, extDecl.Span, $"Unknown interface '{extDecl.ConformsTo}' in conformance declaration.");
+			return;
+		}
+
+		// Record conformance: concrete type -> interface.
+		if (!context.Conformance.TryGetValue(extendedType.Name, out var interfaces))
+		{
+			interfaces = [];
+			context.Conformance[extendedType.Name] = interfaces;
+		}
+		interfaces.Add(interfaceSymbol.Name);
+
+		// Validate the extension provides every required interface member.
+		var interfaceDecl = context.InterfaceTemplates[interfaceSymbol.Name];
+		var providedMethods = new HashSet<(string Name, string ReturnType, string Params)>();
+		foreach (var method in extDecl.Methods)
+			providedMethods.Add((method.Name, method.ReturnType, ParamsSignature(method.Parameters)));
+
+		foreach (var member in interfaceDecl.Members)
+		{
+			var requiredSig = (member.Name, member.ReturnType, ParamsSignature(member.Parameters));
+			if (!providedMethods.Contains(requiredSig))
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, extDecl.Span,
+					$"Type '{extDecl.ExtendedTypeName}' does not implement member '{RequiredSigText(member)}' required by interface '{extDecl.ConformsTo}'.");
+			}
+		}
+	}
+
+	private static string ParamsSignature(IReadOnlyList<ParameterSyntax> parameters)
+		=> string.Join(",", parameters.Select(p => p.Type));
+
+	private static string RequiredSigText(InterfaceMethodDeclarationSyntax member)
+		=> $"{member.ReturnType} {member.Name}({ParamsSignature(member.Parameters)})";
 
 	private void DeclareGlobalVariable(GlobalVariableDeclarationSyntax globalDecl)
 	{

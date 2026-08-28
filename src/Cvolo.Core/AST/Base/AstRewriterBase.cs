@@ -31,7 +31,19 @@ public abstract class AstRewriterBase
 			var rewrittenMethods = extDecl.Methods.Select(Rewrite).Cast<FunctionDeclarationSyntax>().ToList();
 			var rewrittenDestructors = extDecl.Destructors.Select(Rewrite).Cast<DestructorDeclarationSyntax>().ToList();
 			var rewrittenConstructors = extDecl.Constructors.Select(Rewrite).Cast<ConstructorDeclarationSyntax>().ToList();
-			return new ExtensionDeclarationSyntax(extDecl.Span, extDecl.ExtendedTypeName, rewrittenMethods, rewrittenDestructors, rewrittenConstructors, extDecl.GenericParameters);
+			return new ExtensionDeclarationSyntax(extDecl.Span, extDecl.ExtendedTypeName, rewrittenMethods, rewrittenDestructors, rewrittenConstructors, extDecl.GenericParameters, extDecl.ConformsTo);
+		}
+
+		if (node is InterfaceDeclarationSyntax interfaceDecl)
+		{
+			var rewrittenMembers = interfaceDecl.Members.Select(Rewrite).Cast<InterfaceMethodDeclarationSyntax>().ToList();
+			return new InterfaceDeclarationSyntax(interfaceDecl.Span, interfaceDecl.Name, interfaceDecl.GenericParameters, rewrittenMembers, interfaceDecl.Attributes);
+		}
+
+		if (node is InterfaceMethodDeclarationSyntax interfaceMember)
+		{
+			var rewrittenParams = interfaceMember.Parameters.Select(p => new ParameterSyntax(p.Span, p.Type, p.Name, p.Attributes)).ToList();
+			return new InterfaceMethodDeclarationSyntax(interfaceMember.Span, interfaceMember.ReturnType, interfaceMember.Name, rewrittenParams);
 		}
 
 		if (node is FunctionDeclarationSyntax func)

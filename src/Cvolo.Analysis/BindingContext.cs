@@ -51,6 +51,13 @@ public sealed class BindingContext
 	public Dictionary<string, UnionTypeSymbol> UnionTypes { get; } = [];
 	public Dictionary<string, UnionDeclarationSyntax> GenericUnionTemplates { get; } = [];
 
+	// Nominal interface declarations (mangled name -> declaration) and types.
+	public Dictionary<string, InterfaceDeclarationSyntax> InterfaceTemplates { get; } = [];
+	public Dictionary<string, InterfaceTypeSymbol> InterfaceTypes { get; } = [];
+
+	// Concrete type name (mangled) -> set of interface names (mangled) it conforms to.
+	public Dictionary<string, HashSet<string>> Conformance { get; } = [];
+
 
 	public CompilationUnitSyntax? CurrentUnit { get; set; }
 	public string? CurrentNamespace { get; set; }
@@ -176,6 +183,8 @@ public sealed class BindingContext
 				candidates.Add(localStruct);
 			if (UnionTypes.TryGetValue(localMangled, out var localUnion))
 				candidates.Add(localUnion);
+			if (InterfaceTypes.TryGetValue(localMangled, out var localInterface))
+				candidates.Add(localInterface);
 		}
 
 		// Priority 2: Exact/Global Match (Only used if no local namespace match is found)
@@ -185,6 +194,8 @@ public sealed class BindingContext
 				candidates.Add(exactMatch);
 			if (UnionTypes.TryGetValue(name, out var exactUnionMatch))
 				candidates.Add(exactUnionMatch);
+			if (InterfaceTypes.TryGetValue(name, out var exactInterfaceMatch))
+				candidates.Add(exactInterfaceMatch);
 		}
 
 		if (candidates.Count == 1)
@@ -212,6 +223,8 @@ public sealed class BindingContext
 					candidates.Add(match);
 				if (UnionTypes.TryGetValue(candidateMangled, out var unionMatch))
 					candidates.Add(unionMatch);
+				if (InterfaceTypes.TryGetValue(candidateMangled, out var interfaceMatch))
+					candidates.Add(interfaceMatch);
 			}
 		}
 

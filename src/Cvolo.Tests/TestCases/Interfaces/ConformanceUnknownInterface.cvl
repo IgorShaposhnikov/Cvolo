@@ -1,0 +1,13 @@
+interface IUnknown { }
+
+struct Thing {
+    int A;
+}
+
+extension Thing : IMissingInterface {
+    void Print() { }
+}
+
+int main() {
+    return 0;
+}
