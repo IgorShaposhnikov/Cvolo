@@ -70,6 +70,13 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		_functionTypes["exit"] = exitType;
 		_globals["exit"] = _module.AddFunction("exit", exitType);
 
+		// memset(void* dest, int value, size_t count) -> void* — used for `{}` zero-init arrays
+		var memsetType = LLVMTypeRef.CreateFunction(
+			LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0),
+			[LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), LLVMTypeRef.Int32, LLVMTypeRef.Int64]);
+		_functionTypes["memset"] = memsetType;
+		_globals["memset"] = _module.AddFunction("memset", memsetType);
+
 		// Pass A: Declare all Nominal and Instantiated Structs as Opaque Shells
 		foreach (var structType in bindingContext.StructTypes.Values)
 		{
@@ -2269,6 +2276,13 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 	private void EmitArrayInitializationInPlace(ArrayInitializationExpressionSyntax expr, LLVMValueRef destPtr, ArrayTypeSymbol arrayType)
 	{
+		// `{}` empty initializer on an explicitly-sized array: zero-initialize per Memory spec §5.
+		if (expr.Elements.Count == 0 && arrayType.Size > 0)
+		{
+			EmitZeroInitArray(destPtr, arrayType);
+			return;
+		}
+
 		var arrayLayout = GetLLVMType(arrayType);
 
 		for (var i = 0; i < expr.Elements.Count; i++)
@@ -2292,6 +2306,89 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				var val = EmitExpression(elementExpr);
 				_builder.BuildStore(val, elementPtr);
 			}
+		}
+	}
+
+	private void EmitMemset(LLVMValueRef destPtr, long byteCount)
+	{
+		if (byteCount <= 0) return;
+		var memsetFunc = _globals["memset"];
+		var memsetType = _functionTypes["memset"];
+		var destCasted = _builder.BuildBitCast(destPtr, LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), "zero_dest");
+		_builder.BuildCall2(memsetType, memsetFunc, new LLVMValueRef[]
+		{
+			destCasted,
+			LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
+			LLVMValueRef.CreateConstInt(LLVMTypeRef.Int64, (ulong)byteCount)
+		}, "");
+	}
+
+	// The real storage size of an LLVM type (including alignment padding), from the module
+	// data layout. GetByteSize reflects the semantic size and can under-report padded structs.
+	private long GetLLVMStoreSize(LLVMTypeRef type)
+	{
+		var targetData = LLVMTargetDataRef.FromStringRepresentation(_module.DataLayout);
+		return (long)targetData.StoreSizeOfType(type);
+	}
+
+	// Whether zeroing every byte of a value yields a valid empty state:
+	// primitives/pointers/slices/strings and NPO options (None == flat address 0) are safe;
+	// tagged unions (None tag != 0) and types with custom destructors (ResourceMove) are not.
+	private bool TypeIsZeroInitSafe(TypeSymbol t)
+	{
+		if (t is ArrayTypeSymbol arr) return TypeIsZeroInitSafe(arr.ElementType);
+		if (t is UnionTypeSymbol us)
+		{
+			// Null-Pointer-Optimized option: None is the flat zero pointer — memset is safe.
+			if (us.IsNpoEligible) return true;
+			return false; // tagged union: None requires an explicit tag store, never raw zeroing
+		}
+		if (t is StructTypeSymbol st)
+		{
+			if (_bindingContext!.OverloadedFunctions.ContainsKey($"{st.Name}.~{st.Name}")) return false;
+			return st.Fields.All(f => TypeIsZeroInitSafe(f.Type));
+		}
+		return true;
+	}
+
+	private void EmitZeroInitArray(LLVMValueRef destPtr, ArrayTypeSymbol arrayType)
+	{
+		var elementType = arrayType.ElementType;
+
+		// Fast path: Trivial/Large-Copy element (incl. NPO option fields) → single memset.
+		// Byte count comes from LLVM's real storage size to account for struct padding.
+		if (TypeIsZeroInitSafe(elementType))
+		{
+			EmitMemset(destPtr, GetLLVMStoreSize(GetLLVMType(arrayType)));
+			return;
+		}
+
+		// Linear restriction (Memory spec §5): no raw whole-array memset for
+		// tagged unions or types with custom destructors. Initialize per element.
+		var arrayLayout = GetLLVMType(arrayType);
+		for (var i = 0; i < arrayType.Size; i++)
+		{
+			var elementPtr = _builder.BuildGEP2(arrayLayout, destPtr, new LLVMValueRef[]
+			{
+				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0), LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)i)
+			}, "zero_el");
+
+			// A tagged union's empty state is its None tag; store it explicitly.
+			if (elementType is UnionTypeSymbol unionEl)
+			{
+				var unionLayout = GetLLVMType(unionEl);
+				var tagPtr = _builder.BuildGEP2(unionLayout, elementPtr, new LLVMValueRef[]
+				{
+					LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0), LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0)
+				}, "zero_tag");
+				var noneTag = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, (ulong)GetFieldIndex(unionEl, unionEl.NoneVariant.Name));
+				_builder.BuildStore(noneTag, tagPtr);
+				continue;
+			}
+
+			// Struct with a destructor (ResourceMove) or a nested tagged union:
+			// explicit per-element zero init (no single pooled memset).
+			EmitMemset(elementPtr, GetLLVMStoreSize(GetLLVMType(elementType)));
 		}
 	}
 

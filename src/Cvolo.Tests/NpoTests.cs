@@ -10,6 +10,7 @@ public sealed class NpoTests : CompilerTestBase
 	[InlineData("OptionMoveDtor", "Dropping: 1\nDone")]
 	[InlineData("OptionDropOnReassign", "start\nDropping: 10\nmiddle\nnow: 20\nDropping: 20")]
 	[InlineData("OptionMoveToParam", "in consume, some=7\nDropping: 7\nDone")]
+	[InlineData("ArrayOptionZeroInit", "zero: 0")]
 	public void Execution_Success(string caseName, string expected)
 	{
 		var fileName = $"NPO/{caseName}.cvl";

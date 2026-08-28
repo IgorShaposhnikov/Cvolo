@@ -1,0 +1,21 @@
+using System;
+
+union Option<T> {
+    T Some;
+    void None;
+}
+
+struct Node {
+    int Value;
+    Option<ref int> Next;
+}
+
+int main() {
+    var Node[8] nodes = {};
+    var int zero = 0;
+    for (var int i = 0; i < 8; i = i + 1) {
+        zero = zero + nodes[i].Value;
+    }
+    Console.WriteLine($"zero: {zero}");
+    return 0;
+}
