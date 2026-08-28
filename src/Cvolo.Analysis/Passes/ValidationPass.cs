@@ -279,7 +279,7 @@ public sealed class ValidationPass(BindingContext context)
 			{
 				var isValidNull = initializerType.Equals(TypeSymbol.Null) &&
 								  (resolvedType is RawPointerTypeSymbol ||
-								  (resolvedType is UnionTypeSymbol union && union.Name.Contains("Option")));
+								  (resolvedType is UnionTypeSymbol union && union.IsOption));
 
 				if (!isValidNull)
 				{
@@ -581,7 +581,7 @@ public sealed class ValidationPass(BindingContext context)
 			{
 				var isValidNull = initType.Equals(TypeSymbol.Null) &&
 								  (field.Type is RawPointerTypeSymbol ||
-								  (field.Type is UnionTypeSymbol union && union.Name.Contains("Option")));
+								  (field.Type is UnionTypeSymbol union && union.IsOption));
 
 				if (!isValidNull)
 				{
@@ -742,7 +742,7 @@ public sealed class ValidationPass(BindingContext context)
 			{
 				var isValidNull = actualType.Equals(TypeSymbol.Null) &&
 								  (expectedType is RawPointerTypeSymbol ||
-								  (expectedType is UnionTypeSymbol union && union.Name.Contains("Option")));
+								  (expectedType is UnionTypeSymbol union && union.IsOption));
 
 				if (!isValidNull)
 				{
@@ -1143,7 +1143,7 @@ public sealed class ValidationPass(BindingContext context)
 			{
 				score += 4; // Direct exact match is preferred
 			}
-			else if (arg.Equals(TypeSymbol.Null) && (param is RawPointerTypeSymbol || (param is UnionTypeSymbol union && union.Name.Contains("Option"))))
+			else if (arg.Equals(TypeSymbol.Null) && (param is RawPointerTypeSymbol || (param is UnionTypeSymbol union && union.IsOption)))
 			{
 				score += 3; // Null matches raw pointers and Option types!
 			}

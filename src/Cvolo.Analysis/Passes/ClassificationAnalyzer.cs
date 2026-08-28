@@ -97,7 +97,9 @@ public sealed class ClassificationAnalyzer(BindingContext context)
 		return type switch
 		{
 			StructTypeSymbol s => s.Fields.Sum(f => CalculateByteSize(f.Type)),
-			UnionTypeSymbol u => 1 + u.Fields.Where(f => !f.IsVoidVariant).Select(f => CalculateByteSize(f.Type)).DefaultIfEmpty(0).Max(),
+			UnionTypeSymbol u => u.IsNpoEligible
+				? 8 // Null-Pointer Optimization: a flat Option<ref T> / <refvar T> is a single 8-byte pointer.
+				: 1 + u.Fields.Where(f => !f.IsVoidVariant).Select(f => CalculateByteSize(f.Type)).DefaultIfEmpty(0).Max(),
 			ArrayTypeSymbol a => CalculateByteSize(a.ElementType) * a.Size,
 			SliceTypeSymbol => 16,
 			PointerTypeSymbol => 8,

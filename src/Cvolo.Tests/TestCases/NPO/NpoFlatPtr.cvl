@@ -1,0 +1,19 @@
+using System;
+
+union Option<T> {
+    T Some;
+    void None;
+}
+
+int main() {
+    var int inner = 42;
+    var Option<ref int> opt = Option<ref int> { Some: ref inner };
+
+    var ref int r = opt.Some;
+    Console.WriteLine($"Flat: {r}");
+
+    var Option<ref int> none = Option<ref int> { None: void };
+    Console.WriteLine("None created.");
+
+    return 0;
+}

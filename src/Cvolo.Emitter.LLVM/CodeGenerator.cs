@@ -97,6 +97,12 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 		foreach (var unionType in bindingContext.UnionTypes.Values)
 		{
+			// Null-Pointer Optimization: an Option whose payload is a ref/refvar compiles to a
+			// single flat 8-byte pointer (Some = non-zero address, None = 0) with zero size/tag
+			// overhead. A flat pointer needs no named struct body.
+			if (unionType.IsNpoEligible)
+				continue;
+
 			var llvmUnion = _llvmStructTypes[unionType.Name];
 			var maxPayloadSize = unionType.Fields.Where(f => !f.IsVoidVariant).Select(f => GetByteSize(f.Type)).DefaultIfEmpty(0).Max();
 			llvmUnion.StructSetBody([LLVMTypeRef.Int8, LLVMTypeRef.CreateArray(LLVMTypeRef.Int8, (uint)maxPayloadSize)], false);
@@ -542,17 +548,26 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			// 1. Handle Null Returns on Options (Lowers null to Option.None)
 			var expectedType = _functionReturnTypes.TryGetValue(_builder.InsertBlock.Parent.Name, out var et) ? et : TypeSymbol.Int;
 
-			if (ret.Expression is NullLiteralExpressionSyntax && expectedType is UnionTypeSymbol optionUnion && optionUnion.Name.Contains("Option"))
+			if (ret.Expression is NullLiteralExpressionSyntax && expectedType is UnionTypeSymbol optionUnion && optionUnion.IsOption)
 			{
 				var unionLayout = GetLLVMType(optionUnion);
 				var tempAlloc = _builder.BuildAlloca(unionLayout, "ret_null_tmp");
-				var fieldIndex = GetFieldIndex(optionUnion, "None");
 
-				var tagPtr = _builder.BuildGEP2(unionLayout, tempAlloc, new LLVMValueRef[] {
-					LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
-					LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0)
-				}, "union_tag_ptr");
-				_builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, (ulong)fieldIndex), tagPtr);
+				// Null-Pointer Optimization: store flat nullptr (None == zero) instead of a tag.
+				if (optionUnion.IsNpoEligible)
+				{
+					_builder.BuildStore(LLVMValueRef.CreateConstPointerNull(unionLayout), tempAlloc);
+				}
+				else
+				{
+					var fieldIndex = GetFieldIndex(optionUnion, "None");
+
+					var tagPtr = _builder.BuildGEP2(unionLayout, tempAlloc, new LLVMValueRef[] {
+						LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
+						LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0)
+					}, "union_tag_ptr");
+					_builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, (ulong)fieldIndex), tagPtr);
+				}
 
 				var loadedNone = _builder.BuildLoad2(unionLayout, tempAlloc, "loaded_none");
 
@@ -920,16 +935,25 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			{
 				var type = _variableTypes[id.Name];
 
-				if (bin.Right is NullLiteralExpressionSyntax && type is UnionTypeSymbol optionUnion && optionUnion.Name.Contains("Option"))
+				if (bin.Right is NullLiteralExpressionSyntax && type is UnionTypeSymbol optionUnion && optionUnion.IsOption)
 				{
 					var unionLayout = GetLLVMType(optionUnion);
-					var fieldIndex = GetFieldIndex(optionUnion, "None");
 
-					var tagPtr = _builder.BuildGEP2(unionLayout, ptr, new LLVMValueRef[] {
-						LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
-						LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0)
-					}, "union_tag_ptr");
-					_builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, (ulong)fieldIndex), tagPtr);
+					// Null-Pointer Optimization: store flat nullptr (None == zero) instead of a tag.
+					if (optionUnion.IsNpoEligible)
+					{
+						_builder.BuildStore(LLVMValueRef.CreateConstPointerNull(unionLayout), ptr);
+					}
+					else
+					{
+						var fieldIndex = GetFieldIndex(optionUnion, "None");
+
+						var tagPtr = _builder.BuildGEP2(unionLayout, ptr, new LLVMValueRef[] {
+							LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
+							LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0)
+						}, "union_tag_ptr");
+						_builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, (ulong)fieldIndex), tagPtr);
+					}
 					return right;
 				}
 				else if (type is PointerTypeSymbol)
@@ -1150,8 +1174,15 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			if (varDecl.Initializer is not null)
 			{
 				// Handle Null Initializers on Option Types (Lowers null to Option.None)
-				if (varDecl.Initializer is NullLiteralExpressionSyntax && typeSymbol is UnionTypeSymbol optionUnion && optionUnion.Name.Contains("Option"))
+				if (varDecl.Initializer is NullLiteralExpressionSyntax && typeSymbol is UnionTypeSymbol optionUnion && optionUnion.IsOption)
 				{
+					// Null-Pointer Optimization: store flat nullptr (None == zero) instead of a tag.
+					if (optionUnion.IsNpoEligible)
+					{
+						_builder.BuildStore(LLVMValueRef.CreateConstPointerNull(llvmType), alloca);
+						return;
+					}
+
 					var fieldIndex = GetFieldIndex(optionUnion, "None");
 
 					var tagPtr = _builder.BuildGEP2(llvmType, alloca, new LLVMValueRef[] {
@@ -1733,6 +1764,9 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			return LLVMTypeRef.CreateArray(GetLLVMType(arr.ElementType), (uint)arr.Size);
 		}
 
+		if (t is UnionTypeSymbol union && union.IsNpoEligible)
+			return LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0);
+
 		if (t is StructTypeSymbol || t is UnionTypeSymbol)
 		{
 			if (_llvmStructTypes.TryGetValue(t.Name, out var typeRef))
@@ -1785,6 +1819,11 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 						if (field is not null)
 						{
 							var actualThisPtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), thisPtr, "loaded_this_ptr");
+
+							// Null-Pointer Optimization: the flat slot IS the value (a ref/refvar pointer).
+							// Some = value stores directly; there is no tag/payload struct to index into.
+							if (unionType.IsNpoEligible && !field.IsVoidVariant)
+								return (actualThisPtr, field.Type);
 
 							var fieldIndex = GetFieldIndex(unionType, id.Name);
 							var structLayoutTy = GetLLVMType(unionType);
@@ -1848,6 +1887,11 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			{
 				var fieldIndex = GetFieldIndex(unionType, m.MemberName);
 				var fieldType = unionType.Fields[fieldIndex].Type;
+
+				// Null-Pointer Optimization: the flat slot IS the ref/refvar value. Reading u.Some
+				// yields the flat pointer itself; there is no tag/payload struct to index into.
+				if (unionType.IsNpoEligible && !unionType.Fields[fieldIndex].IsVoidVariant)
+					return (parentPtr, fieldType);
 
 				var structLayoutTy = GetLLVMType(parentType);
 				var payloadPtr = _builder.BuildGEP2(structLayoutTy, parentPtr, new LLVMValueRef[] {
@@ -1957,6 +2001,22 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			var init = expr.Initializers[0];
 			var fieldIndex = GetFieldIndex(unionType, init.MemberName);
 			var field = unionType.Fields[fieldIndex];
+
+			// Null-Pointer Optimization: the flat slot IS the pointer. Some(x) stores the ref
+			// value directly into the slot; None stores nullptr. No tag, no payload struct.
+			if (unionType.IsNpoEligible)
+			{
+				if (field.IsVoidVariant)
+				{
+					_builder.BuildStore(LLVMValueRef.CreateConstPointerNull(unionLayout), destPtr);
+				}
+				else
+				{
+					var value = EmitExpression(init.Expression);
+					_builder.BuildStore(value, destPtr);
+				}
+				return;
+			}
 
 			// 1. Store the active variant index into the i8 tag field (Index 0)
 			var tagPtr = _builder.BuildGEP2(unionLayout, destPtr, new LLVMValueRef[] {
@@ -2249,6 +2309,17 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			}
 
 			return size;
+		}
+
+		if (type is UnionTypeSymbol unionType)
+		{
+			// Null-Pointer Optimization: a flat Option<ref T> / <refvar T> is a single 8-byte pointer.
+			if (unionType.IsNpoEligible)
+				return 8;
+
+			// Tagged union: 1-byte tag + (largest non-void variant) payload.
+			var maxPayload = unionType.Fields.Where(f => !f.IsVoidVariant).Select(f => GetByteSize(f.Type)).DefaultIfEmpty(0).Max();
+			return 1 + maxPayload;
 		}
 
 		return 4; // Fallback
