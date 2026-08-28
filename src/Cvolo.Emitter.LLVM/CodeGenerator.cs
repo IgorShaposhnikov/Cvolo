@@ -539,15 +539,39 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	{
 		if (ret.Expression is not null)
 		{
+			// 1. Handle Null Returns on Options (Lowers null to Option.None)
+			var expectedType = _functionReturnTypes.TryGetValue(_builder.InsertBlock.Parent.Name, out var et) ? et : TypeSymbol.Int;
+
+			if (ret.Expression is NullLiteralExpressionSyntax && expectedType is UnionTypeSymbol optionUnion && optionUnion.Name.Contains("Option"))
+			{
+				var unionLayout = GetLLVMType(optionUnion);
+				var tempAlloc = _builder.BuildAlloca(unionLayout, "ret_null_tmp");
+				var fieldIndex = GetFieldIndex(optionUnion, "None");
+
+				var tagPtr = _builder.BuildGEP2(unionLayout, tempAlloc, new LLVMValueRef[] {
+					LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
+					LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0)
+				}, "union_tag_ptr");
+				_builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, (ulong)fieldIndex), tagPtr);
+
+				var loadedNone = _builder.BuildLoad2(unionLayout, tempAlloc, "loaded_none");
+
+				EmitCleanup([.. _locals.Keys]);
+				_builder.BuildRet(loadedNone);
+				return;
+			}
+
+			// 2. Handle Standard Returns
 			var value = EmitExpression(ret.Expression);
 			var type = GetExprType(ret.Expression);
 
-			// Materialize memory-resident return values (structs living in allocas/heap
+			// Materialize memory-resident return values (structs/unions living in allocas/heap
 			// slots) BEFORE scope cleanup frees them - the loaded register is what survives.
 			LLVMValueRef? materialized = null;
-			if (type is StructTypeSymbol structType && value.TypeOf.Kind == LLVMTypeKind.LLVMPointerTypeKind)
+			if ((type is StructTypeSymbol || type is UnionTypeSymbol) && value.TypeOf.Kind == LLVMTypeKind.LLVMPointerTypeKind)
 			{
-				materialized = _builder.BuildLoad2(GetLLVMType(structType), value, "struct_ret_val");
+				var layout = GetLLVMType(type);
+				materialized = _builder.BuildLoad2(layout, value, "struct_ret_val");
 			}
 
 			EmitCleanup([.. _locals.Keys]);
@@ -895,7 +919,20 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			if (_locals.TryGetValue(id.Name, out var ptr))
 			{
 				var type = _variableTypes[id.Name];
-				if (type is PointerTypeSymbol)
+
+				if (bin.Right is NullLiteralExpressionSyntax && type is UnionTypeSymbol optionUnion && optionUnion.Name.Contains("Option"))
+				{
+					var unionLayout = GetLLVMType(optionUnion);
+					var fieldIndex = GetFieldIndex(optionUnion, "None");
+
+					var tagPtr = _builder.BuildGEP2(unionLayout, ptr, new LLVMValueRef[] {
+						LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
+						LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0)
+					}, "union_tag_ptr");
+					_builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, (ulong)fieldIndex), tagPtr);
+					return right;
+				}
+				else if (type is PointerTypeSymbol)
 				{
 					if (bin.Right is BorrowExpressionSyntax)
 					{
@@ -1112,6 +1149,19 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 			if (varDecl.Initializer is not null)
 			{
+				// Handle Null Initializers on Option Types (Lowers null to Option.None)
+				if (varDecl.Initializer is NullLiteralExpressionSyntax && typeSymbol is UnionTypeSymbol optionUnion && optionUnion.Name.Contains("Option"))
+				{
+					var fieldIndex = GetFieldIndex(optionUnion, "None");
+
+					var tagPtr = _builder.BuildGEP2(llvmType, alloca, new LLVMValueRef[] {
+					LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
+					LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0)
+				}, "union_tag_ptr");
+					_builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, (ulong)fieldIndex), tagPtr);
+					return;
+				}
+
 				var valTy = GetExprType(varDecl.Initializer);
 
 				if (typeSymbol is SliceTypeSymbol && valTy is ArrayTypeSymbol)
@@ -1130,17 +1180,17 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				{
 					EmitArrayInitializationInPlace(arrInit, alloca, (typeSymbol as ArrayTypeSymbol)!);
 				}
-			else if (varDecl.Initializer is ArrayReplicationExpressionSyntax arrRepl)
+				else if (varDecl.Initializer is ArrayReplicationExpressionSyntax arrRepl)
 				{
 					EmitArrayReplicationInPlace(arrRepl, alloca, (typeSymbol as ArrayTypeSymbol)!);
 				}
-			else if (varDecl.Initializer is CallExpressionSyntax ctorCall && IsConstructorCall(ctorCall, typeSymbol))
+				else if (varDecl.Initializer is CallExpressionSyntax ctorCall && IsConstructorCall(ctorCall, typeSymbol))
 				{
 					// 'var T v = T(args)': the constructor populates the variable's storage
 					// in place via its implicit 'this' parameter; no value store follows.
 					EmitCallExpression(ctorCall, alloca);
 				}
-			else
+				else
 				{
 					var value = EmitExpression(varDecl.Initializer);
 					_builder.BuildStore(value, alloca);

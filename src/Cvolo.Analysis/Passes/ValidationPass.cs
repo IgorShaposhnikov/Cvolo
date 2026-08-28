@@ -277,8 +277,22 @@ public sealed class ValidationPass(BindingContext context)
 
 			if (resolvedType != null && initializerType != null && !resolvedType.Equals(initializerType))
 			{
-				var currentFileContext = context.FileContexts[context.CurrentUnit!];
-				context.Diagnostics.Report(currentFileContext, varDecl.Span, $"Cannot initialize variable of type '{resolvedType.Name}' with value of type '{initializerType.Name}'");
+				var isValidNull = initializerType.Equals(TypeSymbol.Null) &&
+								  (resolvedType is RawPointerTypeSymbol ||
+								  (resolvedType is UnionTypeSymbol union && union.Name.Contains("Option")));
+
+				if (!isValidNull)
+				{
+					var currentFileContext = context.FileContexts[context.CurrentUnit!];
+					if (initializerType.Equals(TypeSymbol.Null))
+					{
+						context.Diagnostics.Report(currentFileContext, varDecl.Span, "The 'null' literal requires a pointer type (Option or raw pointer).");
+					}
+					else
+					{
+						context.Diagnostics.Report(currentFileContext, varDecl.Span, $"Cannot initialize variable of type '{resolvedType.Name}' with value of type '{initializerType.Name}'");
+					}
+				}
 			}
 		}
 
@@ -565,8 +579,22 @@ public sealed class ValidationPass(BindingContext context)
 			var initType = GetExpressionType(init.Expression, scope);
 			if (initType is not null && !initType.Equals(field.Type))
 			{
-				var currentFileContext = context.FileContexts[context.CurrentUnit!];
-				context.Diagnostics.Report(currentFileContext, init.Span, $"Cannot initialize variant '{init.MemberName}' of type '{field.Type.Name}' with value of type '{initType.Name}'");
+				var isValidNull = initType.Equals(TypeSymbol.Null) &&
+								  (field.Type is RawPointerTypeSymbol ||
+								  (field.Type is UnionTypeSymbol union && union.Name.Contains("Option")));
+
+				if (!isValidNull)
+				{
+					var currentFileContext = context.FileContexts[context.CurrentUnit!];
+					if (initType.Equals(TypeSymbol.Null))
+					{
+						context.Diagnostics.Report(currentFileContext, init.Span, "The 'null' literal requires a pointer type (Option or raw pointer).");
+					}
+					else
+					{
+						context.Diagnostics.Report(currentFileContext, init.Span, $"Cannot initialize field '{init.MemberName}' of type '{field.Type.Name}' with value of type '{initType.Name}'");
+					}
+				}
 			}
 
 			return unionType;
@@ -712,8 +740,22 @@ public sealed class ValidationPass(BindingContext context)
 
 			if (!actualType.Equals(expectedType))
 			{
-				var currentFileContext = context.FileContexts[context.CurrentUnit!];
-				context.Diagnostics.Report(currentFileContext, ret.Expression.Span, $"Function '{currentFunc.Name}' expects return type '{expectedType.Name}' but found '{actualType.Name}'");
+				var isValidNull = actualType.Equals(TypeSymbol.Null) &&
+								  (expectedType is RawPointerTypeSymbol ||
+								  (expectedType is UnionTypeSymbol union && union.Name.Contains("Option")));
+
+				if (!isValidNull)
+				{
+					var currentFileContext = context.FileContexts[context.CurrentUnit!];
+					if (actualType.Equals(TypeSymbol.Null))
+					{
+						context.Diagnostics.Report(currentFileContext, ret.Expression.Span, "The 'null' literal requires a pointer type (Option or raw pointer).");
+					}
+					else
+					{
+						context.Diagnostics.Report(currentFileContext, ret.Expression.Span, $"Function '{currentFunc.Name}' expects return type '{expectedType.Name}' but found '{actualType.Name}'");
+					}
+				}
 			}
 		}
 	}
@@ -726,7 +768,7 @@ public sealed class ValidationPass(BindingContext context)
 			IntegerLiteralExpressionSyntax => TypeSymbol.Int,
 			DoubleLiteralExpressionSyntax => TypeSymbol.Double,
 			BooleanLiteralExpressionSyntax => TypeSymbol.Bool,
-			NullLiteralExpressionSyntax n => CheckNullLiteral(n),
+			NullLiteralExpressionSyntax => TypeSymbol.Null,
 			StringLiteralExpressionSyntax => TypeSymbol.String,
 			CharacterLiteralExpressionSyntax => TypeSymbol.Char,
 			CallExpressionSyntax call when call.FunctionName == "sizeof" => TypeSymbol.Int,
@@ -744,35 +786,6 @@ public sealed class ValidationPass(BindingContext context)
 			UnaryExpressionSyntax unary => GetUnaryExpressionType(unary, scope),
 			_ => null
 		};
-	}
-
-	private FunctionSymbol? ResolveFunction(string name, SymbolTable scope)
-	{
-		// 1. Try direct lookup (fully qualified names)
-		var direct = scope.Lookup(name);
-		if (direct is FunctionSymbol f) return f;
-
-		// 2. Try lookup in current namespace
-		var localMangled = context.GetMangledName(name, context.CurrentNamespace);
-		if (scope.Lookup(localMangled) is FunctionSymbol localFunc)
-			return localFunc;
-
-		// 3. Try lookup across all active 'using' namespaces in this file
-		if (context.CurrentUnit is not null)
-		{
-			var activeUsings = new List<string>(context.CurrentUnit.Usings.Select(u => u.NamespaceName));
-			if (context.CurrentUnit.NamespaceDeclaration is not null)
-				activeUsings.AddRange(context.CurrentUnit.NamespaceDeclaration.Usings.Select(u => u.NamespaceName));
-
-			foreach (var ns in activeUsings)
-			{
-				var candidateMangled = context.GetMangledName(name, ns);
-				if (scope.Lookup(candidateMangled) is FunctionSymbol match)
-					return match;
-			}
-		}
-
-		return null;
 	}
 
 	private string? GetBaseIdentifierName(ExpressionSyntax expr)
@@ -1130,6 +1143,10 @@ public sealed class ValidationPass(BindingContext context)
 			{
 				score += 4; // Direct exact match is preferred
 			}
+			else if (arg.Equals(TypeSymbol.Null) && (param is RawPointerTypeSymbol || (param is UnionTypeSymbol union && union.Name.Contains("Option"))))
+			{
+				score += 3; // Null matches raw pointers and Option types!
+			}
 			else if (param is PointerTypeSymbol paramPtr && arg is PointerTypeSymbol argPointer &&
 					 paramPtr.ReferencedType is SliceTypeSymbol sliceType && argPointer.ReferencedType is ArrayTypeSymbol arrayType &&
 					 sliceType.ElementType.Equals(arrayType.ElementType))
@@ -1274,21 +1291,6 @@ public sealed class ValidationPass(BindingContext context)
 		}
 
 		CheckBlock(method.Body, localScope, method);
-	}
-
-	private readonly HashSet<NullLiteralExpressionSyntax> _checkedNullLiterals = new();
-
-	private TypeSymbol CheckNullLiteral(NullLiteralExpressionSyntax expr)
-	{
-		// GetExpressionType is consulted from several check paths; report each null
-		// literal only once regardless of how many times its type is inferred.
-		if (_checkedNullLiterals.Add(expr))
-		{
-			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.Report(currentFileContext, expr.Span, "The 'null' literal requires a pointer type and is not valid in safe code.");
-		}
-
-		return TypeSymbol.Int;
 	}
 
 	private bool DetectFieldMutation(SyntaxNode node, StructTypeSymbol structType)

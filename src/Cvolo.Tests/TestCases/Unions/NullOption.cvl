@@ -1,0 +1,26 @@
+using System;
+
+union Option<T> {
+    T Some;
+    void None;
+}
+
+unsafe void CheckRawPointerNull(int* p) {
+    if (p == null) {
+        Console.WriteLine("Raw pointer is null as expected.");
+    }
+}
+
+int main() {
+    // 1. Safe null assignment (Option.None)
+    Option<int> opt = null;
+    Console.WriteLine("Safe Option null initialized successfully.");
+
+    // 2. Unsafe null pointer check
+    unsafe {
+        int* p = null;
+        CheckRawPointerNull(p);
+    }
+
+    return 0;
+}

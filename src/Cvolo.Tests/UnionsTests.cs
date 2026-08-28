@@ -9,6 +9,7 @@ public sealed class UnionsTests : CompilerTestBase
 	[InlineData("UnionFieldAccess", "Ok: 42")]
 	[InlineData("UnionExtension", "Some: 100, IsSome: 1\nEmpty option created.")]
 	[InlineData("OptionSwitchPromotion", "Some: 99")]
+	[InlineData("NullOption", "Safe Option null initialized successfully.\nRaw pointer is null as expected.")]
 	public void Execution_Success(string caseName, string expected)
 	{
 		var fileName = $"Unions/{caseName}.cvl";

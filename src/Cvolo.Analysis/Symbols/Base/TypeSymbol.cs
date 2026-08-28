@@ -10,6 +10,7 @@ public class TypeSymbol(string name) : IEquatable<TypeSymbol>
 	public static readonly TypeSymbol Bool = new("bool");
 	public static readonly TypeSymbol String = new("string");
 	public static readonly TypeSymbol Char = new("char");
+	public static readonly TypeSymbol Null = new("null");
 
 	public static TypeSymbol? FromName(string name) => name switch
 	{
@@ -19,6 +20,7 @@ public class TypeSymbol(string name) : IEquatable<TypeSymbol>
 		"bool" => Bool,
 		"string" => String,
 		"char" => Char,
+		"null" => Null,
 		_ => null,
 	};
 
