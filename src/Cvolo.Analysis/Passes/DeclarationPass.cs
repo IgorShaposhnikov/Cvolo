@@ -78,6 +78,14 @@ public sealed class DeclarationPass(BindingContext context)
 		}
 
 		context.SymbolUnits[mangledName] = context.CurrentUnit!;
+
+		// Register a placeholder symbol BEFORE resolving fields so that
+		// self-referential field types (e.g. `Option<ref Node>`) can resolve
+		// the enclosing struct's own name during generic instantiation.
+		// The fully-built symbol replaces it below; equality/codegen are
+		// name-driven, so the placeholder identity is invisible downstream.
+		context.StructTypes[mangledName] = new StructTypeSymbol(mangledName, []);
+
 		var fields = new List<StructFieldSymbol>();
 		var fieldNames = new HashSet<string>();
 
@@ -103,6 +111,10 @@ public sealed class DeclarationPass(BindingContext context)
 
 		var structSymbol = new StructTypeSymbol(mangledName, fields);
 		context.StructTypes[mangledName] = structSymbol;
+		// Ensure the canonical cache no longer serves the (empty) placeholder
+		// registered above, or later ResolveType("Node") would return a
+		// field-less Node even after this replacement.
+		context.ReplaceTypeInCache(mangledName, structSymbol);
 	}
 
 	private void DeclareFunction(FunctionDeclarationSyntax func)

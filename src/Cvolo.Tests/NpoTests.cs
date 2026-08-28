@@ -11,6 +11,7 @@ public sealed class NpoTests : CompilerTestBase
 	[InlineData("OptionDropOnReassign", "start\nDropping: 10\nmiddle\nnow: 20\nDropping: 20")]
 	[InlineData("OptionMoveToParam", "in consume, some=7\nDropping: 7\nDone")]
 	[InlineData("ArrayOptionZeroInit", "zero: 0")]
+	[InlineData("SelfRefOption", "head: 1\nnext: 2")]
 	public void Execution_Success(string caseName, string expected)
 	{
 		var fileName = $"NPO/{caseName}.cvl";

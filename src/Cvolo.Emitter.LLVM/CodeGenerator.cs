@@ -1014,7 +1014,10 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 					}
 					else
 					{
-						_builder.BuildStore(right, ptr);
+						var coerced = (bin.Right is MemberAccessExpressionSyntax or IndexExpressionSyntax)
+							? EmitRefToValue(right, GetExprType(bin.Right))
+							: right;
+						_builder.BuildStore(coerced, ptr);
 					}
 				}
 
@@ -1064,7 +1067,12 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			if (fieldType is UnionTypeSymbol && bin.Right is StructInitializationExpressionSyntax fieldReinit)
 				EmitStructInitializationInPlace(fieldReinit, fieldPtr);
 			else
-				_builder.BuildStore(right, fieldPtr);
+			{
+				var coerced = (bin.Right is MemberAccessExpressionSyntax or IndexExpressionSyntax)
+					? EmitRefToValue(right, GetExprType(bin.Right))
+					: right;
+				_builder.BuildStore(coerced, fieldPtr);
+			}
 			return right;
 		}
 		else if (bin.Left is IndexExpressionSyntax idx)
@@ -1079,7 +1087,12 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			if (elementType is UnionTypeSymbol && bin.Right is StructInitializationExpressionSyntax elemReinit)
 				EmitStructInitializationInPlace(elemReinit, elementPtr);
 			else
-				_builder.BuildStore(right, elementPtr);
+			{
+				var coerced = (bin.Right is MemberAccessExpressionSyntax or IndexExpressionSyntax)
+					? EmitRefToValue(right, GetExprType(bin.Right))
+					: right;
+				_builder.BuildStore(coerced, elementPtr);
+			}
 			return right;
 		}
 
@@ -1302,7 +1315,11 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				else
 				{
 					var value = EmitExpression(varDecl.Initializer);
-					_builder.BuildStore(value, alloca);
+					var coerced = typeSymbol is not PointerTypeSymbol
+						&& (varDecl.Initializer is MemberAccessExpressionSyntax or IndexExpressionSyntax)
+						? EmitRefToValue(value, GetExprType(varDecl.Initializer!))
+						: value;
+					_builder.BuildStore(coerced, alloca);
 				}
 			}
 		}
@@ -1399,6 +1416,22 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		_builder.BuildBr(condBlock);
 
 		_builder.PositionAtEnd(endBlock);
+	}
+
+	// Coerces an expression value that is a `ref T` into the pointed-to value when it
+	// is being consumed as a non-reference value (e.g. `var int y = opt.Some` or
+	// `v = node.Next.Some`). `opt.Some` on a null-pointer-optimized option yields the
+	// inner reference pointer; the value destination expects the pointed-to object, so
+	// dereference once. Callers that want the raw reference never pass through this
+	// (the refvar-declaration and switch-promotion paths consume the pointer directly).
+	private LLVMValueRef EmitRefToValue(LLVMValueRef value, TypeSymbol exprType)
+	{
+		if (exprType is PointerTypeSymbol ptrType && ptrType.ReferencedType is not null)
+		{
+			return _builder.BuildLoad2(GetLLVMType(ptrType.ReferencedType), value, "ref_to_value");
+		}
+
+		return value;
 	}
 
 	private LLVMValueRef Load(string name)

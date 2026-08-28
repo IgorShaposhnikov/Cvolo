@@ -138,16 +138,18 @@ public sealed class BindingContext
 			var baseType = ResolveType(baseName);
 			if (baseType is StructTypeSymbol baseStruct && GenericStructTemplates.TryGetValue(baseStruct.Name, out var templateDecl))
 			{
-				var typeArgs = argsPart.Split(',').Select(s => ResolveType(s.Trim())!).ToList();
-				var instantiatedType = InstantiateGenericStruct(templateDecl, baseType.Name, typeArgs!);
+				if (!TryResolveTypeArguments(argsPart, out var typeArgs))
+					return null;
+				var instantiatedType = InstantiateGenericStruct(templateDecl, baseType.Name, typeArgs);
 				StructTypes[name] = instantiatedType;
 				_typeCache[name] = instantiatedType;
 				return instantiatedType;
 			}
 			else if (baseType is UnionTypeSymbol baseUnion && GenericUnionTemplates.TryGetValue(baseUnion.Name, out var unionTemplateDecl))
 			{
-				var typeArgs = argsPart.Split(',').Select(s => ResolveType(s.Trim())!).ToList();
-				var instantiatedType = InstantiateGenericUnion(unionTemplateDecl, baseUnion.Name, typeArgs!);
+				if (!TryResolveTypeArguments(argsPart, out var unionTypeArgs))
+					return null;
+				var instantiatedType = InstantiateGenericUnion(unionTemplateDecl, baseUnion.Name, unionTypeArgs);
 				UnionTypes[name] = instantiatedType;
 				_typeCache[name] = instantiatedType;
 				return instantiatedType;
@@ -222,10 +224,42 @@ public sealed class BindingContext
 		return null;
 	}
 
+	/// <summary>
+	/// Resolves a comma-separated generic type-argument list (e.g. "ref Node").
+	/// Returns false with a diagnostic if any argument cannot be resolved, so a
+	/// null type is never smuggled into generic instantiation (which would NRE).
+	/// </summary>
+	private bool TryResolveTypeArguments(string argsPart, out List<TypeSymbol> typeArgs)
+	{
+		typeArgs = [];
+		foreach (var rawArg in argsPart.Split(','))
+		{
+			var argType = ResolveType(rawArg.Trim());
+			if (argType is null)
+			{
+				var currentFileContext = FileContexts[CurrentUnit!];
+				Diagnostics.Report(currentFileContext, new TextSpan(0, 0), $"Unknown type argument '{rawArg.Trim()}'");
+				return false;
+			}
+			typeArgs.Add(argType);
+		}
+		return true;
+	}
+
 	public string GetMangledName(string name, string? namespaceName)
 	{
 		if (string.IsNullOrEmpty(namespaceName)) return name;
 		return $"{namespaceName}.{name}";
+	}
+
+	/// <summary>
+	/// Updates the canonical type cache for a name. Used when a placeholder
+	/// symbol registered for forward/self reference is replaced by its fully
+	/// built symbol, so later resolution does not serve a stale placeholder.
+	/// </summary>
+	public void ReplaceTypeInCache(string name, TypeSymbol symbol)
+	{
+		_typeCache[name] = symbol;
 	}
 
 	private StructTypeSymbol InstantiateGenericStruct(StructDeclarationSyntax templateDecl, string templateMangledName, List<TypeSymbol> typeArgs)

@@ -1,0 +1,21 @@
+using System;
+
+union Option<T> {
+    T Some;
+    void None;
+}
+
+struct Node {
+    int Value;
+    Option<ref Node> Next;
+}
+
+int main() {
+    var Node a( Value: 1, Next: Option<ref Node> { None: void } );
+    var Node b( Value: 2, Next: Option<ref Node> { None: void } );
+    a.Next = Option<ref Node> { Some: ref b };
+    Console.WriteLine($"head: {a.Value}");
+    var Node n = a.Next.Some;
+    Console.WriteLine($"next: {n.Value}");
+    return 0;
+}
