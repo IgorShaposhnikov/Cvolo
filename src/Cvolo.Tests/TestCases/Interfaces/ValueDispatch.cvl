@@ -1,0 +1,29 @@
+interface IWidget {
+    void Print();
+    int Value();
+}
+
+struct Point {
+    int X;
+    int Y;
+}
+
+extension Point : IWidget {
+    void Print() {
+        printf("Point(%d,%d)\n", X, Y);
+    }
+    int Value() {
+        return X + Y;
+    }
+}
+
+void Draw(IWidget w) {
+    w.Print();
+    printf("Value: %d\n", w.Value());
+}
+
+int main() {
+    Point p = Point { X: 3, Y: 4 };
+    Draw(p);
+    return 0;
+}

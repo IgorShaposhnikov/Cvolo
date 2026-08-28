@@ -27,6 +27,14 @@ public sealed class ValidationPass(BindingContext context)
 				if (member is FunctionDeclarationSyntax func)
 				{
 					var isTemplate = func.GenericParameters.Count > 0 && func.GenericParameters.Any(p => context.ResolveType(p) == null);
+
+					// Interface-parameterized functions are implicit generic templates: their bodies are
+					// validated at each call site (monomorphized), never here with an abstract interface type.
+					var ifaceTemplateName = context.GetMangledName(func.Name, context.CurrentNamespace);
+					var isInterfaceTemplate = context.InterfaceFunctionTemplates.ContainsKey(ifaceTemplateName);
+
+					if (isInterfaceTemplate) continue;
+
 					if (!isTemplate)
 					{
 						// For explicit template specializations, validate the registered monomorphized version
@@ -417,6 +425,17 @@ public sealed class ValidationPass(BindingContext context)
 					{
 						// Use overload resolution logic for standard non-generic functions / constructors
 						func = ResolveOverloadedFunction(call.FunctionName, argTypes, scope);
+
+						// No concrete overload matched: fall back to interface-parameterized dispatch
+						// (implicit generic templates monomorphized with the concrete conforming arg types).
+						if (func is null && ResolveInterfaceFunctionTemplateName(call.FunctionName, scope) is not null)
+						{
+							// The callee is an interface template: specific conformance/arg-count
+							// diagnostics are reported inside. Return early so the generic
+							// "no overload" message is not also emitted.
+							func = TryResolveInterfaceCall(call, argTypes, scope);
+							if (func is null) return;
+						}
 					}
 
 					if (func is null)
@@ -906,6 +925,158 @@ public sealed class ValidationPass(BindingContext context)
 		}
 
 		// Bind the newly generated function body immediately!
+		var localScope = new SymbolTable(context.Globals);
+		foreach (var p in parameters)
+		{
+			localScope.Declare(new VariableSymbol(p.Name, p.Type, false) { IsInitialized = true });
+		}
+
+		CheckBlock(instBody, localScope, instDecl);
+
+		return instSymbol;
+	}
+
+	// ---------------------------------------------------------------------------
+	// Interface-parameterized (implicit generic) function dispatch.
+	// A function with a nominal-interface-typed parameter is lowered to a template
+	// and monomorphized at each call site with the concrete conforming argument
+	// type (static-only dispatch; no vtable / fat pointers).
+	// ---------------------------------------------------------------------------
+
+	private string? ResolveInterfaceFunctionTemplateName(string name, SymbolTable scope)
+	{
+		var localMangled = context.GetMangledName(name, context.CurrentNamespace);
+		if (context.InterfaceFunctionTemplates.ContainsKey(localMangled)) return localMangled;
+
+		if (context.CurrentUnit is not null)
+		{
+			var activeUsings = new List<string>(context.CurrentUnit.Usings.Select(u => u.NamespaceName));
+			if (context.CurrentUnit.NamespaceDeclaration is not null)
+				activeUsings.AddRange(context.CurrentUnit.NamespaceDeclaration.Usings.Select(u => u.NamespaceName));
+
+			foreach (var ns in activeUsings)
+			{
+				var candidateMangled = context.GetMangledName(name, ns);
+				if (context.InterfaceFunctionTemplates.ContainsKey(candidateMangled))
+					return candidateMangled;
+			}
+		}
+
+		if (context.InterfaceFunctionTemplates.ContainsKey(name)) return name;
+		return null;
+	}
+
+	private bool ConformsToInterface(TypeSymbol type, InterfaceTypeSymbol iface)
+	{
+		var baseType = type is PointerTypeSymbol ptr ? ptr.ReferencedType : type;
+		return context.Conformance.TryGetValue(baseType.Name, out var ifaces) && ifaces.Contains(iface.Name);
+	}
+
+	/// <summary>
+	/// Resolves a call to an interface-parameterized function by monomorphizing the
+	/// template with the concrete conforming argument types. When the callee is an
+	/// interface template but the call cannot be instantiated, reports the specific
+	/// id-less diagnostic (conformance / argument-count / conflicting-concrete) and
+	/// returns null so the caller suppresses the generic "no overload" message.
+	/// </summary>
+	private FunctionSymbol? TryResolveInterfaceCall(CallExpressionSyntax call, IReadOnlyList<TypeSymbol> argTypes, SymbolTable scope)
+	{
+		var templateName = ResolveInterfaceFunctionTemplateName(call.FunctionName, scope);
+		if (templateName is null) return null;
+
+		var templateDecl = context.InterfaceFunctionTemplates[templateName];
+		var currentFileContext = context.FileContexts[context.CurrentUnit!];
+
+		if (argTypes.Count != templateDecl.Parameters.Count)
+		{
+			context.Diagnostics.Report(currentFileContext, call.Span,
+				$"Function '{call.FunctionName}' expects {templateDecl.Parameters.Count} argument(s) but received {argTypes.Count}");
+			return null;
+		}
+
+		// Build the substitution map: each interface-typed parameter maps to its concrete arg type.
+		var substitutionMap = new Dictionary<string, TypeSymbol>();
+		for (var i = 0; i < templateDecl.Parameters.Count; i++)
+		{
+			var param = templateDecl.Parameters[i];
+			if (context.ResolveType(param.Type) is not InterfaceTypeSymbol iface) continue;
+
+			var concrete = argTypes[i];
+			if (!ConformsToInterface(concrete, iface))
+			{
+				context.Diagnostics.Report(currentFileContext, call.Span,
+					$"Type '{concrete.Name}' does not conform to interface '{iface.Name}' for parameter '{param.Name}'");
+				return null;
+			}
+
+			if (substitutionMap.TryGetValue(param.Type, out var existing) && existing.Name != concrete.Name)
+			{
+				context.Diagnostics.Report(currentFileContext, call.Span,
+					$"Interface parameter '{param.Name}' requires a single concrete type, but both '{existing.Name}' and '{concrete.Name}' were passed");
+				return null;
+			}
+
+			substitutionMap[param.Type] = concrete;
+		}
+
+		if (substitutionMap.Count == 0) return null;
+
+		return InstantiateInterfaceFunction(templateDecl, substitutionMap, scope);
+	}
+
+	private FunctionSymbol InstantiateInterfaceFunction(
+		FunctionDeclarationSyntax templateDecl, Dictionary<string, TypeSymbol> substitutionMap, SymbolTable scope)
+	{
+		var templateMangledName = ResolveInterfaceFunctionTemplateName(templateDecl.Name, scope)!;
+		var rawName = $"{templateMangledName}<{string.Join(",", substitutionMap.Values.Select(t => t.Name))}>";
+		var instName = context.NormalizeGenericName(rawName);
+
+		if (context.MonomorphizedFunctions.TryGetValue(instName, out var existing))
+			return existing;
+
+		TypeSymbol ResolveSubstitutedType(string typeName)
+		{
+			var substitutedTypeName = typeName;
+			foreach (var kv in substitutionMap)
+			{
+				substitutedTypeName = System.Text.RegularExpressions.Regex.Replace(substitutedTypeName, $@"\b{kv.Key}\b", kv.Value.Name);
+			}
+
+			if (substitutedTypeName.StartsWith("refvar ") || substitutedTypeName.StartsWith("ref "))
+			{
+				var isMutable = substitutedTypeName.StartsWith("refvar ");
+				var innerName = isMutable ? substitutedTypeName.Substring(7) : substitutedTypeName.Substring(4);
+				var innerType = ResolveSubstitutedType(innerName);
+				return new PointerTypeSymbol(innerType, isMutable);
+			}
+
+			return context.ResolveType(substitutedTypeName)!;
+		}
+
+		var returnType = ResolveSubstitutedType(templateDecl.ReturnType);
+		var parameters = new List<ParameterSymbol>();
+		var instParameters = new List<ParameterSyntax>();
+
+		foreach (var param in templateDecl.Parameters)
+		{
+			var paramType = ResolveSubstitutedType(param.Type);
+			parameters.Add(new ParameterSymbol(param.Name, paramType));
+			instParameters.Add(new ParameterSyntax(param.Span, paramType.Name, param.Name));
+		}
+
+		var instSymbol = new FunctionSymbol(instName, returnType, parameters);
+		context.MonomorphizedFunctions[instName] = instSymbol;
+
+		var instBody = SubstituteBlockGenerics(templateDecl.Body, substitutionMap);
+		var instDecl = new FunctionDeclarationSyntax(templateDecl.Span, returnType.Name, instName, [], instParameters, instBody, modifier: templateDecl.Modifier);
+
+		context.MonomorphizedFunctionDecls.Add(instDecl);
+
+		if (context.SymbolUnits.TryGetValue(templateMangledName, out var templateUnit))
+		{
+			context.SymbolUnits[instName] = templateUnit;
+		}
+
 		var localScope = new SymbolTable(context.Globals);
 		foreach (var p in parameters)
 		{

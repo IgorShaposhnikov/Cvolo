@@ -192,6 +192,16 @@ public sealed class DeclarationPass(BindingContext context)
 			return;
 		}
 
+		// A function with any nominal-interface-typed parameter is an implicit generic template:
+		// the interface name has no value representation, so it is monomorphized at each call site
+		// with the concrete conforming argument type (static-only dispatch, no vtable).
+		if (func.Parameters.Any(p => context.ResolveType(p.Type) is InterfaceTypeSymbol))
+		{
+			context.SymbolUnits[mangledName] = context.CurrentUnit!;
+			context.InterfaceFunctionTemplates[mangledName] = func;
+			return;
+		}
+
 		context.SymbolUnits[mangledName] = context.CurrentUnit!;
 		var type = context.ResolveType(func.ReturnType);
 		if (type is null)

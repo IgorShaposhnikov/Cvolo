@@ -228,6 +228,12 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			{
 				if (member is FunctionDeclarationSyntax func && func.GenericParameters.Count == 0 && !func.Name.Contains('<'))
 				{
+					// Interface-parameterized functions are implicit templates (no value representation);
+					// their monomorphized instances are emitted separately in Pass E.
+					var ifaceTemplateName = bindingContext.GetMangledName(func.Name, ns);
+					if (bindingContext.InterfaceFunctionTemplates.ContainsKey(ifaceTemplateName))
+						continue;
+
 					// Keep 'main' / 'Main' global and unmangled
 					var mangledName = (func.Name == "main" || func.Name == "Main")
 						? "main"
@@ -750,9 +756,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		var callee = _globals[emitName];
 		var funcType = _functionTypes[emitName];
 
-		var args = new List<LLVMValueRef>();
-
-		if (call.FunctionName.Contains('.') && _bindingContext.ResolvedCalls.TryGetValue(call, out var extFunc))
+		var args = new List<LLVMValueRef>();		if (call.FunctionName.Contains('.') && _bindingContext.ResolvedCalls.TryGetValue(call, out var extFunc))
 		{
 			var receiverName = call.FunctionName.Split('.')[0];
 			if (_locals.TryGetValue(receiverName, out var receiverPtr))

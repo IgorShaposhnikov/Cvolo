@@ -58,6 +58,10 @@ public sealed class BindingContext
 	// Concrete type name (mangled) -> set of interface names (mangled) it conforms to.
 	public Dictionary<string, HashSet<string>> Conformance { get; } = [];
 
+	// Interface-parameterized function templates (implicit generics, e.g. void Draw(IWidget w)),
+	// keyed by the mangled base name. Monomorphized per call site with a concrete conforming type.
+	public Dictionary<string, FunctionDeclarationSyntax> InterfaceFunctionTemplates { get; } = [];
+
 
 	public CompilationUnitSyntax? CurrentUnit { get; set; }
 	public string? CurrentNamespace { get; set; }

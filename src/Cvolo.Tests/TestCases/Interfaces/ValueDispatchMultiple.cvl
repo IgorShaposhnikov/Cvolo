@@ -1,0 +1,44 @@
+interface IWidget {
+    void Print();
+    int Value();
+}
+
+struct Point {
+    int X;
+    int Y;
+}
+
+extension Point : IWidget {
+    void Print() {
+        printf("Point(%d,%d)\n", X, Y);
+    }
+    int Value() {
+        return X + Y;
+    }
+}
+
+struct Circle {
+    int Radius;
+}
+
+extension Circle : IWidget {
+    void Print() {
+        printf("Circle(r=%d)\n", Radius);
+    }
+    int Value() {
+        return Radius * 2;
+    }
+}
+
+void Draw(IWidget w) {
+    w.Print();
+    printf("Value: %d\n", w.Value());
+}
+
+int main() {
+    Point p = Point { X: 3, Y: 4 };
+    Circle c = Circle { Radius: 5 };
+    Draw(p);
+    Draw(c);
+    return 0;
+}
