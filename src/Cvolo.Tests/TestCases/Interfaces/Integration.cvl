@@ -1,0 +1,52 @@
+interface IDrawable {
+    void Draw();
+    int Id();
+}
+
+struct Player {
+    int Health;
+}
+
+struct Enemy {
+    int Health;
+}
+
+extension Player : IDrawable {
+    void Draw() {
+        printf("Player(h=%d)\n", Health);
+    }
+    int Id() {
+        return Health * 2;
+    }
+}
+
+extension Enemy : IDrawable {
+    void Draw() {
+        printf("Enemy(h=%d)\n", Health);
+    }
+    int Id() {
+        return Health * 3;
+    }
+}
+
+void Render(IDrawable d) {
+    d.Draw();
+    printf("Id: %d\n", d.Id());
+}
+
+void Boost(refvar IDrawable d) {
+    d.Draw();
+}
+
+int main() {
+    var Player p;
+    p.Health = 10;
+    var Enemy e;
+    e.Health = 4;
+
+    Render(p);
+    Render(e);
+    Boost(ref p);
+
+    return 0;
+}

@@ -1,7 +1,7 @@
 using Cvolo.Core.Diagnostics;
 using Cvolo.Projects;
 using Cvolo.Syntax.Antlr;
-using Cvolo.Tests.Core;
+	using Cvolo.Tests.Core;
 
 namespace Cvolo.Tests;
 
@@ -16,6 +16,8 @@ public sealed class InterfacesTests : CompilerTestBase
 	[InlineData("ValueDispatchNotConforming.cvl")]
 	[InlineData("RefDispatch.cvl")]
 	[InlineData("RefvarDispatch.cvl")]
+	[InlineData("Integration.cvl")]
+	[InlineData("UnresolvedConcreteFail.cvl")]
 	public void Parser_Interfaces_Should_Parse(string caseName)
 	{
 		var assemblyDir = Path.GetDirectoryName(typeof(InterfacesTests).Assembly.Location)!;
@@ -39,6 +41,7 @@ public sealed class InterfacesTests : CompilerTestBase
 	[InlineData("ConformanceMissingMember", "Type 'Point' does not implement member 'int Value()' required by interface 'IWidget'.")]
 	[InlineData("ConformanceUnknownInterface", "Unknown interface 'IMissingInterface' in conformance declaration.")]
 	[InlineData("ValueDispatchNotConforming", "Type 'Foo' does not conform to interface 'IWidget' for parameter 'w'")]
+	[InlineData("UnresolvedConcreteFail", "Interface parameter 'w' of function 'Draw' cannot be resolved to a concrete conforming type; argument is abstract interface type 'IWidget'")]
 	public void Interfaces_Rejections(string caseName, string expectedError)
 	{
 		var fileName = $"Interfaces/{caseName}.cvl";
@@ -51,6 +54,7 @@ public sealed class InterfacesTests : CompilerTestBase
 	[Theory]
 	[InlineData("RefDispatch", "Point(3,4)\nValue: 7")]
 	[InlineData("RefvarDispatch", "Area: 48")]
+	[InlineData("Integration", "Player(h=10)\nId: 20\nEnemy(h=4)\nId: 12\nPlayer(h=10)")]
 	public void Interfaces_RefDispatch(string caseName, string expected)
 	{
 		var fileName = $"Interfaces/{caseName}.cvl";

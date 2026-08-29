@@ -1015,6 +1015,17 @@ public sealed class ValidationPass(BindingContext context)
 			var concreteArg = argTypes[i];
 			var concrete = concreteArg is PointerTypeSymbol cPtr ? cPtr.ReferencedType : concreteArg;
 
+			// An argument that is itself interface-typed has no concrete representation to
+			// monomorphize against (the interface is an abstract marker, not a value type).
+			// Report a dedicated unresolved-concrete-type diagnostic instead of the misleading
+			// "does not conform" message.
+			if (concrete is InterfaceTypeSymbol)
+			{
+				context.Diagnostics.Report(currentFileContext, call.Span,
+					$"Interface parameter '{param.Name}' of function '{call.FunctionName}' cannot be resolved to a concrete conforming type; argument is abstract interface type '{concrete.Name}'");
+				return null;
+			}
+
 			if (!ConformsToInterface(concrete, iface))
 			{
 				context.Diagnostics.Report(currentFileContext, call.Span,
