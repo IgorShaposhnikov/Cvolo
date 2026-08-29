@@ -62,6 +62,14 @@ public sealed class BindingContext
 	// keyed by the mangled base name. Monomorphized per call site with a concrete conforming type.
 	public Dictionary<string, FunctionDeclarationSyntax> InterfaceFunctionTemplates { get; } = [];
 
+	// Structural protocol declarations (mangled name -> declaration) and types.
+	public Dictionary<string, ProtocolDeclarationSyntax> ProtocolTemplates { get; } = [];
+	public Dictionary<string, ProtocolTypeSymbol> ProtocolTypes { get; } = [];
+
+	// Protocol-parameterized function templates (implicit generics, e.g. void Draw(IPrintable p)),
+	// keyed by the mangled base name. Monomorphized per call site with a structurally conforming type.
+	public Dictionary<string, FunctionDeclarationSyntax> ProtocolFunctionTemplates { get; } = [];
+
 
 	public CompilationUnitSyntax? CurrentUnit { get; set; }
 	public string? CurrentNamespace { get; set; }
@@ -189,6 +197,8 @@ public sealed class BindingContext
 				candidates.Add(localUnion);
 			if (InterfaceTypes.TryGetValue(localMangled, out var localInterface))
 				candidates.Add(localInterface);
+			if (ProtocolTypes.TryGetValue(localMangled, out var localProtocol))
+				candidates.Add(localProtocol);
 		}
 
 		// Priority 2: Exact/Global Match (Only used if no local namespace match is found)
@@ -200,6 +210,8 @@ public sealed class BindingContext
 				candidates.Add(exactUnionMatch);
 			if (InterfaceTypes.TryGetValue(name, out var exactInterfaceMatch))
 				candidates.Add(exactInterfaceMatch);
+			if (ProtocolTypes.TryGetValue(name, out var exactProtocolMatch))
+				candidates.Add(exactProtocolMatch);
 		}
 
 		if (candidates.Count == 1)
@@ -229,6 +241,8 @@ public sealed class BindingContext
 					candidates.Add(unionMatch);
 				if (InterfaceTypes.TryGetValue(candidateMangled, out var interfaceMatch))
 					candidates.Add(interfaceMatch);
+				if (ProtocolTypes.TryGetValue(candidateMangled, out var protocolMatch))
+					candidates.Add(protocolMatch);
 			}
 		}
 

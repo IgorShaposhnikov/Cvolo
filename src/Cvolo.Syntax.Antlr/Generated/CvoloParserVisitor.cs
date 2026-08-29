@@ -134,6 +134,18 @@ public interface ICvoloParserVisitor<Result> : IParseTreeVisitor<Result> {
 	/// <return>The visitor result.</return>
 	Result VisitInterfaceMember([NotNull] CvoloParser.InterfaceMemberContext context);
 	/// <summary>
+	/// Visit a parse tree produced by <see cref="CvoloParser.protocolDeclaration"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitProtocolDeclaration([NotNull] CvoloParser.ProtocolDeclarationContext context);
+	/// <summary>
+	/// Visit a parse tree produced by <see cref="CvoloParser.protocolMember"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitProtocolMember([NotNull] CvoloParser.ProtocolMemberContext context);
+	/// <summary>
 	/// Visit a parse tree produced by <see cref="CvoloParser.destructorDeclaration"/>.
 	/// </summary>
 	/// <param name="context">The parse tree.</param>

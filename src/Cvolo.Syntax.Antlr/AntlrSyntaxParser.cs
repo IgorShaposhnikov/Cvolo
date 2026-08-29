@@ -72,6 +72,8 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			return BuildExtensionDeclaration(extensionDecl);
 		if (context.interfaceDeclaration() is { } interfaceDecl)
 			return BuildInterfaceDeclaration(interfaceDecl);
+		if (context.protocolDeclaration() is { } protocolDecl)
+			return BuildProtocolDeclaration(protocolDecl);
 		if (context.globalVariableDeclaration() is { } globalDecl)
 			return BuildGlobalVariableDeclaration(globalDecl);
 		return null;
@@ -744,6 +746,38 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 
 		var attributes = BuildAttributeList(context.attributeList());
 		return new InterfaceDeclarationSyntax(SpanOf(context), name, generics, members, attributes);
+	}
+
+	private ProtocolDeclarationSyntax BuildProtocolDeclaration(CvoloParser.ProtocolDeclarationContext context)
+	{
+		var name = context.Identifier().GetText();
+
+		var generics = new List<string>();
+		if (context.genericParameterList() is { } genList)
+		{
+			foreach (var id in genList.Identifier())
+				generics.Add(id.GetText());
+		}
+
+		var members = new List<ProtocolMethodDeclarationSyntax>();
+		foreach (var memberCtx in context.protocolMember())
+		{
+			var returnType = GetReturnTypeName(memberCtx.returnType());
+			var memberName = memberCtx.Identifier().GetText();
+
+			var parameters = new List<ParameterSyntax>();
+			if (memberCtx.parameterList() is { } paramListCtx)
+			{
+				foreach (var param in paramListCtx.parameter())
+					parameters.Add(BuildParameter(param));
+			}
+
+			members.Add(new ProtocolMethodDeclarationSyntax(SpanOf(memberCtx), returnType, memberName, parameters));
+		}
+
+		var attributes = BuildAttributeList(context.attributeList());
+		var constraint = context.FOR() is not null && context.type() is { } typeCtx ? GetTypeName(typeCtx) : null;
+		return new ProtocolDeclarationSyntax(SpanOf(context), name, generics, members, constraint, attributes);
 	}
 
 	private UnionDeclarationSyntax BuildUnionDeclaration(CvoloParser.UnionDeclarationContext context)

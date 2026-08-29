@@ -30,6 +30,7 @@ UNBOUND: 'unbound';
 PANIC: 'panic';
 EXTENSION: 'extension';
 INTERFACE: 'interface';
+PROTOCOL: 'protocol';
 NAMESPACE: 'namespace';
 USING: 'using';
 GLOBAL: 'global';

@@ -234,6 +234,11 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 					if (bindingContext.InterfaceFunctionTemplates.ContainsKey(ifaceTemplateName))
 						continue;
 
+					// Protocol-parameterized functions are implicit templates too (no value representation);
+					// their monomorphized instances are emitted separately in Pass E.
+					if (bindingContext.ProtocolFunctionTemplates.ContainsKey(ifaceTemplateName))
+						continue;
+
 					// Keep 'main' / 'Main' global and unmangled
 					var mangledName = (func.Name == "main" || func.Name == "Main")
 						? "main"

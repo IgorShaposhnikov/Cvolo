@@ -39,73 +39,74 @@ public partial class CvoloParser : Parser {
 		VAL=1, VAR=2, REFVAR=3, HEAP=4, REF=5, EXTERN=6, RETURN=7, IF=8, ELSE=9, 
 		WHILE=10, FOR=11, TRUE=12, FALSE=13, NULL=14, VOID=15, INT=16, DOUBLE=17, 
 		BOOL=18, STRING=19, CHAR=20, STRUCT=21, UNION=22, UNSAFE=23, UNBOUND=24, 
-		PANIC=25, EXTENSION=26, INTERFACE=27, NAMESPACE=28, USING=29, GLOBAL=30, 
-		SWITCH=31, CASE=32, DEFAULT=33, LPAREN=34, RPAREN=35, LBRACE=36, RBRACE=37, 
-		LBRACK=38, RBRACK=39, SEMI=40, COMMA=41, DOT=42, COLON=43, QMARK=44, PLUS=45, 
-		MINUS=46, STAR=47, DIV=48, PERCENT=49, AMPERSAND=50, PIPE=51, CARET=52, 
-		TILDE=53, EXCLAMATION=54, ASSIGN=55, LT=56, GT=57, EQ=58, NEQ=59, LTE=60, 
-		GTE=61, AND=62, OR=63, PLUS_ASSIGN=64, MINUS_ASSIGN=65, STAR_ASSIGN=66, 
-		DIV_ASSIGN=67, ARROW=68, ELLIPSIS=69, INC=70, DEC=71, LSHIFT=72, RSHIFT=73, 
-		URSHIFT=74, LSHIFT_ASSIGN=75, RSHIFT_ASSIGN=76, URSHIFT_ASSIGN=77, AND_ASSIGN=78, 
-		OR_ASSIGN=79, XOR_ASSIGN=80, CharLiteral=81, InterpolatedStringLiteral=82, 
-		StringLiteral=83, IntegerLiteral=84, DoubleLiteral=85, Identifier=86, 
-		WS=87, LineComment=88, BlockComment=89;
+		PANIC=25, EXTENSION=26, INTERFACE=27, PROTOCOL=28, NAMESPACE=29, USING=30, 
+		GLOBAL=31, SWITCH=32, CASE=33, DEFAULT=34, LPAREN=35, RPAREN=36, LBRACE=37, 
+		RBRACE=38, LBRACK=39, RBRACK=40, SEMI=41, COMMA=42, DOT=43, COLON=44, 
+		QMARK=45, PLUS=46, MINUS=47, STAR=48, DIV=49, PERCENT=50, AMPERSAND=51, 
+		PIPE=52, CARET=53, TILDE=54, EXCLAMATION=55, ASSIGN=56, LT=57, GT=58, 
+		EQ=59, NEQ=60, LTE=61, GTE=62, AND=63, OR=64, PLUS_ASSIGN=65, MINUS_ASSIGN=66, 
+		STAR_ASSIGN=67, DIV_ASSIGN=68, ARROW=69, ELLIPSIS=70, INC=71, DEC=72, 
+		LSHIFT=73, RSHIFT=74, URSHIFT=75, LSHIFT_ASSIGN=76, RSHIFT_ASSIGN=77, 
+		URSHIFT_ASSIGN=78, AND_ASSIGN=79, OR_ASSIGN=80, XOR_ASSIGN=81, CharLiteral=82, 
+		InterpolatedStringLiteral=83, StringLiteral=84, IntegerLiteral=85, DoubleLiteral=86, 
+		Identifier=87, WS=88, LineComment=89, BlockComment=90;
 	public const int
 		RULE_compilationUnit = 0, RULE_usingDirective = 1, RULE_namespaceDeclaration = 2, 
 		RULE_qualifiedName = 3, RULE_declaration = 4, RULE_globalVariableDeclaration = 5, 
 		RULE_attributeList = 6, RULE_attribute = 7, RULE_functionModifier = 8, 
 		RULE_functionDeclaration = 9, RULE_externDeclaration = 10, RULE_structDeclaration = 11, 
 		RULE_unionDeclaration = 12, RULE_unionField = 13, RULE_extensionDeclaration = 14, 
-		RULE_interfaceDeclaration = 15, RULE_interfaceMember = 16, RULE_destructorDeclaration = 17, 
-		RULE_constructorDeclaration = 18, RULE_structField = 19, RULE_returnType = 20, 
-		RULE_type = 21, RULE_primitiveType = 22, RULE_parameterList = 23, RULE_parameter = 24, 
-		RULE_externParameterList = 25, RULE_externParameter = 26, RULE_blockStatement = 27, 
-		RULE_statement = 28, RULE_unsafeBlockStatement = 29, RULE_returnStatement = 30, 
-		RULE_expressionStatement = 31, RULE_variableDeclaration = 32, RULE_ifStatement = 33, 
-		RULE_whileStatement = 34, RULE_forStatement = 35, RULE_expression = 36, 
-		RULE_argumentList = 37, RULE_structInitializerList = 38, RULE_structMemberInitializer = 39, 
-		RULE_genericParameterList = 40, RULE_typeList = 41, RULE_switchStatement = 42, 
-		RULE_switchCase = 43, RULE_pattern = 44;
+		RULE_interfaceDeclaration = 15, RULE_interfaceMember = 16, RULE_protocolDeclaration = 17, 
+		RULE_protocolMember = 18, RULE_destructorDeclaration = 19, RULE_constructorDeclaration = 20, 
+		RULE_structField = 21, RULE_returnType = 22, RULE_type = 23, RULE_primitiveType = 24, 
+		RULE_parameterList = 25, RULE_parameter = 26, RULE_externParameterList = 27, 
+		RULE_externParameter = 28, RULE_blockStatement = 29, RULE_statement = 30, 
+		RULE_unsafeBlockStatement = 31, RULE_returnStatement = 32, RULE_expressionStatement = 33, 
+		RULE_variableDeclaration = 34, RULE_ifStatement = 35, RULE_whileStatement = 36, 
+		RULE_forStatement = 37, RULE_expression = 38, RULE_argumentList = 39, 
+		RULE_structInitializerList = 40, RULE_structMemberInitializer = 41, RULE_genericParameterList = 42, 
+		RULE_typeList = 43, RULE_switchStatement = 44, RULE_switchCase = 45, RULE_pattern = 46;
 	public static readonly string[] ruleNames = {
 		"compilationUnit", "usingDirective", "namespaceDeclaration", "qualifiedName", 
 		"declaration", "globalVariableDeclaration", "attributeList", "attribute", 
 		"functionModifier", "functionDeclaration", "externDeclaration", "structDeclaration", 
 		"unionDeclaration", "unionField", "extensionDeclaration", "interfaceDeclaration", 
-		"interfaceMember", "destructorDeclaration", "constructorDeclaration", 
-		"structField", "returnType", "type", "primitiveType", "parameterList", 
-		"parameter", "externParameterList", "externParameter", "blockStatement", 
-		"statement", "unsafeBlockStatement", "returnStatement", "expressionStatement", 
-		"variableDeclaration", "ifStatement", "whileStatement", "forStatement", 
-		"expression", "argumentList", "structInitializerList", "structMemberInitializer", 
-		"genericParameterList", "typeList", "switchStatement", "switchCase", "pattern"
+		"interfaceMember", "protocolDeclaration", "protocolMember", "destructorDeclaration", 
+		"constructorDeclaration", "structField", "returnType", "type", "primitiveType", 
+		"parameterList", "parameter", "externParameterList", "externParameter", 
+		"blockStatement", "statement", "unsafeBlockStatement", "returnStatement", 
+		"expressionStatement", "variableDeclaration", "ifStatement", "whileStatement", 
+		"forStatement", "expression", "argumentList", "structInitializerList", 
+		"structMemberInitializer", "genericParameterList", "typeList", "switchStatement", 
+		"switchCase", "pattern"
 	};
 
 	private static readonly string[] _LiteralNames = {
 		null, "'val'", "'var'", "'refvar'", "'heap'", "'ref'", "'extern'", "'return'", 
 		"'if'", "'else'", "'while'", "'for'", "'true'", "'false'", "'null'", "'void'", 
 		"'int'", "'double'", "'bool'", "'string'", "'char'", "'struct'", "'union'", 
-		"'unsafe'", "'unbound'", "'panic'", "'extension'", "'interface'", "'namespace'", 
-		"'using'", "'global'", "'switch'", "'case'", "'default'", "'('", "')'", 
-		"'{'", "'}'", "'['", "']'", "';'", "','", "'.'", "':'", "'?'", "'+'", 
-		"'-'", "'*'", "'/'", "'%'", "'&'", "'|'", "'^'", "'~'", "'!'", "'='", 
-		"'<'", "'>'", "'=='", "'!='", "'<='", "'>='", "'&&'", "'||'", "'+='", 
-		"'-='", "'*='", "'/='", "'->'", "'...'", "'++'", "'--'", "'<<'", "'>>'", 
-		"'>>>'", "'<<='", "'>>='", "'>>>='", "'&='", "'|='", "'^='"
+		"'unsafe'", "'unbound'", "'panic'", "'extension'", "'interface'", "'protocol'", 
+		"'namespace'", "'using'", "'global'", "'switch'", "'case'", "'default'", 
+		"'('", "')'", "'{'", "'}'", "'['", "']'", "';'", "','", "'.'", "':'", 
+		"'?'", "'+'", "'-'", "'*'", "'/'", "'%'", "'&'", "'|'", "'^'", "'~'", 
+		"'!'", "'='", "'<'", "'>'", "'=='", "'!='", "'<='", "'>='", "'&&'", "'||'", 
+		"'+='", "'-='", "'*='", "'/='", "'->'", "'...'", "'++'", "'--'", "'<<'", 
+		"'>>'", "'>>>'", "'<<='", "'>>='", "'>>>='", "'&='", "'|='", "'^='"
 	};
 	private static readonly string[] _SymbolicNames = {
 		null, "VAL", "VAR", "REFVAR", "HEAP", "REF", "EXTERN", "RETURN", "IF", 
 		"ELSE", "WHILE", "FOR", "TRUE", "FALSE", "NULL", "VOID", "INT", "DOUBLE", 
 		"BOOL", "STRING", "CHAR", "STRUCT", "UNION", "UNSAFE", "UNBOUND", "PANIC", 
-		"EXTENSION", "INTERFACE", "NAMESPACE", "USING", "GLOBAL", "SWITCH", "CASE", 
-		"DEFAULT", "LPAREN", "RPAREN", "LBRACE", "RBRACE", "LBRACK", "RBRACK", 
-		"SEMI", "COMMA", "DOT", "COLON", "QMARK", "PLUS", "MINUS", "STAR", "DIV", 
-		"PERCENT", "AMPERSAND", "PIPE", "CARET", "TILDE", "EXCLAMATION", "ASSIGN", 
-		"LT", "GT", "EQ", "NEQ", "LTE", "GTE", "AND", "OR", "PLUS_ASSIGN", "MINUS_ASSIGN", 
-		"STAR_ASSIGN", "DIV_ASSIGN", "ARROW", "ELLIPSIS", "INC", "DEC", "LSHIFT", 
-		"RSHIFT", "URSHIFT", "LSHIFT_ASSIGN", "RSHIFT_ASSIGN", "URSHIFT_ASSIGN", 
-		"AND_ASSIGN", "OR_ASSIGN", "XOR_ASSIGN", "CharLiteral", "InterpolatedStringLiteral", 
-		"StringLiteral", "IntegerLiteral", "DoubleLiteral", "Identifier", "WS", 
-		"LineComment", "BlockComment"
+		"EXTENSION", "INTERFACE", "PROTOCOL", "NAMESPACE", "USING", "GLOBAL", 
+		"SWITCH", "CASE", "DEFAULT", "LPAREN", "RPAREN", "LBRACE", "RBRACE", "LBRACK", 
+		"RBRACK", "SEMI", "COMMA", "DOT", "COLON", "QMARK", "PLUS", "MINUS", "STAR", 
+		"DIV", "PERCENT", "AMPERSAND", "PIPE", "CARET", "TILDE", "EXCLAMATION", 
+		"ASSIGN", "LT", "GT", "EQ", "NEQ", "LTE", "GTE", "AND", "OR", "PLUS_ASSIGN", 
+		"MINUS_ASSIGN", "STAR_ASSIGN", "DIV_ASSIGN", "ARROW", "ELLIPSIS", "INC", 
+		"DEC", "LSHIFT", "RSHIFT", "URSHIFT", "LSHIFT_ASSIGN", "RSHIFT_ASSIGN", 
+		"URSHIFT_ASSIGN", "AND_ASSIGN", "OR_ASSIGN", "XOR_ASSIGN", "CharLiteral", 
+		"InterpolatedStringLiteral", "StringLiteral", "IntegerLiteral", "DoubleLiteral", 
+		"Identifier", "WS", "LineComment", "BlockComment"
 	};
 	public static readonly IVocabulary DefaultVocabulary = new Vocabulary(_LiteralNames, _SymbolicNames);
 
@@ -187,26 +188,26 @@ public partial class CvoloParser : Parser {
 		try {
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 93;
+			State = 97;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
 			while (_la==USING) {
 				{
 				{
-				State = 90;
+				State = 94;
 				usingDirective();
 				}
 				}
-				State = 95;
+				State = 99;
 				ErrorHandler.Sync(this);
 				_la = TokenStream.LA(1);
 			}
-			State = 103;
+			State = 107;
 			ErrorHandler.Sync(this);
 			switch (TokenStream.LA(1)) {
 			case NAMESPACE:
 				{
-				State = 96;
+				State = 100;
 				namespaceDeclaration();
 				}
 				break;
@@ -226,21 +227,22 @@ public partial class CvoloParser : Parser {
 			case UNBOUND:
 			case EXTENSION:
 			case INTERFACE:
+			case PROTOCOL:
 			case GLOBAL:
 			case LBRACK:
 			case Identifier:
 				{
-				State = 100;
+				State = 104;
 				ErrorHandler.Sync(this);
 				_la = TokenStream.LA(1);
-				while ((((_la) & ~0x3f) == 0 && ((1L << _la) & 276186497128L) != 0) || _la==Identifier) {
+				while ((((_la) & ~0x3f) == 0 && ((1L << _la) & 552406581352L) != 0) || _la==Identifier) {
 					{
 					{
-					State = 97;
+					State = 101;
 					declaration();
 					}
 					}
-					State = 102;
+					State = 106;
 					ErrorHandler.Sync(this);
 					_la = TokenStream.LA(1);
 				}
@@ -249,7 +251,7 @@ public partial class CvoloParser : Parser {
 			default:
 				throw new NoViableAltException(this);
 			}
-			State = 105;
+			State = 109;
 			Match(Eof);
 			}
 		}
@@ -300,11 +302,11 @@ public partial class CvoloParser : Parser {
 		try {
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 107;
+			State = 111;
 			Match(USING);
-			State = 108;
+			State = 112;
 			qualifiedName();
-			State = 109;
+			State = 113;
 			Match(SEMI);
 			}
 		}
@@ -370,42 +372,42 @@ public partial class CvoloParser : Parser {
 		try {
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 111;
+			State = 115;
 			Match(NAMESPACE);
-			State = 112;
+			State = 116;
 			qualifiedName();
-			State = 140;
+			State = 144;
 			ErrorHandler.Sync(this);
 			switch (TokenStream.LA(1)) {
 			case SEMI:
 				{
-				State = 113;
-				Match(SEMI);
 				State = 117;
+				Match(SEMI);
+				State = 121;
 				ErrorHandler.Sync(this);
 				_la = TokenStream.LA(1);
 				while (_la==USING) {
 					{
 					{
-					State = 114;
+					State = 118;
 					usingDirective();
 					}
 					}
-					State = 119;
+					State = 123;
 					ErrorHandler.Sync(this);
 					_la = TokenStream.LA(1);
 				}
-				State = 123;
+				State = 127;
 				ErrorHandler.Sync(this);
 				_la = TokenStream.LA(1);
-				while ((((_la) & ~0x3f) == 0 && ((1L << _la) & 276186497128L) != 0) || _la==Identifier) {
+				while ((((_la) & ~0x3f) == 0 && ((1L << _la) & 552406581352L) != 0) || _la==Identifier) {
 					{
 					{
-					State = 120;
+					State = 124;
 					declaration();
 					}
 					}
-					State = 125;
+					State = 129;
 					ErrorHandler.Sync(this);
 					_la = TokenStream.LA(1);
 				}
@@ -413,37 +415,37 @@ public partial class CvoloParser : Parser {
 				break;
 			case LBRACE:
 				{
-				State = 126;
-				Match(LBRACE);
 				State = 130;
+				Match(LBRACE);
+				State = 134;
 				ErrorHandler.Sync(this);
 				_la = TokenStream.LA(1);
 				while (_la==USING) {
 					{
 					{
-					State = 127;
+					State = 131;
 					usingDirective();
 					}
 					}
-					State = 132;
+					State = 136;
 					ErrorHandler.Sync(this);
 					_la = TokenStream.LA(1);
 				}
-				State = 136;
+				State = 140;
 				ErrorHandler.Sync(this);
 				_la = TokenStream.LA(1);
-				while ((((_la) & ~0x3f) == 0 && ((1L << _la) & 276186497128L) != 0) || _la==Identifier) {
+				while ((((_la) & ~0x3f) == 0 && ((1L << _la) & 552406581352L) != 0) || _la==Identifier) {
 					{
 					{
-					State = 133;
+					State = 137;
 					declaration();
 					}
 					}
-					State = 138;
+					State = 142;
 					ErrorHandler.Sync(this);
 					_la = TokenStream.LA(1);
 				}
-				State = 139;
+				State = 143;
 				Match(RBRACE);
 				}
 				break;
@@ -503,23 +505,23 @@ public partial class CvoloParser : Parser {
 			int _alt;
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 142;
+			State = 146;
 			Match(Identifier);
-			State = 147;
+			State = 151;
 			ErrorHandler.Sync(this);
 			_alt = Interpreter.AdaptivePredict(TokenStream,8,Context);
 			while ( _alt!=2 && _alt!=global::Antlr4.Runtime.Atn.ATN.INVALID_ALT_NUMBER ) {
 				if ( _alt==1 ) {
 					{
 					{
-					State = 143;
+					State = 147;
 					Match(DOT);
-					State = 144;
+					State = 148;
 					Match(Identifier);
 					}
 					} 
 				}
-				State = 149;
+				State = 153;
 				ErrorHandler.Sync(this);
 				_alt = Interpreter.AdaptivePredict(TokenStream,8,Context);
 			}
@@ -555,6 +557,9 @@ public partial class CvoloParser : Parser {
 		[System.Diagnostics.DebuggerNonUserCode] public InterfaceDeclarationContext interfaceDeclaration() {
 			return GetRuleContext<InterfaceDeclarationContext>(0);
 		}
+		[System.Diagnostics.DebuggerNonUserCode] public ProtocolDeclarationContext protocolDeclaration() {
+			return GetRuleContext<ProtocolDeclarationContext>(0);
+		}
 		[System.Diagnostics.DebuggerNonUserCode] public GlobalVariableDeclarationContext globalVariableDeclaration() {
 			return GetRuleContext<GlobalVariableDeclarationContext>(0);
 		}
@@ -586,55 +591,62 @@ public partial class CvoloParser : Parser {
 		DeclarationContext _localctx = new DeclarationContext(Context, State);
 		EnterRule(_localctx, 8, RULE_declaration);
 		try {
-			State = 157;
+			State = 162;
 			ErrorHandler.Sync(this);
 			switch ( Interpreter.AdaptivePredict(TokenStream,9,Context) ) {
 			case 1:
 				EnterOuterAlt(_localctx, 1);
 				{
-				State = 150;
+				State = 154;
 				functionDeclaration();
 				}
 				break;
 			case 2:
 				EnterOuterAlt(_localctx, 2);
 				{
-				State = 151;
+				State = 155;
 				externDeclaration();
 				}
 				break;
 			case 3:
 				EnterOuterAlt(_localctx, 3);
 				{
-				State = 152;
+				State = 156;
 				structDeclaration();
 				}
 				break;
 			case 4:
 				EnterOuterAlt(_localctx, 4);
 				{
-				State = 153;
+				State = 157;
 				unionDeclaration();
 				}
 				break;
 			case 5:
 				EnterOuterAlt(_localctx, 5);
 				{
-				State = 154;
+				State = 158;
 				extensionDeclaration();
 				}
 				break;
 			case 6:
 				EnterOuterAlt(_localctx, 6);
 				{
-				State = 155;
+				State = 159;
 				interfaceDeclaration();
 				}
 				break;
 			case 7:
 				EnterOuterAlt(_localctx, 7);
 				{
-				State = 156;
+				State = 160;
+				protocolDeclaration();
+				}
+				break;
+			case 8:
+				EnterOuterAlt(_localctx, 8);
+				{
+				State = 161;
 				globalVariableDeclaration();
 				}
 				break;
@@ -695,14 +707,14 @@ public partial class CvoloParser : Parser {
 		try {
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 159;
+			State = 164;
 			Match(GLOBAL);
-			State = 161;
+			State = 166;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
 			if (_la==VAL || _la==VAR) {
 				{
-				State = 160;
+				State = 165;
 				_la = TokenStream.LA(1);
 				if ( !(_la==VAL || _la==VAR) ) {
 				ErrorHandler.RecoverInline(this);
@@ -714,23 +726,23 @@ public partial class CvoloParser : Parser {
 				}
 			}
 
-			State = 163;
+			State = 168;
 			type(0);
-			State = 164;
+			State = 169;
 			Match(Identifier);
-			State = 167;
+			State = 172;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
 			if (_la==ASSIGN) {
 				{
-				State = 165;
+				State = 170;
 				Match(ASSIGN);
-				State = 166;
+				State = 171;
 				expression(0);
 				}
 			}
 
-			State = 169;
+			State = 174;
 			Match(SEMI);
 			}
 		}
@@ -789,27 +801,27 @@ public partial class CvoloParser : Parser {
 		try {
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 171;
+			State = 176;
 			Match(LBRACK);
-			State = 172;
-			attribute();
 			State = 177;
+			attribute();
+			State = 182;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
 			while (_la==COMMA) {
 				{
 				{
-				State = 173;
+				State = 178;
 				Match(COMMA);
-				State = 174;
+				State = 179;
 				attribute();
 				}
 				}
-				State = 179;
+				State = 184;
 				ErrorHandler.Sync(this);
 				_la = TokenStream.LA(1);
 			}
-			State = 180;
+			State = 185;
 			Match(RBRACK);
 			}
 		}
@@ -864,26 +876,26 @@ public partial class CvoloParser : Parser {
 		try {
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 182;
+			State = 187;
 			qualifiedName();
-			State = 188;
+			State = 193;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
 			if (_la==LPAREN) {
 				{
-				State = 183;
+				State = 188;
 				Match(LPAREN);
-				State = 185;
+				State = 190;
 				ErrorHandler.Sync(this);
 				_la = TokenStream.LA(1);
-				if ((((_la) & ~0x3f) == 0 && ((1L << _la) & 28358689803006008L) != 0) || ((((_la - 70)) & ~0x3f) == 0 && ((1L << (_la - 70)) & 129027L) != 0)) {
+				if ((((_la) & ~0x3f) == 0 && ((1L << _la) & 56717379605950520L) != 0) || ((((_la - 71)) & ~0x3f) == 0 && ((1L << (_la - 71)) & 129027L) != 0)) {
 					{
-					State = 184;
+					State = 189;
 					argumentList();
 					}
 				}
 
-				State = 187;
+				State = 192;
 				Match(RPAREN);
 				}
 			}
@@ -935,7 +947,7 @@ public partial class CvoloParser : Parser {
 		try {
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 190;
+			State = 195;
 			_la = TokenStream.LA(1);
 			if ( !(_la==UNSAFE || _la==UNBOUND) ) {
 			ErrorHandler.RecoverInline(this);
@@ -1015,63 +1027,63 @@ public partial class CvoloParser : Parser {
 		try {
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 195;
+			State = 200;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
 			while (_la==LBRACK) {
 				{
 				{
-				State = 192;
+				State = 197;
 				attributeList();
 				}
 				}
-				State = 197;
+				State = 202;
 				ErrorHandler.Sync(this);
 				_la = TokenStream.LA(1);
 			}
-			State = 199;
+			State = 204;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
 			if (_la==UNSAFE || _la==UNBOUND) {
 				{
-				State = 198;
+				State = 203;
 				functionModifier();
 				}
 			}
 
-			State = 201;
+			State = 206;
 			returnType();
-			State = 202;
-			Match(Identifier);
 			State = 207;
+			Match(Identifier);
+			State = 212;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
 			if (_la==LT) {
 				{
-				State = 203;
+				State = 208;
 				Match(LT);
-				State = 204;
+				State = 209;
 				typeList();
-				State = 205;
+				State = 210;
 				Match(GT);
 				}
 			}
 
-			State = 209;
+			State = 214;
 			Match(LPAREN);
-			State = 211;
+			State = 216;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
-			if ((((_la) & ~0x3f) == 0 && ((1L << _la) & 274879971368L) != 0) || _la==Identifier) {
+			if ((((_la) & ~0x3f) == 0 && ((1L << _la) & 549757878312L) != 0) || _la==Identifier) {
 				{
-				State = 210;
+				State = 215;
 				parameterList();
 				}
 			}
 
-			State = 213;
+			State = 218;
 			Match(RPAREN);
-			State = 214;
+			State = 219;
 			blockStatement();
 			}
 		}
@@ -1129,27 +1141,27 @@ public partial class CvoloParser : Parser {
 		try {
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 216;
-			Match(EXTERN);
-			State = 217;
-			returnType();
-			State = 218;
-			Match(Identifier);
-			State = 219;
-			Match(LPAREN);
 			State = 221;
+			Match(EXTERN);
+			State = 222;
+			returnType();
+			State = 223;
+			Match(Identifier);
+			State = 224;
+			Match(LPAREN);
+			State = 226;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
 			if ((((_la) & ~0x3f) == 0 && ((1L << _la) & 2064424L) != 0) || _la==ELLIPSIS || _la==Identifier) {
 				{
-				State = 220;
+				State = 225;
 				externParameterList();
 				}
 			}
 
-			State = 223;
+			State = 228;
 			Match(RPAREN);
-			State = 224;
+			State = 229;
 			Match(SEMI);
 			}
 		}
@@ -1218,62 +1230,62 @@ public partial class CvoloParser : Parser {
 		try {
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 229;
+			State = 234;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
 			while (_la==LBRACK) {
 				{
 				{
-				State = 226;
+				State = 231;
 				attributeList();
 				}
 				}
-				State = 231;
+				State = 236;
 				ErrorHandler.Sync(this);
 				_la = TokenStream.LA(1);
 			}
-			State = 232;
+			State = 237;
 			Match(STRUCT);
-			State = 233;
-			Match(Identifier);
 			State = 238;
+			Match(Identifier);
+			State = 243;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
 			if (_la==LT) {
 				{
-				State = 234;
+				State = 239;
 				Match(LT);
-				State = 235;
+				State = 240;
 				genericParameterList();
-				State = 236;
+				State = 241;
 				Match(GT);
 				}
 			}
 
-			State = 240;
+			State = 245;
 			Match(LBRACE);
-			State = 244;
+			State = 249;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
 			while ((((_la) & ~0x3f) == 0 && ((1L << _la) & 2064424L) != 0) || _la==Identifier) {
 				{
 				{
-				State = 241;
+				State = 246;
 				structField();
 				}
 				}
-				State = 246;
+				State = 251;
 				ErrorHandler.Sync(this);
 				_la = TokenStream.LA(1);
 			}
-			State = 247;
+			State = 252;
 			Match(RBRACE);
-			State = 249;
+			State = 254;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
 			if (_la==SEMI) {
 				{
-				State = 248;
+				State = 253;
 				Match(SEMI);
 				}
 			}
@@ -1345,62 +1357,62 @@ public partial class CvoloParser : Parser {
 		try {
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 254;
+			State = 259;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
 			while (_la==LBRACK) {
 				{
 				{
-				State = 251;
+				State = 256;
 				attributeList();
 				}
 				}
-				State = 256;
+				State = 261;
 				ErrorHandler.Sync(this);
 				_la = TokenStream.LA(1);
 			}
-			State = 257;
+			State = 262;
 			Match(UNION);
-			State = 258;
-			Match(Identifier);
 			State = 263;
+			Match(Identifier);
+			State = 268;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
 			if (_la==LT) {
 				{
-				State = 259;
+				State = 264;
 				Match(LT);
-				State = 260;
+				State = 265;
 				genericParameterList();
-				State = 261;
+				State = 266;
 				Match(GT);
 				}
 			}
 
-			State = 265;
+			State = 270;
 			Match(LBRACE);
-			State = 269;
+			State = 274;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
 			while ((((_la) & ~0x3f) == 0 && ((1L << _la) & 2064424L) != 0) || _la==Identifier) {
 				{
 				{
-				State = 266;
+				State = 271;
 				unionField();
 				}
 				}
-				State = 271;
+				State = 276;
 				ErrorHandler.Sync(this);
 				_la = TokenStream.LA(1);
 			}
-			State = 272;
+			State = 277;
 			Match(RBRACE);
-			State = 274;
+			State = 279;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
 			if (_la==SEMI) {
 				{
-				State = 273;
+				State = 278;
 				Match(SEMI);
 				}
 			}
@@ -1454,11 +1466,11 @@ public partial class CvoloParser : Parser {
 		try {
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 276;
+			State = 281;
 			type(0);
-			State = 277;
+			State = 282;
 			Match(Identifier);
-			State = 278;
+			State = 283;
 			Match(SEMI);
 			}
 		}
@@ -1537,78 +1549,78 @@ public partial class CvoloParser : Parser {
 		try {
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 280;
+			State = 285;
 			Match(EXTENSION);
-			State = 281;
-			Match(Identifier);
 			State = 286;
+			Match(Identifier);
+			State = 291;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
 			if (_la==LT) {
 				{
-				State = 282;
+				State = 287;
 				Match(LT);
-				State = 283;
+				State = 288;
 				genericParameterList();
-				State = 284;
+				State = 289;
 				Match(GT);
 				}
 			}
 
-			State = 290;
+			State = 295;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
 			if (_la==COLON) {
 				{
-				State = 288;
+				State = 293;
 				Match(COLON);
-				State = 289;
+				State = 294;
 				qualifiedName();
 				}
 			}
 
-			State = 292;
+			State = 297;
 			Match(LBRACE);
-			State = 298;
+			State = 303;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
-			while ((((_la) & ~0x3f) == 0 && ((1L << _la) & 9007474159878184L) != 0) || _la==Identifier) {
+			while ((((_la) & ~0x3f) == 0 && ((1L << _la) & 18014948292526120L) != 0) || _la==Identifier) {
 				{
-				State = 296;
+				State = 301;
 				ErrorHandler.Sync(this);
 				switch ( Interpreter.AdaptivePredict(TokenStream,30,Context) ) {
 				case 1:
 					{
-					State = 293;
+					State = 298;
 					functionDeclaration();
 					}
 					break;
 				case 2:
 					{
-					State = 294;
+					State = 299;
 					destructorDeclaration();
 					}
 					break;
 				case 3:
 					{
-					State = 295;
+					State = 300;
 					constructorDeclaration();
 					}
 					break;
 				}
 				}
-				State = 300;
+				State = 305;
 				ErrorHandler.Sync(this);
 				_la = TokenStream.LA(1);
 			}
-			State = 301;
+			State = 306;
 			Match(RBRACE);
-			State = 303;
+			State = 308;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
 			if (_la==SEMI) {
 				{
-				State = 302;
+				State = 307;
 				Match(SEMI);
 				}
 			}
@@ -1680,62 +1692,62 @@ public partial class CvoloParser : Parser {
 		try {
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 308;
+			State = 313;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
 			while (_la==LBRACK) {
 				{
 				{
-				State = 305;
+				State = 310;
 				attributeList();
 				}
 				}
-				State = 310;
+				State = 315;
 				ErrorHandler.Sync(this);
 				_la = TokenStream.LA(1);
 			}
-			State = 311;
+			State = 316;
 			Match(INTERFACE);
-			State = 312;
-			Match(Identifier);
 			State = 317;
+			Match(Identifier);
+			State = 322;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
 			if (_la==LT) {
 				{
-				State = 313;
+				State = 318;
 				Match(LT);
-				State = 314;
+				State = 319;
 				genericParameterList();
-				State = 315;
+				State = 320;
 				Match(GT);
 				}
 			}
 
-			State = 319;
+			State = 324;
 			Match(LBRACE);
-			State = 323;
+			State = 328;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
 			while ((((_la) & ~0x3f) == 0 && ((1L << _la) & 2064424L) != 0) || _la==Identifier) {
 				{
 				{
-				State = 320;
+				State = 325;
 				interfaceMember();
 				}
 				}
-				State = 325;
+				State = 330;
 				ErrorHandler.Sync(this);
 				_la = TokenStream.LA(1);
 			}
-			State = 326;
+			State = 331;
 			Match(RBRACE);
-			State = 328;
+			State = 333;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
 			if (_la==SEMI) {
 				{
-				State = 327;
+				State = 332;
 				Match(SEMI);
 				}
 			}
@@ -1795,25 +1807,243 @@ public partial class CvoloParser : Parser {
 		try {
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 330;
+			State = 335;
 			returnType();
-			State = 331;
+			State = 336;
 			Match(Identifier);
-			State = 332;
+			State = 337;
 			Match(LPAREN);
-			State = 334;
+			State = 339;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
-			if ((((_la) & ~0x3f) == 0 && ((1L << _la) & 274879971368L) != 0) || _la==Identifier) {
+			if ((((_la) & ~0x3f) == 0 && ((1L << _la) & 549757878312L) != 0) || _la==Identifier) {
 				{
-				State = 333;
+				State = 338;
 				parameterList();
 				}
 			}
 
-			State = 336;
+			State = 341;
 			Match(RPAREN);
-			State = 337;
+			State = 342;
+			Match(SEMI);
+			}
+		}
+		catch (RecognitionException re) {
+			_localctx.exception = re;
+			ErrorHandler.ReportError(this, re);
+			ErrorHandler.Recover(this, re);
+		}
+		finally {
+			ExitRule();
+		}
+		return _localctx;
+	}
+
+	public partial class ProtocolDeclarationContext : ParserRuleContext {
+		[System.Diagnostics.DebuggerNonUserCode] public ITerminalNode PROTOCOL() { return GetToken(CvoloParser.PROTOCOL, 0); }
+		[System.Diagnostics.DebuggerNonUserCode] public ITerminalNode Identifier() { return GetToken(CvoloParser.Identifier, 0); }
+		[System.Diagnostics.DebuggerNonUserCode] public ITerminalNode LBRACE() { return GetToken(CvoloParser.LBRACE, 0); }
+		[System.Diagnostics.DebuggerNonUserCode] public ITerminalNode RBRACE() { return GetToken(CvoloParser.RBRACE, 0); }
+		[System.Diagnostics.DebuggerNonUserCode] public AttributeListContext[] attributeList() {
+			return GetRuleContexts<AttributeListContext>();
+		}
+		[System.Diagnostics.DebuggerNonUserCode] public AttributeListContext attributeList(int i) {
+			return GetRuleContext<AttributeListContext>(i);
+		}
+		[System.Diagnostics.DebuggerNonUserCode] public ITerminalNode LT() { return GetToken(CvoloParser.LT, 0); }
+		[System.Diagnostics.DebuggerNonUserCode] public GenericParameterListContext genericParameterList() {
+			return GetRuleContext<GenericParameterListContext>(0);
+		}
+		[System.Diagnostics.DebuggerNonUserCode] public ITerminalNode GT() { return GetToken(CvoloParser.GT, 0); }
+		[System.Diagnostics.DebuggerNonUserCode] public ITerminalNode FOR() { return GetToken(CvoloParser.FOR, 0); }
+		[System.Diagnostics.DebuggerNonUserCode] public TypeContext type() {
+			return GetRuleContext<TypeContext>(0);
+		}
+		[System.Diagnostics.DebuggerNonUserCode] public ProtocolMemberContext[] protocolMember() {
+			return GetRuleContexts<ProtocolMemberContext>();
+		}
+		[System.Diagnostics.DebuggerNonUserCode] public ProtocolMemberContext protocolMember(int i) {
+			return GetRuleContext<ProtocolMemberContext>(i);
+		}
+		[System.Diagnostics.DebuggerNonUserCode] public ITerminalNode SEMI() { return GetToken(CvoloParser.SEMI, 0); }
+		public ProtocolDeclarationContext(ParserRuleContext parent, int invokingState)
+			: base(parent, invokingState)
+		{
+		}
+		public override int RuleIndex { get { return RULE_protocolDeclaration; } }
+		[System.Diagnostics.DebuggerNonUserCode]
+		public override void EnterRule(IParseTreeListener listener) {
+			ICvoloParserListener typedListener = listener as ICvoloParserListener;
+			if (typedListener != null) typedListener.EnterProtocolDeclaration(this);
+		}
+		[System.Diagnostics.DebuggerNonUserCode]
+		public override void ExitRule(IParseTreeListener listener) {
+			ICvoloParserListener typedListener = listener as ICvoloParserListener;
+			if (typedListener != null) typedListener.ExitProtocolDeclaration(this);
+		}
+		[System.Diagnostics.DebuggerNonUserCode]
+		public override TResult Accept<TResult>(IParseTreeVisitor<TResult> visitor) {
+			ICvoloParserVisitor<TResult> typedVisitor = visitor as ICvoloParserVisitor<TResult>;
+			if (typedVisitor != null) return typedVisitor.VisitProtocolDeclaration(this);
+			else return visitor.VisitChildren(this);
+		}
+	}
+
+	[RuleVersion(0)]
+	public ProtocolDeclarationContext protocolDeclaration() {
+		ProtocolDeclarationContext _localctx = new ProtocolDeclarationContext(Context, State);
+		EnterRule(_localctx, 34, RULE_protocolDeclaration);
+		int _la;
+		try {
+			EnterOuterAlt(_localctx, 1);
+			{
+			State = 347;
+			ErrorHandler.Sync(this);
+			_la = TokenStream.LA(1);
+			while (_la==LBRACK) {
+				{
+				{
+				State = 344;
+				attributeList();
+				}
+				}
+				State = 349;
+				ErrorHandler.Sync(this);
+				_la = TokenStream.LA(1);
+			}
+			State = 350;
+			Match(PROTOCOL);
+			State = 351;
+			Match(Identifier);
+			State = 356;
+			ErrorHandler.Sync(this);
+			_la = TokenStream.LA(1);
+			if (_la==LT) {
+				{
+				State = 352;
+				Match(LT);
+				State = 353;
+				genericParameterList();
+				State = 354;
+				Match(GT);
+				}
+			}
+
+			State = 360;
+			ErrorHandler.Sync(this);
+			_la = TokenStream.LA(1);
+			if (_la==FOR) {
+				{
+				State = 358;
+				Match(FOR);
+				State = 359;
+				type(0);
+				}
+			}
+
+			State = 362;
+			Match(LBRACE);
+			State = 366;
+			ErrorHandler.Sync(this);
+			_la = TokenStream.LA(1);
+			while ((((_la) & ~0x3f) == 0 && ((1L << _la) & 2064424L) != 0) || _la==Identifier) {
+				{
+				{
+				State = 363;
+				protocolMember();
+				}
+				}
+				State = 368;
+				ErrorHandler.Sync(this);
+				_la = TokenStream.LA(1);
+			}
+			State = 369;
+			Match(RBRACE);
+			State = 371;
+			ErrorHandler.Sync(this);
+			_la = TokenStream.LA(1);
+			if (_la==SEMI) {
+				{
+				State = 370;
+				Match(SEMI);
+				}
+			}
+
+			}
+		}
+		catch (RecognitionException re) {
+			_localctx.exception = re;
+			ErrorHandler.ReportError(this, re);
+			ErrorHandler.Recover(this, re);
+		}
+		finally {
+			ExitRule();
+		}
+		return _localctx;
+	}
+
+	public partial class ProtocolMemberContext : ParserRuleContext {
+		[System.Diagnostics.DebuggerNonUserCode] public ReturnTypeContext returnType() {
+			return GetRuleContext<ReturnTypeContext>(0);
+		}
+		[System.Diagnostics.DebuggerNonUserCode] public ITerminalNode Identifier() { return GetToken(CvoloParser.Identifier, 0); }
+		[System.Diagnostics.DebuggerNonUserCode] public ITerminalNode LPAREN() { return GetToken(CvoloParser.LPAREN, 0); }
+		[System.Diagnostics.DebuggerNonUserCode] public ITerminalNode RPAREN() { return GetToken(CvoloParser.RPAREN, 0); }
+		[System.Diagnostics.DebuggerNonUserCode] public ITerminalNode SEMI() { return GetToken(CvoloParser.SEMI, 0); }
+		[System.Diagnostics.DebuggerNonUserCode] public ParameterListContext parameterList() {
+			return GetRuleContext<ParameterListContext>(0);
+		}
+		public ProtocolMemberContext(ParserRuleContext parent, int invokingState)
+			: base(parent, invokingState)
+		{
+		}
+		public override int RuleIndex { get { return RULE_protocolMember; } }
+		[System.Diagnostics.DebuggerNonUserCode]
+		public override void EnterRule(IParseTreeListener listener) {
+			ICvoloParserListener typedListener = listener as ICvoloParserListener;
+			if (typedListener != null) typedListener.EnterProtocolMember(this);
+		}
+		[System.Diagnostics.DebuggerNonUserCode]
+		public override void ExitRule(IParseTreeListener listener) {
+			ICvoloParserListener typedListener = listener as ICvoloParserListener;
+			if (typedListener != null) typedListener.ExitProtocolMember(this);
+		}
+		[System.Diagnostics.DebuggerNonUserCode]
+		public override TResult Accept<TResult>(IParseTreeVisitor<TResult> visitor) {
+			ICvoloParserVisitor<TResult> typedVisitor = visitor as ICvoloParserVisitor<TResult>;
+			if (typedVisitor != null) return typedVisitor.VisitProtocolMember(this);
+			else return visitor.VisitChildren(this);
+		}
+	}
+
+	[RuleVersion(0)]
+	public ProtocolMemberContext protocolMember() {
+		ProtocolMemberContext _localctx = new ProtocolMemberContext(Context, State);
+		EnterRule(_localctx, 36, RULE_protocolMember);
+		int _la;
+		try {
+			EnterOuterAlt(_localctx, 1);
+			{
+			State = 373;
+			returnType();
+			State = 374;
+			Match(Identifier);
+			State = 375;
+			Match(LPAREN);
+			State = 377;
+			ErrorHandler.Sync(this);
+			_la = TokenStream.LA(1);
+			if ((((_la) & ~0x3f) == 0 && ((1L << _la) & 549757878312L) != 0) || _la==Identifier) {
+				{
+				State = 376;
+				parameterList();
+				}
+			}
+
+			State = 379;
+			Match(RPAREN);
+			State = 380;
 			Match(SEMI);
 			}
 		}
@@ -1869,41 +2099,41 @@ public partial class CvoloParser : Parser {
 	[RuleVersion(0)]
 	public DestructorDeclarationContext destructorDeclaration() {
 		DestructorDeclarationContext _localctx = new DestructorDeclarationContext(Context, State);
-		EnterRule(_localctx, 34, RULE_destructorDeclaration);
+		EnterRule(_localctx, 38, RULE_destructorDeclaration);
 		int _la;
 		try {
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 342;
+			State = 385;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
 			while (_la==LBRACK) {
 				{
 				{
-				State = 339;
+				State = 382;
 				attributeList();
 				}
 				}
-				State = 344;
+				State = 387;
 				ErrorHandler.Sync(this);
 				_la = TokenStream.LA(1);
 			}
-			State = 345;
+			State = 388;
 			Match(TILDE);
-			State = 346;
+			State = 389;
 			Match(Identifier);
-			State = 347;
+			State = 390;
 			Match(LPAREN);
-			State = 348;
+			State = 391;
 			Match(RPAREN);
-			State = 349;
+			State = 392;
 			blockStatement();
-			State = 351;
+			State = 394;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
 			if (_la==SEMI) {
 				{
-				State = 350;
+				State = 393;
 				Match(SEMI);
 				}
 			}
@@ -1964,49 +2194,49 @@ public partial class CvoloParser : Parser {
 	[RuleVersion(0)]
 	public ConstructorDeclarationContext constructorDeclaration() {
 		ConstructorDeclarationContext _localctx = new ConstructorDeclarationContext(Context, State);
-		EnterRule(_localctx, 36, RULE_constructorDeclaration);
+		EnterRule(_localctx, 40, RULE_constructorDeclaration);
 		int _la;
 		try {
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 356;
+			State = 399;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
 			while (_la==LBRACK) {
 				{
 				{
-				State = 353;
+				State = 396;
 				attributeList();
 				}
 				}
-				State = 358;
+				State = 401;
 				ErrorHandler.Sync(this);
 				_la = TokenStream.LA(1);
 			}
-			State = 359;
+			State = 402;
 			Match(Identifier);
-			State = 360;
+			State = 403;
 			Match(LPAREN);
-			State = 362;
+			State = 405;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
-			if ((((_la) & ~0x3f) == 0 && ((1L << _la) & 274879971368L) != 0) || _la==Identifier) {
+			if ((((_la) & ~0x3f) == 0 && ((1L << _la) & 549757878312L) != 0) || _la==Identifier) {
 				{
-				State = 361;
+				State = 404;
 				parameterList();
 				}
 			}
 
-			State = 364;
+			State = 407;
 			Match(RPAREN);
-			State = 365;
+			State = 408;
 			blockStatement();
-			State = 367;
+			State = 410;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
 			if (_la==SEMI) {
 				{
-				State = 366;
+				State = 409;
 				Match(SEMI);
 				}
 			}
@@ -2056,15 +2286,15 @@ public partial class CvoloParser : Parser {
 	[RuleVersion(0)]
 	public StructFieldContext structField() {
 		StructFieldContext _localctx = new StructFieldContext(Context, State);
-		EnterRule(_localctx, 38, RULE_structField);
+		EnterRule(_localctx, 42, RULE_structField);
 		try {
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 369;
+			State = 412;
 			type(0);
-			State = 370;
+			State = 413;
 			Match(Identifier);
-			State = 371;
+			State = 414;
 			Match(SEMI);
 			}
 		}
@@ -2110,22 +2340,22 @@ public partial class CvoloParser : Parser {
 	[RuleVersion(0)]
 	public ReturnTypeContext returnType() {
 		ReturnTypeContext _localctx = new ReturnTypeContext(Context, State);
-		EnterRule(_localctx, 40, RULE_returnType);
+		EnterRule(_localctx, 44, RULE_returnType);
 		try {
-			State = 375;
+			State = 418;
 			ErrorHandler.Sync(this);
-			switch ( Interpreter.AdaptivePredict(TokenStream,43,Context) ) {
+			switch ( Interpreter.AdaptivePredict(TokenStream,49,Context) ) {
 			case 1:
 				EnterOuterAlt(_localctx, 1);
 				{
-				State = 373;
+				State = 416;
 				Match(VOID);
 				}
 				break;
 			case 2:
 				EnterOuterAlt(_localctx, 2);
 				{
-				State = 374;
+				State = 417;
 				type(0);
 				}
 				break;
@@ -2374,22 +2604,22 @@ public partial class CvoloParser : Parser {
 		int _parentState = State;
 		TypeContext _localctx = new TypeContext(Context, _parentState);
 		TypeContext _prevctx = _localctx;
-		int _startState = 42;
-		EnterRecursionRule(_localctx, 42, RULE_type, _p);
+		int _startState = 46;
+		EnterRecursionRule(_localctx, 46, RULE_type, _p);
 		try {
 			int _alt;
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 385;
+			State = 428;
 			ErrorHandler.Sync(this);
-			switch ( Interpreter.AdaptivePredict(TokenStream,44,Context) ) {
+			switch ( Interpreter.AdaptivePredict(TokenStream,50,Context) ) {
 			case 1:
 				{
 				_localctx = new BaseTypeContext(_localctx);
 				Context = _localctx;
 				_prevctx = _localctx;
 
-				State = 378;
+				State = 421;
 				primitiveType();
 				}
 				break;
@@ -2398,7 +2628,7 @@ public partial class CvoloParser : Parser {
 				_localctx = new QualifiedTypeContext(_localctx);
 				Context = _localctx;
 				_prevctx = _localctx;
-				State = 379;
+				State = 422;
 				qualifiedName();
 				}
 				break;
@@ -2407,7 +2637,7 @@ public partial class CvoloParser : Parser {
 				_localctx = new IdentifierTypeContext(_localctx);
 				Context = _localctx;
 				_prevctx = _localctx;
-				State = 380;
+				State = 423;
 				Match(Identifier);
 				}
 				break;
@@ -2416,9 +2646,9 @@ public partial class CvoloParser : Parser {
 				_localctx = new RefVarTypeContext(_localctx);
 				Context = _localctx;
 				_prevctx = _localctx;
-				State = 381;
+				State = 424;
 				Match(REFVAR);
-				State = 382;
+				State = 425;
 				type(2);
 				}
 				break;
@@ -2427,35 +2657,35 @@ public partial class CvoloParser : Parser {
 				_localctx = new ReadOnlyRefTypeContext(_localctx);
 				Context = _localctx;
 				_prevctx = _localctx;
-				State = 383;
+				State = 426;
 				Match(REF);
-				State = 384;
+				State = 427;
 				type(1);
 				}
 				break;
 			}
 			Context.Stop = TokenStream.LT(-1);
-			State = 403;
+			State = 446;
 			ErrorHandler.Sync(this);
-			_alt = Interpreter.AdaptivePredict(TokenStream,46,Context);
+			_alt = Interpreter.AdaptivePredict(TokenStream,52,Context);
 			while ( _alt!=2 && _alt!=global::Antlr4.Runtime.Atn.ATN.INVALID_ALT_NUMBER ) {
 				if ( _alt==1 ) {
 					if ( ParseListeners!=null )
 						TriggerExitRuleEvent();
 					_prevctx = _localctx;
 					{
-					State = 401;
+					State = 444;
 					ErrorHandler.Sync(this);
-					switch ( Interpreter.AdaptivePredict(TokenStream,45,Context) ) {
+					switch ( Interpreter.AdaptivePredict(TokenStream,51,Context) ) {
 					case 1:
 						{
 						_localctx = new SliceTypeContext(new TypeContext(_parentctx, _parentState));
 						PushNewRecursionContext(_localctx, _startState, RULE_type);
-						State = 387;
+						State = 430;
 						if (!(Precpred(Context, 6))) throw new FailedPredicateException(this, "Precpred(Context, 6)");
-						State = 388;
+						State = 431;
 						Match(LBRACK);
-						State = 389;
+						State = 432;
 						Match(RBRACK);
 						}
 						break;
@@ -2463,13 +2693,13 @@ public partial class CvoloParser : Parser {
 						{
 						_localctx = new ArrayTypeContext(new TypeContext(_parentctx, _parentState));
 						PushNewRecursionContext(_localctx, _startState, RULE_type);
-						State = 390;
+						State = 433;
 						if (!(Precpred(Context, 5))) throw new FailedPredicateException(this, "Precpred(Context, 5)");
-						State = 391;
+						State = 434;
 						Match(LBRACK);
-						State = 392;
+						State = 435;
 						Match(IntegerLiteral);
-						State = 393;
+						State = 436;
 						Match(RBRACK);
 						}
 						break;
@@ -2477,13 +2707,13 @@ public partial class CvoloParser : Parser {
 						{
 						_localctx = new GenericInstantiationTypeContext(new TypeContext(_parentctx, _parentState));
 						PushNewRecursionContext(_localctx, _startState, RULE_type);
-						State = 394;
+						State = 437;
 						if (!(Precpred(Context, 4))) throw new FailedPredicateException(this, "Precpred(Context, 4)");
-						State = 395;
+						State = 438;
 						Match(LT);
-						State = 396;
+						State = 439;
 						typeList();
-						State = 397;
+						State = 440;
 						Match(GT);
 						}
 						break;
@@ -2491,18 +2721,18 @@ public partial class CvoloParser : Parser {
 						{
 						_localctx = new PointerTypeContext(new TypeContext(_parentctx, _parentState));
 						PushNewRecursionContext(_localctx, _startState, RULE_type);
-						State = 399;
+						State = 442;
 						if (!(Precpred(Context, 3))) throw new FailedPredicateException(this, "Precpred(Context, 3)");
-						State = 400;
+						State = 443;
 						Match(STAR);
 						}
 						break;
 					}
 					} 
 				}
-				State = 405;
+				State = 448;
 				ErrorHandler.Sync(this);
-				_alt = Interpreter.AdaptivePredict(TokenStream,46,Context);
+				_alt = Interpreter.AdaptivePredict(TokenStream,52,Context);
 			}
 			}
 		}
@@ -2550,12 +2780,12 @@ public partial class CvoloParser : Parser {
 	[RuleVersion(0)]
 	public PrimitiveTypeContext primitiveType() {
 		PrimitiveTypeContext _localctx = new PrimitiveTypeContext(Context, State);
-		EnterRule(_localctx, 44, RULE_primitiveType);
+		EnterRule(_localctx, 48, RULE_primitiveType);
 		int _la;
 		try {
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 406;
+			State = 449;
 			_la = TokenStream.LA(1);
 			if ( !((((_la) & ~0x3f) == 0 && ((1L << _la) & 2064384L) != 0)) ) {
 			ErrorHandler.RecoverInline(this);
@@ -2614,26 +2844,26 @@ public partial class CvoloParser : Parser {
 	[RuleVersion(0)]
 	public ParameterListContext parameterList() {
 		ParameterListContext _localctx = new ParameterListContext(Context, State);
-		EnterRule(_localctx, 46, RULE_parameterList);
+		EnterRule(_localctx, 50, RULE_parameterList);
 		int _la;
 		try {
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 408;
+			State = 451;
 			parameter();
-			State = 413;
+			State = 456;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
 			while (_la==COMMA) {
 				{
 				{
-				State = 409;
+				State = 452;
 				Match(COMMA);
-				State = 410;
+				State = 453;
 				parameter();
 				}
 				}
-				State = 415;
+				State = 458;
 				ErrorHandler.Sync(this);
 				_la = TokenStream.LA(1);
 			}
@@ -2687,28 +2917,28 @@ public partial class CvoloParser : Parser {
 	[RuleVersion(0)]
 	public ParameterContext parameter() {
 		ParameterContext _localctx = new ParameterContext(Context, State);
-		EnterRule(_localctx, 48, RULE_parameter);
+		EnterRule(_localctx, 52, RULE_parameter);
 		int _la;
 		try {
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 419;
+			State = 462;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
 			while (_la==LBRACK) {
 				{
 				{
-				State = 416;
+				State = 459;
 				attributeList();
 				}
 				}
-				State = 421;
+				State = 464;
 				ErrorHandler.Sync(this);
 				_la = TokenStream.LA(1);
 			}
-			State = 422;
+			State = 465;
 			type(0);
-			State = 423;
+			State = 466;
 			Match(Identifier);
 			}
 		}
@@ -2760,26 +2990,26 @@ public partial class CvoloParser : Parser {
 	[RuleVersion(0)]
 	public ExternParameterListContext externParameterList() {
 		ExternParameterListContext _localctx = new ExternParameterListContext(Context, State);
-		EnterRule(_localctx, 50, RULE_externParameterList);
+		EnterRule(_localctx, 54, RULE_externParameterList);
 		int _la;
 		try {
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 425;
+			State = 468;
 			externParameter();
-			State = 430;
+			State = 473;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
 			while (_la==COMMA) {
 				{
 				{
-				State = 426;
+				State = 469;
 				Match(COMMA);
-				State = 427;
+				State = 470;
 				externParameter();
 				}
 				}
-				State = 432;
+				State = 475;
 				ErrorHandler.Sync(this);
 				_la = TokenStream.LA(1);
 			}
@@ -2828,9 +3058,9 @@ public partial class CvoloParser : Parser {
 	[RuleVersion(0)]
 	public ExternParameterContext externParameter() {
 		ExternParameterContext _localctx = new ExternParameterContext(Context, State);
-		EnterRule(_localctx, 52, RULE_externParameter);
+		EnterRule(_localctx, 56, RULE_externParameter);
 		try {
-			State = 437;
+			State = 480;
 			ErrorHandler.Sync(this);
 			switch (TokenStream.LA(1)) {
 			case REFVAR:
@@ -2844,16 +3074,16 @@ public partial class CvoloParser : Parser {
 			case Identifier:
 				EnterOuterAlt(_localctx, 1);
 				{
-				State = 433;
+				State = 476;
 				type(0);
-				State = 434;
+				State = 477;
 				Match(Identifier);
 				}
 				break;
 			case ELLIPSIS:
 				EnterOuterAlt(_localctx, 2);
 				{
-				State = 436;
+				State = 479;
 				Match(ELLIPSIS);
 				}
 				break;
@@ -2907,28 +3137,28 @@ public partial class CvoloParser : Parser {
 	[RuleVersion(0)]
 	public BlockStatementContext blockStatement() {
 		BlockStatementContext _localctx = new BlockStatementContext(Context, State);
-		EnterRule(_localctx, 54, RULE_blockStatement);
+		EnterRule(_localctx, 58, RULE_blockStatement);
 		int _la;
 		try {
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 439;
+			State = 482;
 			Match(LBRACE);
-			State = 443;
+			State = 486;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
-			while ((((_la) & ~0x3f) == 0 && ((1L << _la) & 28358691960913342L) != 0) || ((((_la - 70)) & ~0x3f) == 0 && ((1L << (_la - 70)) & 129027L) != 0)) {
+			while ((((_la) & ~0x3f) == 0 && ((1L << _la) & 56717383911341502L) != 0) || ((((_la - 71)) & ~0x3f) == 0 && ((1L << (_la - 71)) & 129027L) != 0)) {
 				{
 				{
-				State = 440;
+				State = 483;
 				statement();
 				}
 				}
-				State = 445;
+				State = 488;
 				ErrorHandler.Sync(this);
 				_la = TokenStream.LA(1);
 			}
-			State = 446;
+			State = 489;
 			Match(RBRACE);
 			}
 		}
@@ -2997,71 +3227,71 @@ public partial class CvoloParser : Parser {
 	[RuleVersion(0)]
 	public StatementContext statement() {
 		StatementContext _localctx = new StatementContext(Context, State);
-		EnterRule(_localctx, 56, RULE_statement);
+		EnterRule(_localctx, 60, RULE_statement);
 		try {
-			State = 457;
+			State = 500;
 			ErrorHandler.Sync(this);
-			switch ( Interpreter.AdaptivePredict(TokenStream,52,Context) ) {
+			switch ( Interpreter.AdaptivePredict(TokenStream,58,Context) ) {
 			case 1:
 				EnterOuterAlt(_localctx, 1);
 				{
-				State = 448;
+				State = 491;
 				returnStatement();
 				}
 				break;
 			case 2:
 				EnterOuterAlt(_localctx, 2);
 				{
-				State = 449;
+				State = 492;
 				variableDeclaration();
 				}
 				break;
 			case 3:
 				EnterOuterAlt(_localctx, 3);
 				{
-				State = 450;
+				State = 493;
 				expressionStatement();
 				}
 				break;
 			case 4:
 				EnterOuterAlt(_localctx, 4);
 				{
-				State = 451;
+				State = 494;
 				ifStatement();
 				}
 				break;
 			case 5:
 				EnterOuterAlt(_localctx, 5);
 				{
-				State = 452;
+				State = 495;
 				whileStatement();
 				}
 				break;
 			case 6:
 				EnterOuterAlt(_localctx, 6);
 				{
-				State = 453;
+				State = 496;
 				forStatement();
 				}
 				break;
 			case 7:
 				EnterOuterAlt(_localctx, 7);
 				{
-				State = 454;
+				State = 497;
 				unsafeBlockStatement();
 				}
 				break;
 			case 8:
 				EnterOuterAlt(_localctx, 8);
 				{
-				State = 455;
+				State = 498;
 				switchStatement();
 				}
 				break;
 			case 9:
 				EnterOuterAlt(_localctx, 9);
 				{
-				State = 456;
+				State = 499;
 				blockStatement();
 				}
 				break;
@@ -3109,13 +3339,13 @@ public partial class CvoloParser : Parser {
 	[RuleVersion(0)]
 	public UnsafeBlockStatementContext unsafeBlockStatement() {
 		UnsafeBlockStatementContext _localctx = new UnsafeBlockStatementContext(Context, State);
-		EnterRule(_localctx, 58, RULE_unsafeBlockStatement);
+		EnterRule(_localctx, 62, RULE_unsafeBlockStatement);
 		try {
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 459;
+			State = 502;
 			Match(UNSAFE);
-			State = 460;
+			State = 503;
 			blockStatement();
 			}
 		}
@@ -3162,24 +3392,24 @@ public partial class CvoloParser : Parser {
 	[RuleVersion(0)]
 	public ReturnStatementContext returnStatement() {
 		ReturnStatementContext _localctx = new ReturnStatementContext(Context, State);
-		EnterRule(_localctx, 60, RULE_returnStatement);
+		EnterRule(_localctx, 64, RULE_returnStatement);
 		int _la;
 		try {
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 462;
+			State = 505;
 			Match(RETURN);
-			State = 464;
+			State = 507;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
-			if ((((_la) & ~0x3f) == 0 && ((1L << _la) & 28358689803006008L) != 0) || ((((_la - 70)) & ~0x3f) == 0 && ((1L << (_la - 70)) & 129027L) != 0)) {
+			if ((((_la) & ~0x3f) == 0 && ((1L << _la) & 56717379605950520L) != 0) || ((((_la - 71)) & ~0x3f) == 0 && ((1L << (_la - 71)) & 129027L) != 0)) {
 				{
-				State = 463;
+				State = 506;
 				expression(0);
 				}
 			}
 
-			State = 466;
+			State = 509;
 			Match(SEMI);
 			}
 		}
@@ -3225,13 +3455,13 @@ public partial class CvoloParser : Parser {
 	[RuleVersion(0)]
 	public ExpressionStatementContext expressionStatement() {
 		ExpressionStatementContext _localctx = new ExpressionStatementContext(Context, State);
-		EnterRule(_localctx, 62, RULE_expressionStatement);
+		EnterRule(_localctx, 66, RULE_expressionStatement);
 		try {
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 468;
+			State = 511;
 			expression(0);
-			State = 469;
+			State = 512;
 			Match(SEMI);
 			}
 		}
@@ -3291,16 +3521,16 @@ public partial class CvoloParser : Parser {
 	[RuleVersion(0)]
 	public VariableDeclarationContext variableDeclaration() {
 		VariableDeclarationContext _localctx = new VariableDeclarationContext(Context, State);
-		EnterRule(_localctx, 64, RULE_variableDeclaration);
+		EnterRule(_localctx, 68, RULE_variableDeclaration);
 		int _la;
 		try {
-			State = 531;
+			State = 574;
 			ErrorHandler.Sync(this);
-			switch ( Interpreter.AdaptivePredict(TokenStream,57,Context) ) {
+			switch ( Interpreter.AdaptivePredict(TokenStream,63,Context) ) {
 			case 1:
 				EnterOuterAlt(_localctx, 1);
 				{
-				State = 471;
+				State = 514;
 				_la = TokenStream.LA(1);
 				if ( !(_la==VAL || _la==VAR) ) {
 				ErrorHandler.RecoverInline(this);
@@ -3309,91 +3539,91 @@ public partial class CvoloParser : Parser {
 					ErrorHandler.ReportMatch(this);
 				    Consume();
 				}
-				State = 473;
+				State = 516;
 				ErrorHandler.Sync(this);
-				switch ( Interpreter.AdaptivePredict(TokenStream,54,Context) ) {
+				switch ( Interpreter.AdaptivePredict(TokenStream,60,Context) ) {
 				case 1:
 					{
-					State = 472;
+					State = 515;
 					type(0);
 					}
 					break;
 				}
-				State = 475;
+				State = 518;
 				Match(Identifier);
-				State = 478;
+				State = 521;
 				ErrorHandler.Sync(this);
 				_la = TokenStream.LA(1);
 				if (_la==ASSIGN) {
 					{
-					State = 476;
+					State = 519;
 					Match(ASSIGN);
-					State = 477;
+					State = 520;
 					expression(0);
 					}
 				}
 
-				State = 480;
+				State = 523;
 				Match(SEMI);
 				}
 				break;
 			case 2:
 				EnterOuterAlt(_localctx, 2);
 				{
-				State = 481;
+				State = 524;
 				type(0);
-				State = 482;
+				State = 525;
 				Match(Identifier);
-				State = 485;
+				State = 528;
 				ErrorHandler.Sync(this);
 				_la = TokenStream.LA(1);
 				if (_la==ASSIGN) {
 					{
-					State = 483;
+					State = 526;
 					Match(ASSIGN);
-					State = 484;
+					State = 527;
 					expression(0);
 					}
 				}
 
-				State = 487;
+				State = 530;
 				Match(SEMI);
 				}
 				break;
 			case 3:
 				EnterOuterAlt(_localctx, 3);
 				{
-				State = 489;
+				State = 532;
 				Match(REFVAR);
-				State = 490;
+				State = 533;
 				Match(Identifier);
-				State = 491;
+				State = 534;
 				Match(ASSIGN);
-				State = 492;
+				State = 535;
 				expression(0);
-				State = 493;
+				State = 536;
 				Match(SEMI);
 				}
 				break;
 			case 4:
 				EnterOuterAlt(_localctx, 4);
 				{
-				State = 495;
+				State = 538;
 				Match(REF);
-				State = 496;
+				State = 539;
 				Match(Identifier);
-				State = 497;
+				State = 540;
 				Match(ASSIGN);
-				State = 498;
+				State = 541;
 				expression(0);
-				State = 499;
+				State = 542;
 				Match(SEMI);
 				}
 				break;
 			case 5:
 				EnterOuterAlt(_localctx, 5);
 				{
-				State = 501;
+				State = 544;
 				_la = TokenStream.LA(1);
 				if ( !(_la==VAL || _la==VAR) ) {
 				ErrorHandler.RecoverInline(this);
@@ -3402,41 +3632,41 @@ public partial class CvoloParser : Parser {
 					ErrorHandler.ReportMatch(this);
 				    Consume();
 				}
-				State = 502;
+				State = 545;
 				type(0);
-				State = 503;
+				State = 546;
 				Match(Identifier);
-				State = 504;
+				State = 547;
 				Match(LPAREN);
-				State = 505;
+				State = 548;
 				structInitializerList();
-				State = 506;
+				State = 549;
 				Match(RPAREN);
-				State = 507;
+				State = 550;
 				Match(SEMI);
 				}
 				break;
 			case 6:
 				EnterOuterAlt(_localctx, 6);
 				{
-				State = 509;
+				State = 552;
 				type(0);
-				State = 510;
+				State = 553;
 				Match(Identifier);
-				State = 511;
+				State = 554;
 				Match(LPAREN);
-				State = 512;
+				State = 555;
 				structInitializerList();
-				State = 513;
+				State = 556;
 				Match(RPAREN);
-				State = 514;
+				State = 557;
 				Match(SEMI);
 				}
 				break;
 			case 7:
 				EnterOuterAlt(_localctx, 7);
 				{
-				State = 516;
+				State = 559;
 				_la = TokenStream.LA(1);
 				if ( !(_la==VAL || _la==VAR) ) {
 				ErrorHandler.RecoverInline(this);
@@ -3445,34 +3675,34 @@ public partial class CvoloParser : Parser {
 					ErrorHandler.ReportMatch(this);
 				    Consume();
 				}
-				State = 517;
+				State = 560;
 				type(0);
-				State = 518;
+				State = 561;
 				Match(Identifier);
-				State = 519;
+				State = 562;
 				Match(LPAREN);
-				State = 520;
+				State = 563;
 				expression(0);
-				State = 521;
+				State = 564;
 				Match(RPAREN);
-				State = 522;
+				State = 565;
 				Match(SEMI);
 				}
 				break;
 			case 8:
 				EnterOuterAlt(_localctx, 8);
 				{
-				State = 524;
+				State = 567;
 				type(0);
-				State = 525;
+				State = 568;
 				Match(Identifier);
-				State = 526;
+				State = 569;
 				Match(LPAREN);
-				State = 527;
+				State = 570;
 				expression(0);
-				State = 528;
+				State = 571;
 				Match(RPAREN);
-				State = 529;
+				State = 572;
 				Match(SEMI);
 				}
 				break;
@@ -3529,28 +3759,28 @@ public partial class CvoloParser : Parser {
 	[RuleVersion(0)]
 	public IfStatementContext ifStatement() {
 		IfStatementContext _localctx = new IfStatementContext(Context, State);
-		EnterRule(_localctx, 66, RULE_ifStatement);
+		EnterRule(_localctx, 70, RULE_ifStatement);
 		try {
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 533;
+			State = 576;
 			Match(IF);
-			State = 534;
+			State = 577;
 			Match(LPAREN);
-			State = 535;
+			State = 578;
 			expression(0);
-			State = 536;
+			State = 579;
 			Match(RPAREN);
-			State = 537;
+			State = 580;
 			statement();
-			State = 540;
+			State = 583;
 			ErrorHandler.Sync(this);
-			switch ( Interpreter.AdaptivePredict(TokenStream,58,Context) ) {
+			switch ( Interpreter.AdaptivePredict(TokenStream,64,Context) ) {
 			case 1:
 				{
-				State = 538;
+				State = 581;
 				Match(ELSE);
-				State = 539;
+				State = 582;
 				statement();
 				}
 				break;
@@ -3604,19 +3834,19 @@ public partial class CvoloParser : Parser {
 	[RuleVersion(0)]
 	public WhileStatementContext whileStatement() {
 		WhileStatementContext _localctx = new WhileStatementContext(Context, State);
-		EnterRule(_localctx, 68, RULE_whileStatement);
+		EnterRule(_localctx, 72, RULE_whileStatement);
 		try {
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 542;
+			State = 585;
 			Match(WHILE);
-			State = 543;
+			State = 586;
 			Match(LPAREN);
-			State = 544;
+			State = 587;
 			expression(0);
-			State = 545;
+			State = 588;
 			Match(RPAREN);
-			State = 546;
+			State = 589;
 			statement();
 			}
 		}
@@ -3674,25 +3904,25 @@ public partial class CvoloParser : Parser {
 	[RuleVersion(0)]
 	public ForStatementContext forStatement() {
 		ForStatementContext _localctx = new ForStatementContext(Context, State);
-		EnterRule(_localctx, 70, RULE_forStatement);
+		EnterRule(_localctx, 74, RULE_forStatement);
 		try {
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 548;
+			State = 591;
 			Match(FOR);
-			State = 549;
+			State = 592;
 			Match(LPAREN);
-			State = 550;
+			State = 593;
 			variableDeclaration();
-			State = 551;
+			State = 594;
 			expression(0);
-			State = 552;
+			State = 595;
 			Match(SEMI);
-			State = 553;
+			State = 596;
 			expression(0);
-			State = 554;
+			State = 597;
 			Match(RPAREN);
-			State = 555;
+			State = 598;
 			statement();
 			}
 		}
@@ -4793,23 +5023,23 @@ public partial class CvoloParser : Parser {
 		int _parentState = State;
 		ExpressionContext _localctx = new ExpressionContext(Context, _parentState);
 		ExpressionContext _prevctx = _localctx;
-		int _startState = 72;
-		EnterRecursionRule(_localctx, 72, RULE_expression, _p);
+		int _startState = 76;
+		EnterRecursionRule(_localctx, 76, RULE_expression, _p);
 		int _la;
 		try {
 			int _alt;
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 642;
+			State = 685;
 			ErrorHandler.Sync(this);
-			switch ( Interpreter.AdaptivePredict(TokenStream,65,Context) ) {
+			switch ( Interpreter.AdaptivePredict(TokenStream,71,Context) ) {
 			case 1:
 				{
 				_localctx = new BorrowExpressionContext(_localctx);
 				Context = _localctx;
 				_prevctx = _localctx;
 
-				State = 558;
+				State = 601;
 				_la = TokenStream.LA(1);
 				if ( !(_la==REFVAR || _la==REF) ) {
 				ErrorHandler.RecoverInline(this);
@@ -4818,7 +5048,7 @@ public partial class CvoloParser : Parser {
 					ErrorHandler.ReportMatch(this);
 				    Consume();
 				}
-				State = 559;
+				State = 602;
 				expression(41);
 				}
 				break;
@@ -4827,13 +5057,13 @@ public partial class CvoloParser : Parser {
 				_localctx = new CastExpressionContext(_localctx);
 				Context = _localctx;
 				_prevctx = _localctx;
-				State = 560;
+				State = 603;
 				Match(LPAREN);
-				State = 561;
+				State = 604;
 				type(0);
-				State = 562;
+				State = 605;
 				Match(RPAREN);
-				State = 563;
+				State = 606;
 				expression(38);
 				}
 				break;
@@ -4842,9 +5072,9 @@ public partial class CvoloParser : Parser {
 				_localctx = new DereferenceExpressionContext(_localctx);
 				Context = _localctx;
 				_prevctx = _localctx;
-				State = 565;
+				State = 608;
 				Match(STAR);
-				State = 566;
+				State = 609;
 				expression(37);
 				}
 				break;
@@ -4853,9 +5083,9 @@ public partial class CvoloParser : Parser {
 				_localctx = new AddressOfExpressionContext(_localctx);
 				Context = _localctx;
 				_prevctx = _localctx;
-				State = 567;
+				State = 610;
 				Match(AMPERSAND);
-				State = 568;
+				State = 611;
 				expression(36);
 				}
 				break;
@@ -4864,9 +5094,9 @@ public partial class CvoloParser : Parser {
 				_localctx = new UnaryMinusExpressionContext(_localctx);
 				Context = _localctx;
 				_prevctx = _localctx;
-				State = 569;
+				State = 612;
 				Match(MINUS);
-				State = 570;
+				State = 613;
 				expression(35);
 				}
 				break;
@@ -4875,9 +5105,9 @@ public partial class CvoloParser : Parser {
 				_localctx = new LogicalNotExpressionContext(_localctx);
 				Context = _localctx;
 				_prevctx = _localctx;
-				State = 571;
+				State = 614;
 				Match(EXCLAMATION);
-				State = 572;
+				State = 615;
 				expression(34);
 				}
 				break;
@@ -4886,9 +5116,9 @@ public partial class CvoloParser : Parser {
 				_localctx = new BitwiseNotExpressionContext(_localctx);
 				Context = _localctx;
 				_prevctx = _localctx;
-				State = 573;
+				State = 616;
 				Match(TILDE);
-				State = 574;
+				State = 617;
 				expression(33);
 				}
 				break;
@@ -4897,9 +5127,9 @@ public partial class CvoloParser : Parser {
 				_localctx = new PrefixIncrementExpressionContext(_localctx);
 				Context = _localctx;
 				_prevctx = _localctx;
-				State = 575;
+				State = 618;
 				Match(INC);
-				State = 576;
+				State = 619;
 				expression(32);
 				}
 				break;
@@ -4908,9 +5138,9 @@ public partial class CvoloParser : Parser {
 				_localctx = new PrefixDecrementExpressionContext(_localctx);
 				Context = _localctx;
 				_prevctx = _localctx;
-				State = 577;
+				State = 620;
 				Match(DEC);
-				State = 578;
+				State = 621;
 				expression(31);
 				}
 				break;
@@ -4919,35 +5149,35 @@ public partial class CvoloParser : Parser {
 				_localctx = new CallExpressionContext(_localctx);
 				Context = _localctx;
 				_prevctx = _localctx;
-				State = 579;
+				State = 622;
 				qualifiedName();
-				State = 584;
+				State = 627;
 				ErrorHandler.Sync(this);
 				_la = TokenStream.LA(1);
 				if (_la==LT) {
 					{
-					State = 580;
+					State = 623;
 					Match(LT);
-					State = 581;
+					State = 624;
 					typeList();
-					State = 582;
+					State = 625;
 					Match(GT);
 					}
 				}
 
-				State = 586;
+				State = 629;
 				Match(LPAREN);
-				State = 588;
+				State = 631;
 				ErrorHandler.Sync(this);
 				_la = TokenStream.LA(1);
-				if ((((_la) & ~0x3f) == 0 && ((1L << _la) & 28358689803006008L) != 0) || ((((_la - 70)) & ~0x3f) == 0 && ((1L << (_la - 70)) & 129027L) != 0)) {
+				if ((((_la) & ~0x3f) == 0 && ((1L << _la) & 56717379605950520L) != 0) || ((((_la - 71)) & ~0x3f) == 0 && ((1L << (_la - 71)) & 129027L) != 0)) {
 					{
-					State = 587;
+					State = 630;
 					argumentList();
 					}
 				}
 
-				State = 590;
+				State = 633;
 				Match(RPAREN);
 				}
 				break;
@@ -4956,9 +5186,9 @@ public partial class CvoloParser : Parser {
 				_localctx = new HeapAllocationExpressionContext(_localctx);
 				Context = _localctx;
 				_prevctx = _localctx;
-				State = 592;
+				State = 635;
 				Match(HEAP);
-				State = 593;
+				State = 636;
 				expression(16);
 				}
 				break;
@@ -4967,15 +5197,15 @@ public partial class CvoloParser : Parser {
 				_localctx = new HeapArrayAllocationExpressionContext(_localctx);
 				Context = _localctx;
 				_prevctx = _localctx;
-				State = 594;
+				State = 637;
 				Match(HEAP);
-				State = 595;
+				State = 638;
 				type(0);
-				State = 596;
+				State = 639;
 				Match(LBRACK);
-				State = 597;
+				State = 640;
 				expression(0);
-				State = 598;
+				State = 641;
 				Match(RBRACK);
 				}
 				break;
@@ -4984,35 +5214,35 @@ public partial class CvoloParser : Parser {
 				_localctx = new ArrayInitializationExpressionContext(_localctx);
 				Context = _localctx;
 				_prevctx = _localctx;
-				State = 600;
+				State = 643;
 				Match(LBRACE);
-				State = 609;
+				State = 652;
 				ErrorHandler.Sync(this);
 				_la = TokenStream.LA(1);
-				if ((((_la) & ~0x3f) == 0 && ((1L << _la) & 28358689803006008L) != 0) || ((((_la - 70)) & ~0x3f) == 0 && ((1L << (_la - 70)) & 129027L) != 0)) {
+				if ((((_la) & ~0x3f) == 0 && ((1L << _la) & 56717379605950520L) != 0) || ((((_la - 71)) & ~0x3f) == 0 && ((1L << (_la - 71)) & 129027L) != 0)) {
 					{
-					State = 601;
+					State = 644;
 					expression(0);
-					State = 606;
+					State = 649;
 					ErrorHandler.Sync(this);
 					_la = TokenStream.LA(1);
 					while (_la==COMMA) {
 						{
 						{
-						State = 602;
+						State = 645;
 						Match(COMMA);
-						State = 603;
+						State = 646;
 						expression(0);
 						}
 						}
-						State = 608;
+						State = 651;
 						ErrorHandler.Sync(this);
 						_la = TokenStream.LA(1);
 					}
 					}
 				}
 
-				State = 611;
+				State = 654;
 				Match(RBRACE);
 				}
 				break;
@@ -5021,35 +5251,35 @@ public partial class CvoloParser : Parser {
 				_localctx = new StructInitializationExpressionContext(_localctx);
 				Context = _localctx;
 				_prevctx = _localctx;
-				State = 612;
+				State = 655;
 				Match(Identifier);
-				State = 617;
+				State = 660;
 				ErrorHandler.Sync(this);
 				_la = TokenStream.LA(1);
 				if (_la==LT) {
 					{
-					State = 613;
+					State = 656;
 					Match(LT);
-					State = 614;
+					State = 657;
 					typeList();
-					State = 615;
+					State = 658;
 					Match(GT);
 					}
 				}
 
-				State = 619;
+				State = 662;
 				Match(LBRACE);
-				State = 621;
+				State = 664;
 				ErrorHandler.Sync(this);
 				_la = TokenStream.LA(1);
 				if (_la==Identifier) {
 					{
-					State = 620;
+					State = 663;
 					structInitializerList();
 					}
 				}
 
-				State = 623;
+				State = 666;
 				Match(RBRACE);
 				}
 				break;
@@ -5058,11 +5288,11 @@ public partial class CvoloParser : Parser {
 				_localctx = new ParenthesizedStructInitializerContext(_localctx);
 				Context = _localctx;
 				_prevctx = _localctx;
-				State = 624;
+				State = 667;
 				Match(LPAREN);
-				State = 625;
+				State = 668;
 				structInitializerList();
-				State = 626;
+				State = 669;
 				Match(RPAREN);
 				}
 				break;
@@ -5071,7 +5301,7 @@ public partial class CvoloParser : Parser {
 				_localctx = new IdentifierExpressionContext(_localctx);
 				Context = _localctx;
 				_prevctx = _localctx;
-				State = 628;
+				State = 671;
 				Match(Identifier);
 				}
 				break;
@@ -5080,7 +5310,7 @@ public partial class CvoloParser : Parser {
 				_localctx = new IntegerLiteralExpressionContext(_localctx);
 				Context = _localctx;
 				_prevctx = _localctx;
-				State = 629;
+				State = 672;
 				Match(IntegerLiteral);
 				}
 				break;
@@ -5089,7 +5319,7 @@ public partial class CvoloParser : Parser {
 				_localctx = new DoubleLiteralExpressionContext(_localctx);
 				Context = _localctx;
 				_prevctx = _localctx;
-				State = 630;
+				State = 673;
 				Match(DoubleLiteral);
 				}
 				break;
@@ -5098,7 +5328,7 @@ public partial class CvoloParser : Parser {
 				_localctx = new StringLiteralExpressionContext(_localctx);
 				Context = _localctx;
 				_prevctx = _localctx;
-				State = 631;
+				State = 674;
 				Match(StringLiteral);
 				}
 				break;
@@ -5107,7 +5337,7 @@ public partial class CvoloParser : Parser {
 				_localctx = new InterpolatedStringExpressionContext(_localctx);
 				Context = _localctx;
 				_prevctx = _localctx;
-				State = 632;
+				State = 675;
 				Match(InterpolatedStringLiteral);
 				}
 				break;
@@ -5116,7 +5346,7 @@ public partial class CvoloParser : Parser {
 				_localctx = new CharLiteralExpressionContext(_localctx);
 				Context = _localctx;
 				_prevctx = _localctx;
-				State = 633;
+				State = 676;
 				Match(CharLiteral);
 				}
 				break;
@@ -5125,7 +5355,7 @@ public partial class CvoloParser : Parser {
 				_localctx = new BooleanLiteralExpressionContext(_localctx);
 				Context = _localctx;
 				_prevctx = _localctx;
-				State = 634;
+				State = 677;
 				Match(TRUE);
 				}
 				break;
@@ -5134,7 +5364,7 @@ public partial class CvoloParser : Parser {
 				_localctx = new BooleanLiteralExpressionContext(_localctx);
 				Context = _localctx;
 				_prevctx = _localctx;
-				State = 635;
+				State = 678;
 				Match(FALSE);
 				}
 				break;
@@ -5143,7 +5373,7 @@ public partial class CvoloParser : Parser {
 				_localctx = new NullLiteralExpressionContext(_localctx);
 				Context = _localctx;
 				_prevctx = _localctx;
-				State = 636;
+				State = 679;
 				Match(NULL);
 				}
 				break;
@@ -5152,7 +5382,7 @@ public partial class CvoloParser : Parser {
 				_localctx = new VoidLiteralExpressionContext(_localctx);
 				Context = _localctx;
 				_prevctx = _localctx;
-				State = 637;
+				State = 680;
 				Match(VOID);
 				}
 				break;
@@ -5161,44 +5391,44 @@ public partial class CvoloParser : Parser {
 				_localctx = new ParenthesizedExpressionContext(_localctx);
 				Context = _localctx;
 				_prevctx = _localctx;
-				State = 638;
+				State = 681;
 				Match(LPAREN);
-				State = 639;
+				State = 682;
 				expression(0);
-				State = 640;
+				State = 683;
 				Match(RPAREN);
 				}
 				break;
 			}
 			Context.Stop = TokenStream.LT(-1);
-			State = 703;
+			State = 746;
 			ErrorHandler.Sync(this);
-			_alt = Interpreter.AdaptivePredict(TokenStream,67,Context);
+			_alt = Interpreter.AdaptivePredict(TokenStream,73,Context);
 			while ( _alt!=2 && _alt!=global::Antlr4.Runtime.Atn.ATN.INVALID_ALT_NUMBER ) {
 				if ( _alt==1 ) {
 					if ( ParseListeners!=null )
 						TriggerExitRuleEvent();
 					_prevctx = _localctx;
 					{
-					State = 701;
+					State = 744;
 					ErrorHandler.Sync(this);
-					switch ( Interpreter.AdaptivePredict(TokenStream,66,Context) ) {
+					switch ( Interpreter.AdaptivePredict(TokenStream,72,Context) ) {
 					case 1:
 						{
 						_localctx = new MultiplicativeExpressionContext(new ExpressionContext(_parentctx, _parentState));
 						PushNewRecursionContext(_localctx, _startState, RULE_expression);
-						State = 644;
+						State = 687;
 						if (!(Precpred(Context, 30))) throw new FailedPredicateException(this, "Precpred(Context, 30)");
-						State = 645;
+						State = 688;
 						_la = TokenStream.LA(1);
-						if ( !((((_la) & ~0x3f) == 0 && ((1L << _la) & 985162418487296L) != 0)) ) {
+						if ( !((((_la) & ~0x3f) == 0 && ((1L << _la) & 1970324836974592L) != 0)) ) {
 						ErrorHandler.RecoverInline(this);
 						}
 						else {
 							ErrorHandler.ReportMatch(this);
 						    Consume();
 						}
-						State = 646;
+						State = 689;
 						expression(31);
 						}
 						break;
@@ -5206,9 +5436,9 @@ public partial class CvoloParser : Parser {
 						{
 						_localctx = new AdditiveExpressionContext(new ExpressionContext(_parentctx, _parentState));
 						PushNewRecursionContext(_localctx, _startState, RULE_expression);
-						State = 647;
+						State = 690;
 						if (!(Precpred(Context, 29))) throw new FailedPredicateException(this, "Precpred(Context, 29)");
-						State = 648;
+						State = 691;
 						_la = TokenStream.LA(1);
 						if ( !(_la==PLUS || _la==MINUS) ) {
 						ErrorHandler.RecoverInline(this);
@@ -5217,7 +5447,7 @@ public partial class CvoloParser : Parser {
 							ErrorHandler.ReportMatch(this);
 						    Consume();
 						}
-						State = 649;
+						State = 692;
 						expression(30);
 						}
 						break;
@@ -5225,18 +5455,18 @@ public partial class CvoloParser : Parser {
 						{
 						_localctx = new ShiftExpressionContext(new ExpressionContext(_parentctx, _parentState));
 						PushNewRecursionContext(_localctx, _startState, RULE_expression);
-						State = 650;
+						State = 693;
 						if (!(Precpred(Context, 28))) throw new FailedPredicateException(this, "Precpred(Context, 28)");
-						State = 651;
+						State = 694;
 						_la = TokenStream.LA(1);
-						if ( !(((((_la - 72)) & ~0x3f) == 0 && ((1L << (_la - 72)) & 7L) != 0)) ) {
+						if ( !(((((_la - 73)) & ~0x3f) == 0 && ((1L << (_la - 73)) & 7L) != 0)) ) {
 						ErrorHandler.RecoverInline(this);
 						}
 						else {
 							ErrorHandler.ReportMatch(this);
 						    Consume();
 						}
-						State = 652;
+						State = 695;
 						expression(29);
 						}
 						break;
@@ -5244,18 +5474,18 @@ public partial class CvoloParser : Parser {
 						{
 						_localctx = new RelationalExpressionContext(new ExpressionContext(_parentctx, _parentState));
 						PushNewRecursionContext(_localctx, _startState, RULE_expression);
-						State = 653;
+						State = 696;
 						if (!(Precpred(Context, 27))) throw new FailedPredicateException(this, "Precpred(Context, 27)");
-						State = 654;
+						State = 697;
 						_la = TokenStream.LA(1);
-						if ( !((((_la) & ~0x3f) == 0 && ((1L << _la) & 3674937295934324736L) != 0)) ) {
+						if ( !((((_la) & ~0x3f) == 0 && ((1L << _la) & 7349874591868649472L) != 0)) ) {
 						ErrorHandler.RecoverInline(this);
 						}
 						else {
 							ErrorHandler.ReportMatch(this);
 						    Consume();
 						}
-						State = 655;
+						State = 698;
 						expression(28);
 						}
 						break;
@@ -5263,9 +5493,9 @@ public partial class CvoloParser : Parser {
 						{
 						_localctx = new EqualityExpressionContext(new ExpressionContext(_parentctx, _parentState));
 						PushNewRecursionContext(_localctx, _startState, RULE_expression);
-						State = 656;
+						State = 699;
 						if (!(Precpred(Context, 26))) throw new FailedPredicateException(this, "Precpred(Context, 26)");
-						State = 657;
+						State = 700;
 						_la = TokenStream.LA(1);
 						if ( !(_la==EQ || _la==NEQ) ) {
 						ErrorHandler.RecoverInline(this);
@@ -5274,7 +5504,7 @@ public partial class CvoloParser : Parser {
 							ErrorHandler.ReportMatch(this);
 						    Consume();
 						}
-						State = 658;
+						State = 701;
 						expression(27);
 						}
 						break;
@@ -5282,11 +5512,11 @@ public partial class CvoloParser : Parser {
 						{
 						_localctx = new BitwiseAndExpressionContext(new ExpressionContext(_parentctx, _parentState));
 						PushNewRecursionContext(_localctx, _startState, RULE_expression);
-						State = 659;
+						State = 702;
 						if (!(Precpred(Context, 25))) throw new FailedPredicateException(this, "Precpred(Context, 25)");
-						State = 660;
+						State = 703;
 						Match(AMPERSAND);
-						State = 661;
+						State = 704;
 						expression(26);
 						}
 						break;
@@ -5294,11 +5524,11 @@ public partial class CvoloParser : Parser {
 						{
 						_localctx = new BitwiseXorExpressionContext(new ExpressionContext(_parentctx, _parentState));
 						PushNewRecursionContext(_localctx, _startState, RULE_expression);
-						State = 662;
+						State = 705;
 						if (!(Precpred(Context, 24))) throw new FailedPredicateException(this, "Precpred(Context, 24)");
-						State = 663;
+						State = 706;
 						Match(CARET);
-						State = 664;
+						State = 707;
 						expression(25);
 						}
 						break;
@@ -5306,11 +5536,11 @@ public partial class CvoloParser : Parser {
 						{
 						_localctx = new BitwiseOrExpressionContext(new ExpressionContext(_parentctx, _parentState));
 						PushNewRecursionContext(_localctx, _startState, RULE_expression);
-						State = 665;
+						State = 708;
 						if (!(Precpred(Context, 23))) throw new FailedPredicateException(this, "Precpred(Context, 23)");
-						State = 666;
+						State = 709;
 						Match(PIPE);
-						State = 667;
+						State = 710;
 						expression(24);
 						}
 						break;
@@ -5318,11 +5548,11 @@ public partial class CvoloParser : Parser {
 						{
 						_localctx = new LogicalAndExpressionContext(new ExpressionContext(_parentctx, _parentState));
 						PushNewRecursionContext(_localctx, _startState, RULE_expression);
-						State = 668;
+						State = 711;
 						if (!(Precpred(Context, 22))) throw new FailedPredicateException(this, "Precpred(Context, 22)");
-						State = 669;
+						State = 712;
 						Match(AND);
-						State = 670;
+						State = 713;
 						expression(23);
 						}
 						break;
@@ -5330,11 +5560,11 @@ public partial class CvoloParser : Parser {
 						{
 						_localctx = new LogicalOrExpressionContext(new ExpressionContext(_parentctx, _parentState));
 						PushNewRecursionContext(_localctx, _startState, RULE_expression);
-						State = 671;
+						State = 714;
 						if (!(Precpred(Context, 21))) throw new FailedPredicateException(this, "Precpred(Context, 21)");
-						State = 672;
+						State = 715;
 						Match(OR);
-						State = 673;
+						State = 716;
 						expression(22);
 						}
 						break;
@@ -5342,15 +5572,15 @@ public partial class CvoloParser : Parser {
 						{
 						_localctx = new TernaryExpressionContext(new ExpressionContext(_parentctx, _parentState));
 						PushNewRecursionContext(_localctx, _startState, RULE_expression);
-						State = 674;
+						State = 717;
 						if (!(Precpred(Context, 20))) throw new FailedPredicateException(this, "Precpred(Context, 20)");
-						State = 675;
+						State = 718;
 						Match(QMARK);
-						State = 676;
+						State = 719;
 						expression(0);
-						State = 677;
+						State = 720;
 						Match(COLON);
-						State = 678;
+						State = 721;
 						expression(21);
 						}
 						break;
@@ -5358,11 +5588,11 @@ public partial class CvoloParser : Parser {
 						{
 						_localctx = new AssignmentExpressionContext(new ExpressionContext(_parentctx, _parentState));
 						PushNewRecursionContext(_localctx, _startState, RULE_expression);
-						State = 680;
+						State = 723;
 						if (!(Precpred(Context, 19))) throw new FailedPredicateException(this, "Precpred(Context, 19)");
-						State = 681;
+						State = 724;
 						Match(ASSIGN);
-						State = 682;
+						State = 725;
 						expression(20);
 						}
 						break;
@@ -5370,18 +5600,18 @@ public partial class CvoloParser : Parser {
 						{
 						_localctx = new CompoundAssignmentExpressionContext(new ExpressionContext(_parentctx, _parentState));
 						PushNewRecursionContext(_localctx, _startState, RULE_expression);
-						State = 683;
+						State = 726;
 						if (!(Precpred(Context, 18))) throw new FailedPredicateException(this, "Precpred(Context, 18)");
-						State = 684;
+						State = 727;
 						_la = TokenStream.LA(1);
-						if ( !(((((_la - 64)) & ~0x3f) == 0 && ((1L << (_la - 64)) & 129039L) != 0)) ) {
+						if ( !(((((_la - 65)) & ~0x3f) == 0 && ((1L << (_la - 65)) & 129039L) != 0)) ) {
 						ErrorHandler.RecoverInline(this);
 						}
 						else {
 							ErrorHandler.ReportMatch(this);
 						    Consume();
 						}
-						State = 685;
+						State = 728;
 						expression(19);
 						}
 						break;
@@ -5389,11 +5619,11 @@ public partial class CvoloParser : Parser {
 						{
 						_localctx = new MemberAccessExpressionContext(new ExpressionContext(_parentctx, _parentState));
 						PushNewRecursionContext(_localctx, _startState, RULE_expression);
-						State = 686;
+						State = 729;
 						if (!(Precpred(Context, 44))) throw new FailedPredicateException(this, "Precpred(Context, 44)");
-						State = 687;
+						State = 730;
 						Match(DOT);
-						State = 688;
+						State = 731;
 						Match(Identifier);
 						}
 						break;
@@ -5401,11 +5631,11 @@ public partial class CvoloParser : Parser {
 						{
 						_localctx = new ArrowMemberAccessExpressionContext(new ExpressionContext(_parentctx, _parentState));
 						PushNewRecursionContext(_localctx, _startState, RULE_expression);
-						State = 689;
+						State = 732;
 						if (!(Precpred(Context, 43))) throw new FailedPredicateException(this, "Precpred(Context, 43)");
-						State = 690;
+						State = 733;
 						Match(ARROW);
-						State = 691;
+						State = 734;
 						Match(Identifier);
 						}
 						break;
@@ -5413,13 +5643,13 @@ public partial class CvoloParser : Parser {
 						{
 						_localctx = new IndexExpressionContext(new ExpressionContext(_parentctx, _parentState));
 						PushNewRecursionContext(_localctx, _startState, RULE_expression);
-						State = 692;
+						State = 735;
 						if (!(Precpred(Context, 42))) throw new FailedPredicateException(this, "Precpred(Context, 42)");
-						State = 693;
+						State = 736;
 						Match(LBRACK);
-						State = 694;
+						State = 737;
 						expression(0);
-						State = 695;
+						State = 738;
 						Match(RBRACK);
 						}
 						break;
@@ -5427,9 +5657,9 @@ public partial class CvoloParser : Parser {
 						{
 						_localctx = new PostfixIncrementExpressionContext(new ExpressionContext(_parentctx, _parentState));
 						PushNewRecursionContext(_localctx, _startState, RULE_expression);
-						State = 697;
+						State = 740;
 						if (!(Precpred(Context, 40))) throw new FailedPredicateException(this, "Precpred(Context, 40)");
-						State = 698;
+						State = 741;
 						Match(INC);
 						}
 						break;
@@ -5437,18 +5667,18 @@ public partial class CvoloParser : Parser {
 						{
 						_localctx = new PostfixDecrementExpressionContext(new ExpressionContext(_parentctx, _parentState));
 						PushNewRecursionContext(_localctx, _startState, RULE_expression);
-						State = 699;
+						State = 742;
 						if (!(Precpred(Context, 39))) throw new FailedPredicateException(this, "Precpred(Context, 39)");
-						State = 700;
+						State = 743;
 						Match(DEC);
 						}
 						break;
 					}
 					} 
 				}
-				State = 705;
+				State = 748;
 				ErrorHandler.Sync(this);
-				_alt = Interpreter.AdaptivePredict(TokenStream,67,Context);
+				_alt = Interpreter.AdaptivePredict(TokenStream,73,Context);
 			}
 			}
 		}
@@ -5500,26 +5730,26 @@ public partial class CvoloParser : Parser {
 	[RuleVersion(0)]
 	public ArgumentListContext argumentList() {
 		ArgumentListContext _localctx = new ArgumentListContext(Context, State);
-		EnterRule(_localctx, 74, RULE_argumentList);
+		EnterRule(_localctx, 78, RULE_argumentList);
 		int _la;
 		try {
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 706;
+			State = 749;
 			expression(0);
-			State = 711;
+			State = 754;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
 			while (_la==COMMA) {
 				{
 				{
-				State = 707;
+				State = 750;
 				Match(COMMA);
-				State = 708;
+				State = 751;
 				expression(0);
 				}
 				}
-				State = 713;
+				State = 756;
 				ErrorHandler.Sync(this);
 				_la = TokenStream.LA(1);
 			}
@@ -5573,26 +5803,26 @@ public partial class CvoloParser : Parser {
 	[RuleVersion(0)]
 	public StructInitializerListContext structInitializerList() {
 		StructInitializerListContext _localctx = new StructInitializerListContext(Context, State);
-		EnterRule(_localctx, 76, RULE_structInitializerList);
+		EnterRule(_localctx, 80, RULE_structInitializerList);
 		int _la;
 		try {
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 714;
+			State = 757;
 			structMemberInitializer();
-			State = 719;
+			State = 762;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
 			while (_la==COMMA) {
 				{
 				{
-				State = 715;
+				State = 758;
 				Match(COMMA);
-				State = 716;
+				State = 759;
 				structMemberInitializer();
 				}
 				}
-				State = 721;
+				State = 764;
 				ErrorHandler.Sync(this);
 				_la = TokenStream.LA(1);
 			}
@@ -5641,15 +5871,15 @@ public partial class CvoloParser : Parser {
 	[RuleVersion(0)]
 	public StructMemberInitializerContext structMemberInitializer() {
 		StructMemberInitializerContext _localctx = new StructMemberInitializerContext(Context, State);
-		EnterRule(_localctx, 78, RULE_structMemberInitializer);
+		EnterRule(_localctx, 82, RULE_structMemberInitializer);
 		try {
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 722;
+			State = 765;
 			Match(Identifier);
-			State = 723;
+			State = 766;
 			Match(COLON);
-			State = 724;
+			State = 767;
 			expression(0);
 			}
 		}
@@ -5699,26 +5929,26 @@ public partial class CvoloParser : Parser {
 	[RuleVersion(0)]
 	public GenericParameterListContext genericParameterList() {
 		GenericParameterListContext _localctx = new GenericParameterListContext(Context, State);
-		EnterRule(_localctx, 80, RULE_genericParameterList);
+		EnterRule(_localctx, 84, RULE_genericParameterList);
 		int _la;
 		try {
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 726;
+			State = 769;
 			Match(Identifier);
-			State = 731;
+			State = 774;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
 			while (_la==COMMA) {
 				{
 				{
-				State = 727;
+				State = 770;
 				Match(COMMA);
-				State = 728;
+				State = 771;
 				Match(Identifier);
 				}
 				}
-				State = 733;
+				State = 776;
 				ErrorHandler.Sync(this);
 				_la = TokenStream.LA(1);
 			}
@@ -5772,26 +6002,26 @@ public partial class CvoloParser : Parser {
 	[RuleVersion(0)]
 	public TypeListContext typeList() {
 		TypeListContext _localctx = new TypeListContext(Context, State);
-		EnterRule(_localctx, 82, RULE_typeList);
+		EnterRule(_localctx, 86, RULE_typeList);
 		int _la;
 		try {
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 734;
+			State = 777;
 			type(0);
-			State = 739;
+			State = 782;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
 			while (_la==COMMA) {
 				{
 				{
-				State = 735;
+				State = 778;
 				Match(COMMA);
-				State = 736;
+				State = 779;
 				type(0);
 				}
 				}
-				State = 741;
+				State = 784;
 				ErrorHandler.Sync(this);
 				_la = TokenStream.LA(1);
 			}
@@ -5849,36 +6079,36 @@ public partial class CvoloParser : Parser {
 	[RuleVersion(0)]
 	public SwitchStatementContext switchStatement() {
 		SwitchStatementContext _localctx = new SwitchStatementContext(Context, State);
-		EnterRule(_localctx, 84, RULE_switchStatement);
+		EnterRule(_localctx, 88, RULE_switchStatement);
 		int _la;
 		try {
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 742;
+			State = 785;
 			Match(SWITCH);
-			State = 743;
+			State = 786;
 			Match(LPAREN);
-			State = 744;
+			State = 787;
 			expression(0);
-			State = 745;
+			State = 788;
 			Match(RPAREN);
-			State = 746;
+			State = 789;
 			Match(LBRACE);
-			State = 750;
+			State = 793;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
 			while (_la==CASE || _la==DEFAULT) {
 				{
 				{
-				State = 747;
+				State = 790;
 				switchCase();
 				}
 				}
-				State = 752;
+				State = 795;
 				ErrorHandler.Sync(this);
 				_la = TokenStream.LA(1);
 			}
-			State = 753;
+			State = 796;
 			Match(RBRACE);
 			}
 		}
@@ -5932,32 +6162,32 @@ public partial class CvoloParser : Parser {
 	[RuleVersion(0)]
 	public SwitchCaseContext switchCase() {
 		SwitchCaseContext _localctx = new SwitchCaseContext(Context, State);
-		EnterRule(_localctx, 86, RULE_switchCase);
+		EnterRule(_localctx, 90, RULE_switchCase);
 		int _la;
 		try {
-			State = 772;
+			State = 815;
 			ErrorHandler.Sync(this);
 			switch (TokenStream.LA(1)) {
 			case CASE:
 				EnterOuterAlt(_localctx, 1);
 				{
-				State = 755;
+				State = 798;
 				Match(CASE);
-				State = 756;
+				State = 799;
 				pattern();
-				State = 757;
+				State = 800;
 				Match(COLON);
-				State = 761;
+				State = 804;
 				ErrorHandler.Sync(this);
 				_la = TokenStream.LA(1);
-				while ((((_la) & ~0x3f) == 0 && ((1L << _la) & 28358691960913342L) != 0) || ((((_la - 70)) & ~0x3f) == 0 && ((1L << (_la - 70)) & 129027L) != 0)) {
+				while ((((_la) & ~0x3f) == 0 && ((1L << _la) & 56717383911341502L) != 0) || ((((_la - 71)) & ~0x3f) == 0 && ((1L << (_la - 71)) & 129027L) != 0)) {
 					{
 					{
-					State = 758;
+					State = 801;
 					statement();
 					}
 					}
-					State = 763;
+					State = 806;
 					ErrorHandler.Sync(this);
 					_la = TokenStream.LA(1);
 				}
@@ -5966,21 +6196,21 @@ public partial class CvoloParser : Parser {
 			case DEFAULT:
 				EnterOuterAlt(_localctx, 2);
 				{
-				State = 764;
+				State = 807;
 				Match(DEFAULT);
-				State = 765;
+				State = 808;
 				Match(COLON);
-				State = 769;
+				State = 812;
 				ErrorHandler.Sync(this);
 				_la = TokenStream.LA(1);
-				while ((((_la) & ~0x3f) == 0 && ((1L << _la) & 28358691960913342L) != 0) || ((((_la - 70)) & ~0x3f) == 0 && ((1L << (_la - 70)) & 129027L) != 0)) {
+				while ((((_la) & ~0x3f) == 0 && ((1L << _la) & 56717383911341502L) != 0) || ((((_la - 71)) & ~0x3f) == 0 && ((1L << (_la - 71)) & 129027L) != 0)) {
 					{
 					{
-					State = 766;
+					State = 809;
 					statement();
 					}
 					}
-					State = 771;
+					State = 814;
 					ErrorHandler.Sync(this);
 					_la = TokenStream.LA(1);
 				}
@@ -6060,18 +6290,18 @@ public partial class CvoloParser : Parser {
 	[RuleVersion(0)]
 	public PatternContext pattern() {
 		PatternContext _localctx = new PatternContext(Context, State);
-		EnterRule(_localctx, 88, RULE_pattern);
+		EnterRule(_localctx, 92, RULE_pattern);
 		try {
-			State = 777;
+			State = 820;
 			ErrorHandler.Sync(this);
-			switch ( Interpreter.AdaptivePredict(TokenStream,76,Context) ) {
+			switch ( Interpreter.AdaptivePredict(TokenStream,82,Context) ) {
 			case 1:
 				_localctx = new VariantPatternContext(_localctx);
 				EnterOuterAlt(_localctx, 1);
 				{
-				State = 774;
+				State = 817;
 				Match(Identifier);
-				State = 775;
+				State = 818;
 				Match(Identifier);
 				}
 				break;
@@ -6079,7 +6309,7 @@ public partial class CvoloParser : Parser {
 				_localctx = new ConstantPatternContext(_localctx);
 				EnterOuterAlt(_localctx, 2);
 				{
-				State = 776;
+				State = 819;
 				Match(Identifier);
 				}
 				break;
@@ -6098,8 +6328,8 @@ public partial class CvoloParser : Parser {
 
 	public override bool Sempred(RuleContext _localctx, int ruleIndex, int predIndex) {
 		switch (ruleIndex) {
-		case 21: return type_sempred((TypeContext)_localctx, predIndex);
-		case 36: return expression_sempred((ExpressionContext)_localctx, predIndex);
+		case 23: return type_sempred((TypeContext)_localctx, predIndex);
+		case 38: return expression_sempred((ExpressionContext)_localctx, predIndex);
 		}
 		return true;
 	}
@@ -6137,278 +6367,293 @@ public partial class CvoloParser : Parser {
 	}
 
 	private static int[] _serializedATN = {
-		4,1,89,780,2,0,7,0,2,1,7,1,2,2,7,2,2,3,7,3,2,4,7,4,2,5,7,5,2,6,7,6,2,7,
+		4,1,90,823,2,0,7,0,2,1,7,1,2,2,7,2,2,3,7,3,2,4,7,4,2,5,7,5,2,6,7,6,2,7,
 		7,7,2,8,7,8,2,9,7,9,2,10,7,10,2,11,7,11,2,12,7,12,2,13,7,13,2,14,7,14,
 		2,15,7,15,2,16,7,16,2,17,7,17,2,18,7,18,2,19,7,19,2,20,7,20,2,21,7,21,
 		2,22,7,22,2,23,7,23,2,24,7,24,2,25,7,25,2,26,7,26,2,27,7,27,2,28,7,28,
 		2,29,7,29,2,30,7,30,2,31,7,31,2,32,7,32,2,33,7,33,2,34,7,34,2,35,7,35,
 		2,36,7,36,2,37,7,37,2,38,7,38,2,39,7,39,2,40,7,40,2,41,7,41,2,42,7,42,
-		2,43,7,43,2,44,7,44,1,0,5,0,92,8,0,10,0,12,0,95,9,0,1,0,1,0,5,0,99,8,0,
-		10,0,12,0,102,9,0,3,0,104,8,0,1,0,1,0,1,1,1,1,1,1,1,1,1,2,1,2,1,2,1,2,
-		5,2,116,8,2,10,2,12,2,119,9,2,1,2,5,2,122,8,2,10,2,12,2,125,9,2,1,2,1,
-		2,5,2,129,8,2,10,2,12,2,132,9,2,1,2,5,2,135,8,2,10,2,12,2,138,9,2,1,2,
-		3,2,141,8,2,1,3,1,3,1,3,5,3,146,8,3,10,3,12,3,149,9,3,1,4,1,4,1,4,1,4,
-		1,4,1,4,1,4,3,4,158,8,4,1,5,1,5,3,5,162,8,5,1,5,1,5,1,5,1,5,3,5,168,8,
-		5,1,5,1,5,1,6,1,6,1,6,1,6,5,6,176,8,6,10,6,12,6,179,9,6,1,6,1,6,1,7,1,
-		7,1,7,3,7,186,8,7,1,7,3,7,189,8,7,1,8,1,8,1,9,5,9,194,8,9,10,9,12,9,197,
-		9,9,1,9,3,9,200,8,9,1,9,1,9,1,9,1,9,1,9,1,9,3,9,208,8,9,1,9,1,9,3,9,212,
-		8,9,1,9,1,9,1,9,1,10,1,10,1,10,1,10,1,10,3,10,222,8,10,1,10,1,10,1,10,
-		1,11,5,11,228,8,11,10,11,12,11,231,9,11,1,11,1,11,1,11,1,11,1,11,1,11,
-		3,11,239,8,11,1,11,1,11,5,11,243,8,11,10,11,12,11,246,9,11,1,11,1,11,3,
-		11,250,8,11,1,12,5,12,253,8,12,10,12,12,12,256,9,12,1,12,1,12,1,12,1,12,
-		1,12,1,12,3,12,264,8,12,1,12,1,12,5,12,268,8,12,10,12,12,12,271,9,12,1,
-		12,1,12,3,12,275,8,12,1,13,1,13,1,13,1,13,1,14,1,14,1,14,1,14,1,14,1,14,
-		3,14,287,8,14,1,14,1,14,3,14,291,8,14,1,14,1,14,1,14,1,14,5,14,297,8,14,
-		10,14,12,14,300,9,14,1,14,1,14,3,14,304,8,14,1,15,5,15,307,8,15,10,15,
-		12,15,310,9,15,1,15,1,15,1,15,1,15,1,15,1,15,3,15,318,8,15,1,15,1,15,5,
-		15,322,8,15,10,15,12,15,325,9,15,1,15,1,15,3,15,329,8,15,1,16,1,16,1,16,
-		1,16,3,16,335,8,16,1,16,1,16,1,16,1,17,5,17,341,8,17,10,17,12,17,344,9,
-		17,1,17,1,17,1,17,1,17,1,17,1,17,3,17,352,8,17,1,18,5,18,355,8,18,10,18,
-		12,18,358,9,18,1,18,1,18,1,18,3,18,363,8,18,1,18,1,18,1,18,3,18,368,8,
-		18,1,19,1,19,1,19,1,19,1,20,1,20,3,20,376,8,20,1,21,1,21,1,21,1,21,1,21,
-		1,21,1,21,1,21,3,21,386,8,21,1,21,1,21,1,21,1,21,1,21,1,21,1,21,1,21,1,
-		21,1,21,1,21,1,21,1,21,1,21,5,21,402,8,21,10,21,12,21,405,9,21,1,22,1,
-		22,1,23,1,23,1,23,5,23,412,8,23,10,23,12,23,415,9,23,1,24,5,24,418,8,24,
-		10,24,12,24,421,9,24,1,24,1,24,1,24,1,25,1,25,1,25,5,25,429,8,25,10,25,
-		12,25,432,9,25,1,26,1,26,1,26,1,26,3,26,438,8,26,1,27,1,27,5,27,442,8,
-		27,10,27,12,27,445,9,27,1,27,1,27,1,28,1,28,1,28,1,28,1,28,1,28,1,28,1,
-		28,1,28,3,28,458,8,28,1,29,1,29,1,29,1,30,1,30,3,30,465,8,30,1,30,1,30,
-		1,31,1,31,1,31,1,32,1,32,3,32,474,8,32,1,32,1,32,1,32,3,32,479,8,32,1,
-		32,1,32,1,32,1,32,1,32,3,32,486,8,32,1,32,1,32,1,32,1,32,1,32,1,32,1,32,
-		1,32,1,32,1,32,1,32,1,32,1,32,1,32,1,32,1,32,1,32,1,32,1,32,1,32,1,32,
-		1,32,1,32,1,32,1,32,1,32,1,32,1,32,1,32,1,32,1,32,1,32,1,32,1,32,1,32,
-		1,32,1,32,1,32,1,32,1,32,1,32,1,32,1,32,1,32,3,32,532,8,32,1,33,1,33,1,
-		33,1,33,1,33,1,33,1,33,3,33,541,8,33,1,34,1,34,1,34,1,34,1,34,1,34,1,35,
-		1,35,1,35,1,35,1,35,1,35,1,35,1,35,1,35,1,36,1,36,1,36,1,36,1,36,1,36,
-		1,36,1,36,1,36,1,36,1,36,1,36,1,36,1,36,1,36,1,36,1,36,1,36,1,36,1,36,
-		1,36,1,36,1,36,1,36,1,36,1,36,1,36,3,36,585,8,36,1,36,1,36,3,36,589,8,
-		36,1,36,1,36,1,36,1,36,1,36,1,36,1,36,1,36,1,36,1,36,1,36,1,36,1,36,1,
-		36,5,36,605,8,36,10,36,12,36,608,9,36,3,36,610,8,36,1,36,1,36,1,36,1,36,
-		1,36,1,36,3,36,618,8,36,1,36,1,36,3,36,622,8,36,1,36,1,36,1,36,1,36,1,
-		36,1,36,1,36,1,36,1,36,1,36,1,36,1,36,1,36,1,36,1,36,1,36,1,36,1,36,1,
-		36,3,36,643,8,36,1,36,1,36,1,36,1,36,1,36,1,36,1,36,1,36,1,36,1,36,1,36,
-		1,36,1,36,1,36,1,36,1,36,1,36,1,36,1,36,1,36,1,36,1,36,1,36,1,36,1,36,
-		1,36,1,36,1,36,1,36,1,36,1,36,1,36,1,36,1,36,1,36,1,36,1,36,1,36,1,36,
-		1,36,1,36,1,36,1,36,1,36,1,36,1,36,1,36,1,36,1,36,1,36,1,36,1,36,1,36,
-		1,36,1,36,1,36,1,36,5,36,702,8,36,10,36,12,36,705,9,36,1,37,1,37,1,37,
-		5,37,710,8,37,10,37,12,37,713,9,37,1,38,1,38,1,38,5,38,718,8,38,10,38,
-		12,38,721,9,38,1,39,1,39,1,39,1,39,1,40,1,40,1,40,5,40,730,8,40,10,40,
-		12,40,733,9,40,1,41,1,41,1,41,5,41,738,8,41,10,41,12,41,741,9,41,1,42,
-		1,42,1,42,1,42,1,42,1,42,5,42,749,8,42,10,42,12,42,752,9,42,1,42,1,42,
-		1,43,1,43,1,43,1,43,5,43,760,8,43,10,43,12,43,763,9,43,1,43,1,43,1,43,
-		5,43,768,8,43,10,43,12,43,771,9,43,3,43,773,8,43,1,44,1,44,1,44,3,44,778,
-		8,44,1,44,0,2,42,72,45,0,2,4,6,8,10,12,14,16,18,20,22,24,26,28,30,32,34,
-		36,38,40,42,44,46,48,50,52,54,56,58,60,62,64,66,68,70,72,74,76,78,80,82,
-		84,86,88,0,10,1,0,1,2,1,0,23,24,1,0,15,20,2,0,3,3,5,5,1,0,47,49,1,0,45,
-		46,1,0,72,74,2,0,56,57,60,61,1,0,58,59,2,0,64,67,75,80,875,0,93,1,0,0,
-		0,2,107,1,0,0,0,4,111,1,0,0,0,6,142,1,0,0,0,8,157,1,0,0,0,10,159,1,0,0,
-		0,12,171,1,0,0,0,14,182,1,0,0,0,16,190,1,0,0,0,18,195,1,0,0,0,20,216,1,
-		0,0,0,22,229,1,0,0,0,24,254,1,0,0,0,26,276,1,0,0,0,28,280,1,0,0,0,30,308,
-		1,0,0,0,32,330,1,0,0,0,34,342,1,0,0,0,36,356,1,0,0,0,38,369,1,0,0,0,40,
-		375,1,0,0,0,42,385,1,0,0,0,44,406,1,0,0,0,46,408,1,0,0,0,48,419,1,0,0,
-		0,50,425,1,0,0,0,52,437,1,0,0,0,54,439,1,0,0,0,56,457,1,0,0,0,58,459,1,
-		0,0,0,60,462,1,0,0,0,62,468,1,0,0,0,64,531,1,0,0,0,66,533,1,0,0,0,68,542,
-		1,0,0,0,70,548,1,0,0,0,72,642,1,0,0,0,74,706,1,0,0,0,76,714,1,0,0,0,78,
-		722,1,0,0,0,80,726,1,0,0,0,82,734,1,0,0,0,84,742,1,0,0,0,86,772,1,0,0,
-		0,88,777,1,0,0,0,90,92,3,2,1,0,91,90,1,0,0,0,92,95,1,0,0,0,93,91,1,0,0,
-		0,93,94,1,0,0,0,94,103,1,0,0,0,95,93,1,0,0,0,96,104,3,4,2,0,97,99,3,8,
-		4,0,98,97,1,0,0,0,99,102,1,0,0,0,100,98,1,0,0,0,100,101,1,0,0,0,101,104,
-		1,0,0,0,102,100,1,0,0,0,103,96,1,0,0,0,103,100,1,0,0,0,104,105,1,0,0,0,
-		105,106,5,0,0,1,106,1,1,0,0,0,107,108,5,29,0,0,108,109,3,6,3,0,109,110,
-		5,40,0,0,110,3,1,0,0,0,111,112,5,28,0,0,112,140,3,6,3,0,113,117,5,40,0,
-		0,114,116,3,2,1,0,115,114,1,0,0,0,116,119,1,0,0,0,117,115,1,0,0,0,117,
-		118,1,0,0,0,118,123,1,0,0,0,119,117,1,0,0,0,120,122,3,8,4,0,121,120,1,
-		0,0,0,122,125,1,0,0,0,123,121,1,0,0,0,123,124,1,0,0,0,124,141,1,0,0,0,
-		125,123,1,0,0,0,126,130,5,36,0,0,127,129,3,2,1,0,128,127,1,0,0,0,129,132,
-		1,0,0,0,130,128,1,0,0,0,130,131,1,0,0,0,131,136,1,0,0,0,132,130,1,0,0,
-		0,133,135,3,8,4,0,134,133,1,0,0,0,135,138,1,0,0,0,136,134,1,0,0,0,136,
-		137,1,0,0,0,137,139,1,0,0,0,138,136,1,0,0,0,139,141,5,37,0,0,140,113,1,
-		0,0,0,140,126,1,0,0,0,141,5,1,0,0,0,142,147,5,86,0,0,143,144,5,42,0,0,
-		144,146,5,86,0,0,145,143,1,0,0,0,146,149,1,0,0,0,147,145,1,0,0,0,147,148,
-		1,0,0,0,148,7,1,0,0,0,149,147,1,0,0,0,150,158,3,18,9,0,151,158,3,20,10,
-		0,152,158,3,22,11,0,153,158,3,24,12,0,154,158,3,28,14,0,155,158,3,30,15,
-		0,156,158,3,10,5,0,157,150,1,0,0,0,157,151,1,0,0,0,157,152,1,0,0,0,157,
-		153,1,0,0,0,157,154,1,0,0,0,157,155,1,0,0,0,157,156,1,0,0,0,158,9,1,0,
-		0,0,159,161,5,30,0,0,160,162,7,0,0,0,161,160,1,0,0,0,161,162,1,0,0,0,162,
-		163,1,0,0,0,163,164,3,42,21,0,164,167,5,86,0,0,165,166,5,55,0,0,166,168,
-		3,72,36,0,167,165,1,0,0,0,167,168,1,0,0,0,168,169,1,0,0,0,169,170,5,40,
-		0,0,170,11,1,0,0,0,171,172,5,38,0,0,172,177,3,14,7,0,173,174,5,41,0,0,
-		174,176,3,14,7,0,175,173,1,0,0,0,176,179,1,0,0,0,177,175,1,0,0,0,177,178,
-		1,0,0,0,178,180,1,0,0,0,179,177,1,0,0,0,180,181,5,39,0,0,181,13,1,0,0,
-		0,182,188,3,6,3,0,183,185,5,34,0,0,184,186,3,74,37,0,185,184,1,0,0,0,185,
-		186,1,0,0,0,186,187,1,0,0,0,187,189,5,35,0,0,188,183,1,0,0,0,188,189,1,
-		0,0,0,189,15,1,0,0,0,190,191,7,1,0,0,191,17,1,0,0,0,192,194,3,12,6,0,193,
-		192,1,0,0,0,194,197,1,0,0,0,195,193,1,0,0,0,195,196,1,0,0,0,196,199,1,
-		0,0,0,197,195,1,0,0,0,198,200,3,16,8,0,199,198,1,0,0,0,199,200,1,0,0,0,
-		200,201,1,0,0,0,201,202,3,40,20,0,202,207,5,86,0,0,203,204,5,56,0,0,204,
-		205,3,82,41,0,205,206,5,57,0,0,206,208,1,0,0,0,207,203,1,0,0,0,207,208,
-		1,0,0,0,208,209,1,0,0,0,209,211,5,34,0,0,210,212,3,46,23,0,211,210,1,0,
-		0,0,211,212,1,0,0,0,212,213,1,0,0,0,213,214,5,35,0,0,214,215,3,54,27,0,
-		215,19,1,0,0,0,216,217,5,6,0,0,217,218,3,40,20,0,218,219,5,86,0,0,219,
-		221,5,34,0,0,220,222,3,50,25,0,221,220,1,0,0,0,221,222,1,0,0,0,222,223,
-		1,0,0,0,223,224,5,35,0,0,224,225,5,40,0,0,225,21,1,0,0,0,226,228,3,12,
-		6,0,227,226,1,0,0,0,228,231,1,0,0,0,229,227,1,0,0,0,229,230,1,0,0,0,230,
-		232,1,0,0,0,231,229,1,0,0,0,232,233,5,21,0,0,233,238,5,86,0,0,234,235,
-		5,56,0,0,235,236,3,80,40,0,236,237,5,57,0,0,237,239,1,0,0,0,238,234,1,
-		0,0,0,238,239,1,0,0,0,239,240,1,0,0,0,240,244,5,36,0,0,241,243,3,38,19,
-		0,242,241,1,0,0,0,243,246,1,0,0,0,244,242,1,0,0,0,244,245,1,0,0,0,245,
-		247,1,0,0,0,246,244,1,0,0,0,247,249,5,37,0,0,248,250,5,40,0,0,249,248,
-		1,0,0,0,249,250,1,0,0,0,250,23,1,0,0,0,251,253,3,12,6,0,252,251,1,0,0,
-		0,253,256,1,0,0,0,254,252,1,0,0,0,254,255,1,0,0,0,255,257,1,0,0,0,256,
-		254,1,0,0,0,257,258,5,22,0,0,258,263,5,86,0,0,259,260,5,56,0,0,260,261,
-		3,80,40,0,261,262,5,57,0,0,262,264,1,0,0,0,263,259,1,0,0,0,263,264,1,0,
-		0,0,264,265,1,0,0,0,265,269,5,36,0,0,266,268,3,26,13,0,267,266,1,0,0,0,
-		268,271,1,0,0,0,269,267,1,0,0,0,269,270,1,0,0,0,270,272,1,0,0,0,271,269,
-		1,0,0,0,272,274,5,37,0,0,273,275,5,40,0,0,274,273,1,0,0,0,274,275,1,0,
-		0,0,275,25,1,0,0,0,276,277,3,42,21,0,277,278,5,86,0,0,278,279,5,40,0,0,
-		279,27,1,0,0,0,280,281,5,26,0,0,281,286,5,86,0,0,282,283,5,56,0,0,283,
-		284,3,80,40,0,284,285,5,57,0,0,285,287,1,0,0,0,286,282,1,0,0,0,286,287,
-		1,0,0,0,287,290,1,0,0,0,288,289,5,43,0,0,289,291,3,6,3,0,290,288,1,0,0,
-		0,290,291,1,0,0,0,291,292,1,0,0,0,292,298,5,36,0,0,293,297,3,18,9,0,294,
-		297,3,34,17,0,295,297,3,36,18,0,296,293,1,0,0,0,296,294,1,0,0,0,296,295,
-		1,0,0,0,297,300,1,0,0,0,298,296,1,0,0,0,298,299,1,0,0,0,299,301,1,0,0,
-		0,300,298,1,0,0,0,301,303,5,37,0,0,302,304,5,40,0,0,303,302,1,0,0,0,303,
-		304,1,0,0,0,304,29,1,0,0,0,305,307,3,12,6,0,306,305,1,0,0,0,307,310,1,
-		0,0,0,308,306,1,0,0,0,308,309,1,0,0,0,309,311,1,0,0,0,310,308,1,0,0,0,
-		311,312,5,27,0,0,312,317,5,86,0,0,313,314,5,56,0,0,314,315,3,80,40,0,315,
-		316,5,57,0,0,316,318,1,0,0,0,317,313,1,0,0,0,317,318,1,0,0,0,318,319,1,
-		0,0,0,319,323,5,36,0,0,320,322,3,32,16,0,321,320,1,0,0,0,322,325,1,0,0,
-		0,323,321,1,0,0,0,323,324,1,0,0,0,324,326,1,0,0,0,325,323,1,0,0,0,326,
-		328,5,37,0,0,327,329,5,40,0,0,328,327,1,0,0,0,328,329,1,0,0,0,329,31,1,
-		0,0,0,330,331,3,40,20,0,331,332,5,86,0,0,332,334,5,34,0,0,333,335,3,46,
-		23,0,334,333,1,0,0,0,334,335,1,0,0,0,335,336,1,0,0,0,336,337,5,35,0,0,
-		337,338,5,40,0,0,338,33,1,0,0,0,339,341,3,12,6,0,340,339,1,0,0,0,341,344,
-		1,0,0,0,342,340,1,0,0,0,342,343,1,0,0,0,343,345,1,0,0,0,344,342,1,0,0,
-		0,345,346,5,53,0,0,346,347,5,86,0,0,347,348,5,34,0,0,348,349,5,35,0,0,
-		349,351,3,54,27,0,350,352,5,40,0,0,351,350,1,0,0,0,351,352,1,0,0,0,352,
-		35,1,0,0,0,353,355,3,12,6,0,354,353,1,0,0,0,355,358,1,0,0,0,356,354,1,
-		0,0,0,356,357,1,0,0,0,357,359,1,0,0,0,358,356,1,0,0,0,359,360,5,86,0,0,
-		360,362,5,34,0,0,361,363,3,46,23,0,362,361,1,0,0,0,362,363,1,0,0,0,363,
-		364,1,0,0,0,364,365,5,35,0,0,365,367,3,54,27,0,366,368,5,40,0,0,367,366,
-		1,0,0,0,367,368,1,0,0,0,368,37,1,0,0,0,369,370,3,42,21,0,370,371,5,86,
-		0,0,371,372,5,40,0,0,372,39,1,0,0,0,373,376,5,15,0,0,374,376,3,42,21,0,
-		375,373,1,0,0,0,375,374,1,0,0,0,376,41,1,0,0,0,377,378,6,21,-1,0,378,386,
-		3,44,22,0,379,386,3,6,3,0,380,386,5,86,0,0,381,382,5,3,0,0,382,386,3,42,
-		21,2,383,384,5,5,0,0,384,386,3,42,21,1,385,377,1,0,0,0,385,379,1,0,0,0,
-		385,380,1,0,0,0,385,381,1,0,0,0,385,383,1,0,0,0,386,403,1,0,0,0,387,388,
-		10,6,0,0,388,389,5,38,0,0,389,402,5,39,0,0,390,391,10,5,0,0,391,392,5,
-		38,0,0,392,393,5,84,0,0,393,402,5,39,0,0,394,395,10,4,0,0,395,396,5,56,
-		0,0,396,397,3,82,41,0,397,398,5,57,0,0,398,402,1,0,0,0,399,400,10,3,0,
-		0,400,402,5,47,0,0,401,387,1,0,0,0,401,390,1,0,0,0,401,394,1,0,0,0,401,
-		399,1,0,0,0,402,405,1,0,0,0,403,401,1,0,0,0,403,404,1,0,0,0,404,43,1,0,
-		0,0,405,403,1,0,0,0,406,407,7,2,0,0,407,45,1,0,0,0,408,413,3,48,24,0,409,
-		410,5,41,0,0,410,412,3,48,24,0,411,409,1,0,0,0,412,415,1,0,0,0,413,411,
-		1,0,0,0,413,414,1,0,0,0,414,47,1,0,0,0,415,413,1,0,0,0,416,418,3,12,6,
-		0,417,416,1,0,0,0,418,421,1,0,0,0,419,417,1,0,0,0,419,420,1,0,0,0,420,
-		422,1,0,0,0,421,419,1,0,0,0,422,423,3,42,21,0,423,424,5,86,0,0,424,49,
-		1,0,0,0,425,430,3,52,26,0,426,427,5,41,0,0,427,429,3,52,26,0,428,426,1,
-		0,0,0,429,432,1,0,0,0,430,428,1,0,0,0,430,431,1,0,0,0,431,51,1,0,0,0,432,
-		430,1,0,0,0,433,434,3,42,21,0,434,435,5,86,0,0,435,438,1,0,0,0,436,438,
-		5,69,0,0,437,433,1,0,0,0,437,436,1,0,0,0,438,53,1,0,0,0,439,443,5,36,0,
-		0,440,442,3,56,28,0,441,440,1,0,0,0,442,445,1,0,0,0,443,441,1,0,0,0,443,
-		444,1,0,0,0,444,446,1,0,0,0,445,443,1,0,0,0,446,447,5,37,0,0,447,55,1,
-		0,0,0,448,458,3,60,30,0,449,458,3,64,32,0,450,458,3,62,31,0,451,458,3,
-		66,33,0,452,458,3,68,34,0,453,458,3,70,35,0,454,458,3,58,29,0,455,458,
-		3,84,42,0,456,458,3,54,27,0,457,448,1,0,0,0,457,449,1,0,0,0,457,450,1,
-		0,0,0,457,451,1,0,0,0,457,452,1,0,0,0,457,453,1,0,0,0,457,454,1,0,0,0,
-		457,455,1,0,0,0,457,456,1,0,0,0,458,57,1,0,0,0,459,460,5,23,0,0,460,461,
-		3,54,27,0,461,59,1,0,0,0,462,464,5,7,0,0,463,465,3,72,36,0,464,463,1,0,
-		0,0,464,465,1,0,0,0,465,466,1,0,0,0,466,467,5,40,0,0,467,61,1,0,0,0,468,
-		469,3,72,36,0,469,470,5,40,0,0,470,63,1,0,0,0,471,473,7,0,0,0,472,474,
-		3,42,21,0,473,472,1,0,0,0,473,474,1,0,0,0,474,475,1,0,0,0,475,478,5,86,
-		0,0,476,477,5,55,0,0,477,479,3,72,36,0,478,476,1,0,0,0,478,479,1,0,0,0,
-		479,480,1,0,0,0,480,532,5,40,0,0,481,482,3,42,21,0,482,485,5,86,0,0,483,
-		484,5,55,0,0,484,486,3,72,36,0,485,483,1,0,0,0,485,486,1,0,0,0,486,487,
-		1,0,0,0,487,488,5,40,0,0,488,532,1,0,0,0,489,490,5,3,0,0,490,491,5,86,
-		0,0,491,492,5,55,0,0,492,493,3,72,36,0,493,494,5,40,0,0,494,532,1,0,0,
-		0,495,496,5,5,0,0,496,497,5,86,0,0,497,498,5,55,0,0,498,499,3,72,36,0,
-		499,500,5,40,0,0,500,532,1,0,0,0,501,502,7,0,0,0,502,503,3,42,21,0,503,
-		504,5,86,0,0,504,505,5,34,0,0,505,506,3,76,38,0,506,507,5,35,0,0,507,508,
-		5,40,0,0,508,532,1,0,0,0,509,510,3,42,21,0,510,511,5,86,0,0,511,512,5,
-		34,0,0,512,513,3,76,38,0,513,514,5,35,0,0,514,515,5,40,0,0,515,532,1,0,
-		0,0,516,517,7,0,0,0,517,518,3,42,21,0,518,519,5,86,0,0,519,520,5,34,0,
-		0,520,521,3,72,36,0,521,522,5,35,0,0,522,523,5,40,0,0,523,532,1,0,0,0,
-		524,525,3,42,21,0,525,526,5,86,0,0,526,527,5,34,0,0,527,528,3,72,36,0,
-		528,529,5,35,0,0,529,530,5,40,0,0,530,532,1,0,0,0,531,471,1,0,0,0,531,
-		481,1,0,0,0,531,489,1,0,0,0,531,495,1,0,0,0,531,501,1,0,0,0,531,509,1,
-		0,0,0,531,516,1,0,0,0,531,524,1,0,0,0,532,65,1,0,0,0,533,534,5,8,0,0,534,
-		535,5,34,0,0,535,536,3,72,36,0,536,537,5,35,0,0,537,540,3,56,28,0,538,
-		539,5,9,0,0,539,541,3,56,28,0,540,538,1,0,0,0,540,541,1,0,0,0,541,67,1,
-		0,0,0,542,543,5,10,0,0,543,544,5,34,0,0,544,545,3,72,36,0,545,546,5,35,
-		0,0,546,547,3,56,28,0,547,69,1,0,0,0,548,549,5,11,0,0,549,550,5,34,0,0,
-		550,551,3,64,32,0,551,552,3,72,36,0,552,553,5,40,0,0,553,554,3,72,36,0,
-		554,555,5,35,0,0,555,556,3,56,28,0,556,71,1,0,0,0,557,558,6,36,-1,0,558,
-		559,7,3,0,0,559,643,3,72,36,41,560,561,5,34,0,0,561,562,3,42,21,0,562,
-		563,5,35,0,0,563,564,3,72,36,38,564,643,1,0,0,0,565,566,5,47,0,0,566,643,
-		3,72,36,37,567,568,5,50,0,0,568,643,3,72,36,36,569,570,5,46,0,0,570,643,
-		3,72,36,35,571,572,5,54,0,0,572,643,3,72,36,34,573,574,5,53,0,0,574,643,
-		3,72,36,33,575,576,5,70,0,0,576,643,3,72,36,32,577,578,5,71,0,0,578,643,
-		3,72,36,31,579,584,3,6,3,0,580,581,5,56,0,0,581,582,3,82,41,0,582,583,
-		5,57,0,0,583,585,1,0,0,0,584,580,1,0,0,0,584,585,1,0,0,0,585,586,1,0,0,
-		0,586,588,5,34,0,0,587,589,3,74,37,0,588,587,1,0,0,0,588,589,1,0,0,0,589,
-		590,1,0,0,0,590,591,5,35,0,0,591,643,1,0,0,0,592,593,5,4,0,0,593,643,3,
-		72,36,16,594,595,5,4,0,0,595,596,3,42,21,0,596,597,5,38,0,0,597,598,3,
-		72,36,0,598,599,5,39,0,0,599,643,1,0,0,0,600,609,5,36,0,0,601,606,3,72,
-		36,0,602,603,5,41,0,0,603,605,3,72,36,0,604,602,1,0,0,0,605,608,1,0,0,
-		0,606,604,1,0,0,0,606,607,1,0,0,0,607,610,1,0,0,0,608,606,1,0,0,0,609,
-		601,1,0,0,0,609,610,1,0,0,0,610,611,1,0,0,0,611,643,5,37,0,0,612,617,5,
-		86,0,0,613,614,5,56,0,0,614,615,3,82,41,0,615,616,5,57,0,0,616,618,1,0,
-		0,0,617,613,1,0,0,0,617,618,1,0,0,0,618,619,1,0,0,0,619,621,5,36,0,0,620,
-		622,3,76,38,0,621,620,1,0,0,0,621,622,1,0,0,0,622,623,1,0,0,0,623,643,
-		5,37,0,0,624,625,5,34,0,0,625,626,3,76,38,0,626,627,5,35,0,0,627,643,1,
-		0,0,0,628,643,5,86,0,0,629,643,5,84,0,0,630,643,5,85,0,0,631,643,5,83,
-		0,0,632,643,5,82,0,0,633,643,5,81,0,0,634,643,5,12,0,0,635,643,5,13,0,
-		0,636,643,5,14,0,0,637,643,5,15,0,0,638,639,5,34,0,0,639,640,3,72,36,0,
-		640,641,5,35,0,0,641,643,1,0,0,0,642,557,1,0,0,0,642,560,1,0,0,0,642,565,
-		1,0,0,0,642,567,1,0,0,0,642,569,1,0,0,0,642,571,1,0,0,0,642,573,1,0,0,
-		0,642,575,1,0,0,0,642,577,1,0,0,0,642,579,1,0,0,0,642,592,1,0,0,0,642,
-		594,1,0,0,0,642,600,1,0,0,0,642,612,1,0,0,0,642,624,1,0,0,0,642,628,1,
-		0,0,0,642,629,1,0,0,0,642,630,1,0,0,0,642,631,1,0,0,0,642,632,1,0,0,0,
-		642,633,1,0,0,0,642,634,1,0,0,0,642,635,1,0,0,0,642,636,1,0,0,0,642,637,
-		1,0,0,0,642,638,1,0,0,0,643,703,1,0,0,0,644,645,10,30,0,0,645,646,7,4,
-		0,0,646,702,3,72,36,31,647,648,10,29,0,0,648,649,7,5,0,0,649,702,3,72,
-		36,30,650,651,10,28,0,0,651,652,7,6,0,0,652,702,3,72,36,29,653,654,10,
-		27,0,0,654,655,7,7,0,0,655,702,3,72,36,28,656,657,10,26,0,0,657,658,7,
-		8,0,0,658,702,3,72,36,27,659,660,10,25,0,0,660,661,5,50,0,0,661,702,3,
-		72,36,26,662,663,10,24,0,0,663,664,5,52,0,0,664,702,3,72,36,25,665,666,
-		10,23,0,0,666,667,5,51,0,0,667,702,3,72,36,24,668,669,10,22,0,0,669,670,
-		5,62,0,0,670,702,3,72,36,23,671,672,10,21,0,0,672,673,5,63,0,0,673,702,
-		3,72,36,22,674,675,10,20,0,0,675,676,5,44,0,0,676,677,3,72,36,0,677,678,
-		5,43,0,0,678,679,3,72,36,21,679,702,1,0,0,0,680,681,10,19,0,0,681,682,
-		5,55,0,0,682,702,3,72,36,20,683,684,10,18,0,0,684,685,7,9,0,0,685,702,
-		3,72,36,19,686,687,10,44,0,0,687,688,5,42,0,0,688,702,5,86,0,0,689,690,
-		10,43,0,0,690,691,5,68,0,0,691,702,5,86,0,0,692,693,10,42,0,0,693,694,
-		5,38,0,0,694,695,3,72,36,0,695,696,5,39,0,0,696,702,1,0,0,0,697,698,10,
-		40,0,0,698,702,5,70,0,0,699,700,10,39,0,0,700,702,5,71,0,0,701,644,1,0,
-		0,0,701,647,1,0,0,0,701,650,1,0,0,0,701,653,1,0,0,0,701,656,1,0,0,0,701,
-		659,1,0,0,0,701,662,1,0,0,0,701,665,1,0,0,0,701,668,1,0,0,0,701,671,1,
-		0,0,0,701,674,1,0,0,0,701,680,1,0,0,0,701,683,1,0,0,0,701,686,1,0,0,0,
-		701,689,1,0,0,0,701,692,1,0,0,0,701,697,1,0,0,0,701,699,1,0,0,0,702,705,
-		1,0,0,0,703,701,1,0,0,0,703,704,1,0,0,0,704,73,1,0,0,0,705,703,1,0,0,0,
-		706,711,3,72,36,0,707,708,5,41,0,0,708,710,3,72,36,0,709,707,1,0,0,0,710,
-		713,1,0,0,0,711,709,1,0,0,0,711,712,1,0,0,0,712,75,1,0,0,0,713,711,1,0,
-		0,0,714,719,3,78,39,0,715,716,5,41,0,0,716,718,3,78,39,0,717,715,1,0,0,
-		0,718,721,1,0,0,0,719,717,1,0,0,0,719,720,1,0,0,0,720,77,1,0,0,0,721,719,
-		1,0,0,0,722,723,5,86,0,0,723,724,5,43,0,0,724,725,3,72,36,0,725,79,1,0,
-		0,0,726,731,5,86,0,0,727,728,5,41,0,0,728,730,5,86,0,0,729,727,1,0,0,0,
-		730,733,1,0,0,0,731,729,1,0,0,0,731,732,1,0,0,0,732,81,1,0,0,0,733,731,
-		1,0,0,0,734,739,3,42,21,0,735,736,5,41,0,0,736,738,3,42,21,0,737,735,1,
-		0,0,0,738,741,1,0,0,0,739,737,1,0,0,0,739,740,1,0,0,0,740,83,1,0,0,0,741,
-		739,1,0,0,0,742,743,5,31,0,0,743,744,5,34,0,0,744,745,3,72,36,0,745,746,
-		5,35,0,0,746,750,5,36,0,0,747,749,3,86,43,0,748,747,1,0,0,0,749,752,1,
-		0,0,0,750,748,1,0,0,0,750,751,1,0,0,0,751,753,1,0,0,0,752,750,1,0,0,0,
-		753,754,5,37,0,0,754,85,1,0,0,0,755,756,5,32,0,0,756,757,3,88,44,0,757,
-		761,5,43,0,0,758,760,3,56,28,0,759,758,1,0,0,0,760,763,1,0,0,0,761,759,
-		1,0,0,0,761,762,1,0,0,0,762,773,1,0,0,0,763,761,1,0,0,0,764,765,5,33,0,
-		0,765,769,5,43,0,0,766,768,3,56,28,0,767,766,1,0,0,0,768,771,1,0,0,0,769,
-		767,1,0,0,0,769,770,1,0,0,0,770,773,1,0,0,0,771,769,1,0,0,0,772,755,1,
-		0,0,0,772,764,1,0,0,0,773,87,1,0,0,0,774,775,5,86,0,0,775,778,5,86,0,0,
-		776,778,5,86,0,0,777,774,1,0,0,0,777,776,1,0,0,0,778,89,1,0,0,0,77,93,
-		100,103,117,123,130,136,140,147,157,161,167,177,185,188,195,199,207,211,
-		221,229,238,244,249,254,263,269,274,286,290,296,298,303,308,317,323,328,
-		334,342,351,356,362,367,375,385,401,403,413,419,430,437,443,457,464,473,
-		478,485,531,540,584,588,606,609,617,621,642,701,703,711,719,731,739,750,
-		761,769,772,777
+		2,43,7,43,2,44,7,44,2,45,7,45,2,46,7,46,1,0,5,0,96,8,0,10,0,12,0,99,9,
+		0,1,0,1,0,5,0,103,8,0,10,0,12,0,106,9,0,3,0,108,8,0,1,0,1,0,1,1,1,1,1,
+		1,1,1,1,2,1,2,1,2,1,2,5,2,120,8,2,10,2,12,2,123,9,2,1,2,5,2,126,8,2,10,
+		2,12,2,129,9,2,1,2,1,2,5,2,133,8,2,10,2,12,2,136,9,2,1,2,5,2,139,8,2,10,
+		2,12,2,142,9,2,1,2,3,2,145,8,2,1,3,1,3,1,3,5,3,150,8,3,10,3,12,3,153,9,
+		3,1,4,1,4,1,4,1,4,1,4,1,4,1,4,1,4,3,4,163,8,4,1,5,1,5,3,5,167,8,5,1,5,
+		1,5,1,5,1,5,3,5,173,8,5,1,5,1,5,1,6,1,6,1,6,1,6,5,6,181,8,6,10,6,12,6,
+		184,9,6,1,6,1,6,1,7,1,7,1,7,3,7,191,8,7,1,7,3,7,194,8,7,1,8,1,8,1,9,5,
+		9,199,8,9,10,9,12,9,202,9,9,1,9,3,9,205,8,9,1,9,1,9,1,9,1,9,1,9,1,9,3,
+		9,213,8,9,1,9,1,9,3,9,217,8,9,1,9,1,9,1,9,1,10,1,10,1,10,1,10,1,10,3,10,
+		227,8,10,1,10,1,10,1,10,1,11,5,11,233,8,11,10,11,12,11,236,9,11,1,11,1,
+		11,1,11,1,11,1,11,1,11,3,11,244,8,11,1,11,1,11,5,11,248,8,11,10,11,12,
+		11,251,9,11,1,11,1,11,3,11,255,8,11,1,12,5,12,258,8,12,10,12,12,12,261,
+		9,12,1,12,1,12,1,12,1,12,1,12,1,12,3,12,269,8,12,1,12,1,12,5,12,273,8,
+		12,10,12,12,12,276,9,12,1,12,1,12,3,12,280,8,12,1,13,1,13,1,13,1,13,1,
+		14,1,14,1,14,1,14,1,14,1,14,3,14,292,8,14,1,14,1,14,3,14,296,8,14,1,14,
+		1,14,1,14,1,14,5,14,302,8,14,10,14,12,14,305,9,14,1,14,1,14,3,14,309,8,
+		14,1,15,5,15,312,8,15,10,15,12,15,315,9,15,1,15,1,15,1,15,1,15,1,15,1,
+		15,3,15,323,8,15,1,15,1,15,5,15,327,8,15,10,15,12,15,330,9,15,1,15,1,15,
+		3,15,334,8,15,1,16,1,16,1,16,1,16,3,16,340,8,16,1,16,1,16,1,16,1,17,5,
+		17,346,8,17,10,17,12,17,349,9,17,1,17,1,17,1,17,1,17,1,17,1,17,3,17,357,
+		8,17,1,17,1,17,3,17,361,8,17,1,17,1,17,5,17,365,8,17,10,17,12,17,368,9,
+		17,1,17,1,17,3,17,372,8,17,1,18,1,18,1,18,1,18,3,18,378,8,18,1,18,1,18,
+		1,18,1,19,5,19,384,8,19,10,19,12,19,387,9,19,1,19,1,19,1,19,1,19,1,19,
+		1,19,3,19,395,8,19,1,20,5,20,398,8,20,10,20,12,20,401,9,20,1,20,1,20,1,
+		20,3,20,406,8,20,1,20,1,20,1,20,3,20,411,8,20,1,21,1,21,1,21,1,21,1,22,
+		1,22,3,22,419,8,22,1,23,1,23,1,23,1,23,1,23,1,23,1,23,1,23,3,23,429,8,
+		23,1,23,1,23,1,23,1,23,1,23,1,23,1,23,1,23,1,23,1,23,1,23,1,23,1,23,1,
+		23,5,23,445,8,23,10,23,12,23,448,9,23,1,24,1,24,1,25,1,25,1,25,5,25,455,
+		8,25,10,25,12,25,458,9,25,1,26,5,26,461,8,26,10,26,12,26,464,9,26,1,26,
+		1,26,1,26,1,27,1,27,1,27,5,27,472,8,27,10,27,12,27,475,9,27,1,28,1,28,
+		1,28,1,28,3,28,481,8,28,1,29,1,29,5,29,485,8,29,10,29,12,29,488,9,29,1,
+		29,1,29,1,30,1,30,1,30,1,30,1,30,1,30,1,30,1,30,1,30,3,30,501,8,30,1,31,
+		1,31,1,31,1,32,1,32,3,32,508,8,32,1,32,1,32,1,33,1,33,1,33,1,34,1,34,3,
+		34,517,8,34,1,34,1,34,1,34,3,34,522,8,34,1,34,1,34,1,34,1,34,1,34,3,34,
+		529,8,34,1,34,1,34,1,34,1,34,1,34,1,34,1,34,1,34,1,34,1,34,1,34,1,34,1,
+		34,1,34,1,34,1,34,1,34,1,34,1,34,1,34,1,34,1,34,1,34,1,34,1,34,1,34,1,
+		34,1,34,1,34,1,34,1,34,1,34,1,34,1,34,1,34,1,34,1,34,1,34,1,34,1,34,1,
+		34,1,34,1,34,1,34,3,34,575,8,34,1,35,1,35,1,35,1,35,1,35,1,35,1,35,3,35,
+		584,8,35,1,36,1,36,1,36,1,36,1,36,1,36,1,37,1,37,1,37,1,37,1,37,1,37,1,
+		37,1,37,1,37,1,38,1,38,1,38,1,38,1,38,1,38,1,38,1,38,1,38,1,38,1,38,1,
+		38,1,38,1,38,1,38,1,38,1,38,1,38,1,38,1,38,1,38,1,38,1,38,1,38,1,38,1,
+		38,1,38,3,38,628,8,38,1,38,1,38,3,38,632,8,38,1,38,1,38,1,38,1,38,1,38,
+		1,38,1,38,1,38,1,38,1,38,1,38,1,38,1,38,1,38,5,38,648,8,38,10,38,12,38,
+		651,9,38,3,38,653,8,38,1,38,1,38,1,38,1,38,1,38,1,38,3,38,661,8,38,1,38,
+		1,38,3,38,665,8,38,1,38,1,38,1,38,1,38,1,38,1,38,1,38,1,38,1,38,1,38,1,
+		38,1,38,1,38,1,38,1,38,1,38,1,38,1,38,1,38,3,38,686,8,38,1,38,1,38,1,38,
+		1,38,1,38,1,38,1,38,1,38,1,38,1,38,1,38,1,38,1,38,1,38,1,38,1,38,1,38,
+		1,38,1,38,1,38,1,38,1,38,1,38,1,38,1,38,1,38,1,38,1,38,1,38,1,38,1,38,
+		1,38,1,38,1,38,1,38,1,38,1,38,1,38,1,38,1,38,1,38,1,38,1,38,1,38,1,38,
+		1,38,1,38,1,38,1,38,1,38,1,38,1,38,1,38,1,38,1,38,1,38,1,38,5,38,745,8,
+		38,10,38,12,38,748,9,38,1,39,1,39,1,39,5,39,753,8,39,10,39,12,39,756,9,
+		39,1,40,1,40,1,40,5,40,761,8,40,10,40,12,40,764,9,40,1,41,1,41,1,41,1,
+		41,1,42,1,42,1,42,5,42,773,8,42,10,42,12,42,776,9,42,1,43,1,43,1,43,5,
+		43,781,8,43,10,43,12,43,784,9,43,1,44,1,44,1,44,1,44,1,44,1,44,5,44,792,
+		8,44,10,44,12,44,795,9,44,1,44,1,44,1,45,1,45,1,45,1,45,5,45,803,8,45,
+		10,45,12,45,806,9,45,1,45,1,45,1,45,5,45,811,8,45,10,45,12,45,814,9,45,
+		3,45,816,8,45,1,46,1,46,1,46,3,46,821,8,46,1,46,0,2,46,76,47,0,2,4,6,8,
+		10,12,14,16,18,20,22,24,26,28,30,32,34,36,38,40,42,44,46,48,50,52,54,56,
+		58,60,62,64,66,68,70,72,74,76,78,80,82,84,86,88,90,92,0,10,1,0,1,2,1,0,
+		23,24,1,0,15,20,2,0,3,3,5,5,1,0,48,50,1,0,46,47,1,0,73,75,2,0,57,58,61,
+		62,1,0,59,60,2,0,65,68,76,81,923,0,97,1,0,0,0,2,111,1,0,0,0,4,115,1,0,
+		0,0,6,146,1,0,0,0,8,162,1,0,0,0,10,164,1,0,0,0,12,176,1,0,0,0,14,187,1,
+		0,0,0,16,195,1,0,0,0,18,200,1,0,0,0,20,221,1,0,0,0,22,234,1,0,0,0,24,259,
+		1,0,0,0,26,281,1,0,0,0,28,285,1,0,0,0,30,313,1,0,0,0,32,335,1,0,0,0,34,
+		347,1,0,0,0,36,373,1,0,0,0,38,385,1,0,0,0,40,399,1,0,0,0,42,412,1,0,0,
+		0,44,418,1,0,0,0,46,428,1,0,0,0,48,449,1,0,0,0,50,451,1,0,0,0,52,462,1,
+		0,0,0,54,468,1,0,0,0,56,480,1,0,0,0,58,482,1,0,0,0,60,500,1,0,0,0,62,502,
+		1,0,0,0,64,505,1,0,0,0,66,511,1,0,0,0,68,574,1,0,0,0,70,576,1,0,0,0,72,
+		585,1,0,0,0,74,591,1,0,0,0,76,685,1,0,0,0,78,749,1,0,0,0,80,757,1,0,0,
+		0,82,765,1,0,0,0,84,769,1,0,0,0,86,777,1,0,0,0,88,785,1,0,0,0,90,815,1,
+		0,0,0,92,820,1,0,0,0,94,96,3,2,1,0,95,94,1,0,0,0,96,99,1,0,0,0,97,95,1,
+		0,0,0,97,98,1,0,0,0,98,107,1,0,0,0,99,97,1,0,0,0,100,108,3,4,2,0,101,103,
+		3,8,4,0,102,101,1,0,0,0,103,106,1,0,0,0,104,102,1,0,0,0,104,105,1,0,0,
+		0,105,108,1,0,0,0,106,104,1,0,0,0,107,100,1,0,0,0,107,104,1,0,0,0,108,
+		109,1,0,0,0,109,110,5,0,0,1,110,1,1,0,0,0,111,112,5,30,0,0,112,113,3,6,
+		3,0,113,114,5,41,0,0,114,3,1,0,0,0,115,116,5,29,0,0,116,144,3,6,3,0,117,
+		121,5,41,0,0,118,120,3,2,1,0,119,118,1,0,0,0,120,123,1,0,0,0,121,119,1,
+		0,0,0,121,122,1,0,0,0,122,127,1,0,0,0,123,121,1,0,0,0,124,126,3,8,4,0,
+		125,124,1,0,0,0,126,129,1,0,0,0,127,125,1,0,0,0,127,128,1,0,0,0,128,145,
+		1,0,0,0,129,127,1,0,0,0,130,134,5,37,0,0,131,133,3,2,1,0,132,131,1,0,0,
+		0,133,136,1,0,0,0,134,132,1,0,0,0,134,135,1,0,0,0,135,140,1,0,0,0,136,
+		134,1,0,0,0,137,139,3,8,4,0,138,137,1,0,0,0,139,142,1,0,0,0,140,138,1,
+		0,0,0,140,141,1,0,0,0,141,143,1,0,0,0,142,140,1,0,0,0,143,145,5,38,0,0,
+		144,117,1,0,0,0,144,130,1,0,0,0,145,5,1,0,0,0,146,151,5,87,0,0,147,148,
+		5,43,0,0,148,150,5,87,0,0,149,147,1,0,0,0,150,153,1,0,0,0,151,149,1,0,
+		0,0,151,152,1,0,0,0,152,7,1,0,0,0,153,151,1,0,0,0,154,163,3,18,9,0,155,
+		163,3,20,10,0,156,163,3,22,11,0,157,163,3,24,12,0,158,163,3,28,14,0,159,
+		163,3,30,15,0,160,163,3,34,17,0,161,163,3,10,5,0,162,154,1,0,0,0,162,155,
+		1,0,0,0,162,156,1,0,0,0,162,157,1,0,0,0,162,158,1,0,0,0,162,159,1,0,0,
+		0,162,160,1,0,0,0,162,161,1,0,0,0,163,9,1,0,0,0,164,166,5,31,0,0,165,167,
+		7,0,0,0,166,165,1,0,0,0,166,167,1,0,0,0,167,168,1,0,0,0,168,169,3,46,23,
+		0,169,172,5,87,0,0,170,171,5,56,0,0,171,173,3,76,38,0,172,170,1,0,0,0,
+		172,173,1,0,0,0,173,174,1,0,0,0,174,175,5,41,0,0,175,11,1,0,0,0,176,177,
+		5,39,0,0,177,182,3,14,7,0,178,179,5,42,0,0,179,181,3,14,7,0,180,178,1,
+		0,0,0,181,184,1,0,0,0,182,180,1,0,0,0,182,183,1,0,0,0,183,185,1,0,0,0,
+		184,182,1,0,0,0,185,186,5,40,0,0,186,13,1,0,0,0,187,193,3,6,3,0,188,190,
+		5,35,0,0,189,191,3,78,39,0,190,189,1,0,0,0,190,191,1,0,0,0,191,192,1,0,
+		0,0,192,194,5,36,0,0,193,188,1,0,0,0,193,194,1,0,0,0,194,15,1,0,0,0,195,
+		196,7,1,0,0,196,17,1,0,0,0,197,199,3,12,6,0,198,197,1,0,0,0,199,202,1,
+		0,0,0,200,198,1,0,0,0,200,201,1,0,0,0,201,204,1,0,0,0,202,200,1,0,0,0,
+		203,205,3,16,8,0,204,203,1,0,0,0,204,205,1,0,0,0,205,206,1,0,0,0,206,207,
+		3,44,22,0,207,212,5,87,0,0,208,209,5,57,0,0,209,210,3,86,43,0,210,211,
+		5,58,0,0,211,213,1,0,0,0,212,208,1,0,0,0,212,213,1,0,0,0,213,214,1,0,0,
+		0,214,216,5,35,0,0,215,217,3,50,25,0,216,215,1,0,0,0,216,217,1,0,0,0,217,
+		218,1,0,0,0,218,219,5,36,0,0,219,220,3,58,29,0,220,19,1,0,0,0,221,222,
+		5,6,0,0,222,223,3,44,22,0,223,224,5,87,0,0,224,226,5,35,0,0,225,227,3,
+		54,27,0,226,225,1,0,0,0,226,227,1,0,0,0,227,228,1,0,0,0,228,229,5,36,0,
+		0,229,230,5,41,0,0,230,21,1,0,0,0,231,233,3,12,6,0,232,231,1,0,0,0,233,
+		236,1,0,0,0,234,232,1,0,0,0,234,235,1,0,0,0,235,237,1,0,0,0,236,234,1,
+		0,0,0,237,238,5,21,0,0,238,243,5,87,0,0,239,240,5,57,0,0,240,241,3,84,
+		42,0,241,242,5,58,0,0,242,244,1,0,0,0,243,239,1,0,0,0,243,244,1,0,0,0,
+		244,245,1,0,0,0,245,249,5,37,0,0,246,248,3,42,21,0,247,246,1,0,0,0,248,
+		251,1,0,0,0,249,247,1,0,0,0,249,250,1,0,0,0,250,252,1,0,0,0,251,249,1,
+		0,0,0,252,254,5,38,0,0,253,255,5,41,0,0,254,253,1,0,0,0,254,255,1,0,0,
+		0,255,23,1,0,0,0,256,258,3,12,6,0,257,256,1,0,0,0,258,261,1,0,0,0,259,
+		257,1,0,0,0,259,260,1,0,0,0,260,262,1,0,0,0,261,259,1,0,0,0,262,263,5,
+		22,0,0,263,268,5,87,0,0,264,265,5,57,0,0,265,266,3,84,42,0,266,267,5,58,
+		0,0,267,269,1,0,0,0,268,264,1,0,0,0,268,269,1,0,0,0,269,270,1,0,0,0,270,
+		274,5,37,0,0,271,273,3,26,13,0,272,271,1,0,0,0,273,276,1,0,0,0,274,272,
+		1,0,0,0,274,275,1,0,0,0,275,277,1,0,0,0,276,274,1,0,0,0,277,279,5,38,0,
+		0,278,280,5,41,0,0,279,278,1,0,0,0,279,280,1,0,0,0,280,25,1,0,0,0,281,
+		282,3,46,23,0,282,283,5,87,0,0,283,284,5,41,0,0,284,27,1,0,0,0,285,286,
+		5,26,0,0,286,291,5,87,0,0,287,288,5,57,0,0,288,289,3,84,42,0,289,290,5,
+		58,0,0,290,292,1,0,0,0,291,287,1,0,0,0,291,292,1,0,0,0,292,295,1,0,0,0,
+		293,294,5,44,0,0,294,296,3,6,3,0,295,293,1,0,0,0,295,296,1,0,0,0,296,297,
+		1,0,0,0,297,303,5,37,0,0,298,302,3,18,9,0,299,302,3,38,19,0,300,302,3,
+		40,20,0,301,298,1,0,0,0,301,299,1,0,0,0,301,300,1,0,0,0,302,305,1,0,0,
+		0,303,301,1,0,0,0,303,304,1,0,0,0,304,306,1,0,0,0,305,303,1,0,0,0,306,
+		308,5,38,0,0,307,309,5,41,0,0,308,307,1,0,0,0,308,309,1,0,0,0,309,29,1,
+		0,0,0,310,312,3,12,6,0,311,310,1,0,0,0,312,315,1,0,0,0,313,311,1,0,0,0,
+		313,314,1,0,0,0,314,316,1,0,0,0,315,313,1,0,0,0,316,317,5,27,0,0,317,322,
+		5,87,0,0,318,319,5,57,0,0,319,320,3,84,42,0,320,321,5,58,0,0,321,323,1,
+		0,0,0,322,318,1,0,0,0,322,323,1,0,0,0,323,324,1,0,0,0,324,328,5,37,0,0,
+		325,327,3,32,16,0,326,325,1,0,0,0,327,330,1,0,0,0,328,326,1,0,0,0,328,
+		329,1,0,0,0,329,331,1,0,0,0,330,328,1,0,0,0,331,333,5,38,0,0,332,334,5,
+		41,0,0,333,332,1,0,0,0,333,334,1,0,0,0,334,31,1,0,0,0,335,336,3,44,22,
+		0,336,337,5,87,0,0,337,339,5,35,0,0,338,340,3,50,25,0,339,338,1,0,0,0,
+		339,340,1,0,0,0,340,341,1,0,0,0,341,342,5,36,0,0,342,343,5,41,0,0,343,
+		33,1,0,0,0,344,346,3,12,6,0,345,344,1,0,0,0,346,349,1,0,0,0,347,345,1,
+		0,0,0,347,348,1,0,0,0,348,350,1,0,0,0,349,347,1,0,0,0,350,351,5,28,0,0,
+		351,356,5,87,0,0,352,353,5,57,0,0,353,354,3,84,42,0,354,355,5,58,0,0,355,
+		357,1,0,0,0,356,352,1,0,0,0,356,357,1,0,0,0,357,360,1,0,0,0,358,359,5,
+		11,0,0,359,361,3,46,23,0,360,358,1,0,0,0,360,361,1,0,0,0,361,362,1,0,0,
+		0,362,366,5,37,0,0,363,365,3,36,18,0,364,363,1,0,0,0,365,368,1,0,0,0,366,
+		364,1,0,0,0,366,367,1,0,0,0,367,369,1,0,0,0,368,366,1,0,0,0,369,371,5,
+		38,0,0,370,372,5,41,0,0,371,370,1,0,0,0,371,372,1,0,0,0,372,35,1,0,0,0,
+		373,374,3,44,22,0,374,375,5,87,0,0,375,377,5,35,0,0,376,378,3,50,25,0,
+		377,376,1,0,0,0,377,378,1,0,0,0,378,379,1,0,0,0,379,380,5,36,0,0,380,381,
+		5,41,0,0,381,37,1,0,0,0,382,384,3,12,6,0,383,382,1,0,0,0,384,387,1,0,0,
+		0,385,383,1,0,0,0,385,386,1,0,0,0,386,388,1,0,0,0,387,385,1,0,0,0,388,
+		389,5,54,0,0,389,390,5,87,0,0,390,391,5,35,0,0,391,392,5,36,0,0,392,394,
+		3,58,29,0,393,395,5,41,0,0,394,393,1,0,0,0,394,395,1,0,0,0,395,39,1,0,
+		0,0,396,398,3,12,6,0,397,396,1,0,0,0,398,401,1,0,0,0,399,397,1,0,0,0,399,
+		400,1,0,0,0,400,402,1,0,0,0,401,399,1,0,0,0,402,403,5,87,0,0,403,405,5,
+		35,0,0,404,406,3,50,25,0,405,404,1,0,0,0,405,406,1,0,0,0,406,407,1,0,0,
+		0,407,408,5,36,0,0,408,410,3,58,29,0,409,411,5,41,0,0,410,409,1,0,0,0,
+		410,411,1,0,0,0,411,41,1,0,0,0,412,413,3,46,23,0,413,414,5,87,0,0,414,
+		415,5,41,0,0,415,43,1,0,0,0,416,419,5,15,0,0,417,419,3,46,23,0,418,416,
+		1,0,0,0,418,417,1,0,0,0,419,45,1,0,0,0,420,421,6,23,-1,0,421,429,3,48,
+		24,0,422,429,3,6,3,0,423,429,5,87,0,0,424,425,5,3,0,0,425,429,3,46,23,
+		2,426,427,5,5,0,0,427,429,3,46,23,1,428,420,1,0,0,0,428,422,1,0,0,0,428,
+		423,1,0,0,0,428,424,1,0,0,0,428,426,1,0,0,0,429,446,1,0,0,0,430,431,10,
+		6,0,0,431,432,5,39,0,0,432,445,5,40,0,0,433,434,10,5,0,0,434,435,5,39,
+		0,0,435,436,5,85,0,0,436,445,5,40,0,0,437,438,10,4,0,0,438,439,5,57,0,
+		0,439,440,3,86,43,0,440,441,5,58,0,0,441,445,1,0,0,0,442,443,10,3,0,0,
+		443,445,5,48,0,0,444,430,1,0,0,0,444,433,1,0,0,0,444,437,1,0,0,0,444,442,
+		1,0,0,0,445,448,1,0,0,0,446,444,1,0,0,0,446,447,1,0,0,0,447,47,1,0,0,0,
+		448,446,1,0,0,0,449,450,7,2,0,0,450,49,1,0,0,0,451,456,3,52,26,0,452,453,
+		5,42,0,0,453,455,3,52,26,0,454,452,1,0,0,0,455,458,1,0,0,0,456,454,1,0,
+		0,0,456,457,1,0,0,0,457,51,1,0,0,0,458,456,1,0,0,0,459,461,3,12,6,0,460,
+		459,1,0,0,0,461,464,1,0,0,0,462,460,1,0,0,0,462,463,1,0,0,0,463,465,1,
+		0,0,0,464,462,1,0,0,0,465,466,3,46,23,0,466,467,5,87,0,0,467,53,1,0,0,
+		0,468,473,3,56,28,0,469,470,5,42,0,0,470,472,3,56,28,0,471,469,1,0,0,0,
+		472,475,1,0,0,0,473,471,1,0,0,0,473,474,1,0,0,0,474,55,1,0,0,0,475,473,
+		1,0,0,0,476,477,3,46,23,0,477,478,5,87,0,0,478,481,1,0,0,0,479,481,5,70,
+		0,0,480,476,1,0,0,0,480,479,1,0,0,0,481,57,1,0,0,0,482,486,5,37,0,0,483,
+		485,3,60,30,0,484,483,1,0,0,0,485,488,1,0,0,0,486,484,1,0,0,0,486,487,
+		1,0,0,0,487,489,1,0,0,0,488,486,1,0,0,0,489,490,5,38,0,0,490,59,1,0,0,
+		0,491,501,3,64,32,0,492,501,3,68,34,0,493,501,3,66,33,0,494,501,3,70,35,
+		0,495,501,3,72,36,0,496,501,3,74,37,0,497,501,3,62,31,0,498,501,3,88,44,
+		0,499,501,3,58,29,0,500,491,1,0,0,0,500,492,1,0,0,0,500,493,1,0,0,0,500,
+		494,1,0,0,0,500,495,1,0,0,0,500,496,1,0,0,0,500,497,1,0,0,0,500,498,1,
+		0,0,0,500,499,1,0,0,0,501,61,1,0,0,0,502,503,5,23,0,0,503,504,3,58,29,
+		0,504,63,1,0,0,0,505,507,5,7,0,0,506,508,3,76,38,0,507,506,1,0,0,0,507,
+		508,1,0,0,0,508,509,1,0,0,0,509,510,5,41,0,0,510,65,1,0,0,0,511,512,3,
+		76,38,0,512,513,5,41,0,0,513,67,1,0,0,0,514,516,7,0,0,0,515,517,3,46,23,
+		0,516,515,1,0,0,0,516,517,1,0,0,0,517,518,1,0,0,0,518,521,5,87,0,0,519,
+		520,5,56,0,0,520,522,3,76,38,0,521,519,1,0,0,0,521,522,1,0,0,0,522,523,
+		1,0,0,0,523,575,5,41,0,0,524,525,3,46,23,0,525,528,5,87,0,0,526,527,5,
+		56,0,0,527,529,3,76,38,0,528,526,1,0,0,0,528,529,1,0,0,0,529,530,1,0,0,
+		0,530,531,5,41,0,0,531,575,1,0,0,0,532,533,5,3,0,0,533,534,5,87,0,0,534,
+		535,5,56,0,0,535,536,3,76,38,0,536,537,5,41,0,0,537,575,1,0,0,0,538,539,
+		5,5,0,0,539,540,5,87,0,0,540,541,5,56,0,0,541,542,3,76,38,0,542,543,5,
+		41,0,0,543,575,1,0,0,0,544,545,7,0,0,0,545,546,3,46,23,0,546,547,5,87,
+		0,0,547,548,5,35,0,0,548,549,3,80,40,0,549,550,5,36,0,0,550,551,5,41,0,
+		0,551,575,1,0,0,0,552,553,3,46,23,0,553,554,5,87,0,0,554,555,5,35,0,0,
+		555,556,3,80,40,0,556,557,5,36,0,0,557,558,5,41,0,0,558,575,1,0,0,0,559,
+		560,7,0,0,0,560,561,3,46,23,0,561,562,5,87,0,0,562,563,5,35,0,0,563,564,
+		3,76,38,0,564,565,5,36,0,0,565,566,5,41,0,0,566,575,1,0,0,0,567,568,3,
+		46,23,0,568,569,5,87,0,0,569,570,5,35,0,0,570,571,3,76,38,0,571,572,5,
+		36,0,0,572,573,5,41,0,0,573,575,1,0,0,0,574,514,1,0,0,0,574,524,1,0,0,
+		0,574,532,1,0,0,0,574,538,1,0,0,0,574,544,1,0,0,0,574,552,1,0,0,0,574,
+		559,1,0,0,0,574,567,1,0,0,0,575,69,1,0,0,0,576,577,5,8,0,0,577,578,5,35,
+		0,0,578,579,3,76,38,0,579,580,5,36,0,0,580,583,3,60,30,0,581,582,5,9,0,
+		0,582,584,3,60,30,0,583,581,1,0,0,0,583,584,1,0,0,0,584,71,1,0,0,0,585,
+		586,5,10,0,0,586,587,5,35,0,0,587,588,3,76,38,0,588,589,5,36,0,0,589,590,
+		3,60,30,0,590,73,1,0,0,0,591,592,5,11,0,0,592,593,5,35,0,0,593,594,3,68,
+		34,0,594,595,3,76,38,0,595,596,5,41,0,0,596,597,3,76,38,0,597,598,5,36,
+		0,0,598,599,3,60,30,0,599,75,1,0,0,0,600,601,6,38,-1,0,601,602,7,3,0,0,
+		602,686,3,76,38,41,603,604,5,35,0,0,604,605,3,46,23,0,605,606,5,36,0,0,
+		606,607,3,76,38,38,607,686,1,0,0,0,608,609,5,48,0,0,609,686,3,76,38,37,
+		610,611,5,51,0,0,611,686,3,76,38,36,612,613,5,47,0,0,613,686,3,76,38,35,
+		614,615,5,55,0,0,615,686,3,76,38,34,616,617,5,54,0,0,617,686,3,76,38,33,
+		618,619,5,71,0,0,619,686,3,76,38,32,620,621,5,72,0,0,621,686,3,76,38,31,
+		622,627,3,6,3,0,623,624,5,57,0,0,624,625,3,86,43,0,625,626,5,58,0,0,626,
+		628,1,0,0,0,627,623,1,0,0,0,627,628,1,0,0,0,628,629,1,0,0,0,629,631,5,
+		35,0,0,630,632,3,78,39,0,631,630,1,0,0,0,631,632,1,0,0,0,632,633,1,0,0,
+		0,633,634,5,36,0,0,634,686,1,0,0,0,635,636,5,4,0,0,636,686,3,76,38,16,
+		637,638,5,4,0,0,638,639,3,46,23,0,639,640,5,39,0,0,640,641,3,76,38,0,641,
+		642,5,40,0,0,642,686,1,0,0,0,643,652,5,37,0,0,644,649,3,76,38,0,645,646,
+		5,42,0,0,646,648,3,76,38,0,647,645,1,0,0,0,648,651,1,0,0,0,649,647,1,0,
+		0,0,649,650,1,0,0,0,650,653,1,0,0,0,651,649,1,0,0,0,652,644,1,0,0,0,652,
+		653,1,0,0,0,653,654,1,0,0,0,654,686,5,38,0,0,655,660,5,87,0,0,656,657,
+		5,57,0,0,657,658,3,86,43,0,658,659,5,58,0,0,659,661,1,0,0,0,660,656,1,
+		0,0,0,660,661,1,0,0,0,661,662,1,0,0,0,662,664,5,37,0,0,663,665,3,80,40,
+		0,664,663,1,0,0,0,664,665,1,0,0,0,665,666,1,0,0,0,666,686,5,38,0,0,667,
+		668,5,35,0,0,668,669,3,80,40,0,669,670,5,36,0,0,670,686,1,0,0,0,671,686,
+		5,87,0,0,672,686,5,85,0,0,673,686,5,86,0,0,674,686,5,84,0,0,675,686,5,
+		83,0,0,676,686,5,82,0,0,677,686,5,12,0,0,678,686,5,13,0,0,679,686,5,14,
+		0,0,680,686,5,15,0,0,681,682,5,35,0,0,682,683,3,76,38,0,683,684,5,36,0,
+		0,684,686,1,0,0,0,685,600,1,0,0,0,685,603,1,0,0,0,685,608,1,0,0,0,685,
+		610,1,0,0,0,685,612,1,0,0,0,685,614,1,0,0,0,685,616,1,0,0,0,685,618,1,
+		0,0,0,685,620,1,0,0,0,685,622,1,0,0,0,685,635,1,0,0,0,685,637,1,0,0,0,
+		685,643,1,0,0,0,685,655,1,0,0,0,685,667,1,0,0,0,685,671,1,0,0,0,685,672,
+		1,0,0,0,685,673,1,0,0,0,685,674,1,0,0,0,685,675,1,0,0,0,685,676,1,0,0,
+		0,685,677,1,0,0,0,685,678,1,0,0,0,685,679,1,0,0,0,685,680,1,0,0,0,685,
+		681,1,0,0,0,686,746,1,0,0,0,687,688,10,30,0,0,688,689,7,4,0,0,689,745,
+		3,76,38,31,690,691,10,29,0,0,691,692,7,5,0,0,692,745,3,76,38,30,693,694,
+		10,28,0,0,694,695,7,6,0,0,695,745,3,76,38,29,696,697,10,27,0,0,697,698,
+		7,7,0,0,698,745,3,76,38,28,699,700,10,26,0,0,700,701,7,8,0,0,701,745,3,
+		76,38,27,702,703,10,25,0,0,703,704,5,51,0,0,704,745,3,76,38,26,705,706,
+		10,24,0,0,706,707,5,53,0,0,707,745,3,76,38,25,708,709,10,23,0,0,709,710,
+		5,52,0,0,710,745,3,76,38,24,711,712,10,22,0,0,712,713,5,63,0,0,713,745,
+		3,76,38,23,714,715,10,21,0,0,715,716,5,64,0,0,716,745,3,76,38,22,717,718,
+		10,20,0,0,718,719,5,45,0,0,719,720,3,76,38,0,720,721,5,44,0,0,721,722,
+		3,76,38,21,722,745,1,0,0,0,723,724,10,19,0,0,724,725,5,56,0,0,725,745,
+		3,76,38,20,726,727,10,18,0,0,727,728,7,9,0,0,728,745,3,76,38,19,729,730,
+		10,44,0,0,730,731,5,43,0,0,731,745,5,87,0,0,732,733,10,43,0,0,733,734,
+		5,69,0,0,734,745,5,87,0,0,735,736,10,42,0,0,736,737,5,39,0,0,737,738,3,
+		76,38,0,738,739,5,40,0,0,739,745,1,0,0,0,740,741,10,40,0,0,741,745,5,71,
+		0,0,742,743,10,39,0,0,743,745,5,72,0,0,744,687,1,0,0,0,744,690,1,0,0,0,
+		744,693,1,0,0,0,744,696,1,0,0,0,744,699,1,0,0,0,744,702,1,0,0,0,744,705,
+		1,0,0,0,744,708,1,0,0,0,744,711,1,0,0,0,744,714,1,0,0,0,744,717,1,0,0,
+		0,744,723,1,0,0,0,744,726,1,0,0,0,744,729,1,0,0,0,744,732,1,0,0,0,744,
+		735,1,0,0,0,744,740,1,0,0,0,744,742,1,0,0,0,745,748,1,0,0,0,746,744,1,
+		0,0,0,746,747,1,0,0,0,747,77,1,0,0,0,748,746,1,0,0,0,749,754,3,76,38,0,
+		750,751,5,42,0,0,751,753,3,76,38,0,752,750,1,0,0,0,753,756,1,0,0,0,754,
+		752,1,0,0,0,754,755,1,0,0,0,755,79,1,0,0,0,756,754,1,0,0,0,757,762,3,82,
+		41,0,758,759,5,42,0,0,759,761,3,82,41,0,760,758,1,0,0,0,761,764,1,0,0,
+		0,762,760,1,0,0,0,762,763,1,0,0,0,763,81,1,0,0,0,764,762,1,0,0,0,765,766,
+		5,87,0,0,766,767,5,44,0,0,767,768,3,76,38,0,768,83,1,0,0,0,769,774,5,87,
+		0,0,770,771,5,42,0,0,771,773,5,87,0,0,772,770,1,0,0,0,773,776,1,0,0,0,
+		774,772,1,0,0,0,774,775,1,0,0,0,775,85,1,0,0,0,776,774,1,0,0,0,777,782,
+		3,46,23,0,778,779,5,42,0,0,779,781,3,46,23,0,780,778,1,0,0,0,781,784,1,
+		0,0,0,782,780,1,0,0,0,782,783,1,0,0,0,783,87,1,0,0,0,784,782,1,0,0,0,785,
+		786,5,32,0,0,786,787,5,35,0,0,787,788,3,76,38,0,788,789,5,36,0,0,789,793,
+		5,37,0,0,790,792,3,90,45,0,791,790,1,0,0,0,792,795,1,0,0,0,793,791,1,0,
+		0,0,793,794,1,0,0,0,794,796,1,0,0,0,795,793,1,0,0,0,796,797,5,38,0,0,797,
+		89,1,0,0,0,798,799,5,33,0,0,799,800,3,92,46,0,800,804,5,44,0,0,801,803,
+		3,60,30,0,802,801,1,0,0,0,803,806,1,0,0,0,804,802,1,0,0,0,804,805,1,0,
+		0,0,805,816,1,0,0,0,806,804,1,0,0,0,807,808,5,34,0,0,808,812,5,44,0,0,
+		809,811,3,60,30,0,810,809,1,0,0,0,811,814,1,0,0,0,812,810,1,0,0,0,812,
+		813,1,0,0,0,813,816,1,0,0,0,814,812,1,0,0,0,815,798,1,0,0,0,815,807,1,
+		0,0,0,816,91,1,0,0,0,817,818,5,87,0,0,818,821,5,87,0,0,819,821,5,87,0,
+		0,820,817,1,0,0,0,820,819,1,0,0,0,821,93,1,0,0,0,83,97,104,107,121,127,
+		134,140,144,151,162,166,172,182,190,193,200,204,212,216,226,234,243,249,
+		254,259,268,274,279,291,295,301,303,308,313,322,328,333,339,347,356,360,
+		366,371,377,385,394,399,405,410,418,428,444,446,456,462,473,480,486,500,
+		507,516,521,528,574,583,627,631,649,652,660,664,685,744,746,754,762,774,
+		782,793,804,812,815,820
 	};
 
 	public static readonly ATN _ATN =

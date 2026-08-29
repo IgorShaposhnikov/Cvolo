@@ -35,6 +35,12 @@ public sealed class ValidationPass(BindingContext context)
 
 					if (isInterfaceTemplate) continue;
 
+					// Protocol-parameterized functions are likewise implicit templates: a protocol name has
+					// no value representation, so the body is validated when monomorphized at a call site.
+					var isProtocolTemplate = context.ProtocolFunctionTemplates.ContainsKey(ifaceTemplateName);
+
+					if (isProtocolTemplate) continue;
+
 					if (!isTemplate)
 					{
 						// For explicit template specializations, validate the registered monomorphized version

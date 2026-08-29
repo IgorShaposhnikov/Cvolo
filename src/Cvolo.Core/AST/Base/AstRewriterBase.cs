@@ -46,6 +46,18 @@ public abstract class AstRewriterBase
 			return new InterfaceMethodDeclarationSyntax(interfaceMember.Span, interfaceMember.ReturnType, interfaceMember.Name, rewrittenParams);
 		}
 
+		if (node is ProtocolDeclarationSyntax protocolDecl)
+		{
+			var rewrittenMembers = protocolDecl.Members.Select(Rewrite).Cast<ProtocolMethodDeclarationSyntax>().ToList();
+			return new ProtocolDeclarationSyntax(protocolDecl.Span, protocolDecl.Name, protocolDecl.GenericParameters, rewrittenMembers, protocolDecl.Constraint, protocolDecl.Attributes);
+		}
+
+		if (node is ProtocolMethodDeclarationSyntax protocolMember)
+		{
+			var rewrittenParams = protocolMember.Parameters.Select(p => new ParameterSyntax(p.Span, p.Type, p.Name, p.Attributes)).ToList();
+			return new ProtocolMethodDeclarationSyntax(protocolMember.Span, protocolMember.ReturnType, protocolMember.Name, rewrittenParams);
+		}
+
 		if (node is FunctionDeclarationSyntax func)
 		{
 			var rewrittenBody = (BlockStatementSyntax)Rewrite(func.Body);

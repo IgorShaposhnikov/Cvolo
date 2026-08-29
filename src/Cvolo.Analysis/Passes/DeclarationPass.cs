@@ -27,6 +27,8 @@ public sealed class DeclarationPass(BindingContext context)
 					DeclareUnion(unionDecl);
 				else if (member is InterfaceDeclarationSyntax interfaceDecl)
 					DeclareInterface(interfaceDecl);
+				else if (member is ProtocolDeclarationSyntax protocolDecl)
+					DeclareProtocol(protocolDecl);
 			}
 		}
 
@@ -135,6 +137,126 @@ public sealed class DeclarationPass(BindingContext context)
 		context.InterfaceTypes[mangledName] = new InterfaceTypeSymbol(mangledName);
 	}
 
+	private void DeclareProtocol(ProtocolDeclarationSyntax protocolDecl)
+	{
+		var mangledName = context.GetMangledName(protocolDecl.Name, context.CurrentNamespace);
+
+		if (context.ProtocolTypes.ContainsKey(mangledName))
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, protocolDecl.Span, $"Duplicate protocol definition '{protocolDecl.Name}'");
+			return;
+		}
+
+		context.SymbolUnits[mangledName] = context.CurrentUnit!;
+		context.ProtocolTemplates[mangledName] = protocolDecl;
+
+		// Phase-1 structural pre-match: build the canonical member tokens once,
+		// resolved in this protocol's namespace, so conformance checks are O(1)
+		// set membership (topological, naming-independent) rather than symbolic.
+		var canonicalMembers = BuildCanonicalMembers(protocolDecl);
+		context.ProtocolTypes[mangledName] = new ProtocolTypeSymbol(mangledName, protocolDecl.Members, protocolDecl.GenericParameters, protocolDecl.Constraint, canonicalMembers);
+	}
+
+	/// <summary>
+	/// Builds the canonical "{Return}:{Name}({Param1},...)" token for every
+	/// protocol member, resolving type names in the protocol's namespace context.
+	/// Generic type parameters become positional $-placeholders ($T0, $T1, ...) so
+	/// width-lock matching is topological and independent of how the concrete
+	/// type names its parameters (T vs U). `Self` stays a literal anchor; the
+	/// concrete type is substituted during monomorphization. ref/refvar/*/[]/[N]
+	/// wrappers are preserved around the resolved inner token. Types that cannot
+	/// be resolved yet (forward references) fall back to their raw, space-free
+	/// text; Phase-2 semantic validation re-checks them via TypeSymbol.Equals.
+	/// </summary>
+	private IReadOnlySet<string> BuildCanonicalMembers(ProtocolDeclarationSyntax protocolDecl)
+	{
+		var tokens = new HashSet<string>();
+		foreach (var member in protocolDecl.Members)
+		{
+			var returnToken = CanonicalizeProtocolType(member.ReturnType, protocolDecl);
+			var paramTokens = member.Parameters.Select(p => CanonicalizeProtocolType(p.Type, protocolDecl));
+			tokens.Add(string.Join(":", returnToken, $"{member.Name}({string.Join(",", paramTokens)})"));
+		}
+		return tokens;
+	}
+
+	private string CanonicalizeProtocolType(string rawType, ProtocolDeclarationSyntax protocolDecl)
+	{
+		var prefix = "";
+		var suffix = "";
+
+		var t = rawType.Trim();
+		while (true)
+		{
+			if (t.StartsWith("refvar ", StringComparison.Ordinal)) { prefix += "refvar "; t = t[7..]; }
+			else if (t.StartsWith("ref ", StringComparison.Ordinal)) { prefix += "ref "; t = t[4..]; }
+			else if (t.EndsWith("[]", StringComparison.Ordinal)) { suffix = "[]" + suffix; t = t[..^2]; }
+			else if (t.EndsWith("*", StringComparison.Ordinal)) { suffix = "*" + suffix; t = t[..^1]; }
+			else if (t.EndsWith("]", StringComparison.Ordinal))
+			{
+				var openBracket = t.LastIndexOf('[');
+				if (openBracket <= 0) break;
+				suffix = t[openBracket..] + suffix;
+				t = t[..openBracket];
+			}
+			else
+			{
+				break;
+			}
+		}
+
+		return prefix + CanonicalizeProtocolInner(t, protocolDecl) + suffix;
+	}
+
+	private string CanonicalizeProtocolInner(string t, ProtocolDeclarationSyntax protocolDecl)
+	{
+		// `Self` is a literal anchor that resolves to the enclosing concrete type
+		// only at conformance time (P4); keep it verbatim in the token.
+		if (t == "Self") return "Self";
+
+		// Generic type parameters normalize to positional width-lock placeholders,
+		// so `protocol IContainer<T> { void Store(T); }` matches a same-topology
+		// `struct Bag<T>` regardless of how each side names its type parameter.
+		var genericIndex = IndexOfGeneric(protocolDecl.GenericParameters, t);
+		if (genericIndex >= 0) return $"$T{genericIndex}";
+
+		var resolved = context.ResolveType(t);
+		if (resolved is not null) return resolved.Name;
+
+		// Unresolvable at Pass 0 (e.g. a generic instantiation whose argument is
+		// itself a generic parameter or Self): reconstruct canonically from parts.
+		if (t.Contains('<'))
+		{
+			var openBracket = t.IndexOf('<');
+			var closeBracket = t.LastIndexOf('>');
+			if (closeBracket > openBracket)
+			{
+				var baseName = t[..openBracket];
+				var baseIndex = IndexOfGeneric(protocolDecl.GenericParameters, baseName);
+				var baseToken = baseIndex >= 0 ? $"$T{baseIndex}" : NormalizeRawTypeName(baseName);
+				var args = t[(openBracket + 1)..closeBracket].Split(',').Select(a => CanonicalizeProtocolInner(a.Trim(), protocolDecl));
+				return $"{baseToken}<{string.Join(",", args)}>";
+			}
+		}
+
+		return NormalizeRawTypeName(t);
+	}
+
+	private static string NormalizeRawTypeName(string t)
+	{
+		return t.Replace(" ", "");
+	}
+
+	private static int IndexOfGeneric(IReadOnlyList<string> genericParameters, string name)
+	{
+		for (var i = 0; i < genericParameters.Count; i++)
+		{
+			if (genericParameters[i] == name) return i;
+		}
+		return -1;
+	}
+
 	private void DeclareFunction(FunctionDeclarationSyntax func)
 	{
 		// Entry point (main / Main) is always global, lowercase, and unmangled
@@ -199,6 +321,17 @@ public sealed class DeclarationPass(BindingContext context)
 		{
 			context.SymbolUnits[mangledName] = context.CurrentUnit!;
 			context.InterfaceFunctionTemplates[mangledName] = func;
+			return;
+		}
+
+		// A function with any protocol-typed parameter is likewise an implicit
+		// generic template: a protocol name has no value representation, so it is
+		// monomorphized at each call site with the structurally conforming
+		// concrete argument type (static-only dispatch, no vtable).
+		if (func.Parameters.Any(p => IsProtocolTypedParameter(p)))
+		{
+			context.SymbolUnits[mangledName] = context.CurrentUnit!;
+			context.ProtocolFunctionTemplates[mangledName] = func;
 			return;
 		}
 
@@ -276,6 +409,17 @@ public sealed class DeclarationPass(BindingContext context)
 		if (type.StartsWith("refvar ", StringComparison.Ordinal)) type = type[7..];
 		else if (type.StartsWith("ref ", StringComparison.Ordinal)) type = type[4..];
 		return context.ResolveType(type) is InterfaceTypeSymbol;
+	}
+
+	// A parameter is protocol-typed if its (possibly ref/refvar-wrapped) type resolves to a
+	// ProtocolTypeSymbol. Functions carrying such a parameter become implicit generic templates,
+	// monomorphized per call site against the structurally conforming concrete type.
+	private bool IsProtocolTypedParameter(ParameterSyntax p)
+	{
+		var type = p.Type;
+		if (type.StartsWith("refvar ", StringComparison.Ordinal)) type = type[7..];
+		else if (type.StartsWith("ref ", StringComparison.Ordinal)) type = type[4..];
+		return context.ResolveType(type) is ProtocolTypeSymbol;
 	}
 
 	// M1 attribute model: only System.* intrinsics exist. Their [AttributeUsage]-style rules

@@ -25,6 +25,7 @@ declaration
 	| unionDeclaration
 	| extensionDeclaration
 	| interfaceDeclaration
+	| protocolDeclaration
 	| globalVariableDeclaration
 	;
 
@@ -74,6 +75,14 @@ interfaceDeclaration
 	;
 
 interfaceMember
+	: returnType Identifier LPAREN parameterList? RPAREN SEMI
+	;
+
+protocolDeclaration
+	: attributeList* PROTOCOL Identifier (LT genericParameterList GT)? (FOR type)? LBRACE protocolMember* RBRACE SEMI?
+	;
+
+protocolMember
 	: returnType Identifier LPAREN parameterList? RPAREN SEMI
 	;
 

@@ -51,4 +51,6 @@ public enum SyntaxKind
 	SwitchCase,
 	InterfaceDeclaration,
 	InterfaceMember,
+	ProtocolDeclaration,
+	ProtocolMember,
 }

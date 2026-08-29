@@ -240,6 +240,30 @@ public partial class CvoloParserBaseListener : ICvoloParserListener {
 	/// <param name="context">The parse tree.</param>
 	public virtual void ExitInterfaceMember([NotNull] CvoloParser.InterfaceMemberContext context) { }
 	/// <summary>
+	/// Enter a parse tree produced by <see cref="CvoloParser.protocolDeclaration"/>.
+	/// <para>The default implementation does nothing.</para>
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	public virtual void EnterProtocolDeclaration([NotNull] CvoloParser.ProtocolDeclarationContext context) { }
+	/// <summary>
+	/// Exit a parse tree produced by <see cref="CvoloParser.protocolDeclaration"/>.
+	/// <para>The default implementation does nothing.</para>
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	public virtual void ExitProtocolDeclaration([NotNull] CvoloParser.ProtocolDeclarationContext context) { }
+	/// <summary>
+	/// Enter a parse tree produced by <see cref="CvoloParser.protocolMember"/>.
+	/// <para>The default implementation does nothing.</para>
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	public virtual void EnterProtocolMember([NotNull] CvoloParser.ProtocolMemberContext context) { }
+	/// <summary>
+	/// Exit a parse tree produced by <see cref="CvoloParser.protocolMember"/>.
+	/// <para>The default implementation does nothing.</para>
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	public virtual void ExitProtocolMember([NotNull] CvoloParser.ProtocolMemberContext context) { }
+	/// <summary>
 	/// Enter a parse tree produced by <see cref="CvoloParser.destructorDeclaration"/>.
 	/// <para>The default implementation does nothing.</para>
 	/// </summary>

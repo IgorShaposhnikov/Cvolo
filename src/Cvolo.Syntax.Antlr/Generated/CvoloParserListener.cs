@@ -201,6 +201,26 @@ public interface ICvoloParserListener : IParseTreeListener {
 	/// <param name="context">The parse tree.</param>
 	void ExitInterfaceMember([NotNull] CvoloParser.InterfaceMemberContext context);
 	/// <summary>
+	/// Enter a parse tree produced by <see cref="CvoloParser.protocolDeclaration"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	void EnterProtocolDeclaration([NotNull] CvoloParser.ProtocolDeclarationContext context);
+	/// <summary>
+	/// Exit a parse tree produced by <see cref="CvoloParser.protocolDeclaration"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	void ExitProtocolDeclaration([NotNull] CvoloParser.ProtocolDeclarationContext context);
+	/// <summary>
+	/// Enter a parse tree produced by <see cref="CvoloParser.protocolMember"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	void EnterProtocolMember([NotNull] CvoloParser.ProtocolMemberContext context);
+	/// <summary>
+	/// Exit a parse tree produced by <see cref="CvoloParser.protocolMember"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	void ExitProtocolMember([NotNull] CvoloParser.ProtocolMemberContext context);
+	/// <summary>
 	/// Enter a parse tree produced by <see cref="CvoloParser.destructorDeclaration"/>.
 	/// </summary>
 	/// <param name="context">The parse tree.</param>
