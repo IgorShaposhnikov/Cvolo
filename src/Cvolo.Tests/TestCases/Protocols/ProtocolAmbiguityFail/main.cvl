@@ -1,0 +1,32 @@
+/// <summary>
+/// Feature: Ambiguous Protocol Dispatch Rule.
+/// Verifies that a protocol member satisfied by multiple distinct extension methods
+/// on the same concrete type is rejected at the call site instead of being resolved
+/// by declaration order or namespace precedence.
+/// </summary>
+/// <remarks>
+/// Compiler Target: ValidationPass (ReportProtocolAmbiguity, Lazy Call-Site Phase).
+/// Expected Diagnostic: 'Ambiguous implementation of 'DoWork' for protocol 'IWorker' on type 'Point''.
+/// Note: Multi-file folder case — main.cvl + alpha.cvl + beta.cvl.
+/// </remarks>
+using System;
+using Alpha;
+using Beta;
+
+struct Point {
+    int X;
+}
+
+protocol IWorker {
+    void DoWork();
+}
+
+void Use(IWorker w) {
+    w.DoWork();
+}
+
+int main() {
+    Point p = Point { X: 1 };
+    Use(p);
+    return 0;
+}

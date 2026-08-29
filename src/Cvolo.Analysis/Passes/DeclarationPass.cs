@@ -10,9 +10,9 @@ namespace Cvolo.Analysis.Passes;
 
 public sealed class DeclarationPass(BindingContext context)
 {
-	public void Process(IEnumerable<CompilationUnitSyntax> units)
+public void Process(IEnumerable<CompilationUnitSyntax> units)
 	{
-		// Pass 0: Register all Structs across all files
+		// Pass 0a: Register all Struct/Union/Interface/Protocol raw symbols across all files
 		foreach (var unit in units)
 		{
 			context.CurrentUnit = unit;
@@ -29,6 +29,24 @@ public sealed class DeclarationPass(BindingContext context)
 					DeclareInterface(interfaceDecl);
 				else if (member is ProtocolDeclarationSyntax protocolDecl)
 					DeclareProtocol(protocolDecl);
+			}
+		}
+
+		// Pass 0b: Link contract hierarchy (`:` base clauses) — validate bases,
+		// compute protocol effective members (transitive closure), and rebuild the
+		// protocol symbols with the expanded member set.
+		foreach (var unit in units)
+		{
+			context.CurrentUnit = unit;
+			context.CurrentNamespace = unit.NamespaceDeclaration?.Name;
+
+			var members = context.CurrentNamespace != null ? unit.NamespaceDeclaration!.Members : unit.Members;
+			foreach (var member in members)
+			{
+				if (member is ProtocolDeclarationSyntax protocolDecl)
+					LinkProtocol(protocolDecl);
+				else if (member is InterfaceDeclarationSyntax interfaceDecl)
+					LinkInterface(interfaceDecl);
 			}
 		}
 
@@ -156,6 +174,107 @@ public sealed class DeclarationPass(BindingContext context)
 		// set membership (topological, naming-independent) rather than symbolic.
 		var canonicalMembers = ProtocolCanonicalizer.BuildCanonicalMembers(protocolDecl, context);
 		context.ProtocolTypes[mangledName] = new ProtocolTypeSymbol(mangledName, protocolDecl.Members, protocolDecl.GenericParameters, protocolDecl.Constraint, canonicalMembers);
+	}
+
+	/// <summary>
+	/// Pass 0b protocol linking: validates `:` base clauses and computes the
+	/// protocol's effective member list (its own members plus the transitive
+	/// closure of its protocol parents, with child overrides winning by name).
+	/// The registered protocol symbol is rebuilt with the expanded member set so
+	/// conformance checks, dispatch, and default lookup all see the full graph.
+	/// </summary>
+	private void LinkProtocol(ProtocolDeclarationSyntax protocolDecl)
+	{
+		var mangledName = context.GetMangledName(protocolDecl.Name, context.CurrentNamespace);
+		var currentFileContext = context.FileContexts[context.CurrentUnit!];
+
+		// Only protocols may be protocol bases; anything else is a declaration error.
+		foreach (var baseName in protocolDecl.Bases)
+		{
+			if (context.ResolveType(baseName) is not ProtocolTypeSymbol)
+			{
+				context.Diagnostics.Report(currentFileContext, protocolDecl.Span,
+					$"Unknown protocol '{baseName}' in base clause of protocol '{protocolDecl.Name}'.");
+			}
+		}
+
+		var effective = new List<(string Owner, ProtocolMethodDeclarationSyntax Member)>();
+		effective.AddRange(protocolDecl.Members.Select(m => (mangledName, m)));
+
+		if (protocolDecl.Bases.Count > 0)
+		{
+			var visited = new HashSet<string>();
+			var stack = new HashSet<string>();
+			foreach (var baseName in protocolDecl.Bases)
+				CollectProtocolBaseMembers(baseName, visited, stack, effective, protocolDecl.Span);
+		}
+
+		context.ProtocolEffectiveMembers[mangledName] = effective;
+
+		// Rebuild the symbol: expanded members + canonical tokens (each member
+		// canonicalized with its OWNER's generic parameters to preserve widths).
+		var canonical = new HashSet<string>();
+		foreach (var (owner, member) in effective)
+		{
+			var ownerGenerics = owner == mangledName
+				? protocolDecl.GenericParameters
+				: context.ProtocolTemplates.TryGetValue(owner, out var ownerDecl)
+					? ownerDecl.GenericParameters
+					: protocolDecl.GenericParameters;
+			canonical.Add(ProtocolCanonicalizer.BuildMemberToken(member, ownerGenerics, context, selfReplacement: null));
+		}
+		context.ProtocolTypes[mangledName] = new ProtocolTypeSymbol(
+			mangledName, effective.Select(e => e.Member).ToList(), protocolDecl.GenericParameters, protocolDecl.Constraint, canonical);
+	}
+
+	private void CollectProtocolBaseMembers(
+		string baseName, HashSet<string> visited, HashSet<string> stack,
+		List<(string Owner, ProtocolMethodDeclarationSyntax Member)> effective, TextSpan span)
+	{
+		if (context.ResolveType(baseName) is not ProtocolTypeSymbol protoBase) return;
+
+		if (!stack.Add(protoBase.Name))
+		{
+			context.Diagnostics.Report(context.FileContexts[context.CurrentUnit!], span,
+				$"Circular protocol inheritance involving '{baseName}'.");
+			return;
+		}
+
+		if (visited.Add(protoBase.Name))
+		{
+			if (context.ProtocolTemplates.TryGetValue(protoBase.Name, out var baseDecl))
+			{
+				foreach (var baseOfBase in baseDecl.Bases)
+					CollectProtocolBaseMembers(baseOfBase, visited, stack, effective, span);
+
+				foreach (var member in baseDecl.Members)
+				{
+					if (effective.Any(e => e.Member.Name == member.Name)) continue;
+					effective.Add((protoBase.Name, member));
+				}
+			}
+		}
+
+		stack.Remove(protoBase.Name);
+	}
+
+	/// <summary>
+	/// Pass 0b interface linking: validates `:` base clauses. Interface bases may
+	/// be other interfaces or protocols; the effective member set is computed
+	/// lazily during conformance registration (effective interface members).
+	/// </summary>
+	private void LinkInterface(InterfaceDeclarationSyntax interfaceDecl)
+	{
+		var currentFileContext = context.FileContexts[context.CurrentUnit!];
+		foreach (var baseName in interfaceDecl.Bases)
+		{
+			var baseType = context.ResolveType(baseName);
+			if (baseType is not (InterfaceTypeSymbol or ProtocolTypeSymbol))
+			{
+				context.Diagnostics.Report(currentFileContext, interfaceDecl.Span,
+					$"Unknown contract '{baseName}' in base clause of interface '{interfaceDecl.Name}'.");
+			}
+		}
 	}
 
 	private void DeclareFunction(FunctionDeclarationSyntax func)
@@ -629,6 +748,18 @@ public sealed class DeclarationPass(BindingContext context)
 				newSymbol,
 				methodSuppressedWarnings);
 			WarnIfUnsafeBodyUnused(method.Span, method.Body, newSymbol, methodSuppressedWarnings);
+
+			// COLLISION RULE: an extension may not re-declare a method the type already
+			// has with a matching signature (another extension block, the proto-default
+			// registry's naked symbols, or a conformer-declared override). First wins.
+			if (context.Globals.Lookup(overloadedName) is not null)
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, method.Span,
+					$"Duplicate symbol '{method.Name}' on type '{extDecl.ExtendedTypeName}' in extension blocks.");
+				continue;
+			}
+
 			context.Globals.Declare(newSymbol);
 
 			if (!context.OverloadedFunctions.TryGetValue(baseMangledName, out var candidates))
@@ -692,6 +823,16 @@ public sealed class DeclarationPass(BindingContext context)
 			var ctorSuppressedWarnings = new List<string>();
 			ApplyFunctionAttributes(VerifyAttributes(ctorDecl.Attributes, "Constructor", ctorSuppressedWarnings), ctorSymbol, ctorSuppressedWarnings);
 			WarnIfUnsafeBodyUnused(ctorDecl.Span, ctorDecl.Body, ctorSymbol, ctorSuppressedWarnings);
+
+			// COLLISION RULE: duplicate constructor signatures on the same type.
+			if (context.Globals.Lookup(ctorOverloadedName) is not null)
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, ctorDecl.Span,
+					$"Duplicate constructor signature for type '{extDecl.ExtendedTypeName}'.");
+				continue;
+			}
+
 			context.Globals.Declare(ctorSymbol);
 
 			if (!context.OverloadedFunctions.TryGetValue(ctorBaseMangledName, out var ctorCandidates))
@@ -742,13 +883,20 @@ public sealed class DeclarationPass(BindingContext context)
 		}
 		interfaces.Add(interfaceSymbol.Name);
 
-		// Validate the extension provides every required interface member.
 		var interfaceDecl = context.InterfaceTemplates[interfaceSymbol.Name];
+
+		// Record transitive nominal ancestors (interface base clauses), so a
+		// conforming type implicitly satisfies the parent capability graph.
+		// Protocol bases are satisfied structurally elsewhere and stay nominal-free.
+		CollectInterfaceAncestors(interfaceDecl, interfaces);
+
+		// A conforming type must provide every required member of the effective
+		// interface (own members + base-clause closure).
 		var providedMethods = new HashSet<(string Name, string ReturnType, string Params)>();
 		foreach (var method in extDecl.Methods)
 			providedMethods.Add((method.Name, method.ReturnType, ParamsSignature(method.Parameters)));
 
-		foreach (var member in interfaceDecl.Members)
+		foreach (var member in GetEffectiveInterfaceMembers(interfaceSymbol, new Dictionary<string, List<InterfaceMethodDeclarationSyntax>>(), new HashSet<string>()))
 		{
 			var requiredSig = (member.Name, member.ReturnType, ParamsSignature(member.Parameters));
 			if (!providedMethods.Contains(requiredSig))
@@ -758,6 +906,135 @@ public sealed class DeclarationPass(BindingContext context)
 					$"Type '{extDecl.ExtendedTypeName}' does not implement member '{RequiredSigText(member)}' required by interface '{extDecl.ConformsTo}'.");
 			}
 		}
+
+		// Interface `for ...` requires-clause (spec §7.B), enforced eagerly at the
+		// conformance site: the extended type must satisfy the named contract.
+		if (interfaceDecl.Constraint is not null)
+			EnforceInterfaceConstraint(interfaceDecl, extDecl, providedMethods);
+	}
+
+	/// <summary>
+	/// Records every transitive interface ancestor of <paramref name="iface"/> into
+	/// the concrete type's conformance set (interface base clauses only; protocol
+	/// bases are structural and are never recorded nominally).
+	/// </summary>
+	private void CollectInterfaceAncestors(InterfaceDeclarationSyntax iface, HashSet<string> interfaces)
+	{
+		foreach (var baseName in iface.Bases)
+		{
+			if (context.ResolveType(baseName) is not InterfaceTypeSymbol baseIface) continue;
+			if (!interfaces.Add(baseIface.Name)) continue;
+			if (context.InterfaceTemplates.TryGetValue(baseIface.Name, out var baseDecl))
+				CollectInterfaceAncestors(baseDecl, interfaces);
+		}
+	}
+
+	/// <summary>
+	/// The effective member set of an interface: its own required members plus the
+	/// transitive closure of interface parents, plus protocol-parent members.
+	/// Child declarations override inherited members with identical signatures.
+	/// </summary>
+	private List<InterfaceMethodDeclarationSyntax> GetEffectiveInterfaceMembers(
+		InterfaceTypeSymbol iface, Dictionary<string, List<InterfaceMethodDeclarationSyntax>> cache, HashSet<string> visiting)
+	{
+		if (cache.TryGetValue(iface.Name, out var cached) || !visiting.Add(iface.Name))
+			return cached;
+
+		var decl = context.InterfaceTemplates[iface.Name];
+		var result = new List<InterfaceMethodDeclarationSyntax>();
+		foreach (var baseName in decl.Bases)
+		{
+			if (context.ResolveType(baseName) is InterfaceTypeSymbol baseIface)
+				result.AddRange(GetEffectiveInterfaceMembers(baseIface, cache, visiting));
+			else if (context.ResolveType(baseName) is ProtocolTypeSymbol baseProto
+				&& context.ProtocolTemplates.TryGetValue(baseProto.Name, out var protoDecl))
+			{
+				// A protocol parent contributes every required member of its own
+				// effective set (a protocol may itself aggregate other protocols).
+				IEnumerable<(string Owner, ProtocolMethodDeclarationSyntax Member)> protocolMembers =
+					context.ProtocolEffectiveMembers.TryGetValue(baseProto.Name, out var effective)
+						? effective
+						: protoDecl.Members.Select(m => (baseProto.Name, m));
+				foreach (var (_, member) in protocolMembers)
+					result.Add(new InterfaceMethodDeclarationSyntax(member.Span, member.ReturnType, member.Name, member.Parameters));
+			}
+		}
+
+		// Child overrides win: inherited members identical to an own member are dropped.
+		result.RemoveAll(m => decl.Members.Any(own =>
+			own.Name == m.Name && own.ReturnType == m.ReturnType && ParamsSignature(own.Parameters) == ParamsSignature(m.Parameters)));
+		result.AddRange(decl.Members);
+
+		visiting.Remove(iface.Name);
+		cache[iface.Name] = result;
+		return result;
+	}
+
+	/// <summary>
+	/// Aggressive enforcement of an interface's `for ...` requires-clause at the
+	/// conformance site. The extended type is checked against the named contract:
+	/// a nominal interface must be in the conformance set; a structural protocol
+	/// must be satisfied by the provided methods (name-level).
+	/// </summary>
+	private void EnforceInterfaceConstraint(InterfaceDeclarationSyntax interfaceDecl, ExtensionDeclarationSyntax extDecl, HashSet<(string Name, string ReturnType, string Params)> providedMethods)
+	{
+		var currentFileContext = context.FileContexts[context.CurrentUnit!];
+		var contract = ResolveContractType(interfaceDecl.Constraint, extDecl.ExtendedTypeName);
+
+		switch (contract)
+		{
+			case InterfaceTypeSymbol consIface:
+			{
+				if (!context.Conformance.TryGetValue(extDecl.ExtendedTypeName, out var ifaces) || !ifaces.Contains(consIface.Name))
+					context.Diagnostics.Report(currentFileContext, extDecl.Span,
+						$"Type '{extDecl.ExtendedTypeName}' does not satisfy the requires-clause '{interfaceDecl.Constraint}' of interface '{extDecl.ConformsTo}': it does not conform to interface '{consIface.Name}'.");
+				break;
+			}
+			case ProtocolTypeSymbol consProto:
+			{
+				var requiredNames = new HashSet<string>();
+				foreach (var member in GetProtocolRequirements(consProto.Name))
+					requiredNames.Add(member.Name);
+				var providedNames = new HashSet<string>(extDecl.Methods.Select(m => m.Name));
+				foreach (var required in requiredNames)
+				{
+					if (!providedNames.Contains(required))
+						context.Diagnostics.Report(currentFileContext, extDecl.Span,
+							$"Type '{extDecl.ExtendedTypeName}' does not satisfy the requires-clause '{interfaceDecl.Constraint}' of interface '{extDecl.ConformsTo}': missing protocol member '{required}'.");
+				}
+				break;
+			}
+			default:
+				context.Diagnostics.Report(currentFileContext, extDecl.Span,
+					$"Unknown contract '{interfaceDecl.Constraint}' in requires-clause of interface '{extDecl.ConformsTo}'.");
+				break;
+		}
+	}
+
+	private List<ProtocolMethodDeclarationSyntax> GetProtocolRequirements(string protoMangledName)
+	{
+		if (context.ProtocolTemplates.TryGetValue(protoMangledName, out var decl)
+			&& context.ProtocolEffectiveMembers.TryGetValue(protoMangledName, out var effective))
+			return effective.Select(e => e.Member).ToList();
+
+		// Fall back to the declared members if effective membership is unavailable.
+		return context.ProtocolTemplates.TryGetValue(protoMangledName, out var protoDecl)
+			? protoDecl.Members.ToList()
+			: [];
+	}
+
+	/// <summary>
+	/// Resolves a requires-clause type in the context of the extended type.
+	/// Literal `Self` tokens are replaced with the concrete type name, and a
+	/// generic instantiation (e.g. `IComparable&lt;Self&gt;`) is stripped to its
+	/// base contract name (generic interfaces are not instantiable in this model).
+	/// </summary>
+	private TypeSymbol? ResolveContractType(string constraintText, string concreteName)
+	{
+		var substituted = constraintText.Replace("Self", concreteName);
+		var openBracket = substituted.IndexOf('<');
+		var baseName = (openBracket > 0 ? substituted[..openBracket] : substituted).Trim();
+		return context.ResolveType(baseName);
 	}
 
 	private static string ParamsSignature(IReadOnlyList<ParameterSyntax> parameters)

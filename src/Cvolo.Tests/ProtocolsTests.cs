@@ -17,8 +17,17 @@ public sealed class ProtocolsTests : CompilerTestBase
 	[InlineData("SelfConformingFail.cvl")]
 	[InlineData("GenericDispatch.cvl")]
 	[InlineData("WidthLockFail.cvl")]
+	// P6: protocol default implementations (extension block on the protocol).
 	[InlineData("DefaultDispatch.cvl")]
 	[InlineData("DefaultOverride.cvl")]
+	// P7: colon inheritance, inherited defaults, collision rule, requires-clause
+	// (ok+fail) and multi-file ambiguity — all must PARSE (or the compiler can't reach its checks).
+	[InlineData("ProtocolInheritance.cvl")]
+	[InlineData("ProtocolInheritedDefault.cvl")]
+	[InlineData("ProtocolCollisionFail.cvl")]
+	[InlineData("ProtocolRequires.cvl")]
+	[InlineData("ProtocolRequiresFail.cvl")]
+	[InlineData("ProtocolAmbiguityFail")]
 	public void Parser_Protocols_Should_Parse(string caseName)
 	{
 		var assemblyDir = Path.GetDirectoryName(typeof(ProtocolsTests).Assembly.Location)!;
@@ -40,9 +49,18 @@ public sealed class ProtocolsTests : CompilerTestBase
 
 	[Theory]
 	[InlineData("NonConformingFail", "Type 'Foo' does not structurally conform to protocol 'IWidget' for parameter 'w'")]
+	// P7: collision — same method twice on one type is rejected.
+	[InlineData("ProtocolCollisionFail", "Duplicate symbol 'DoWork' on type 'Thing' in extension blocks.")]
+	// P7: requires-clause — a type without the required capability can't satisfy the protocol.
+	[InlineData("ProtocolRequiresFail", "does not satisfy the requires-clause 'IRecordId' of protocol 'ISorter'")]
+	// P7: ambiguity — two matching extension methods make dispatch non-deterministic.
+	[InlineData("ProtocolAmbiguityFail", "Ambiguous implementation of 'DoWork' for protocol 'IWorker' on type 'Point'")]
 	public void Protocols_Rejections(string caseName, string expectedError)
 	{
-		var fileName = $"Protocols/{caseName}.cvl";
+		var assemblyDir = Path.GetDirectoryName(typeof(ProtocolsTests).Assembly.Location)!;
+		var fileName = File.Exists(Path.Combine(assemblyDir, "TestCases", $"Protocols/{caseName}.cvl"))
+			? $"Protocols/{caseName}.cvl"
+			: $"Protocols/{caseName}";
 		var (exitCode, stdout, stderr) = RunCompiler(fileName);
 
 		Assert.Equal(1, exitCode);
@@ -115,10 +133,31 @@ public sealed class ProtocolsTests : CompilerTestBase
 		Assert.Equal(expected.Replace("\r\n", "\n").Trim(), runStdout.Replace("\r\n", "\n").Trim());
 	}
 
+	// P6 defaults: DefaultDispatch exercises the inherited body; DefaultOverride
+	// proves a conformer's own method shadows the default. Both dispatch through a
+	// protocol-typed parameter, so codegen must land on the right LLVM function.
 	[Theory]
 	[InlineData("DefaultDispatch", "Document(pages=12)\nDefault Info Output")]
 	[InlineData("DefaultOverride", "Document(pages=12)\nDocument Info Override")]
 	public void Protocols_DefaultDispatch(string caseName, string expected)
+	{
+		var fileName = $"Protocols/{caseName}.cvl";
+		var (exitCode, stdout, stderr) = RunCompiler(fileName);
+		AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
+
+		var (runCode, runStdout) = ExecuteBinary(caseName, "Protocols");
+		Assert.Equal(0, runCode);
+		Assert.Equal(expected.Replace("\r\n", "\n").Trim(), runStdout.Replace("\r\n", "\n").Trim());
+	}
+
+	// P7 hierarchy: ProtocolInheritance tests multi-base aggregation; 
+	// ProtocolInheritedDefault tests defaults surviving protocol inheritance; 
+	// ProtocolRequires tests a satisfied requires-clause end to end.
+	[Theory]
+	[InlineData("ProtocolInheritance", "File read at 3\nFile write\nFile flush")]
+	[InlineData("ProtocolInheritedDefault", "device go 7\nBase Info default\nBase Extra default")]
+	[InlineData("ProtocolRequires", "sorted")]
+	public void Protocols_Hierarchy(string caseName, string expected)
 	{
 		var fileName = $"Protocols/{caseName}.cvl";
 		var (exitCode, stdout, stderr) = RunCompiler(fileName);

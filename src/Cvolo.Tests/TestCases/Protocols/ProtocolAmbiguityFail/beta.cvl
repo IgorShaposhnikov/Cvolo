@@ -1,0 +1,18 @@
+/// <summary>
+/// Feature: Ambiguous Protocol Dispatch — Contributing Extension (Namespace Beta).
+/// Declares a second Point.DoWork() extension so the concrete type matches one
+/// protocol member via two distinct methods, making dispatch non-deterministic.
+/// </summary>
+/// <remarks>
+/// Compiler Target: ValidationPass (Structural Candidate Gathering, 3-Key Namespace Walk).
+/// Role: The other same-signature contribution in the ProtocolAmbiguityFail case.
+/// </remarks>
+using System;
+
+namespace Beta {
+    extension Point {
+        void DoWork() {
+            Console.WriteLine("beta work");
+        }
+    }
+}

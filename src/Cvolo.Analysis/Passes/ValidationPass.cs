@@ -1250,14 +1250,32 @@ public sealed class ValidationPass(BindingContext context)
 			if (openBracket > 0) protoName = protoName[..openBracket];
 		}
 
-		if (!context.ProtocolDefaults.TryGetValue(protoName, out var defaults))
+		// The default for a member lives under the member's OWNING protocol
+		// (a `:` base clause may aggregate members declared on a parent whose
+		// own extension block carries the default).
+		var ownerName = protoName;
+		var ownerGenerics = proto.GenericParameters;
+		if (context.ProtocolEffectiveMembers.TryGetValue(protoName, out var effective))
+		{
+			var owner = effective.FirstOrDefault(e => ReferenceEquals(e.Member, member));
+			if (owner == default)
+				owner = effective.FirstOrDefault(e => e.Member.Name == member.Name);
+			if (owner != default)
+			{
+				ownerName = owner.OwnerProtocol;
+				if (context.ProtocolTemplates.TryGetValue(owner.OwnerProtocol, out var ownerDecl))
+					ownerGenerics = ownerDecl.GenericParameters;
+			}
+		}
+
+		if (!context.ProtocolDefaults.TryGetValue(ownerName, out var defaults))
 			return false;
 
-		var memberToken = ProtocolCanonicalizer.BuildMemberToken(member, proto.GenericParameters, context, selfReplacement: null, proto.GenericTypeArguments);
+		var memberToken = ProtocolCanonicalizer.BuildMemberToken(member, ownerGenerics, context, selfReplacement: null, proto.GenericTypeArguments);
 		foreach (var (defaultName, decl) in defaults)
 		{
 			if (defaultName != member.Name) continue;
-			var defaultToken = ProtocolCanonicalizer.BuildFunctionToken(decl, proto.GenericParameters, context, proto.GenericTypeArguments);
+			var defaultToken = ProtocolCanonicalizer.BuildFunctionToken(decl, ownerGenerics, context, proto.GenericTypeArguments);
 			if (defaultToken == memberToken) return true;
 		}
 		return false;
@@ -1473,7 +1491,23 @@ public sealed class ValidationPass(BindingContext context)
 				return null;
 			}
 
+			// Protocol `for ...` requires-clause (lazy, at the dispatch call site):
+			// the concrete type must itself satisfy the named contract. Missing or
+			// unresolvable constraints are treated conservatively as non-conforming.
+			if (proto.Constraint is not null && !SatisfiesProtocolConstraint(concrete, proto.Constraint))
+			{
+				context.Diagnostics.Report(currentFileContext, call.Span,
+					$"Type '{concrete.Name}' does not satisfy the requires-clause '{proto.Constraint}' of protocol '{proto.Name}'.");
+				return null;
+			}
+
 			conformedPairs.Add((concrete, proto));
+
+			// Ambiguity rule (spec §7.C): a concrete type matching several contracts
+			// (declared in different extension namespaces) for the same member
+			// signature yields more than one distinct implementation -> error.
+			if (ReportProtocolAmbiguity(concrete, proto, call))
+				return null;
 
 			if (substitutionMap.TryGetValue(protocolTypeName, out var existing) && existing.Name != concrete.Name)
 			{
@@ -1497,6 +1531,67 @@ public sealed class ValidationPass(BindingContext context)
 	}
 
 	/// <summary>
+	/// Lazy protocol `for ...` requires-clause check (spec §7.B). The concrete
+	/// type must satisfy the named contract: a nominal interface requires
+	/// (transitive) conformance membership; a structural protocol requires
+	/// structural conformance. Unknown contracts are conservatively treated as
+	/// non-satisfying (the constraint names a contract this module lacks).
+	/// </summary>
+	private bool SatisfiesProtocolConstraint(TypeSymbol concrete, string constraintText)
+	{
+		var contract = ResolveContractBase(constraintText, concrete.Name);
+		switch (contract)
+		{
+			case ProtocolTypeSymbol consProto:
+				return StructurallyConformsToProtocol(concrete, consProto);
+			case InterfaceTypeSymbol consIface:
+				var baseType = concrete is PointerTypeSymbol ptr ? ptr.ReferencedType : concrete;
+				return context.Conformance.TryGetValue(baseType.Name, out var ifaces) && ifaces.Contains(consIface.Name);
+			default:
+				return false;
+		}
+	}
+
+	/// <summary>
+	/// Resolves a requires-clause type in the concrete type's context: literal
+	/// `Self` is replaced with the concrete type name and a generic instantiation
+	/// (e.g. `IComparable&lt;Self&gt;`) is stripped to its base contract name
+	/// (generic interfaces are not instantiable in this model).
+	/// </summary>
+	private TypeSymbol? ResolveContractBase(string constraintText, string concreteName)
+	{
+		var substituted = constraintText.Replace("Self", concreteName);
+		var openBracket = substituted.IndexOf('<');
+		var baseName = (openBracket > 0 ? substituted[..openBracket] : substituted).Trim();
+		return context.ResolveType(baseName);
+	}
+
+	/// <summary>
+	/// Reports an ambiguity (spec §7.C) when a concrete type matches more than one
+	/// distinct implementation for any member of the protocol (e.g. extension
+	/// blocks declared in different namespaces both satisfying the same signature).
+	/// Members satisfied by a default implementation do not compete.
+	/// </summary>
+	private bool ReportProtocolAmbiguity(TypeSymbol concrete, ProtocolTypeSymbol proto, CallExpressionSyntax call)
+	{
+		var currentFileContext = context.FileContexts[context.CurrentUnit!];
+		foreach (var member in proto.Members)
+		{
+			var matches = GatherProtocolMemberCandidates(concrete, member.Name)
+				.Where(candidate => MemberStructurallyMatches(member, candidate, proto, concrete))
+				.Distinct()
+				.Count();
+			if (matches > 1)
+			{
+				context.Diagnostics.Report(currentFileContext, call.Span,
+					$"Ambiguous implementation of '{member.Name}' for protocol '{proto.Name}' on type '{concrete.Name}': multiple extension methods match the required signature.");
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/// <summary>
 	/// Materialize a protocol's default implementations (extension blocks on the
 	/// protocol definition) as real methods on a conforming concrete type.
 	/// The default's `this` receiver becomes a pointer to the concrete type, the
@@ -1517,12 +1612,40 @@ public sealed class ValidationPass(BindingContext context)
 			if (openBracket > 0) protoName = protoName[..openBracket];
 		}
 
-		if (!context.ProtocolDefaults.TryGetValue(protoName, out var defaults)) return;
-
 		var materializationKey = $"{baseType.Name}|{protoName}";
 		if (!context.MaterializedProtocolDefaults.Add(materializationKey)) return;
 
-		foreach (var (memberName, decl) in defaults)
+		// Collect the inherited defaults for this conformer: walk the effective
+		// member list and pick, for each member it does not implement itself, the
+		// satisfying default from that member's OWNING protocol's registry.
+		IEnumerable<(string MemberName, FunctionDeclarationSyntax Decl)> inheritedDefaults;
+		if (context.ProtocolEffectiveMembers.TryGetValue(protoName, out var effective))
+		{
+			var list = new List<(string MemberName, FunctionDeclarationSyntax Decl)>();
+			foreach (var (owner, member) in effective)
+			{
+				var ownerGenerics = context.ProtocolTemplates.TryGetValue(owner, out var ownerDecl) ? ownerDecl.GenericParameters : proto.GenericParameters;
+				if (!context.ProtocolDefaults.TryGetValue(owner, out var ownerDefaults)) continue;
+
+				var memberToken = ProtocolCanonicalizer.BuildMemberToken(member, ownerGenerics, context, selfReplacement: null, proto.GenericTypeArguments);
+				foreach (var (dn, ddecl) in ownerDefaults)
+				{
+					if (dn != member.Name) continue;
+					var defaultToken = ProtocolCanonicalizer.BuildFunctionToken(ddecl, ownerGenerics, context, proto.GenericTypeArguments);
+					if (defaultToken != memberToken) continue;
+					list.Add((dn, ddecl));
+					break;
+				}
+			}
+			inheritedDefaults = list;
+		}
+		else
+		{
+			if (!context.ProtocolDefaults.TryGetValue(protoName, out var flatDefaults)) return;
+			inheritedDefaults = flatDefaults;
+		}
+
+		foreach (var (memberName, decl) in inheritedDefaults)
 		{
 			var baseMangledName = $"{baseType.Name}.{memberName}";
 

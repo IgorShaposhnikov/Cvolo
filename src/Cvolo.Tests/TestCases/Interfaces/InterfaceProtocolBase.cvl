@@ -1,0 +1,44 @@
+/// <summary>
+/// Feature: Interface Inheritance from a Protocol Base.
+/// Verifies that an interface can reuse a protocol's structural member set while
+/// remaining a nominally dispatchable contract, so both members are reachable
+/// through the interface parameter.
+/// </summary>
+/// <remarks>
+/// Compiler Target: DeclarationPass (GetEffectiveInterfaceMembers) -> ValidationPass (Interface Dispatch).
+/// Memory Layout: 100% Flat contiguous stack frame allocation, zero heap overhead.
+/// </remarks>
+using System;
+
+protocol ISortable {
+    int Key();
+}
+
+interface IRecord : ISortable {
+    void Describe();
+}
+
+struct Entry {
+    int Id;
+}
+
+extension Entry : IRecord {
+    int Key() {
+        return Id;
+    }
+
+    void Describe() {
+        Console.WriteLine("entry described");
+    }
+}
+
+void Inspect(IRecord r) {
+    Console.WriteLine($"key={r.Key()}");
+    r.Describe();
+}
+
+int main() {
+    Entry e = Entry { Id: 42 };
+    Inspect(e);
+    return 0;
+}

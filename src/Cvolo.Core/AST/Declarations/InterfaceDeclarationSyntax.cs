@@ -14,6 +14,8 @@ public sealed class InterfaceDeclarationSyntax(
 	string name,
 	IReadOnlyList<string> genericParameters,
 	IReadOnlyList<InterfaceMethodDeclarationSyntax> members,
+	IReadOnlyList<string>? bases = null,
+	string? constraint = null,
 	IReadOnlyList<AttributeSyntax>? attributes = null) : SyntaxNode(span)
 {
 	public override SyntaxKind Kind => SyntaxKind.InterfaceDeclaration;
@@ -21,6 +23,18 @@ public sealed class InterfaceDeclarationSyntax(
 	public string Name { get; } = name;
 	public IReadOnlyList<string> GenericParameters { get; } = genericParameters;
 	public IReadOnlyList<InterfaceMethodDeclarationSyntax> Members { get; } = members;
+	/// <summary>
+	/// Optional `: Parent, Other` base clauses naming other contracts this interface
+	/// aggregates (interfaces and/or protocols). A conforming type must provide
+	/// every member of the transitive closure.
+	/// </summary>
+	public IReadOnlyList<string> Bases { get; } = bases ?? [];
+	/// <summary>
+	/// Optional `for ...` requires-clause naming the contract a conforming type
+	/// must itself satisfy (e.g. `interface IButton for IWidget&lt;Self&gt;`).
+	/// Null when the clause is absent.
+	/// </summary>
+	public string? Constraint { get; } = constraint;
 	public IReadOnlyList<AttributeSyntax> Attributes { get; } = attributes ?? [];
 
 	public override IEnumerable<SyntaxNode> GetChildren() => Members;

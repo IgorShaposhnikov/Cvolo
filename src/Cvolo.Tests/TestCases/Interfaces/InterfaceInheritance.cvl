@@ -1,0 +1,50 @@
+/// <summary>
+/// Feature: Interface Inheritance via ':' Base Clause.
+/// Verifies that a child interface extends its parent, that a conforming type must
+/// satisfy every ancestor member, and that dispatch reaches the whole graph through
+/// a parameter of the child interface type.
+/// </summary>
+/// <remarks>
+/// Compiler Target: DeclarationPass (Interface Ancestor Linking) -> ValidationPass (Effective Member Dispatch).
+/// Memory Layout: 100% Flat contiguous stack frame allocation, zero heap overhead.
+/// </remarks>
+using System;
+
+interface IWidget {
+    void Print();
+    int Value();
+}
+
+interface IButton : IWidget {
+    void Click();
+}
+
+struct Button {
+    int Times;
+}
+
+extension Button : IButton {
+    void Print() {
+        Console.WriteLine("Button Print");
+    }
+
+    int Value() {
+        return Times;
+    }
+
+    void Click() {
+        Console.WriteLine("button clicked");
+    }
+}
+
+void Press(IButton b) {
+    b.Print();
+    Console.WriteLine($"Value: {b.Value()}");
+    b.Click();
+}
+
+int main() {
+    Button btn = Button { Times: 5 };
+    Press(btn);
+    return 0;
+}

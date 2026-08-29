@@ -1,3 +1,13 @@
+/// <summary>
+/// Feature: Conformer Method Override of Protocol Defaults.
+/// Verifies that a concrete type's own method shadows the inherited default, so a
+/// default never overrides an explicit implementation and dispatch through a
+/// protocol-typed parameter lands on the concrete method.
+/// </summary>
+/// <remarks>
+/// Compiler Target: ValidationPass (Default Materialization Override Skip) -> CodeGenerator (Monomorphized LLVM IR).
+/// Memory Layout: 100% Flat contiguous stack frame allocation, zero heap overhead.
+/// </remarks>
 using System;
 
 protocol IPrintable {

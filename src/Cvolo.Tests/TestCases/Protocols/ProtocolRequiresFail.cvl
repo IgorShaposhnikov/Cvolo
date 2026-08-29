@@ -1,0 +1,38 @@
+/// <summary>
+/// Feature: Protocol Constraint Violation via 'for' Header Syntax.
+/// Verifies that the compiler aggressively blocks contract propagation when a concrete
+/// type fails to satisfy a protocol's external dependency requirement.
+/// </summary>
+/// <remarks>
+/// Compiler Target: ValidationPass (Lazy Call-Site Validation Phase).
+/// Expected Diagnostic: Id-less structural mismatch error.
+/// </remarks>
+using System;
+
+interface IRecordId {
+    int Id();
+}
+
+protocol ISorter for IRecordId {
+    void Sort();
+}
+
+struct Row {
+    int N;
+}
+
+extension Row {
+    void Sort() {
+        Console.WriteLine("sorted");
+    }
+}
+
+void Process(ISorter s) {
+    s.Sort();
+}
+
+int main() {
+    Row r = Row { N: 3 };
+    Process(r);
+    return 0;
+}

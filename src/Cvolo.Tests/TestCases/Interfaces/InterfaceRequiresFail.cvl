@@ -1,0 +1,39 @@
+/// <summary>
+/// Feature: Interface Constraint Violation via 'for' Header Syntax.
+/// Verifies that interface conformance registration fails eagerly when a concrete
+/// type does not also satisfy the interface's required capability contract — unlike
+/// the lazy protocol-side check.
+/// </summary>
+/// <remarks>
+/// Compiler Target: DeclarationPass (EnforceInterfaceConstraint, Registration Phase).
+/// Expected Diagnostic: 'Type 'Btn' does not satisfy the requires-clause 'IWidget' of interface 'IButton''.
+/// </remarks>
+using System;
+
+interface IWidget {
+    void Print();
+}
+
+interface IButton for IWidget {
+    void SetLabel();
+}
+
+struct Btn {
+    string Text;
+}
+
+extension Btn : IButton {
+    void SetLabel() {
+        Console.WriteLine("labeled");
+    }
+}
+
+void Use(IButton b) {
+    b.SetLabel();
+}
+
+int main() {
+    Btn x = Btn { Text: "ok" };
+    Use(x);
+    return 0;
+}

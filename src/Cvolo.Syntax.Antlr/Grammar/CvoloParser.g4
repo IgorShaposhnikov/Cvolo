@@ -71,7 +71,7 @@ extensionDeclaration
 	;
 
 interfaceDeclaration
-	: attributeList* INTERFACE Identifier (LT genericParameterList GT)? LBRACE interfaceMember* RBRACE SEMI?
+	: attributeList* INTERFACE Identifier (LT genericParameterList GT)? (COLON qualifiedName (COMMA qualifiedName)*)? (FOR type)? LBRACE interfaceMember* RBRACE SEMI?
 	;
 
 interfaceMember
@@ -79,7 +79,7 @@ interfaceMember
 	;
 
 protocolDeclaration
-	: attributeList* PROTOCOL Identifier (LT genericParameterList GT)? (FOR type)? LBRACE protocolMember* RBRACE SEMI?
+	: attributeList* PROTOCOL Identifier (LT genericParameterList GT)? (COLON qualifiedName (COMMA qualifiedName)*)? (FOR type)? LBRACE protocolMember* RBRACE SEMI?
 	;
 
 protocolMember

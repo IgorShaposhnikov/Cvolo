@@ -1,0 +1,53 @@
+/// <summary>
+/// Feature: Protocol Inheritance and Aggregation via ':' Base Clauses.
+/// Verifies that `protocol IStream : IReader, IWriter` composes the member graph
+/// from every ancestor, and that a concrete type implementing only leaf members
+/// still dispatches through the whole inherited contract.
+/// </summary>
+/// <remarks>
+/// Compiler Target: DeclarationPass (Pass 0b Contract Linking) -> ValidationPass (Effective Member Dispatch).
+/// Memory Layout: 100% Flat contiguous stack frame allocation, zero heap overhead.
+/// </remarks>
+using System;
+
+protocol IReader {
+    void Read();
+}
+
+protocol IWriter {
+    void Write();
+}
+
+protocol IStream : IReader, IWriter {
+    void Flush();
+}
+
+struct File {
+    int Position;
+}
+
+extension File {
+    void Read() {
+        Console.WriteLine($"File read at {Position}");
+    }
+
+    void Write() {
+        Console.WriteLine("File write");
+    }
+
+    void Flush() {
+        Console.WriteLine("File flush");
+    }
+}
+
+void Pump(IStream s) {
+    s.Read();
+    s.Write();
+    s.Flush();
+}
+
+int main() {
+    File f = File { Position: 3 };
+    Pump(f);
+    return 0;
+}

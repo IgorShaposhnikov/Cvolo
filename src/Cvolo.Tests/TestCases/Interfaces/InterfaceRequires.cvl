@@ -1,0 +1,45 @@
+/// <summary>
+/// Feature: Interface 'for' Requires-Clause Satisfaction.
+/// Verifies that a concrete type conforming to both the interface and its required
+/// capability contract (anchored on Self) is accepted at registration and dispatches
+/// normally through the interface parameter.
+/// </summary>
+/// <remarks>
+/// Compiler Target: DeclarationPass (RegisterConformance Aggressive Constraint Check) -> CodeGenerator.
+/// Memory Layout: 100% Flat contiguous stack frame allocation, zero heap overhead.
+/// </remarks>
+using System;
+
+interface IWidget {
+    void Print();
+}
+
+interface IButton for IWidget {
+    void SetLabel();
+}
+
+struct Btn {
+    string Text;
+}
+
+extension Btn : IWidget {
+    void Print() {
+        Console.WriteLine("btn printed");
+    }
+}
+
+extension Btn : IButton {
+    void SetLabel() {
+        Console.WriteLine("labeled");
+    }
+}
+
+void Use(IButton b) {
+    b.SetLabel();
+}
+
+int main() {
+    Btn x = Btn { Text: "ok" };
+    Use(x);
+    return 0;
+}

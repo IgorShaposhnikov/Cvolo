@@ -37,7 +37,7 @@ public abstract class AstRewriterBase
 		if (node is InterfaceDeclarationSyntax interfaceDecl)
 		{
 			var rewrittenMembers = interfaceDecl.Members.Select(Rewrite).Cast<InterfaceMethodDeclarationSyntax>().ToList();
-			return new InterfaceDeclarationSyntax(interfaceDecl.Span, interfaceDecl.Name, interfaceDecl.GenericParameters, rewrittenMembers, interfaceDecl.Attributes);
+			return new InterfaceDeclarationSyntax(interfaceDecl.Span, interfaceDecl.Name, interfaceDecl.GenericParameters, rewrittenMembers, interfaceDecl.Bases, interfaceDecl.Constraint, interfaceDecl.Attributes);
 		}
 
 		if (node is InterfaceMethodDeclarationSyntax interfaceMember)
@@ -49,7 +49,7 @@ public abstract class AstRewriterBase
 		if (node is ProtocolDeclarationSyntax protocolDecl)
 		{
 			var rewrittenMembers = protocolDecl.Members.Select(Rewrite).Cast<ProtocolMethodDeclarationSyntax>().ToList();
-			return new ProtocolDeclarationSyntax(protocolDecl.Span, protocolDecl.Name, protocolDecl.GenericParameters, rewrittenMembers, protocolDecl.Constraint, protocolDecl.Attributes);
+			return new ProtocolDeclarationSyntax(protocolDecl.Span, protocolDecl.Name, protocolDecl.GenericParameters, rewrittenMembers, protocolDecl.Bases, protocolDecl.Constraint, protocolDecl.Attributes);
 		}
 
 		if (node is ProtocolMethodDeclarationSyntax protocolMember)

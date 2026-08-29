@@ -79,6 +79,12 @@ public sealed class BindingContext
 	// ("{ConcreteTypeName}|{ProtocolName}" once a conformer's inherited methods exist).
 	public HashSet<string> MaterializedProtocolDefaults { get; } = [];
 
+	// Transitive closure of a protocol's members after `:` base-clause aggregation
+	// (mangled protocol name -> (owning protocol mangled name, member declaration)).
+	// Built by DeclarationPass Pass 0b; used for conformance checks, dispatch
+	// templates, generic protocol instantiation, and default-implementation lookup.
+	public Dictionary<string, List<(string OwnerProtocol, ProtocolMethodDeclarationSyntax Member)>> ProtocolEffectiveMembers { get; } = [];
+
 
 	public CompilationUnitSyntax? CurrentUnit { get; set; }
 	public string? CurrentNamespace { get; set; }
@@ -736,7 +742,33 @@ MonomorphizeExtensionsForType(instantiatedType, typeArgs, templateMangledName);
 		var instName = $"{templateMangledName}<{string.Join(", ", typeArgs.Select(t => t.Name))}>";
 		var argNames = typeArgs.Select(t => t.Name).ToList();
 
-		var canonicalMembers = ProtocolCanonicalizer.BuildCanonicalMembers(templateDecl, this, argNames);
-		return new ProtocolTypeSymbol(instName, templateDecl.Members, templateDecl.GenericParameters, templateDecl.Constraint, canonicalMembers, argNames);
+		var (members, canonicalMembers) = GetEffectiveProtocolShape(templateMangledName, argNames, templateDecl);
+		return new ProtocolTypeSymbol(instName, members, templateDecl.GenericParameters, templateDecl.Constraint, canonicalMembers, argNames);
+	}
+
+	/// <summary>
+	/// The member list and canonical tokens of a protocol after `:` base-clause
+	/// aggregation. Each member is canonicalized with its OWNER's generic
+	/// parameters (the protocol it was declared on), so a parent protocol's
+	/// placeholders keep their own width; concrete arguments from the current
+	/// instantiation substitute throughout.
+	/// </summary>
+	private (IReadOnlyList<ProtocolMethodDeclarationSyntax> Members, IReadOnlySet<string> CanonicalMembers) GetEffectiveProtocolShape(
+		string protoMangledName, List<string> concreteTypeArguments, ProtocolDeclarationSyntax fallbackDecl)
+	{
+		if (ProtocolEffectiveMembers.TryGetValue(protoMangledName, out var effective))
+		{
+			var canonical = new HashSet<string>();
+			foreach (var (owner, member) in effective)
+			{
+				var ownerGenerics = ProtocolTemplates.TryGetValue(owner, out var ownerDecl)
+					? ownerDecl.GenericParameters
+					: fallbackDecl.GenericParameters;
+				canonical.Add(ProtocolCanonicalizer.BuildMemberToken(member, ownerGenerics, this, selfReplacement: null, concreteTypeArguments));
+			}
+			return (effective.Select(e => e.Member).ToList(), canonical);
+		}
+
+		return (fallbackDecl.Members, ProtocolCanonicalizer.BuildCanonicalMembers(fallbackDecl, this, concreteTypeArguments));
 	}
 }

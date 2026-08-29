@@ -1,0 +1,44 @@
+/// <summary>
+/// Feature: Protocol 'for' Requires-Clause Satisfaction.
+/// Verifies that a concrete type satisfying the external capability dependency of a
+/// protocol (anchored on Self) is accepted at the call site and dispatches normally.
+/// </summary>
+/// <remarks>
+/// Compiler Target: ValidationPass (Lazy Call-Site Required-Capability Check) -> CodeGenerator.
+/// Memory Layout: 100% Flat contiguous stack frame allocation, zero heap overhead.
+/// </remarks>
+using System;
+
+interface IRecordId {
+    int Id();
+}
+
+protocol ISorter for IRecordId {
+    void Sort();
+}
+
+struct Row {
+    int N;
+}
+
+extension Row : IRecordId {
+    int Id() {
+        return N;
+    }
+}
+
+extension Row {
+    void Sort() {
+        Console.WriteLine("sorted");
+    }
+}
+
+void Process(ISorter s) {
+    s.Sort();
+}
+
+int main() {
+    Row r = Row { N: 3 };
+    Process(r);
+    return 0;
+}

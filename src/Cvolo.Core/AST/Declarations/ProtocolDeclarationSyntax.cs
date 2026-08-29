@@ -16,6 +16,7 @@ public sealed class ProtocolDeclarationSyntax(
 	string name,
 	IReadOnlyList<string> genericParameters,
 	IReadOnlyList<ProtocolMethodDeclarationSyntax> members,
+	IReadOnlyList<string>? bases = null,
 	string? constraint = null,
 	IReadOnlyList<AttributeSyntax>? attributes = null) : SyntaxNode(span)
 {
@@ -24,6 +25,12 @@ public sealed class ProtocolDeclarationSyntax(
 	public string Name { get; } = name;
 	public IReadOnlyList<string> GenericParameters { get; } = genericParameters;
 	public IReadOnlyList<ProtocolMethodDeclarationSyntax> Members { get; } = members;
+	/// <summary>
+	/// Optional `: Parent, Other` base clauses naming other contracts this protocol
+	/// aggregates. All bases must themselves be protocols (interface parents are
+	/// not allowed). Conforming types implicitly satisfy the parent capability graph.
+	/// </summary>
+	public IReadOnlyList<string> Bases { get; } = bases ?? [];
 	/// <summary>
 	/// Optional `for ...` requires-clause naming the contract a conforming type
 	/// must itself satisfy (e.g. `protocol ISortable for IComparable&lt;Self&gt;`).

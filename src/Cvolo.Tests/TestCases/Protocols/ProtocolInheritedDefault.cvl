@@ -1,0 +1,52 @@
+/// <summary>
+/// Feature: Protocol Default Inheritance Across Hierarchy Boundaries.
+/// Verifies that defaults declared on an ancestor protocol remain applied when a
+/// concrete type satisfies the contract by way of a derived protocol (member
+/// ownership is tracked per ancestor, not re-attributed to the child).
+/// </summary>
+/// <remarks>
+/// Compiler Target: DeclarationPass (ProtocolEffectiveMembers) -> ValidationPass (Owner-Keyed Default Materialization).
+/// Memory Layout: 100% Flat contiguous stack frame allocation, zero heap overhead.
+/// </remarks>
+using System;
+
+protocol IBase {
+    void Info();
+    void Extra();
+}
+
+protocol IDerived : IBase {
+    void Go();
+}
+
+struct Device {
+    int Id;
+}
+
+extension Device {
+    void Go() {
+        Console.WriteLine($"device go {Id}");
+    }
+}
+
+extension IBase {
+    void Info() {
+        Console.WriteLine("Base Info default");
+    }
+
+    void Extra() {
+        Console.WriteLine("Base Extra default");
+    }
+}
+
+void Run(IDerived d) {
+    d.Go();
+    d.Info();
+    d.Extra();
+}
+
+int main() {
+    Device dev = Device { Id: 7 };
+    Run(dev);
+    return 0;
+}

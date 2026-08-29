@@ -745,7 +745,9 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		}
 
 		var attributes = BuildAttributeList(context.attributeList());
-		return new InterfaceDeclarationSyntax(SpanOf(context), name, generics, members, attributes);
+		var bases = context.qualifiedName().Select(q => q.GetText()).ToList();
+		var constraint = context.FOR() is not null && context.type() is { } typeCtx ? GetTypeName(typeCtx) : null;
+		return new InterfaceDeclarationSyntax(SpanOf(context), name, generics, members, bases, constraint, attributes);
 	}
 
 	private ProtocolDeclarationSyntax BuildProtocolDeclaration(CvoloParser.ProtocolDeclarationContext context)
@@ -776,8 +778,9 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		}
 
 		var attributes = BuildAttributeList(context.attributeList());
+		var bases = context.qualifiedName().Select(q => q.GetText()).ToList();
 		var constraint = context.FOR() is not null && context.type() is { } typeCtx ? GetTypeName(typeCtx) : null;
-		return new ProtocolDeclarationSyntax(SpanOf(context), name, generics, members, constraint, attributes);
+		return new ProtocolDeclarationSyntax(SpanOf(context), name, generics, members, bases, constraint, attributes);
 	}
 
 	private UnionDeclarationSyntax BuildUnionDeclaration(CvoloParser.UnionDeclarationContext context)

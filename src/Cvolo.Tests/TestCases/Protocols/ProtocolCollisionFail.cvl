@@ -1,0 +1,32 @@
+/// <summary>
+/// Feature: Extension Collision Rule.
+/// Verifies that two extension blocks providing the same method signature on the
+/// same type are rejected, so dispatch cannot be declaration-order-dependent.
+/// </summary>
+/// <remarks>
+/// Compiler Target: DeclarationPass (DeclareExtension Collision Guard).
+/// Expected Diagnostic: 'Duplicate symbol 'DoWork' on type 'Thing' in extension blocks.'
+/// </remarks>
+using System;
+
+struct Thing {
+    int X;
+}
+
+extension Thing {
+    void DoWork() {
+        Console.WriteLine("first");
+    }
+}
+
+extension Thing {
+    void DoWork() {
+        Console.WriteLine("second");
+    }
+}
+
+int main() {
+    Thing t = Thing { X: 1 };
+    t.DoWork();
+    return 0;
+}

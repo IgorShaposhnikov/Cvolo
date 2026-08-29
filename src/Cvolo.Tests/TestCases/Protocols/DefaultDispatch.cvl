@@ -1,3 +1,13 @@
+/// <summary>
+/// Feature: Protocol Default Implementations via Extension Blocks.
+/// Verifies that a conforming concrete type automatically inherits a default body
+/// declared on the protocol, and that dispatch through a protocol-typed parameter
+/// lands on the inherited implementation.
+/// </summary>
+/// <remarks>
+/// Compiler Target: ValidationPass (Lazy Default Materialization) -> CodeGenerator (Monomorphized LLVM IR).
+/// Memory Layout: 100% Flat contiguous stack frame allocation, zero heap overhead.
+/// </remarks>
 using System;
 
 protocol IPrintable {

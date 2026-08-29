@@ -1,0 +1,18 @@
+/// <summary>
+/// Feature: Ambiguous Protocol Dispatch — Contributing Extension (Namespace Alpha).
+/// Declares a Point.DoWork() extension that, together with Beta's same-signature
+/// extension, makes protocol dispatch ambiguous for the ProtocolAmbiguityFail case.
+/// </summary>
+/// <remarks>
+/// Compiler Target: ValidationPass (Structural Candidate Gathering, 3-Key Namespace Walk).
+/// Role: One of two same-signature contributions driven by main.cvl in this folder.
+/// </remarks>
+using System;
+
+namespace Alpha {
+    extension Point {
+        void DoWork() {
+            Console.WriteLine("alpha work");
+        }
+    }
+}
