@@ -70,6 +70,15 @@ public sealed class BindingContext
 	// keyed by the mangled base name. Monomorphized per call site with a structurally conforming type.
 	public Dictionary<string, FunctionDeclarationSyntax> ProtocolFunctionTemplates { get; } = [];
 
+	// Default implementations for contracts: extension blocks written directly on a
+	// protocol definition (mangled protocol name -> (member name, method declaration)).
+	// Conforming concrete types inherit these automatically unless they override them.
+	public Dictionary<string, List<(string MemberName, FunctionDeclarationSyntax Decl)>> ProtocolDefaults { get; } = [];
+
+	// Module-level dedup of default-implementation materialization
+	// ("{ConcreteTypeName}|{ProtocolName}" once a conformer's inherited methods exist).
+	public HashSet<string> MaterializedProtocolDefaults { get; } = [];
+
 
 	public CompilationUnitSyntax? CurrentUnit { get; set; }
 	public string? CurrentNamespace { get; set; }

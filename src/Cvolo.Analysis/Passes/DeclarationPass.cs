@@ -549,6 +549,23 @@ public sealed class DeclarationPass(BindingContext context)
 			return;
 		}
 
+		// PROTOCOL DEFAULTS: an extension block written directly ON a protocol
+		// definition provides default implementations. Conforming concrete types
+		// inherit them unless they define a matching method of their own. The
+		// naked "{Protocol}.{Method}" symbols registered below are never emitted
+		// (CodeGenerator skips protocol-typed extension blocks); ValidationPass
+		// materializes a substituted copy onto each conforming concrete type.
+		if (extendedType is ProtocolTypeSymbol protoExtType)
+		{
+			if (!context.ProtocolDefaults.TryGetValue(protoExtType.Name, out var defaults))
+			{
+				defaults = [];
+				context.ProtocolDefaults[protoExtType.Name] = defaults;
+			}
+			foreach (var method in extDecl.Methods)
+				defaults.Add((method.Name, method));
+		}
+
 		// RETROACTIVE CONFORMANCE: "extension T : IName" records that the
 		// extended concrete type conforms to the named interface and validates
 		// that this extension provides every required method with a matching

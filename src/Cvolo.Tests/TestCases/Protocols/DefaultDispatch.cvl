@@ -1,0 +1,33 @@
+using System;
+
+protocol IPrintable {
+    void Print();
+    void Info();
+}
+
+struct Document {
+    int PageCount;
+}
+
+extension Document {
+    void Print() {
+        Console.WriteLine($"Document(pages={PageCount})");
+    }
+}
+
+extension IPrintable {
+    void Info() {
+        Console.WriteLine("Default Info Output");
+    }
+}
+
+void Show(IPrintable p) {
+    p.Print();
+    p.Info();
+}
+
+int main() {
+    Document d = Document { PageCount: 12 };
+    Show(d);
+    return 0;
+}

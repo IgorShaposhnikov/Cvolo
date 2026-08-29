@@ -46,6 +46,19 @@ internal static class ProtocolCanonicalizer
 	}
 
 	/// <summary>
+	/// The canonical token for a default-implementation method written in an
+	/// extension block on a protocol definition. Mirrors <see cref="BuildMemberToken"/>
+	/// for a <see cref="FunctionDeclarationSyntax"/> (the method has an implicit
+	/// `this` receiver of the protocol type, which is outside the token).
+	/// </summary>
+	public static string BuildFunctionToken(FunctionDeclarationSyntax method, IReadOnlyList<string> genericParameters, BindingContext context, IReadOnlyList<string>? concreteTypeArguments = null)
+	{
+		var returnToken = CanonicalizeProtocolType(method.ReturnType, genericParameters, context, selfReplacement: null, concreteTypeArguments);
+		var paramTokens = method.Parameters.Select(p => CanonicalizeProtocolType(p.Type, genericParameters, context, selfReplacement: null, concreteTypeArguments));
+		return string.Join(":", returnToken, $"{method.Name}({string.Join(",", paramTokens)})");
+	}
+
+	/// <summary>
 	/// Removes any leading ref/refvar and trailing * / [N] / [] wrappers, leaving
 	/// the bare inner type name (e.g. "refvar Self[4]" -> "Self").
 	/// </summary>

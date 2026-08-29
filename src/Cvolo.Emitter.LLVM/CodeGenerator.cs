@@ -255,6 +255,12 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				}
 				else if (member is ExtensionDeclarationSyntax extDecl)
 				{
+					// Default implementations written on a protocol definition are
+					// never emitted standalone (their receiver is abstract); a
+					// substituted copy is materialized onto each conforming type.
+					if (bindingContext.ResolveType(extDecl.ExtendedTypeName) is ProtocolTypeSymbol)
+						continue;
+
 					foreach (var method in extDecl.Methods
 						.Concat(extDecl.Destructors.Select(static d => d.ToFunctionDeclaration())))
 					{

@@ -17,6 +17,8 @@ public sealed class ProtocolsTests : CompilerTestBase
 	[InlineData("SelfConformingFail.cvl")]
 	[InlineData("GenericDispatch.cvl")]
 	[InlineData("WidthLockFail.cvl")]
+	[InlineData("DefaultDispatch.cvl")]
+	[InlineData("DefaultOverride.cvl")]
 	public void Parser_Protocols_Should_Parse(string caseName)
 	{
 		var assemblyDir = Path.GetDirectoryName(typeof(ProtocolsTests).Assembly.Location)!;
@@ -103,6 +105,20 @@ public sealed class ProtocolsTests : CompilerTestBase
 	[Theory]
 	[InlineData("SelfDispatch", "cmp1=1\ncmp2=0\nclone=(7,8)")]
 	public void Protocols_SelfDispatch(string caseName, string expected)
+	{
+		var fileName = $"Protocols/{caseName}.cvl";
+		var (exitCode, stdout, stderr) = RunCompiler(fileName);
+		AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
+
+		var (runCode, runStdout) = ExecuteBinary(caseName, "Protocols");
+		Assert.Equal(0, runCode);
+		Assert.Equal(expected.Replace("\r\n", "\n").Trim(), runStdout.Replace("\r\n", "\n").Trim());
+	}
+
+	[Theory]
+	[InlineData("DefaultDispatch", "Document(pages=12)\nDefault Info Output")]
+	[InlineData("DefaultOverride", "Document(pages=12)\nDocument Info Override")]
+	public void Protocols_DefaultDispatch(string caseName, string expected)
 	{
 		var fileName = $"Protocols/{caseName}.cvl";
 		var (exitCode, stdout, stderr) = RunCompiler(fileName);

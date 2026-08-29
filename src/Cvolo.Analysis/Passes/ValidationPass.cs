@@ -1224,10 +1224,43 @@ public sealed class ValidationPass(BindingContext context)
 				}
 			}
 
+			// Default implementations (extension on the protocol, spec §4): a
+			// conformer inherits the default unless it overrides the member.
+			if (!matched && HasSatisfyingDefault(member, proto))
+				matched = true;
+
 			if (!matched) return false;
 		}
 
 		return true;
+	}
+
+	/// <summary>
+	/// True when the protocol carries a default implementation (extension block on
+	/// the protocol definition, spec §4) whose canonical token matches this member.
+	/// Generic protocols are compared in width-lock placeholder form, so a default
+	/// declared as `void Store(T item)` satisfies the member for every instantiation.
+	/// </summary>
+	private bool HasSatisfyingDefault(ProtocolMethodDeclarationSyntax member, ProtocolTypeSymbol proto)
+	{
+		var protoName = proto.Name;
+		if (proto.GenericTypeArguments is not null)
+		{
+			var openBracket = protoName.IndexOf('<');
+			if (openBracket > 0) protoName = protoName[..openBracket];
+		}
+
+		if (!context.ProtocolDefaults.TryGetValue(protoName, out var defaults))
+			return false;
+
+		var memberToken = ProtocolCanonicalizer.BuildMemberToken(member, proto.GenericParameters, context, selfReplacement: null, proto.GenericTypeArguments);
+		foreach (var (defaultName, decl) in defaults)
+		{
+			if (defaultName != member.Name) continue;
+			var defaultToken = ProtocolCanonicalizer.BuildFunctionToken(decl, proto.GenericParameters, context, proto.GenericTypeArguments);
+			if (defaultToken == memberToken) return true;
+		}
+		return false;
 	}
 
 	/// <summary>
@@ -1401,6 +1434,10 @@ public sealed class ValidationPass(BindingContext context)
 			return null;
 		}
 
+		// Conforming concrete types whose protocol defaults must be materialized
+		// before the body is validated (so inherited-member calls resolve).
+		var conformedPairs = new List<(TypeSymbol Concrete, ProtocolTypeSymbol Proto)>();
+
 		// Build the substitution map: each protocol-typed parameter maps to its concrete arg type.
 		var substitutionMap = new Dictionary<string, TypeSymbol>();
 		for (var i = 0; i < templateDecl.Parameters.Count; i++)
@@ -1436,6 +1473,8 @@ public sealed class ValidationPass(BindingContext context)
 				return null;
 			}
 
+			conformedPairs.Add((concrete, proto));
+
 			if (substitutionMap.TryGetValue(protocolTypeName, out var existing) && existing.Name != concrete.Name)
 			{
 				context.Diagnostics.Report(currentFileContext, call.Span,
@@ -1448,7 +1487,77 @@ public sealed class ValidationPass(BindingContext context)
 
 		if (substitutionMap.Count == 0) return null;
 
+		// Inherited default implementations (spec §4): materialize a substituted
+		// copy of each default onto its conforming concrete type so calls inside
+		// the monomorphized body resolve to a real function.
+		foreach (var (conformed, conformedProto) in conformedPairs.Distinct())
+			MaterializeProtocolDefaults(conformed, conformedProto);
+
 		return InstantiateProtocolFunction(templateDecl, substitutionMap, scope);
+	}
+
+	/// <summary>
+	/// Materialize a protocol's default implementations (extension blocks on the
+	/// protocol definition) as real methods on a conforming concrete type.
+	/// The default's `this` receiver becomes a pointer to the concrete type, the
+	/// declaration is registered under "{Concrete}.{Method}", and the raw body is
+	/// queued for codegen via the monomorphized-function pipeline. A conformer
+	/// that declares its own matching method overrides the default (identical
+	/// overloaded names collide, own registration wins by order).
+	/// </summary>
+	private void MaterializeProtocolDefaults(TypeSymbol concrete, ProtocolTypeSymbol proto)
+	{
+		var baseType = concrete is PointerTypeSymbol ptr ? ptr.ReferencedType : concrete;
+		if (baseType is not (StructTypeSymbol or UnionTypeSymbol)) return;
+
+		var protoName = proto.Name;
+		if (proto.GenericTypeArguments is not null)
+		{
+			var openBracket = protoName.IndexOf('<');
+			if (openBracket > 0) protoName = protoName[..openBracket];
+		}
+
+		if (!context.ProtocolDefaults.TryGetValue(protoName, out var defaults)) return;
+
+		var materializationKey = $"{baseType.Name}|{protoName}";
+		if (!context.MaterializedProtocolDefaults.Add(materializationKey)) return;
+
+		foreach (var (memberName, decl) in defaults)
+		{
+			var baseMangledName = $"{baseType.Name}.{memberName}";
+
+			var thisParamType = new PointerTypeSymbol(baseType, isMutable: false);
+			var parameters = new List<ParameterSymbol> { new ParameterSymbol("this", thisParamType) };
+			var hasBadParam = false;
+			foreach (var p in decl.Parameters)
+			{
+				var paramType = context.ResolveType(p.Type);
+				if (paramType is null) { hasBadParam = true; break; }
+				parameters.Add(new ParameterSymbol(p.Name, paramType));
+			}
+			if (hasBadParam) continue;
+
+			var returnType = context.ResolveType(decl.ReturnType);
+			if (returnType is null) continue;
+
+			var overloadedName = context.GetOverloadedMangledName(baseMangledName, parameters.Select(q => q.Type).ToList());
+			if (context.Globals.Lookup(overloadedName) is not null) continue;
+
+			var newSymbol = new FunctionSymbol(overloadedName, returnType, parameters);
+			context.Globals.Declare(newSymbol);
+
+			if (!context.OverloadedFunctions.TryGetValue(baseMangledName, out var candidates))
+			{
+				candidates = [];
+				context.OverloadedFunctions[baseMangledName] = candidates;
+			}
+			candidates.Add(newSymbol);
+
+			context.SymbolUnits[overloadedName] = context.CurrentUnit!;
+
+			var instDecl = new FunctionDeclarationSyntax(decl.Span, decl.ReturnType, overloadedName, [], decl.Parameters, decl.Body);
+			context.MonomorphizedFunctionDecls.Add(instDecl);
+		}
 	}
 
 	private BlockStatementSyntax SubstituteBlockGenerics(BlockStatementSyntax block, Dictionary<string, TypeSymbol> substitutionMap)
@@ -1795,6 +1904,23 @@ public sealed class ValidationPass(BindingContext context)
 	private void CheckExtensionMethodBody(string extendedTypeName, FunctionDeclarationSyntax method, bool forceMutableThis = false)
 	{
 		var extendedType = context.ResolveType(extendedTypeName);
+		if (extendedType is ProtocolTypeSymbol)
+		{
+			// PROTOCOL DEFAULT BODIES: validated once at declaration against a
+			// this-free scope (no receiver object or flat struct fields exist).
+			// A default body may only reference globals/functions and its own
+			// explicit parameters.
+			var protoScope = new SymbolTable(context.Globals);
+			foreach (var p in method.Parameters)
+			{
+				var pt = context.ResolveType(p.Type);
+				if (pt is not null)
+					protoScope.Declare(new VariableSymbol(p.Name, pt, isMutable: false) { IsInitialized = true });
+			}
+			CheckBlock(method.Body, protoScope, method);
+			return;
+		}
+
 		if (extendedType is not (StructTypeSymbol or UnionTypeSymbol)) return;
 
 		// 1. Static AST Mutation Scan: Infer if the method modifies any fields
