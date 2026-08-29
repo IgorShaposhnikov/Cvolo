@@ -1,3 +1,5 @@
+using System;
+
 protocol IShape {
     void Scale(int factor);
     int Area();
@@ -27,6 +29,6 @@ int main() {
     r.W = 3;
     r.H = 4;
     ApplyScale(ref r, 2);
-    printf("Area: %d\n", r.Area());
+    Console.WriteLine($"Area: {r.Area()}");
     return 0;
 }

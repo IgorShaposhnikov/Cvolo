@@ -1,3 +1,5 @@
+using System;
+
 protocol IWidget {
     void Print();
     int Value();
@@ -11,7 +13,7 @@ struct Point {
 
 extension Point {
     void Print() {
-        printf("Point(%d,%d)\n", X, Y);
+        Console.WriteLine($"Point({X},{Y})");
     }
     int Value() {
         return X + Y;
@@ -23,9 +25,9 @@ extension Point {
 
 void Draw(IWidget w) {
     w.Print();
-    printf("Value: %d\n", w.Value());
-    printf("Contains4: %d\n", w.Contains(4) ? 1 : 0);
-    printf("Contains7: %d\n", w.Contains(7) ? 1 : 0);
+    Console.WriteLine($"Value: {w.Value()}");
+    Console.WriteLine($"Contains4: {w.Contains(4) ? 1 : 0}");
+    Console.WriteLine($"Contains7: {w.Contains(7) ? 1 : 0}");
 }
 
 int main() {

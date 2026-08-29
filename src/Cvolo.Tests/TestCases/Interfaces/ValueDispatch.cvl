@@ -1,3 +1,5 @@
+using System;
+
 interface IWidget {
     void Print();
     int Value();
@@ -10,7 +12,7 @@ struct Point {
 
 extension Point : IWidget {
     void Print() {
-        printf("Point(%d,%d)\n", X, Y);
+        Console.WriteLine($"Point({X},{Y})");
     }
     int Value() {
         return X + Y;
@@ -19,7 +21,7 @@ extension Point : IWidget {
 
 void Draw(IWidget w) {
     w.Print();
-    printf("Value: %d\n", w.Value());
+    Console.WriteLine($"Value: {w.Value()}");
 }
 
 int main() {

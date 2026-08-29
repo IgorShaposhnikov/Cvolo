@@ -1,3 +1,5 @@
+using System;
+
 protocol IEquatable {
     bool Equals(Self other);
     Self Make(int seed);
@@ -14,12 +16,12 @@ extension Point {
 }
 
 void Compare(IEquatable a, IEquatable b, int label) {
-    printf("cmp%d=%d\n", label, a.Equals(b) ? 1 : 0);
+    Console.WriteLine($"cmp{label}={a.Equals(b) ? 1 : 0}");
 }
 
 void Clone(IEquatable a, int seed) {
     Point c = a.Make(seed);
-    printf("clone=(%d,%d)\n", c.X, c.Y);
+    Console.WriteLine($"clone=({c.X},{c.Y})");
 }
 
 int main() {

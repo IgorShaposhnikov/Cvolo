@@ -1,3 +1,5 @@
+using System;
+
 interface IDrawable {
     void Draw();
     int Id();
@@ -13,7 +15,7 @@ struct Enemy {
 
 extension Player : IDrawable {
     void Draw() {
-        printf("Player(h=%d)\n", Health);
+        Console.WriteLine($"Player(h={Health})");
     }
     int Id() {
         return Health * 2;
@@ -22,7 +24,7 @@ extension Player : IDrawable {
 
 extension Enemy : IDrawable {
     void Draw() {
-        printf("Enemy(h=%d)\n", Health);
+        Console.WriteLine($"Enemy(h={Health})");
     }
     int Id() {
         return Health * 3;
@@ -31,7 +33,7 @@ extension Enemy : IDrawable {
 
 void Render(IDrawable d) {
     d.Draw();
-    printf("Id: %d\n", d.Id());
+    Console.WriteLine($"Id: {d.Id()}");
 }
 
 void Boost(refvar IDrawable d) {
