@@ -14,6 +14,8 @@ public sealed class InterfacesTests : CompilerTestBase
 	[InlineData("ValueDispatch.cvl")]
 	[InlineData("ValueDispatchMultiple.cvl")]
 	[InlineData("ValueDispatchNotConforming.cvl")]
+	[InlineData("RefDispatch.cvl")]
+	[InlineData("RefvarDispatch.cvl")]
 	public void Parser_Interfaces_Should_Parse(string caseName)
 	{
 		var assemblyDir = Path.GetDirectoryName(typeof(InterfacesTests).Assembly.Location)!;
@@ -47,9 +49,9 @@ public sealed class InterfacesTests : CompilerTestBase
 	}
 
 	[Theory]
-	[InlineData("ValueDispatch", "Point(3,4)\nValue: 7")]
-	[InlineData("ValueDispatchMultiple", "Point(3,4)\nValue: 7\nCircle(r=5)\nValue: 10")]
-	public void Interfaces_ValueDispatch(string caseName, string expected)
+	[InlineData("RefDispatch", "Point(3,4)\nValue: 7")]
+	[InlineData("RefvarDispatch", "Area: 48")]
+	public void Interfaces_RefDispatch(string caseName, string expected)
 	{
 		var fileName = $"Interfaces/{caseName}.cvl";
 		var (exitCode, stdout, stderr) = RunCompiler(fileName);

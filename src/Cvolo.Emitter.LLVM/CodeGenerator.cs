@@ -761,7 +761,16 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			var receiverName = call.FunctionName.Split('.')[0];
 			if (_locals.TryGetValue(receiverName, out var receiverPtr))
 			{
-				args.Add(receiverPtr);
+				// If the receiver is a ref/refvar (pointer) variable, the extension's 'this'
+				// parameter expects the referred-to struct address, so load the stored pointer.
+				if (_variableTypes.TryGetValue(receiverName, out var recvType) && recvType is PointerTypeSymbol)
+				{
+					args.Add(_builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), receiverPtr, "receiver_loaded_ptr"));
+				}
+				else
+				{
+					args.Add(receiverPtr);
+				}
 			}
 		}
 		else if (implicitThisPtr is not null)

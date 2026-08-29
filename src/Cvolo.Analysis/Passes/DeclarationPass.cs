@@ -195,7 +195,7 @@ public sealed class DeclarationPass(BindingContext context)
 		// A function with any nominal-interface-typed parameter is an implicit generic template:
 		// the interface name has no value representation, so it is monomorphized at each call site
 		// with the concrete conforming argument type (static-only dispatch, no vtable).
-		if (func.Parameters.Any(p => context.ResolveType(p.Type) is InterfaceTypeSymbol))
+		if (func.Parameters.Any(p => IsInterfaceTypedParameter(p)))
 		{
 			context.SymbolUnits[mangledName] = context.CurrentUnit!;
 			context.InterfaceFunctionTemplates[mangledName] = func;
@@ -266,6 +266,16 @@ public sealed class DeclarationPass(BindingContext context)
 		}
 
 		candidates.Add(newSymbol);
+	}
+
+	// A parameter is interface-typed if its (possibly ref/refvar-wrapped) type resolves to an
+	// InterfaceTypeSymbol. Functions carrying such a parameter become implicit generic templates.
+	private bool IsInterfaceTypedParameter(ParameterSyntax p)
+	{
+		var type = p.Type;
+		if (type.StartsWith("refvar ", StringComparison.Ordinal)) type = type[7..];
+		else if (type.StartsWith("ref ", StringComparison.Ordinal)) type = type[4..];
+		return context.ResolveType(type) is InterfaceTypeSymbol;
 	}
 
 	// M1 attribute model: only System.* intrinsics exist. Their [AttributeUsage]-style rules

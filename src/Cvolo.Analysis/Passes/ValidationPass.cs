@@ -928,7 +928,7 @@ public sealed class ValidationPass(BindingContext context)
 		var localScope = new SymbolTable(context.Globals);
 		foreach (var p in parameters)
 		{
-			localScope.Declare(new VariableSymbol(p.Name, p.Type, false) { IsInitialized = true });
+			localScope.Declare(new VariableSymbol(p.Name, p.Type, p.Type is PointerTypeSymbol { IsMutable: true }) { IsInitialized = true });
 		}
 
 		CheckBlock(instBody, localScope, instDecl);
@@ -999,9 +999,22 @@ public sealed class ValidationPass(BindingContext context)
 		for (var i = 0; i < templateDecl.Parameters.Count; i++)
 		{
 			var param = templateDecl.Parameters[i];
-			if (context.ResolveType(param.Type) is not InterfaceTypeSymbol iface) continue;
 
-			var concrete = argTypes[i];
+			// Unwrap an optional ref/refvar prefix to discover the underlying interface name.
+			var isRefParam = param.Type.StartsWith("refvar ", StringComparison.Ordinal)
+				|| param.Type.StartsWith("ref ", StringComparison.Ordinal);
+			var interfaceTypeName = isRefParam
+				? (param.Type.StartsWith("refvar ", StringComparison.Ordinal) ? param.Type[7..] : param.Type[4..])
+				: param.Type;
+
+			if (context.ResolveType(interfaceTypeName) is not InterfaceTypeSymbol iface) continue;
+
+			// For a ref/refvar interface parameter, the concrete argument arrives as a pointer;
+			// substitute the referent type name so the ref/refvar wrapper is supplied by the
+			// template's own parameter string (e.g. "refvar IShape" -> "refvar Rect").
+			var concreteArg = argTypes[i];
+			var concrete = concreteArg is PointerTypeSymbol cPtr ? cPtr.ReferencedType : concreteArg;
+
 			if (!ConformsToInterface(concrete, iface))
 			{
 				context.Diagnostics.Report(currentFileContext, call.Span,
@@ -1009,14 +1022,14 @@ public sealed class ValidationPass(BindingContext context)
 				return null;
 			}
 
-			if (substitutionMap.TryGetValue(param.Type, out var existing) && existing.Name != concrete.Name)
+			if (substitutionMap.TryGetValue(interfaceTypeName, out var existing) && existing.Name != concrete.Name)
 			{
 				context.Diagnostics.Report(currentFileContext, call.Span,
 					$"Interface parameter '{param.Name}' requires a single concrete type, but both '{existing.Name}' and '{concrete.Name}' were passed");
 				return null;
 			}
 
-			substitutionMap[param.Type] = concrete;
+			substitutionMap[interfaceTypeName] = concrete;
 		}
 
 		if (substitutionMap.Count == 0) return null;
@@ -1080,7 +1093,7 @@ public sealed class ValidationPass(BindingContext context)
 		var localScope = new SymbolTable(context.Globals);
 		foreach (var p in parameters)
 		{
-			localScope.Declare(new VariableSymbol(p.Name, p.Type, false) { IsInitialized = true });
+			localScope.Declare(new VariableSymbol(p.Name, p.Type, p.Type is PointerTypeSymbol { IsMutable: true }) { IsInitialized = true });
 		}
 
 		CheckBlock(instBody, localScope, instDecl);
