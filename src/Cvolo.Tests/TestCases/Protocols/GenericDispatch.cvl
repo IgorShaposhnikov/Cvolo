@@ -1,0 +1,38 @@
+protocol IContainer<T> {
+    void Store(T item);
+    T Get();
+}
+
+struct Point {
+    int x;
+    int y;
+}
+
+struct Bag<T> {
+    T value;
+}
+
+extension Bag<T> {
+    void Store(T item) { value = item; }
+    T Get() { return value; }
+}
+
+void Fill(refvar IContainer<int> c, int v) {
+    c.Store(v);
+    printf("stored=%d\n", c.Get());
+}
+
+void FillPoint(refvar IContainer<Point> c) {
+    printf("point=ok\n");
+}
+
+int main() {
+    Bag<int> b = Bag<int> { value: 7 };
+    Fill(ref b, 13);
+    printf("final=%d\n", b.value);
+
+    Point p = Point { x: 1, y: 2 };
+    Bag<Point> bp = Bag<Point> { value: p };
+    FillPoint(ref bp);
+    return 0;
+}

@@ -17,13 +17,22 @@ public sealed class ProtocolTypeSymbol(
 	IReadOnlyList<ProtocolMethodDeclarationSyntax> members,
 	IReadOnlyList<string> genericParameters,
 	string? constraint,
-	IReadOnlySet<string> canonicalMembers) : TypeSymbol(name)
+	IReadOnlySet<string> canonicalMembers,
+	IReadOnlyList<string>? genericTypeArguments = null) : TypeSymbol(name)
 {
 	/// <summary>The required member signatures declared by this protocol.</summary>
 	public IReadOnlyList<ProtocolMethodDeclarationSyntax> Members { get; } = members;
 
 	/// <summary>The protocol's generic type parameters (e.g. ["T"] for IContainer&lt;T&gt;).</summary>
 	public IReadOnlyList<string> GenericParameters { get; } = genericParameters;
+
+	/// <summary>
+	/// The concrete type arguments of a generic protocol instantiation (e.g. int
+	/// for IContainer&lt;int&gt;); null when this is the generic template itself.
+	/// Holds the template's declared type parameters alongside (width-lock arity),
+	/// so an instantiation is still recognized as generic.
+	/// </summary>
+	public IReadOnlyList<string>? GenericTypeArguments { get; } = genericTypeArguments;
 
 	/// <summary>
 	/// The optional `for ...` requires-clause contract a conforming type must

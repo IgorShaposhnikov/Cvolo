@@ -15,6 +15,8 @@ public sealed class ProtocolsTests : CompilerTestBase
 	[InlineData("RefvarDispatch.cvl")]
 	[InlineData("SelfDispatch.cvl")]
 	[InlineData("SelfConformingFail.cvl")]
+	[InlineData("GenericDispatch.cvl")]
+	[InlineData("WidthLockFail.cvl")]
 	public void Parser_Protocols_Should_Parse(string caseName)
 	{
 		var assemblyDir = Path.GetDirectoryName(typeof(ProtocolsTests).Assembly.Location)!;
@@ -75,13 +77,27 @@ public sealed class ProtocolsTests : CompilerTestBase
 
 	[Theory]
 	[InlineData("SelfConformingFail", "does not structurally conform to protocol 'IEquatable' for parameter 'e'")]
-	public void Protocols_SelfRejections(string caseName, string expectedError)
+	[InlineData("WidthLockFail", "Type 'IntBag' does not structurally conform to protocol 'IContainer<int>' for parameter 'c'")]
+	public void Protocols_RejectionsGeneric(string caseName, string expectedError)
 	{
 		var fileName = $"Protocols/{caseName}.cvl";
-		var (exitCode, _ , stderr) = RunCompiler(fileName);
+		var (exitCode, _, stderr) = RunCompiler(fileName);
 
 		Assert.Equal(1, exitCode);
 		Assert.Contains(expectedError, stderr);
+	}
+
+	[Theory]
+	[InlineData("GenericDispatch", "stored=13\nfinal=13\npoint=ok")]
+	public void Protocols_GenericDispatch(string caseName, string expected)
+	{
+		var fileName = $"Protocols/{caseName}.cvl";
+		var (exitCode, stdout, stderr) = RunCompiler(fileName);
+		AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
+
+		var (runCode, runStdout) = ExecuteBinary(caseName, "Protocols");
+		Assert.Equal(0, runCode);
+		Assert.Equal(expected.Replace("\r\n", "\n").Trim(), runStdout.Replace("\r\n", "\n").Trim());
 	}
 
 	[Theory]

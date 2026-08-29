@@ -173,6 +173,16 @@ public sealed class BindingContext
 				_typeCache[name] = instantiatedType;
 				return instantiatedType;
 			}
+			else if (baseType is ProtocolTypeSymbol baseProtocol && ProtocolTemplates.TryGetValue(baseProtocol.Name, out var protocolDecl))
+			{
+				if (!TryResolveTypeArguments(argsPart, out var protocolTypeArgs))
+					return null;
+				if (protocolTypeArgs.Count != baseProtocol.GenericParameters.Count)
+					return null;
+				var instantiatedProtocol = InstantiateGenericProtocol(protocolDecl, baseProtocol.Name, protocolTypeArgs);
+				_typeCache[name] = instantiatedProtocol;
+				return instantiatedProtocol;
+			}
 		}
 
 		// 5c. Check Primitives
@@ -700,8 +710,24 @@ public sealed class BindingContext
 		UnionTypes[instName] = instantiatedType;
 		_typeCache[instName] = instantiatedType;
 
-		MonomorphizeExtensionsForType(instantiatedType, typeArgs, templateMangledName);
+MonomorphizeExtensionsForType(instantiatedType, typeArgs, templateMangledName);
 
 		return instantiatedType;
+	}
+
+	/// <summary>
+	/// Instantiates a generic protocol (e.g. IContainer&lt;int&gt;): the template's
+	/// canonical member tokens get each positional $T placeholder substituted with
+	/// its concrete argument name, keeping structural pre-matching O(1). The
+	/// declared type parameters are retained (width-lock arity), and the concrete
+	/// argument list is recorded for deferred semantic re-validation.
+	/// </summary>
+	private ProtocolTypeSymbol InstantiateGenericProtocol(ProtocolDeclarationSyntax templateDecl, string templateMangledName, List<TypeSymbol> typeArgs)
+	{
+		var instName = $"{templateMangledName}<{string.Join(", ", typeArgs.Select(t => t.Name))}>";
+		var argNames = typeArgs.Select(t => t.Name).ToList();
+
+		var canonicalMembers = ProtocolCanonicalizer.BuildCanonicalMembers(templateDecl, this, argNames);
+		return new ProtocolTypeSymbol(instName, templateDecl.Members, templateDecl.GenericParameters, templateDecl.Constraint, canonicalMembers, argNames);
 	}
 }

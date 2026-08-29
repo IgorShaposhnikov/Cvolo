@@ -1,0 +1,23 @@
+protocol IContainer<T> {
+    void Store(T item);
+    T Get();
+}
+
+struct IntBag {
+    int value;
+}
+
+extension IntBag {
+    void Store(int item) { value = item; }
+    int Get() { return value; }
+}
+
+void Fill(refvar IContainer<int> c, int v) {
+    c.Store(v);
+}
+
+int main() {
+    IntBag b = IntBag { value: 1 };
+    Fill(ref b, 4);
+    return 0;
+}

@@ -21,11 +21,11 @@ namespace Cvolo.Analysis.Symbols.Structs;
 internal static class ProtocolCanonicalizer
 {
 	/// <summary>All canonical member tokens for a protocol, joined into a pre-match set.</summary>
-	public static IReadOnlySet<string> BuildCanonicalMembers(ProtocolDeclarationSyntax protocolDecl, BindingContext context)
+	public static IReadOnlySet<string> BuildCanonicalMembers(ProtocolDeclarationSyntax protocolDecl, BindingContext context, IReadOnlyList<string>? concreteTypeArguments = null)
 	{
 		var tokens = new HashSet<string>();
 		foreach (var member in protocolDecl.Members)
-			tokens.Add(BuildMemberToken(member, protocolDecl.GenericParameters, context, selfReplacement: null));
+			tokens.Add(BuildMemberToken(member, protocolDecl.GenericParameters, context, selfReplacement: null, concreteTypeArguments));
 		return tokens;
 	}
 
@@ -33,12 +33,15 @@ internal static class ProtocolCanonicalizer
 	/// The canonical token for a single protocol member. When
 	/// <paramref name="selfReplacement"/> is non-null, every literal `Self` in the
 	/// member's return or parameter types is replaced with it (used at conformance
-	/// time to compare against a candidate concrete type's canonical token).
+	/// time to compare against a candidate concrete type's canonical token). When
+	/// <paramref name="concreteTypeArguments"/> is non-null (a generic protocol
+	/// instantiation, e.g. IContainer&lt;int&gt;), each positional $-placeholder is
+	/// replaced with its concrete type argument instead.
 	/// </summary>
-	public static string BuildMemberToken(ProtocolMethodDeclarationSyntax member, IReadOnlyList<string> genericParameters, BindingContext context, string? selfReplacement)
+	public static string BuildMemberToken(ProtocolMethodDeclarationSyntax member, IReadOnlyList<string> genericParameters, BindingContext context, string? selfReplacement, IReadOnlyList<string>? concreteTypeArguments = null)
 	{
-		var returnToken = CanonicalizeProtocolType(member.ReturnType, genericParameters, context, selfReplacement);
-		var paramTokens = member.Parameters.Select(p => CanonicalizeProtocolType(p.Type, genericParameters, context, selfReplacement));
+		var returnToken = CanonicalizeProtocolType(member.ReturnType, genericParameters, context, selfReplacement, concreteTypeArguments);
+		var paramTokens = member.Parameters.Select(p => CanonicalizeProtocolType(p.Type, genericParameters, context, selfReplacement, concreteTypeArguments));
 		return string.Join(":", returnToken, $"{member.Name}({string.Join(",", paramTokens)})");
 	}
 
@@ -68,7 +71,7 @@ internal static class ProtocolCanonicalizer
 		}
 	}
 
-	private static string CanonicalizeProtocolType(string rawType, IReadOnlyList<string> genericParameters, BindingContext context, string? selfReplacement)
+	private static string CanonicalizeProtocolType(string rawType, IReadOnlyList<string> genericParameters, BindingContext context, string? selfReplacement, IReadOnlyList<string>? concreteTypeArguments)
 	{
 		var prefix = "";
 		var suffix = "";
@@ -93,10 +96,10 @@ internal static class ProtocolCanonicalizer
 			}
 		}
 
-		return prefix + CanonicalizeProtocolInner(t, genericParameters, context, selfReplacement) + suffix;
+		return prefix + CanonicalizeProtocolInner(t, genericParameters, context, selfReplacement, concreteTypeArguments) + suffix;
 	}
 
-	private static string CanonicalizeProtocolInner(string t, IReadOnlyList<string> genericParameters, BindingContext context, string? selfReplacement)
+	private static string CanonicalizeProtocolInner(string t, IReadOnlyList<string> genericParameters, BindingContext context, string? selfReplacement, IReadOnlyList<string>? concreteTypeArguments)
 	{
 		// `Self` is a compile-time anchor resolving to the enclosing concrete type:
 		// kept verbatim in stored tokens, substituted literally at conformance time.
@@ -105,8 +108,13 @@ internal static class ProtocolCanonicalizer
 		// Generic type parameters normalize to positional width-lock placeholders,
 		// so `protocol IContainer<T> { void Store(T); }` matches a same-topology
 		// `struct Bag<T>` regardless of how each side names its type parameter.
+		// A concrete instantiation (e.g. IContainer<int>) substitutes the argument
+		// in that position, keeping the pre-match O(1).
 		var genericIndex = IndexOfGeneric(genericParameters, t);
-		if (genericIndex >= 0) return $"$T{genericIndex}";
+		if (genericIndex >= 0)
+			return concreteTypeArguments is not null && genericIndex < concreteTypeArguments.Count
+				? concreteTypeArguments[genericIndex]
+				: $"$T{genericIndex}";
 
 		var resolved = context.ResolveType(t);
 		if (resolved is not null) return resolved.Name;
@@ -122,7 +130,7 @@ internal static class ProtocolCanonicalizer
 				var baseName = t[..openBracket];
 				var baseIndex = IndexOfGeneric(genericParameters, baseName);
 				var baseToken = baseIndex >= 0 ? $"$T{baseIndex}" : NormalizeRawTypeName(baseName);
-				var args = t[(openBracket + 1)..closeBracket].Split(',').Select(a => CanonicalizeProtocolInner(a.Trim(), genericParameters, context, selfReplacement));
+				var args = t[(openBracket + 1)..closeBracket].Split(',').Select(a => CanonicalizeProtocolInner(a.Trim(), genericParameters, context, selfReplacement, concreteTypeArguments));
 				return $"{baseToken}<{string.Join(",", args)}>";
 			}
 		}

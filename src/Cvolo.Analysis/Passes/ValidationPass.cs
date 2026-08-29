@@ -904,7 +904,7 @@ public sealed class ValidationPass(BindingContext context)
 			var substitutedTypeName = typeName;
 			foreach (var kv in substitutionMap)
 			{
-				substitutedTypeName = System.Text.RegularExpressions.Regex.Replace(substitutedTypeName, $@"\b{kv.Key}\b", kv.Value.Name);
+				substitutedTypeName = SubstituteTypeToken(substitutedTypeName, kv.Key, kv.Value.Name);
 			}
 
 			if (substitutedTypeName.StartsWith("refvar ") || substitutedTypeName.StartsWith("ref "))
@@ -1086,7 +1086,18 @@ public sealed class ValidationPass(BindingContext context)
 	/// substitutes the concrete conforming type names into the signature and body,
 	/// registers the instance, and validates the body once with the concrete types.
 	/// </summary>
-	private FunctionSymbol InstantiateDispatchFunction(
+	private static string SubstituteTypeToken(string text, string key, string value)
+		{
+			// A generic-instantiated key (e.g. "IContainer<int>") can never be matched by a
+			// \b...\b regex pattern (a word boundary cannot be asserted after a non-word '>'),
+			// so generic keys are substituted as exact type tokens instead.
+			if (key.Contains('<'))
+				return text.Replace(key, value);
+
+			return System.Text.RegularExpressions.Regex.Replace(text, $@"\b{System.Text.RegularExpressions.Regex.Escape(key)}\b", value);
+		}
+
+		private FunctionSymbol InstantiateDispatchFunction(
 		FunctionDeclarationSyntax templateDecl, Dictionary<string, TypeSymbol> substitutionMap, SymbolTable scope,
 		string templateMangledName)
 	{
@@ -1101,7 +1112,7 @@ public sealed class ValidationPass(BindingContext context)
 			var substitutedTypeName = typeName;
 			foreach (var kv in substitutionMap)
 			{
-				substitutedTypeName = System.Text.RegularExpressions.Regex.Replace(substitutedTypeName, $@"\b{kv.Key}\b", kv.Value.Name);
+				substitutedTypeName = SubstituteTypeToken(substitutedTypeName, kv.Key, kv.Value.Name);
 			}
 
 			if (substitutedTypeName.StartsWith("refvar ") || substitutedTypeName.StartsWith("ref "))
@@ -1193,6 +1204,14 @@ public sealed class ValidationPass(BindingContext context)
 		var baseType = type is PointerTypeSymbol ptr ? ptr.ReferencedType : type;
 		if (baseType is ProtocolTypeSymbol or InterfaceTypeSymbol) return false;
 
+		// Width-lock invariant (Generic Contracts spec §6.A): a parameterized
+		// protocol strictly matches only structures sharing the identical
+		// type-parameter topology. A flat IntBag (Store(int)) can never satisfy
+		// IContainer<T> even though its concrete tokens happen to match an
+		// IContainer<int> instantiation.
+		if (proto.GenericParameters.Count > 0 && GetConcreteGenericArity(baseType) != proto.GenericParameters.Count)
+			return false;
+
 		foreach (var member in proto.Members)
 		{
 			var matched = false;
@@ -1209,6 +1228,25 @@ public sealed class ValidationPass(BindingContext context)
 		}
 
 		return true;
+	}
+
+	/// <summary>
+	/// The generic type-parameter arity of a concrete type: 0 for flat types,
+	/// the declared parameter count for generic templates/instances (both share
+	/// the same topology). Used by the width-lock invariant.
+	/// </summary>
+	private int GetConcreteGenericArity(TypeSymbol baseType)
+	{
+		var name = baseType.Name;
+		var openBracket = name.LastIndexOf('<');
+		if (openBracket <= 0) return 0;
+
+		var baseName = name[..openBracket];
+		if (context.GenericStructTemplates.TryGetValue(baseName, out var structTemplate))
+			return structTemplate.GenericParameters.Count;
+		if (context.GenericUnionTemplates.TryGetValue(baseName, out var unionTemplate))
+			return unionTemplate.GenericParameters.Count;
+		return 0;
 	}
 
 	/// <summary>
@@ -1260,7 +1298,7 @@ public sealed class ValidationPass(BindingContext context)
 		// tokens keep the literal anchor): rebuild this member's canonical token
 		// with Self substituted to the enclosing concrete type and compare exactly.
 		if (MemberReferencesSelf(member)
-			&& ProtocolCanonicalizer.BuildMemberToken(member, proto.GenericParameters, context, baseType.Name) == concreteToken)
+			&& ProtocolCanonicalizer.BuildMemberToken(member, proto.GenericParameters, context, baseType.Name, proto.GenericTypeArguments) == concreteToken)
 			return true;
 
 		// Deferred semantic evaluation: the protocol member's types were not fully
@@ -1268,18 +1306,23 @@ public sealed class ValidationPass(BindingContext context)
 		// mapping `Self` to the concrete type.
 		for (var i = 0; i < member.Parameters.Count; i++)
 		{
-			var protoParamType = ResolveProtocolMemberType(member.Parameters[i].Type, baseType);
+			var protoParamType = ResolveProtocolMemberType(member.Parameters[i].Type, baseType, proto);
 			if (protoParamType is null || !protoParamType.Equals(candidate.Parameters[i + 1].Type)) return false;
 		}
 
-		var protoReturnType = ResolveProtocolMemberType(member.ReturnType, baseType);
+		var protoReturnType = ResolveProtocolMemberType(member.ReturnType, baseType, proto);
 		if (protoReturnType is not null && !protoReturnType.Equals(candidate.ReturnType)) return false;
 
 		return true;
 	}
 
-	/// <summary>Resolves a protocol member type against the concrete type, mapping a raw `Self` (in any wrapper) to the concrete type.</summary>
-	private TypeSymbol? ResolveProtocolMemberType(string typeText, TypeSymbol baseType)
+	/// <summary>
+	/// Resolves a protocol member type against the concrete type, mapping a raw
+	/// `Self` (in any wrapper) to the concrete type and a generic protocol's type
+	/// parameter to its concrete argument (deferred semantic re-validation of a
+	/// generic instantiation whose tokens were not resolvable at Phase 1).
+	/// </summary>
+	private TypeSymbol? ResolveProtocolMemberType(string typeText, TypeSymbol baseType, ProtocolTypeSymbol proto)
 	{
 		var t = typeText.Trim();
 		var prefix = "";
@@ -1294,6 +1337,24 @@ public sealed class ValidationPass(BindingContext context)
 				"ref " => new PointerTypeSymbol(baseType, isMutable: false),
 				_ => baseType,
 			};
+		}
+
+		if (proto.GenericTypeArguments is not null)
+		{
+			for (var i = 0; i < proto.GenericParameters.Count; i++)
+			{
+				if (t == proto.GenericParameters[i])
+				{
+					var argType = context.ResolveType(proto.GenericTypeArguments[i]);
+					if (argType is null) return null;
+					return prefix switch
+					{
+						"refvar " => new PointerTypeSymbol(argType, isMutable: true),
+						"ref " => new PointerTypeSymbol(argType, isMutable: false),
+						_ => argType,
+					};
+				}
+			}
 		}
 
 		return context.ResolveType(typeText);
@@ -1408,7 +1469,7 @@ public sealed class ValidationPass(BindingContext context)
 				{
 					foreach (var kv in substitutionMap)
 					{
-						newType = System.Text.RegularExpressions.Regex.Replace(newType, $@"\b{kv.Key}\b", kv.Value.Name);
+						newType = SubstituteTypeToken(newType, kv.Key, kv.Value.Name);
 					}
 				}
 				return new VariableDeclarationSyntax(v.Span, v.IsMutable, newType, v.Name, v.Initializer != null ? SubstituteExpressionGenerics(v.Initializer, substitutionMap) : null);
@@ -1449,7 +1510,7 @@ public sealed class ValidationPass(BindingContext context)
 				{
 					foreach (var kv in substitutionMap)
 					{
-						newOp = System.Text.RegularExpressions.Regex.Replace(newOp, $@"\b{kv.Key}\b", kv.Value.Name);
+						newOp = SubstituteTypeToken(newOp, kv.Key, kv.Value.Name);
 					}
 				}
 
@@ -1460,7 +1521,7 @@ public sealed class ValidationPass(BindingContext context)
 					var substituted = t;
 					foreach (var kv in substitutionMap)
 					{
-						substituted = System.Text.RegularExpressions.Regex.Replace(substituted, $@"\b{kv.Key}\b", kv.Value.Name);
+						substituted = SubstituteTypeToken(substituted, kv.Key, kv.Value.Name);
 					}
 
 					return substituted;
@@ -1472,7 +1533,7 @@ public sealed class ValidationPass(BindingContext context)
 				var newTypeName = structInit.StructTypeName;
 				foreach (var kv in substitutionMap)
 				{
-					newTypeName = System.Text.RegularExpressions.Regex.Replace(newTypeName, $@"\b{kv.Key}\b", kv.Value.Name);
+					newTypeName = SubstituteTypeToken(newTypeName, kv.Key, kv.Value.Name);
 				}
 
 				var newInits = structInit.Initializers.Select(i => new MemberInitializerSyntax(i.Span, i.MemberName, SubstituteExpressionGenerics(i.Expression, substitutionMap))).ToList();
