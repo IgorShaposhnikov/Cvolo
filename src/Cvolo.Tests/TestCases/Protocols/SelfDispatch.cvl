@@ -1,0 +1,33 @@
+protocol IEquatable {
+    bool Equals(Self other);
+    Self Make(int seed);
+}
+
+struct Point {
+    int X;
+    int Y;
+}
+
+extension Point {
+    bool Equals(Point other) { return X == other.X && Y == other.Y; }
+    Point Make(int seed) { return Point { X: seed, Y: seed + 1 }; }
+}
+
+void Compare(IEquatable a, IEquatable b, int label) {
+    printf("cmp%d=%d\n", label, a.Equals(b) ? 1 : 0);
+}
+
+void Clone(IEquatable a, int seed) {
+    Point c = a.Make(seed);
+    printf("clone=(%d,%d)\n", c.X, c.Y);
+}
+
+int main() {
+    Point p = Point { X: 3, Y: 4 };
+    Point q = Point { X: 3, Y: 4 };
+    Point r = Point { X: 5, Y: 6 };
+    Compare(p, q, 1);
+    Compare(p, r, 2);
+    Clone(p, 7);
+    return 0;
+}

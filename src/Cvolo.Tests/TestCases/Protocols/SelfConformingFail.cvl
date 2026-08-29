@@ -1,0 +1,22 @@
+protocol IEquatable {
+    bool Equals(Self other);
+    Self Make(int seed);
+}
+
+struct MissingSelf {
+    int V;
+}
+
+extension MissingSelf {
+    bool Equals(MissingSelf other) { return V == other.V; }
+}
+
+void Wrap(IEquatable e, int seed) {
+    printf("%d", seed);
+}
+
+int main() {
+    MissingSelf f = MissingSelf { V: 1 };
+    Wrap(f, 2);
+    return 0;
+}

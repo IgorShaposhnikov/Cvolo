@@ -833,6 +833,7 @@ public sealed class ValidationPass(BindingContext context)
 			StringLiteralExpressionSyntax => TypeSymbol.String,
 			CharacterLiteralExpressionSyntax => TypeSymbol.Char,
 			CallExpressionSyntax call when call.FunctionName == "sizeof" => TypeSymbol.Int,
+			CallExpressionSyntax call => context.ResolvedCalls.TryGetValue(call, out var resolved) ? resolved.ReturnType : null,
 			MemberAccessExpressionSyntax m => CheckMemberAccessExpression(m, scope),
 			BorrowExpressionSyntax b => new PointerTypeSymbol(GetExpressionType(b.Expression, scope) ?? TypeSymbol.Int, b.IsMutable),
 			StructInitializationExpressionSyntax s => CheckStructInitializationExpression(s, scope),
@@ -1197,7 +1198,7 @@ public sealed class ValidationPass(BindingContext context)
 			var matched = false;
 			foreach (var candidate in GatherProtocolMemberCandidates(baseType, member.Name))
 			{
-				if (MemberStructurallyMatches(member, candidate, proto))
+				if (MemberStructurallyMatches(member, candidate, proto, baseType))
 				{
 					matched = true;
 					break;
@@ -1245,29 +1246,67 @@ public sealed class ValidationPass(BindingContext context)
 		return results;
 	}
 
-	private bool MemberStructurallyMatches(ProtocolMethodDeclarationSyntax member, FunctionSymbol candidate, ProtocolTypeSymbol proto)
+	private bool MemberStructurallyMatches(ProtocolMethodDeclarationSyntax member, FunctionSymbol candidate, ProtocolTypeSymbol proto, TypeSymbol baseType)
 	{
 		if (candidate.Parameters.Count == 0 || candidate.Parameters[0].Name != "this") return false;
 		if (candidate.Parameters.Count - 1 != member.Parameters.Count) return false;
 
 		// Phase-2 canonical pre-match: the token built from the concrete resolved
 		// symbol must be a protocol member token (O(1) set membership).
-		if (proto.CanonicalMembers.Contains(BuildConcreteCanonicalToken(candidate, member.Name)))
+		var concreteToken = BuildConcreteCanonicalToken(candidate, member.Name);
+		if (proto.CanonicalMembers.Contains(concreteToken)) return true;
+
+		// `Self`-anchored members never match by set membership (their stored
+		// tokens keep the literal anchor): rebuild this member's canonical token
+		// with Self substituted to the enclosing concrete type and compare exactly.
+		if (MemberReferencesSelf(member)
+			&& ProtocolCanonicalizer.BuildMemberToken(member, proto.GenericParameters, context, baseType.Name) == concreteToken)
 			return true;
 
 		// Deferred semantic evaluation: the protocol member's types were not fully
-		// qualified at Phase-1 (forward reference); compare resolved types exactly.
+		// qualified at Phase-1 (forward reference); compare resolved types exactly,
+		// mapping `Self` to the concrete type.
 		for (var i = 0; i < member.Parameters.Count; i++)
 		{
-			var protoParamType = context.ResolveType(member.Parameters[i].Type);
-			if (protoParamType is null) return false;
-			if (!protoParamType.Equals(candidate.Parameters[i + 1].Type)) return false;
+			var protoParamType = ResolveProtocolMemberType(member.Parameters[i].Type, baseType);
+			if (protoParamType is null || !protoParamType.Equals(candidate.Parameters[i + 1].Type)) return false;
 		}
 
-		var protoReturnType = context.ResolveType(member.ReturnType);
+		var protoReturnType = ResolveProtocolMemberType(member.ReturnType, baseType);
 		if (protoReturnType is not null && !protoReturnType.Equals(candidate.ReturnType)) return false;
 
 		return true;
+	}
+
+	/// <summary>Resolves a protocol member type against the concrete type, mapping a raw `Self` (in any wrapper) to the concrete type.</summary>
+	private TypeSymbol? ResolveProtocolMemberType(string typeText, TypeSymbol baseType)
+	{
+		var t = typeText.Trim();
+		var prefix = "";
+		if (t.StartsWith("refvar ", StringComparison.Ordinal)) { prefix = "refvar "; t = t[7..]; }
+		else if (t.StartsWith("ref ", StringComparison.Ordinal)) { prefix = "ref "; t = t[4..]; }
+
+		if (ProtocolCanonicalizer.StripWrappers(t) == "Self")
+		{
+			return prefix switch
+			{
+				"refvar " => new PointerTypeSymbol(baseType, isMutable: true),
+				"ref " => new PointerTypeSymbol(baseType, isMutable: false),
+				_ => baseType,
+			};
+		}
+
+		return context.ResolveType(typeText);
+	}
+
+	private static bool MemberReferencesSelf(ProtocolMethodDeclarationSyntax member)
+	{
+		return ReferencesSelf(member.ReturnType) || member.Parameters.Any(p => ReferencesSelf(p.Type));
+	}
+
+	private static bool ReferencesSelf(string typeText)
+	{
+		return ProtocolCanonicalizer.StripWrappers(typeText) == "Self";
 	}
 
 	private string BuildConcreteCanonicalToken(FunctionSymbol candidate, string memberName)
@@ -1921,7 +1960,12 @@ public sealed class ValidationPass(BindingContext context)
 				return rawPtr.ElementType;
 			if (opType is PointerTypeSymbol ptr)
 				return ptr.ReferencedType;
-			return null;
+return null;
+		}
+
+		if (unary.Operator.Length >= 3 && unary.Operator.StartsWith("(") && unary.Operator.EndsWith(")"))
+		{
+			return context.ResolveType(unary.Operator[1..^1]);
 		}
 
 		return GetExpressionType(unary.Operand, scope);
