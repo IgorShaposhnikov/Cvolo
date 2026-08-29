@@ -1,0 +1,31 @@
+protocol IWidget {
+    void Print();
+    int Value();
+}
+
+struct Point {
+    int X;
+    int Y;
+}
+
+extension Point {
+    void Print() {
+        printf("Point(%d,%d)\n", X, Y);
+    }
+    int Value() {
+        return X + Y;
+    }
+}
+
+void Draw(ref IWidget w) {
+    w.Print();
+    printf("Value: %d\n", w.Value());
+}
+
+int main() {
+    var Point p;
+    p.X = 3;
+    p.Y = 4;
+    Draw(ref p);
+    return 0;
+}

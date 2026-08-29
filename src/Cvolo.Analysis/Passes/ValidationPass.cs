@@ -442,6 +442,18 @@ public sealed class ValidationPass(BindingContext context)
 							func = TryResolveInterfaceCall(call, argTypes, scope);
 							if (func is null) return;
 						}
+
+						// No concrete overload matched: fall back to protocol-parameterized
+						// dispatch (structural duck typing against the protocol's canonical
+						// member tokens; monomorphized with the structurally conforming arg types).
+						if (func is null && ResolveProtocolFunctionTemplateName(call.FunctionName, scope) is not null)
+						{
+							// The callee is a protocol template: specific structural-conformance/
+							// arg-count diagnostics are reported inside. Return early so the
+							// generic "no overload" message is not also emitted.
+							func = TryResolveProtocolCall(call, argTypes, scope);
+							if (func is null) return;
+						}
 					}
 
 					if (func is null)
@@ -1058,6 +1070,25 @@ public sealed class ValidationPass(BindingContext context)
 		FunctionDeclarationSyntax templateDecl, Dictionary<string, TypeSymbol> substitutionMap, SymbolTable scope)
 	{
 		var templateMangledName = ResolveInterfaceFunctionTemplateName(templateDecl.Name, scope)!;
+		return InstantiateDispatchFunction(templateDecl, substitutionMap, scope, templateMangledName);
+	}
+
+	private FunctionSymbol InstantiateProtocolFunction(
+		FunctionDeclarationSyntax templateDecl, Dictionary<string, TypeSymbol> substitutionMap, SymbolTable scope)
+	{
+		var templateMangledName = ResolveProtocolFunctionTemplateName(templateDecl.Name, scope)!;
+		return InstantiateDispatchFunction(templateDecl, substitutionMap, scope, templateMangledName);
+	}
+
+	/// <summary>
+	/// Shared monomorphization core for interface/protocol-parameterized templates:
+	/// substitutes the concrete conforming type names into the signature and body,
+	/// registers the instance, and validates the body once with the concrete types.
+	/// </summary>
+	private FunctionSymbol InstantiateDispatchFunction(
+		FunctionDeclarationSyntax templateDecl, Dictionary<string, TypeSymbol> substitutionMap, SymbolTable scope,
+		string templateMangledName)
+	{
 		var rawName = $"{templateMangledName}<{string.Join(",", substitutionMap.Values.Select(t => t.Name))}>";
 		var instName = context.NormalizeGenericName(rawName);
 
@@ -1116,6 +1147,208 @@ public sealed class ValidationPass(BindingContext context)
 		CheckBlock(instBody, localScope, instDecl);
 
 		return instSymbol;
+	}
+
+	// ---------------------------------------------------------------------------
+	// Protocol-parameterized (structural / duck-typed implicit generic) dispatch.
+	// A function with a protocol-typed parameter is lowered to a template and
+	// monomorphized at each call site with the concrete argument type that
+	// structurally conforms to the protocol's canonical member tokens. Conformance
+	// is implicit — no `extension T : IProtocol` declaration exists for protocols.
+	// ---------------------------------------------------------------------------
+
+	private string? ResolveProtocolFunctionTemplateName(string name, SymbolTable scope)
+	{
+		var localMangled = context.GetMangledName(name, context.CurrentNamespace);
+		if (context.ProtocolFunctionTemplates.ContainsKey(localMangled)) return localMangled;
+
+		if (context.CurrentUnit is not null)
+		{
+			var activeUsings = new List<string>(context.CurrentUnit.Usings.Select(u => u.NamespaceName));
+			if (context.CurrentUnit.NamespaceDeclaration is not null)
+				activeUsings.AddRange(context.CurrentUnit.NamespaceDeclaration.Usings.Select(u => u.NamespaceName));
+
+			foreach (var ns in activeUsings)
+			{
+				var candidateMangled = context.GetMangledName(name, ns);
+				if (context.ProtocolFunctionTemplates.ContainsKey(candidateMangled))
+					return candidateMangled;
+			}
+		}
+
+		if (context.ProtocolFunctionTemplates.ContainsKey(name)) return name;
+		return null;
+	}
+
+	/// <summary>
+	/// Structural (duck-typed) protocol conformance: the concrete type satisfies
+	/// every required protocol member. Phase-2 canonical token pre-matching builds
+	/// tokens from the concrete type's resolved extension methods; a deferred
+	/// TypeSymbol.Equals pass re-validates members whose Phase-1 tokens used raw
+	/// (not yet resolvable) text, keeping structural matching topological and exact.
+	/// </summary>
+	private bool StructurallyConformsToProtocol(TypeSymbol type, ProtocolTypeSymbol proto)
+	{
+		var baseType = type is PointerTypeSymbol ptr ? ptr.ReferencedType : type;
+		if (baseType is ProtocolTypeSymbol or InterfaceTypeSymbol) return false;
+
+		foreach (var member in proto.Members)
+		{
+			var matched = false;
+			foreach (var candidate in GatherProtocolMemberCandidates(baseType, member.Name))
+			{
+				if (MemberStructurallyMatches(member, candidate, proto))
+				{
+					matched = true;
+					break;
+				}
+			}
+
+			if (!matched) return false;
+		}
+
+		return true;
+	}
+
+	/// <summary>
+	/// The "3-key walk": locate a concrete type's extension methods in every place
+	/// an implementation could be declared — fully-qualified type name, leaf name
+	/// (global-namespace extension blocks), and the call-site namespace/usings —
+	/// mirroring how ordinary extension calls resolve.
+	/// </summary>
+	private List<FunctionSymbol> GatherProtocolMemberCandidates(TypeSymbol baseType, string memberName)
+	{
+		var results = new List<FunctionSymbol>();
+		var leafName = baseType.Name.Contains('.')
+			? baseType.Name[(baseType.Name.LastIndexOf('.') + 1)..]
+			: baseType.Name;
+
+		if (context.OverloadedFunctions.TryGetValue($"{baseType.Name}.{memberName}", out var qualified))
+			results.AddRange(qualified);
+
+		if (context.OverloadedFunctions.TryGetValue($"{leafName}.{memberName}", out var leaf))
+			results.AddRange(leaf);
+
+		if (context.CurrentUnit is not null)
+		{
+			var activeUsings = new List<string>(context.CurrentUnit.Usings.Select(u => u.NamespaceName));
+			if (context.CurrentUnit.NamespaceDeclaration is not null)
+				activeUsings.AddRange(context.CurrentUnit.NamespaceDeclaration.Usings.Select(u => u.NamespaceName));
+
+			foreach (var ns in activeUsings)
+			{
+				if (context.OverloadedFunctions.TryGetValue(context.GetMangledName($"{leafName}.{memberName}", ns), out var viaUsing))
+					results.AddRange(viaUsing);
+			}
+		}
+
+		return results;
+	}
+
+	private bool MemberStructurallyMatches(ProtocolMethodDeclarationSyntax member, FunctionSymbol candidate, ProtocolTypeSymbol proto)
+	{
+		if (candidate.Parameters.Count == 0 || candidate.Parameters[0].Name != "this") return false;
+		if (candidate.Parameters.Count - 1 != member.Parameters.Count) return false;
+
+		// Phase-2 canonical pre-match: the token built from the concrete resolved
+		// symbol must be a protocol member token (O(1) set membership).
+		if (proto.CanonicalMembers.Contains(BuildConcreteCanonicalToken(candidate, member.Name)))
+			return true;
+
+		// Deferred semantic evaluation: the protocol member's types were not fully
+		// qualified at Phase-1 (forward reference); compare resolved types exactly.
+		for (var i = 0; i < member.Parameters.Count; i++)
+		{
+			var protoParamType = context.ResolveType(member.Parameters[i].Type);
+			if (protoParamType is null) return false;
+			if (!protoParamType.Equals(candidate.Parameters[i + 1].Type)) return false;
+		}
+
+		var protoReturnType = context.ResolveType(member.ReturnType);
+		if (protoReturnType is not null && !protoReturnType.Equals(candidate.ReturnType)) return false;
+
+		return true;
+	}
+
+	private string BuildConcreteCanonicalToken(FunctionSymbol candidate, string memberName)
+	{
+		var paramTokens = new List<string>();
+		for (var i = 1; i < candidate.Parameters.Count; i++)
+			paramTokens.Add(candidate.Parameters[i].Type.Name);
+
+		return $"{candidate.ReturnType.Name}:{memberName}({string.Join(",", paramTokens)})";
+	}
+
+	/// <summary>
+	/// Resolves a call to a protocol-parameterized function by monomorphizing the
+	/// template with the concrete structurally conforming argument types. Reports
+	/// the specific id-less diagnostic (conformance / argument-count / conflicting
+	/// concrete) and returns null so the caller suppresses the generic "no
+	/// overload" message.
+	/// </summary>
+	private FunctionSymbol? TryResolveProtocolCall(CallExpressionSyntax call, IReadOnlyList<TypeSymbol> argTypes, SymbolTable scope)
+	{
+		var templateName = ResolveProtocolFunctionTemplateName(call.FunctionName, scope);
+		if (templateName is null) return null;
+
+		var templateDecl = context.ProtocolFunctionTemplates[templateName];
+		var currentFileContext = context.FileContexts[context.CurrentUnit!];
+
+		if (argTypes.Count != templateDecl.Parameters.Count)
+		{
+			context.Diagnostics.Report(currentFileContext, call.Span,
+				$"Function '{call.FunctionName}' expects {templateDecl.Parameters.Count} argument(s) but received {argTypes.Count}");
+			return null;
+		}
+
+		// Build the substitution map: each protocol-typed parameter maps to its concrete arg type.
+		var substitutionMap = new Dictionary<string, TypeSymbol>();
+		for (var i = 0; i < templateDecl.Parameters.Count; i++)
+		{
+			var param = templateDecl.Parameters[i];
+
+			// Unwrap an optional ref/refvar prefix to discover the underlying protocol name.
+			var isRefParam = param.Type.StartsWith("refvar ", StringComparison.Ordinal)
+				|| param.Type.StartsWith("ref ", StringComparison.Ordinal);
+			var protocolTypeName = isRefParam
+				? (param.Type.StartsWith("refvar ", StringComparison.Ordinal) ? param.Type[7..] : param.Type[4..])
+				: param.Type;
+
+			if (context.ResolveType(protocolTypeName) is not ProtocolTypeSymbol proto) continue;
+
+			// For a ref/refvar protocol parameter, the concrete argument arrives as a pointer;
+			// substitute the referent type name so ref/refvar is supplied by the template's
+			// own parameter string (e.g. "refvar IShape" -> "refvar Rect").
+			var concreteArg = argTypes[i];
+			var concrete = concreteArg is PointerTypeSymbol cPtr ? cPtr.ReferencedType : concreteArg;
+
+			if (concrete is ProtocolTypeSymbol or InterfaceTypeSymbol)
+			{
+				context.Diagnostics.Report(currentFileContext, call.Span,
+					$"Protocol parameter '{param.Name}' of function '{call.FunctionName}' cannot be resolved to a concrete conforming type; argument is abstract protocol type '{concrete.Name}'");
+				return null;
+			}
+
+			if (!StructurallyConformsToProtocol(concrete, proto))
+			{
+				context.Diagnostics.Report(currentFileContext, call.Span,
+					$"Type '{concrete.Name}' does not structurally conform to protocol '{proto.Name}' for parameter '{param.Name}'");
+				return null;
+			}
+
+			if (substitutionMap.TryGetValue(protocolTypeName, out var existing) && existing.Name != concrete.Name)
+			{
+				context.Diagnostics.Report(currentFileContext, call.Span,
+					$"Protocol parameter '{param.Name}' requires a single concrete type, but both '{existing.Name}' and '{concrete.Name}' were passed");
+				return null;
+			}
+
+			substitutionMap[protocolTypeName] = concrete;
+		}
+
+		if (substitutionMap.Count == 0) return null;
+
+		return InstantiateProtocolFunction(templateDecl, substitutionMap, scope);
 	}
 
 	private BlockStatementSyntax SubstituteBlockGenerics(BlockStatementSyntax block, Dictionary<string, TypeSymbol> substitutionMap)

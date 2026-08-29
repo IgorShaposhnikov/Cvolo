@@ -1,0 +1,24 @@
+protocol IWidget {
+    void Print();
+    int Value();
+}
+
+struct Foo {
+    int A;
+}
+
+extension Foo {
+    void Print() {
+        printf("Foo\n");
+    }
+}
+
+void Draw(IWidget w) {
+    w.Print();
+}
+
+int main() {
+    Foo f = Foo { A: 1 };
+    Draw(f);
+    return 0;
+}

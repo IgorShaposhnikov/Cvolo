@@ -1,0 +1,32 @@
+protocol IShape {
+    void Scale(int factor);
+    int Area();
+}
+
+struct Rect {
+    int W;
+    int H;
+}
+
+extension Rect {
+    void Scale(int f) {
+        W = W * f;
+        H = H * f;
+    }
+    int Area() {
+        return W * H;
+    }
+}
+
+void ApplyScale(refvar IShape s, int factor) {
+    s.Scale(factor);
+}
+
+int main() {
+    var Rect r;
+    r.W = 3;
+    r.H = 4;
+    ApplyScale(ref r, 2);
+    printf("Area: %d\n", r.Area());
+    return 0;
+}
