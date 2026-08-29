@@ -1,0 +1,34 @@
+/// <summary>
+/// Feature: Embed Composition via `struct T embed Base`.
+/// Verifies that the embedded type's fields flatten at the FRONT of the outer
+/// struct's layout (readable/writable through the outer), and that the embedded
+/// type's extension methods are promoted so `w.TakeDamage(20)` resolves with the
+/// outer struct as the implicit `this`.
+/// </summary>
+/// <remarks>
+/// Compiler Target: DeclarationPass (Pass 0c LinkEmbeds / Pass 1.5 PromoteEmbeddedMethods) -> CodeGenerator.
+/// Memory Layout: 100% Flat contiguous stack frame allocation, base prefix first, zero heap overhead.
+/// </remarks>
+using System;
+
+struct BaseEntity {
+    int hp;
+}
+
+struct Warrior embed BaseEntity {
+    int swordDamage;
+}
+
+extension BaseEntity {
+    void TakeDamage(int amount) {
+        hp -= amount;
+    }
+}
+
+int main() {
+    Warrior w = Warrior { hp: 100, swordDamage: 45 };
+    w.hp -= 10;
+    w.TakeDamage(20);
+    Console.WriteLine($"hp={w.hp} sword={w.swordDamage}");
+    return 0;
+}

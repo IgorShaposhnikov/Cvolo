@@ -1,0 +1,22 @@
+/// <summary>
+/// Feature: Embed Field Collision Rejection.
+/// Verifies that a struct may not redeclare a field that already arrives via its
+/// embedded type — ambiguity in layout would otherwise be order-dependent.
+/// </summary>
+/// <remarks>
+/// Compiler Target: DeclarationPass (FlattenStructFields conflict check).
+/// Expected Diagnostic: "Field 'b' of struct 'W' conflicts with embedded field from 'B'."
+/// </remarks>
+using System;
+
+struct B {
+    int b;
+}
+
+struct W embed B {
+    int b;
+}
+
+int main() {
+    return 0;
+}

@@ -1,0 +1,39 @@
+/// <summary>
+/// Feature: Nominal Interface Conformance Is NON-TRANSITIVE Across Embed.
+/// Verifies that embedding a type which explicitly conforms to an interface does
+/// NOT make the outer struct conform — interface markers require an explicit
+/// `extension T : I` declaration on the outer type itself.
+/// </summary>
+/// <remarks>
+/// Compiler Target: ValidationPass (TryResolveInterfaceCall, Conformance registry untouched by embed).
+/// Expected Diagnostic: "Type 'Warrior' does not conform to interface 'IRecord' for parameter 'r'".
+/// </remarks>
+using System;
+
+struct BaseEntity {
+    int hp;
+}
+
+struct Warrior embed BaseEntity {
+    int swordDamage;
+}
+
+interface IRecord {
+    void Log();
+}
+
+extension BaseEntity : IRecord {
+    void Log() {
+        Console.WriteLine("base logged");
+    }
+}
+
+void Save(IRecord r) {
+    r.Log();
+}
+
+int main() {
+    Warrior w = Warrior { hp: 100, swordDamage: 45 };
+    Save(w);
+    return 0;
+}

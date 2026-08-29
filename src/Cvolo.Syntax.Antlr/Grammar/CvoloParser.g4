@@ -55,7 +55,7 @@ externDeclaration
 	;
 
 structDeclaration
-	: attributeList* STRUCT Identifier (LT genericParameterList GT)? LBRACE structField* RBRACE SEMI?
+	: attributeList* STRUCT Identifier (LT genericParameterList GT)? (EMBED qualifiedName)? LBRACE structField* RBRACE SEMI?
 	;
 
 unionDeclaration

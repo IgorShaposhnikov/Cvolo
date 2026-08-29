@@ -177,8 +177,9 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		var fields = new List<StructFieldSyntax>();
 		foreach (var field in context.structField())
 			fields.Add(new StructFieldSyntax(SpanOf(field), GetTypeName(field.type()), field.Identifier().GetText()));
+		var embeddedType = context.EMBED() is not null && context.qualifiedName() is { } embedCtx ? embedCtx.GetText() : null;
 		var structAttributes = BuildAttributeList(context.attributeList());
-		return new StructDeclarationSyntax(SpanOf(context), name, generics, fields, structAttributes);
+		return new StructDeclarationSyntax(SpanOf(context), name, generics, fields, embeddedType, structAttributes);
 	}
 
 	private ParameterSyntax BuildParameter(CvoloParser.ParameterContext context)

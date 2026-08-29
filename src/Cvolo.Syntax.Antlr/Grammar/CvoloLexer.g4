@@ -31,6 +31,7 @@ PANIC: 'panic';
 EXTENSION: 'extension';
 INTERFACE: 'interface';
 PROTOCOL: 'protocol';
+EMBED: 'embed';
 NAMESPACE: 'namespace';
 USING: 'using';
 GLOBAL: 'global';

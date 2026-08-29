@@ -1,0 +1,45 @@
+/// <summary>
+/// Feature: Implicit Protocol Conformance Through Embed Promotion.
+/// Verifies that a struct embedding another type structurally conforms to a
+/// protocol whose members are satisfied by the PROMOTED embedded methods alone
+/// (no extension block on the outer struct) and dispatches via monomorphization.
+/// </summary>
+/// <remarks>
+/// Compiler Target: ValidationPass (Structural Match via OverloadedFunctions) -> CodeGenerator (Monomorphized LLVM IR).
+/// Memory Layout: 100% Flat contiguous stack frame allocation, zero heap overhead.
+/// </remarks>
+using System;
+
+struct BaseEntity {
+    int hp;
+}
+
+struct Warrior embed BaseEntity {
+    int swordDamage;
+}
+
+protocol ICombat {
+    void TakeDamage(int amount);
+    int Hp();
+}
+
+extension BaseEntity {
+    void TakeDamage(int amount) {
+        hp -= amount;
+    }
+
+    int Hp() {
+        return hp;
+    }
+}
+
+void Fight(ICombat c) {
+    c.TakeDamage(5);
+    Console.WriteLine($"hp={c.Hp()}");
+}
+
+int main() {
+    Warrior w = Warrior { hp: 100, swordDamage: 45 };
+    Fight(w);
+    return 0;
+}

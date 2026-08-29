@@ -1,0 +1,37 @@
+/// <summary>
+/// Feature: Own-Method-Overrides-Promoted-Method.
+/// Verifies that when the outer struct declares its own method with the same
+/// signature as an embedded one, promotion is skipped (collision-rule parity) and
+/// dispatch lands on the outer's explicit implementation.
+/// </summary>
+/// <remarks>
+/// Compiler Target: DeclarationPass (PromoteEmbeddedMethods Globals.Lookup skip).
+/// Memory Layout: 100% Flat contiguous stack frame allocation, zero heap overhead.
+/// </remarks>
+using System;
+
+struct BaseEntity {
+    int hp;
+}
+
+struct Warrior embed BaseEntity {
+    int swordDamage;
+}
+
+extension BaseEntity {
+    void Status() {
+        Console.WriteLine($"base hp={hp}");
+    }
+}
+
+extension Warrior {
+    void Status() {
+        Console.WriteLine($"warrior hp={hp}+{swordDamage}");
+    }
+}
+
+int main() {
+    Warrior w = Warrior { hp: 100, swordDamage: 45 };
+    w.Status();
+    return 0;
+}

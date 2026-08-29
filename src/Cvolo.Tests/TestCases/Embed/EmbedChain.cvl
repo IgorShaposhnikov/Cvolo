@@ -1,0 +1,40 @@
+/// <summary>
+/// Feature: Multi-Level Embed Chains (T embeds B embeds A).
+/// Verifies that flattening and method promotion compose transitively — the
+/// outermost struct sees every ancestor's fields and extension methods.
+/// </summary>
+/// <remarks>
+/// Compiler Target: DeclarationPass (Recursive FlattenStructFields / chain-walk promotion).
+/// Memory Layout: 100% Flat contiguous stack frame allocation, ancestors first, zero heap overhead.
+/// </remarks>
+using System;
+
+struct A {
+    int a;
+}
+
+struct B embed A {
+    int b;
+}
+
+struct C embed B {
+    int c;
+}
+
+extension A {
+    int GetA() {
+        return a;
+    }
+}
+
+extension B {
+    int GetB() {
+        return b;
+    }
+}
+
+int main() {
+    C c = C { a: 1, b: 2, c: 3 };
+    Console.WriteLine($"a={c.GetA()} b={c.GetB()} c={c.c}");
+    return 0;
+}

@@ -1,0 +1,22 @@
+/// <summary>
+/// Feature: Generic Struct Templates May Not Use Embed.
+/// Verifies that the P8 limitation is rejected up front (generic instances build
+/// fields from source text only, so flattening could not be honored).
+/// </summary>
+/// <remarks>
+/// Compiler Target: DeclarationPass (FlattenStructFields generic guard).
+/// Expected Diagnostic: "Cannot use embed in generic struct template 'W'."
+/// </remarks>
+using System;
+
+struct B {
+    int b;
+}
+
+struct W<T> embed B {
+    T v;
+}
+
+int main() {
+    return 0;
+}
