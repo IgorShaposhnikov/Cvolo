@@ -1,0 +1,44 @@
+/// <summary>
+/// Feature: Enum Extension Methods — Unqualified Variant Access (E3).
+/// </summary>
+/// <remarks>
+/// Inside an extension method body on an enum, variant names (Active, Pending, ...)
+/// resolve WITHOUT qualification as values of the enum type, alongside the implicit
+/// 'this' receiver. IsActive/IsPending compare this against the inner variants and
+/// Ordinal reads the scalar value; all are used from main through dot dispatch.
+/// Compiler Target: ValidationPass enum extension scope (this + variants declared
+/// before params), CodeGenerator.Load 'this'-referent variant const resolution and
+/// GetExprTypeIdentifier for unqualified enum identifiers in extension bodies.
+/// Memory: receiver passed by reference; variants are pure constants.
+/// </remarks>
+using System;
+
+enum Status : byte {
+    Active = 1,
+    Pending = 2
+}
+
+extension Status {
+    int Ordinal() {
+        return (int)this;
+    }
+
+    int IsActive() {
+        return this == Active ? 1 : 0;
+    }
+
+    int IsPending() {
+        return this == Pending ? 1 : 0;
+    }
+}
+
+int main() {
+    var Status s = Status.Pending;
+    Console.WriteLine(s.Ordinal());
+    Console.WriteLine(s.IsActive());
+    Console.WriteLine(s.IsPending());
+
+    var Status a = Status.Active;
+    Console.WriteLine(a.IsActive());
+    return 0;
+}

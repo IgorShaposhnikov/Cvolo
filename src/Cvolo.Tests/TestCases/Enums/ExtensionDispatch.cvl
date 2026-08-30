@@ -1,0 +1,33 @@
+/// <summary>
+/// Feature: Enum Extension Methods — Dot Dispatch (E3).
+/// </summary>
+/// <remarks>
+/// Extension blocks may be declared on enum types. A call to an extension method
+/// through the dot operator (s.Print()) binds the scalar enum receiver by reference
+/// (implicit 'ref this'), so the method body reads the live value through '(int)this'.
+/// Verifies dispatch, by-reference receiver semantics, and scalar enum addressing.
+/// Compiler Target: ValidationPass.ResolveOverloadedFunction dotted-receiver gate,
+/// CheckExtensionMethodBody enum scope, CodeGenerator scalar receiver path.
+/// Memory: no copy and no heap; the receiver address is passed directly.
+/// </remarks>
+using System;
+
+enum Status : byte {
+    Active = 1,
+    Pending = 2
+}
+
+extension Status {
+    void Print() {
+        Console.WriteLine($"Status value: {(int)this}");
+    }
+}
+
+int main() {
+    var Status first = Status.Active;
+    first.Print();
+
+    var Status second = Status.Pending;
+    second.Print();
+    return 0;
+}

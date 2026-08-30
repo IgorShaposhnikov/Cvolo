@@ -1895,7 +1895,7 @@ case BinaryExpressionSyntax bin:
 				if (receiverType is PointerTypeSymbol ptr)
 					receiverType = ptr.ReferencedType;
 
-				if (receiverType is StructTypeSymbol or UnionTypeSymbol)
+				if (receiverType is StructTypeSymbol or UnionTypeSymbol or EnumTypeSymbol)
 				{
 					isDottedExtension = true;
 					// Resolve using "Option<int>.IsSome" as the base name
@@ -2124,7 +2124,7 @@ case BinaryExpressionSyntax bin:
 			return;
 		}
 
-		if (extendedType is not (StructTypeSymbol or UnionTypeSymbol)) return;
+		if (extendedType is not (StructTypeSymbol or UnionTypeSymbol or EnumTypeSymbol)) return;
 
 		var baseUnsafeDepth2 = _unsafeDepth;
 		_unsafeDepth = IsUnsafeFunction(method) ? 1 : 0;
@@ -2168,6 +2168,16 @@ case BinaryExpressionSyntax bin:
 			foreach (var field in ut.Fields)
 			{
 				localScope.Declare(new VariableSymbol(field.Name, field.Type, isMutable: true) { IsInitialized = true });
+			}
+		}
+		else if (extendedType is EnumTypeSymbol enumExtType)
+		{
+			// Enums are flat scalars: 'this' reads as the enum value itself and the
+			// variant names (Active, Pending, ...) are visible without qualification.
+			localScope.Declare(new VariableSymbol("this", enumExtType, isMutable: false) { IsInitialized = true });
+			foreach (var variant in enumExtType.Variants)
+			{
+				localScope.Declare(new VariableSymbol(variant.Name, enumExtType, isMutable: false) { IsInitialized = true });
 			}
 		}
 

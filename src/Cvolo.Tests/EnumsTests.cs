@@ -94,6 +94,32 @@ public sealed class EnumsTests : CompilerTestBase
 	}
 
 	[Theory]
+	[InlineData("ExtensionDispatch", "Status value: 1\nStatus value: 2\n")]
+	[InlineData("ExtensionInnerVariant", "2\n0\n1\n1\n")]
+	[InlineData("ExtensionRefReceiver", "Inspect: 1\nInspect: 2\n")]
+	public void Enum_ExtensionMethods_Dispatch(string caseName, string expected)
+	{
+		var fileName = $"{Category}/{caseName}.cvl";
+		var (exitCode, stdout, stderr) = RunCompiler(fileName);
+		AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
+
+		var (runCode, runStdout) = ExecuteBinary(caseName, Category);
+		Assert.Equal(0, runCode);
+		Assert.Equal(expected.Replace("\r\n", "\n").Trim(), runStdout.Replace("\r\n", "\n").Trim());
+	}
+
+	[Theory]
+	[InlineData("EnumExtensionUnknownVariantFail.cvl", "Undefined variable 'Bogus'")]
+	[InlineData("EnumExtensionNoMethodFail.cvl", "No overload of function 's.Nope' matches argument types ()")]
+	[InlineData("EnumUnqualifiedOutsideExtensionFail.cvl", "Undefined variable 'Active'")]
+	public void Enum_Extension_Rejections(string caseName, string expectedError)
+	{
+		var (exitCode, stdout, stderr) = RunCompiler($"{Category}/{caseName}");
+		Assert.NotEqual(0, exitCode);
+		Assert.Contains(expectedError, stderr);
+	}
+
+	[Theory]
 	[InlineData("EnumEmptyFail.cvl", "missing Identifier at '}'")]
 	[InlineData("EnumDuplicateVariantFail.cvl", "Duplicate variant 'A' in enum 'Dupe'")]
 	[InlineData("EnumDuplicateTypeFail.cvl", "Duplicate type definition 'Collide'")]

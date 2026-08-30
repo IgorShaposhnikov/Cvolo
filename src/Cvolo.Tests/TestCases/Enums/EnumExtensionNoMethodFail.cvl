@@ -1,0 +1,27 @@
+/// <summary>
+/// Feature: Enum Extension Methods — Unknown Method Rejected (E3).
+/// </summary>
+/// <remarks>
+/// Dot dispatch on an enum value only resolves methods declared by an extension
+/// block on that enum. Invoking a method that does not exist must fail overload
+/// resolution.
+/// Compiler Target: ResolveOverloadedFunction dotted-receiver path.
+/// </remarks>
+using System;
+
+enum Status : byte {
+    Active = 1,
+    Pending = 2
+}
+
+extension Status {
+    int Check() {
+        return (int)this;
+    }
+}
+
+int main() {
+    var Status s = Status.Active;
+    Console.WriteLine(s.Nope());
+    return 0;
+}

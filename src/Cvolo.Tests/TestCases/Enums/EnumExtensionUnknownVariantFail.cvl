@@ -1,0 +1,27 @@
+/// <summary>
+/// Feature: Enum Extension Methods — Unknown Variant Rejected (E3).
+/// </summary>
+/// <remarks>
+/// Only the enum's OWN variants (and 'this') are visible unqualified inside an
+/// extension method body. Referencing a name that is not a declared variant must
+/// fail as an undefined variable.
+/// Compiler Target: CheckExtensionMethodBody enum local scope.
+/// </remarks>
+using System;
+
+enum Status : byte {
+    Active = 1,
+    Pending = 2
+}
+
+extension Status {
+    int Check() {
+        return Bogus == Active ? 1 : 0;
+    }
+}
+
+int main() {
+    var Status s = Status.Active;
+    Console.WriteLine(s.Check());
+    return 0;
+}

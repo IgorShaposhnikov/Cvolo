@@ -1576,9 +1576,18 @@ case MemberAccessExpressionSyntax m:
 		{
 			if (_locals.TryGetValue("this", out var thisPtr))
 			{
+				if (_variableTypes["this"] is PointerTypeSymbol thisPtrTy && thisPtrTy.ReferencedType is EnumTypeSymbol enumSelf)
+				{
+					// Unqualified enum variant access inside an extension body:
+					// 'Active' lowers to the variant's compile-time constant.
+					var variant = enumSelf.FindVariant(name);
+					if (variant is not null)
+						return LLVMValueRef.CreateConstInt(GetLLVMType(enumSelf), unchecked((ulong)variant.Value));
+				}
+
 				var thisType = _variableTypes["this"] as PointerTypeSymbol;
 				var structType = thisType!.ReferencedType as StructTypeSymbol;
-				var field = structType!.FindField(name);
+				var field = structType?.FindField(name);
 				if (field is not null)
 				{
 					var actualThisPtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), thisPtr, "loaded_this_ptr");
@@ -1604,7 +1613,8 @@ case MemberAccessExpressionSyntax m:
 		if (type is PointerTypeSymbol ptrType)
 		{
 			var resolvedType = ptrType.ReferencedType;
-			if (resolvedType == TypeSymbol.Int || resolvedType == TypeSymbol.Double || resolvedType == TypeSymbol.Bool || resolvedType == TypeSymbol.Char)
+			if (resolvedType == TypeSymbol.Int || resolvedType == TypeSymbol.Double || resolvedType == TypeSymbol.Bool || resolvedType == TypeSymbol.Char
+				|| resolvedType is EnumTypeSymbol)
 			{
 				var innerTy = GetLLVMType(resolvedType);
 				return _builder.BuildLoad2(innerTy, reg, "deref_val");
@@ -1706,7 +1716,7 @@ case MemberAccessExpressionSyntax m:
 			BooleanLiteralExpressionSyntax => TypeSymbol.Bool,
 			StringLiteralExpressionSyntax => TypeSymbol.String,
 			CharacterLiteralExpressionSyntax => TypeSymbol.Char,
-			IdentifierExpressionSyntax id => _variableTypes.TryGetValue(id.Name, out var type) ? type : TypeSymbol.Int,
+			IdentifierExpressionSyntax id => GetExprTypeIdentifier(id),
 			MemberAccessExpressionSyntax m => GetMemberAccessType(m),
 			IndexExpressionSyntax idx => GetIndexExpressionType(idx),
 			BorrowExpressionSyntax b => new PointerTypeSymbol(GetExprType(b.Expression), false),
@@ -1720,6 +1730,29 @@ case MemberAccessExpressionSyntax m:
 			ArrayInitializationExpressionSyntax a => new ArrayTypeSymbol(a.Elements.Count > 0 ? GetExprType(a.Elements[0]) : TypeSymbol.Int, a.Elements.Count),
 			_ => TypeSymbol.Int
 		};
+	}
+
+	private TypeSymbol GetExprTypeIdentifier(IdentifierExpressionSyntax id)
+	{
+		if (_variableTypes.TryGetValue(id.Name, out var type))
+		{
+			// Enum 'this' in an extension body reads as the scalar enum value,
+			// not the injected receiver pointer.
+			if (type is PointerTypeSymbol ptrId && ptrId.ReferencedType is EnumTypeSymbol enumId)
+				return enumId;
+			return type;
+		}
+
+		// Unqualified enum variant access inside an enum extension body.
+		if (_variableTypes.TryGetValue("this", out var thisTy)
+			&& thisTy is PointerTypeSymbol thisPtr
+			&& thisPtr.ReferencedType is EnumTypeSymbol enumSelf
+			&& enumSelf.FindVariant(id.Name) is not null)
+		{
+			return enumSelf;
+		}
+
+		return TypeSymbol.Int;
 	}
 
 	private TypeSymbol ResolveUnaryExprType(UnaryExpressionSyntax u)

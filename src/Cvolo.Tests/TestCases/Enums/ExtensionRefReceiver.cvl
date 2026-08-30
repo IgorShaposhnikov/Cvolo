@@ -1,0 +1,30 @@
+/// <summary>
+/// Feature: Enum Extension Methods — ref Parameter Receiver (E3).
+/// </summary>
+/// <remarks>
+/// A plain function taking 'ref Status' receives the enum scalar BY REFERENCE
+/// (aliasing the caller's storage, no copy) and reads its value through '(int)x'.
+/// Complements extension dispatch: scalar enums are addressable, readable, and
+/// shareable through read-only references at the C-variable level.
+/// Compiler Target: CodeGenerator scalar receiver/ref-argument addressing path.
+/// Memory: no heap, no copy; the argument aliases the caller's enum slot.
+/// </remarks>
+using System;
+
+enum Status : byte {
+    Active = 1,
+    Pending = 2
+}
+
+void Inspect(ref Status x) {
+    Console.WriteLine($"Inspect: {(int)x}");
+}
+
+int main() {
+    var Status s = Status.Active;
+    Inspect(ref s);
+
+    var Status t = Status.Pending;
+    Inspect(ref t);
+    return 0;
+}

@@ -1,0 +1,27 @@
+/// <summary>
+/// Feature: Enum Extension Methods — Unqualified Access Scoping (E3).
+/// </summary>
+/// <remarks>
+/// Unqualified variant access (Active without 'Status.' prefix) is lexically
+/// restricted to enum extension method bodies. Reaching for a bare variant name
+/// in ordinary code must fail as an undefined variable.
+/// Compiler Target: CheckExtensionMethodBody enum local scope isolation.
+/// </remarks>
+using System;
+
+enum Status : byte {
+    Active = 1,
+    Pending = 2
+}
+
+extension Status {
+    int Check() {
+        return (int)this;
+    }
+}
+
+int main() {
+    var Status s = Active;
+    Console.WriteLine(s.Check());
+    return 0;
+}
