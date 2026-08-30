@@ -1,0 +1,29 @@
+/// <summary>
+/// Verifies that the 'ref this' explicit receiver marker correctly compiles and enforces read-only access.
+/// </summary>
+/// <remarks>
+/// Ensures that both mutable 'var' and immutable 'val' instances can safely call methods
+/// marked with the 'ref this' read-only receiver contract.
+/// </remarks>
+using System;
+
+struct Point
+{ 
+    int X; 
+    int Y; 
+}
+
+extension Point
+{
+    int SumRef(ref this)
+	{ 
+        return X + Y; 
+    }
+}
+
+int Main() {
+    val Point p1 = Point { X: 10, Y: 20 };
+    var Point p2 = Point { X: 5, Y: 5 };
+    Console.WriteLine($"{p1.SumRef()}, {p2.SumRef()}");
+    return 0;
+}

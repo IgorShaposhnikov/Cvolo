@@ -10,7 +10,33 @@ namespace Cvolo.Analysis.Passes;
 
 public sealed class DeclarationPass(BindingContext context)
 {
-public void Process(IEnumerable<CompilationUnitSyntax> units)
+	// M1 attribute model: only System.* intrinsics exist. Their [AttributeUsage]-style rules
+	// (syntactic target x safety context, per spec section 4) are modeled compiler-side until
+	// the language has enums/inheritance to declare them in source. Attributes are erased
+	// before emission - they never reach LLVM IR.
+	private static readonly Dictionary<string, (string[] Targets, SafetyTier[] Contexts)> IntrinsicAttributes = new()
+	{
+		["UnsafeBody"] = (["Function", "Method", "Constructor", "Destructor"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
+		["NoAlias"] = (["Function", "Method", "Parameter"], [SafetyTier.Unbound, SafetyTier.Unsafe]),
+		["SuppressWarning"] = (["Struct", "Function", "Method", "Constructor", "Destructor", "Parameter"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
+		["Flags"] = (["Struct"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
+		["NonExhaustive"] = (["Struct"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
+		["StrictMutability"] = (["Struct"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
+	};
+
+	private static readonly HashSet<string> KnownWarningIds =
+	[
+		DiagnosticIds.UnsafeBodyNoEffect, DiagnosticIds.UnknownAttribute, DiagnosticIds.UnboundNoRefParams, DiagnosticIds.AutoInferMutationWarning
+	];
+
+	// E1 enum underlying storage types (§1.A). Enums are strictly flat, unmanaged
+	// scalar integers. 'char' is allowed as a 1-byte storage type.
+	private static readonly HashSet<string> AllowedEnumStorageTypes =
+	[
+		"int", "uint", "short", "ushort", "long", "ulong", "char", "byte", "sbyte"
+	];
+
+	public void Process(IEnumerable<CompilationUnitSyntax> units)
 	{
 		// Pass 0a: Register all Struct/Union/Interface/Protocol raw symbols across all files
 		foreach (var unit in units)
@@ -45,7 +71,7 @@ public void Process(IEnumerable<CompilationUnitSyntax> units)
 			var members = context.CurrentNamespace != null ? unit.NamespaceDeclaration!.Members : unit.Members;
 			foreach (var member in members)
 			{
-if (member is ProtocolDeclarationSyntax protocolDecl)
+				if (member is ProtocolDeclarationSyntax protocolDecl)
 					LinkProtocol(protocolDecl);
 				else if (member is InterfaceDeclarationSyntax interfaceDecl)
 					LinkInterface(interfaceDecl);
@@ -80,7 +106,7 @@ if (member is ProtocolDeclarationSyntax protocolDecl)
 		// Pass 1.5: Promote embedded-type extension methods onto every struct that
 		// embeds them — `w.TakeDamage(20)` on a struct that `embed`s BaseEntity
 		// resolves BaseEntity's extension with the outer struct as `this`.
-PromoteEmbeddedMethods(units);
+		PromoteEmbeddedMethods(units);
 	}
 
 	/// <summary>
@@ -106,7 +132,9 @@ PromoteEmbeddedMethods(units);
 		var flattened = new Dictionary<string, List<StructFieldSymbol>>();
 		foreach (var (mangledName, decl) in structDecls)
 		{
-			if (decl.EmbeddedType is null) continue;
+			if (decl.EmbeddedType is null)
+				continue;
+
 			FlattenStructFields(mangledName, decl, structDecls, flattened, new HashSet<string>());
 		}
 	}
@@ -118,7 +146,9 @@ PromoteEmbeddedMethods(units);
 		Dictionary<string, List<StructFieldSymbol>> flattened,
 		HashSet<string> stack)
 	{
-		if (flattened.TryGetValue(mangledName, out var cached)) return cached;
+		if (flattened.TryGetValue(mangledName, out var cached))
+			return cached;
+
 		var currentFileContext = context.FileContexts[context.CurrentUnit!];
 
 		var ownFields = context.StructTypes[mangledName].Fields.ToList();
@@ -201,14 +231,17 @@ PromoteEmbeddedMethods(units);
 			var members = unit.NamespaceDeclaration is not null ? unit.NamespaceDeclaration.Members : unit.Members;
 			foreach (var member in members)
 			{
-				if (member is not ExtensionDeclarationSyntax extDecl) continue;
-				if (context.ResolveType(extDecl.ExtendedTypeName) is not StructTypeSymbol targetType) continue;
+				if (member is not ExtensionDeclarationSyntax extDecl)
+					continue;
+				if (context.ResolveType(extDecl.ExtendedTypeName) is not StructTypeSymbol targetType)
+					continue;
 
 				if (!extensionsByType.TryGetValue(targetType.Name, out var list))
 				{
 					list = [];
 					extensionsByType[targetType.Name] = list;
 				}
+
 				list.Add((unit, extDecl));
 			}
 		}
@@ -219,7 +252,9 @@ PromoteEmbeddedMethods(units);
 			var members = unit.NamespaceDeclaration is not null ? unit.NamespaceDeclaration.Members : unit.Members;
 			foreach (var member in members)
 			{
-				if (member is not StructDeclarationSyntax outerDecl || outerDecl.EmbeddedType is null) continue;
+				if (member is not StructDeclarationSyntax outerDecl || outerDecl.EmbeddedType is null)
+					continue;
+
 				var outerName = context.GetMangledName(outerDecl.Name, unit.NamespaceDeclaration?.Name);
 				if (context.StructTypes.TryGetValue(outerName, out var outerSym) && outerSym is StructTypeSymbol outerStruct)
 					PromoteForStruct(outerStruct, unit, extensionsByType, promotedAny);
@@ -240,9 +275,12 @@ PromoteEmbeddedMethods(units);
 			chain.Add(cursor);
 			cursor = cursor.EmbeddedType;
 		}
-		if (chain.Count == 0) return;
 
-		if (!promotedAny.Add(outerStruct.Name)) return;
+		if (chain.Count == 0)
+			return;
+
+		if (!promotedAny.Add(outerStruct.Name))
+			return;
 
 		var previousUnit = context.CurrentUnit;
 		var previousNamespace = context.CurrentNamespace;
@@ -253,7 +291,8 @@ PromoteEmbeddedMethods(units);
 
 		foreach (var baseStruct in chain)
 		{
-			if (!extensionsByType.TryGetValue(baseStruct.Name, out var extList)) continue;
+			if (!extensionsByType.TryGetValue(baseStruct.Name, out var extList))
+				continue;
 
 			foreach (var (sourceUnit, extDecl) in extList)
 			{
@@ -268,19 +307,26 @@ PromoteEmbeddedMethods(units);
 
 					var parameters = new List<ParameterSymbol>
 					{
-						new ParameterSymbol("this", new PointerTypeSymbol(outerStruct, isMutable: false))
+						new("this", new PointerTypeSymbol(outerStruct, isMutable: false))
 					};
 					var paramOk = true;
 					foreach (var param in method.Parameters)
 					{
 						var paramType = context.ResolveType(param.Type);
-						if (paramType is null) { paramOk = false; break; }
+						if (paramType is null)
+						{
+							paramOk = false;
+							break;
+						}
+
 						parameters.Add(new ParameterSymbol(param.Name, paramType));
 					}
+
 					var returnType = context.ResolveType(method.ReturnType);
 					context.CurrentUnit = previousUnit2;
 					context.CurrentNamespace = previousNamespace2;
-					if (!paramOk || returnType is null) continue;
+					if (!paramOk || returnType is null)
+						continue;
 
 					// Register under the OUTER struct's method key so `w.Method(...)`
 					// resolves through the existing dotted-extension machinery.
@@ -298,6 +344,7 @@ PromoteEmbeddedMethods(units);
 						candidates = [];
 						context.OverloadedFunctions[baseKey] = candidates;
 					}
+
 					candidates.Add(newSymbol);
 
 					context.SymbolUnits[overloadedName] = outerUnit;
@@ -314,6 +361,12 @@ PromoteEmbeddedMethods(units);
 		context.CurrentNamespace = previousNamespace;
 	}
 
+	/// <summary>
+	/// Registers a structural type (struct) into the binding context.
+	/// Creates the symbol representation, handles generic templates,
+	/// and applies intrinsic attributes like [StrictMutability].
+	/// </summary>
+	/// <param name="structDecl">The syntax node for the struct declaration.</param>
 	private void DeclareStruct(StructDeclarationSyntax structDecl)
 	{
 		var mangledName = context.GetMangledName(structDecl.Name, context.CurrentNamespace);
@@ -326,18 +379,22 @@ PromoteEmbeddedMethods(units);
 		}
 
 		// No intrinsic targets structs; verify so unknown/misapplied attributes still surface.
-		_ = VerifyAttributes(structDecl.Attributes, "Struct", new List<string>());
+		var appliedAttrs = VerifyAttributes(structDecl.Attributes, "Struct", new List<string>());
 
 		// If this is a generic struct template (e.g. struct Point<T>)
 		if (structDecl.GenericParameters.Count > 0)
 		{
-			// Record the original template file unit
 			context.SymbolUnits[mangledName] = context.CurrentUnit!;
-
 			context.GenericStructTemplates[mangledName] = structDecl;
 
 			var placeholderFields = new List<StructFieldSymbol>();
-			var templateSymbol = new StructTypeSymbol(mangledName, placeholderFields);
+
+			// MAKE SURE IsStrictMutability is set here too!
+			var templateSymbol = new StructTypeSymbol(mangledName, placeholderFields)
+			{
+				IsStrictMutability = appliedAttrs.Contains("StrictMutability")
+			};
+
 			context.StructTypes[mangledName] = templateSymbol;
 			return;
 		}
@@ -374,7 +431,10 @@ PromoteEmbeddedMethods(units);
 			fields.Add(new StructFieldSymbol(field.Name, fieldType));
 		}
 
-		var structSymbol = new StructTypeSymbol(mangledName, fields);
+		var structSymbol = new StructTypeSymbol(mangledName, fields)
+		{
+			IsStrictMutability = appliedAttrs.Contains("StrictMutability")
+		};
 		context.StructTypes[mangledName] = structSymbol;
 		// Ensure the canonical cache no longer serves the (empty) placeholder
 		// registered above, or later ResolveType("Node") would return a
@@ -466,6 +526,7 @@ PromoteEmbeddedMethods(units);
 					: protocolDecl.GenericParameters;
 			canonical.Add(ProtocolCanonicalizer.BuildMemberToken(member, ownerGenerics, context, selfReplacement: null));
 		}
+
 		context.ProtocolTypes[mangledName] = new ProtocolTypeSymbol(
 			mangledName, effective.Select(e => e.Member).ToList(), protocolDecl.GenericParameters, protocolDecl.Constraint, canonical);
 	}
@@ -474,7 +535,8 @@ PromoteEmbeddedMethods(units);
 		string baseName, HashSet<string> visited, HashSet<string> stack,
 		List<(string Owner, ProtocolMethodDeclarationSyntax Member)> effective, TextSpan span)
 	{
-		if (context.ResolveType(baseName) is not ProtocolTypeSymbol protoBase) return;
+		if (context.ResolveType(baseName) is not ProtocolTypeSymbol protoBase)
+			return;
 
 		if (!stack.Add(protoBase.Name))
 		{
@@ -492,7 +554,8 @@ PromoteEmbeddedMethods(units);
 
 				foreach (var member in baseDecl.Members)
 				{
-					if (effective.Any(e => e.Member.Name == member.Name)) continue;
+					if (effective.Any(e => e.Member.Name == member.Name))
+						continue;
 					effective.Add((protoBase.Name, member));
 				}
 			}
@@ -669,8 +732,10 @@ PromoteEmbeddedMethods(units);
 	private bool IsInterfaceTypedParameter(ParameterSyntax p)
 	{
 		var type = p.Type;
-		if (type.StartsWith("refvar ", StringComparison.Ordinal)) type = type[7..];
-		else if (type.StartsWith("ref ", StringComparison.Ordinal)) type = type[4..];
+		if (type.StartsWith("refvar ", StringComparison.Ordinal))
+			type = type[7..];
+		else if (type.StartsWith("ref ", StringComparison.Ordinal))
+			type = type[4..];
 		return context.ResolveType(type) is InterfaceTypeSymbol;
 	}
 
@@ -680,25 +745,12 @@ PromoteEmbeddedMethods(units);
 	private bool IsProtocolTypedParameter(ParameterSyntax p)
 	{
 		var type = p.Type;
-		if (type.StartsWith("refvar ", StringComparison.Ordinal)) type = type[7..];
-		else if (type.StartsWith("ref ", StringComparison.Ordinal)) type = type[4..];
+		if (type.StartsWith("refvar ", StringComparison.Ordinal))
+			type = type[7..];
+		else if (type.StartsWith("ref ", StringComparison.Ordinal))
+			type = type[4..];
 		return context.ResolveType(type) is ProtocolTypeSymbol;
 	}
-
-	// M1 attribute model: only System.* intrinsics exist. Their [AttributeUsage]-style rules
-	// (syntactic target x safety context, per spec section 4) are modeled compiler-side until
-	// the language has enums/inheritance to declare them in source. Attributes are erased
-	// before emission - they never reach LLVM IR.
-	private static readonly Dictionary<string, (string[] Targets, SafetyTier[] Contexts)> IntrinsicAttributes = new()
-	{
-		["UnsafeBody"] = (["Function", "Method", "Constructor", "Destructor"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
-		["NoAlias"] = (["Function", "Method", "Parameter"], [SafetyTier.Unbound, SafetyTier.Unsafe]),
-		["SuppressWarning"] = (["Struct", "Function", "Method", "Constructor", "Destructor", "Parameter"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
-		["Flags"] = (["Struct"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
-		["NonExhaustive"] = (["Struct"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe])
-	};
-
-	private static readonly HashSet<string> KnownWarningIds = [DiagnosticIds.UnsafeBodyNoEffect, DiagnosticIds.UnknownAttribute, DiagnosticIds.UnboundNoRefParams];
 
 	private static string? NormalizeAttributeName(string attributeName)
 	{
@@ -796,7 +848,9 @@ PromoteEmbeddedMethods(units);
 			symbol.SuppressedWarnings.Add(warningId);
 	}
 
-	/// <summary>Flags [UnsafeBody] declarations whose bodies contain nothing unsafe; suppressible via [SuppressWarning].</summary>
+	/// <summary>
+	/// Flags [UnsafeBody] declarations whose bodies contain nothing unsafe; suppressible via [SuppressWarning].
+	/// </summary>
 	private void WarnIfUnsafeBodyUnused(Core.Diagnostics.TextSpan declarationSpan, SyntaxNode body, FunctionSymbol symbol, List<string> suppressedWarnings)
 	{
 		if (!symbol.IsUnsafeBody || suppressedWarnings.Contains(DiagnosticIds.UnsafeBodyNoEffect))
@@ -812,7 +866,9 @@ PromoteEmbeddedMethods(units);
 			DiagnosticIds.UnsafeBodyNoEffect);
 	}
 
-	/// <summary>Resolves a parameter's type, verifies its attributes, and returns null when the type is unknown.</summary>
+	/// <summary>
+	/// Resolves a parameter's type, verifies its attributes, and returns null when the type is unknown.
+	/// </summary>
 	private ParameterSymbol? CreateParameter(ParameterSyntax param)
 	{
 		var paramType = context.ResolveType(param.Type);
@@ -888,6 +944,7 @@ PromoteEmbeddedMethods(units);
 			candidates = [];
 			context.OverloadedFunctions[ext.Name] = candidates;
 		}
+
 		candidates.Add(newSymbol);
 	}
 
@@ -909,6 +966,7 @@ PromoteEmbeddedMethods(units);
 				templates = [];
 				context.GenericExtensionTemplates[extendedType.Name] = templates;
 			}
+
 			templates.Add(extDecl);
 			return;
 		}
@@ -926,6 +984,7 @@ PromoteEmbeddedMethods(units);
 				defaults = [];
 				context.ProtocolDefaults[protoExtType.Name] = defaults;
 			}
+
 			foreach (var method in extDecl.Methods)
 				defaults.Add((method.Name, method));
 		}
@@ -1012,6 +1071,7 @@ PromoteEmbeddedMethods(units);
 				candidates = [];
 				context.OverloadedFunctions[baseMangledName] = candidates;
 			}
+
 			candidates.Add(newSymbol);
 
 			context.SymbolUnits[overloadedName] = context.CurrentUnit!;
@@ -1085,6 +1145,7 @@ PromoteEmbeddedMethods(units);
 				ctorCandidates = [];
 				context.OverloadedFunctions[ctorBaseMangledName] = ctorCandidates;
 			}
+
 			ctorCandidates.Add(ctorSymbol);
 
 			if (context.CurrentUnit is not null)
@@ -1097,6 +1158,7 @@ PromoteEmbeddedMethods(units);
 				registeredCtors = [];
 				context.Constructors[extDecl.ExtendedTypeName] = registeredCtors;
 			}
+
 			registeredCtors.Add(ctorSymbol);
 		}
 	}
@@ -1126,6 +1188,7 @@ PromoteEmbeddedMethods(units);
 			interfaces = [];
 			context.Conformance[extendedType.Name] = interfaces;
 		}
+
 		interfaces.Add(interfaceSymbol.Name);
 
 		var interfaceDecl = context.InterfaceTemplates[interfaceSymbol.Name];
@@ -1167,8 +1230,12 @@ PromoteEmbeddedMethods(units);
 	{
 		foreach (var baseName in iface.Bases)
 		{
-			if (context.ResolveType(baseName) is not InterfaceTypeSymbol baseIface) continue;
-			if (!interfaces.Add(baseIface.Name)) continue;
+			if (context.ResolveType(baseName) is not InterfaceTypeSymbol baseIface)
+				continue;
+
+			if (!interfaces.Add(baseIface.Name))
+				continue;
+
 			if (context.InterfaceTemplates.TryGetValue(baseIface.Name, out var baseDecl))
 				CollectInterfaceAncestors(baseDecl, interfaces);
 		}
@@ -1229,26 +1296,27 @@ PromoteEmbeddedMethods(units);
 		switch (contract)
 		{
 			case InterfaceTypeSymbol consIface:
-			{
-				if (!context.Conformance.TryGetValue(extDecl.ExtendedTypeName, out var ifaces) || !ifaces.Contains(consIface.Name))
-					context.Diagnostics.Report(currentFileContext, extDecl.Span,
-						$"Type '{extDecl.ExtendedTypeName}' does not satisfy the requires-clause '{interfaceDecl.Constraint}' of interface '{extDecl.ConformsTo}': it does not conform to interface '{consIface.Name}'.");
-				break;
-			}
-			case ProtocolTypeSymbol consProto:
-			{
-				var requiredNames = new HashSet<string>();
-				foreach (var member in GetProtocolRequirements(consProto.Name))
-					requiredNames.Add(member.Name);
-				var providedNames = new HashSet<string>(extDecl.Methods.Select(m => m.Name));
-				foreach (var required in requiredNames)
 				{
-					if (!providedNames.Contains(required))
+					if (!context.Conformance.TryGetValue(extDecl.ExtendedTypeName, out var ifaces) || !ifaces.Contains(consIface.Name))
 						context.Diagnostics.Report(currentFileContext, extDecl.Span,
-							$"Type '{extDecl.ExtendedTypeName}' does not satisfy the requires-clause '{interfaceDecl.Constraint}' of interface '{extDecl.ConformsTo}': missing protocol member '{required}'.");
+							$"Type '{extDecl.ExtendedTypeName}' does not satisfy the requires-clause '{interfaceDecl.Constraint}' of interface '{extDecl.ConformsTo}': it does not conform to interface '{consIface.Name}'.");
+					break;
 				}
-				break;
-			}
+			case ProtocolTypeSymbol consProto:
+				{
+					var requiredNames = new HashSet<string>();
+					foreach (var member in GetProtocolRequirements(consProto.Name))
+						requiredNames.Add(member.Name);
+					var providedNames = new HashSet<string>(extDecl.Methods.Select(m => m.Name));
+					foreach (var required in requiredNames)
+					{
+						if (!providedNames.Contains(required))
+							context.Diagnostics.Report(currentFileContext, extDecl.Span,
+								$"Type '{extDecl.ExtendedTypeName}' does not satisfy the requires-clause '{interfaceDecl.Constraint}' of interface '{extDecl.ConformsTo}': missing protocol member '{required}'.");
+					}
+
+					break;
+				}
 			default:
 				context.Diagnostics.Report(currentFileContext, extDecl.Span,
 					$"Unknown contract '{interfaceDecl.Constraint}' in requires-clause of interface '{extDecl.ConformsTo}'.");
@@ -1405,13 +1473,6 @@ PromoteEmbeddedMethods(units);
 		var unionSymbol = new UnionTypeSymbol(mangledName, fields);
 		context.UnionTypes[mangledName] = unionSymbol;
 	}
-
-	// E1 enum underlying storage types (§1.A). Enums are strictly flat, unmanaged
-	// scalar integers. 'char' is allowed as a 1-byte storage type.
-	private static readonly HashSet<string> AllowedEnumStorageTypes =
-	[
-		"int", "uint", "short", "ushort", "long", "ulong", "char", "byte", "sbyte"
-	];
 
 	private void DeclareEnum(EnumDeclarationSyntax enumDecl)
 	{
@@ -1582,6 +1643,7 @@ PromoteEmbeddedMethods(units);
 				{
 					return null;
 				}
+
 				return bin.Operator switch
 				{
 					"|" => left.Value | right.Value,

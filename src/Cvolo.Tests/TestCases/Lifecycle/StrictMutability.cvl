@@ -1,0 +1,45 @@
+/// <summary>
+/// Verifies that the [StrictMutability] attribute correctly enforces explicit markers on all methods.
+/// </summary>
+/// <remarks>
+/// Ensures that constructors and destructors are exempt from the marker requirement, and that
+/// explicitly marked methods compile cleanly without CVL1011 warnings.
+/// </remarks>
+using System;
+
+[StrictMutability]
+struct P
+{ 
+    int X; 
+}
+
+extension P
+{
+    P(int x)
+	{ 
+        X = x; // ctor exempt
+    } 
+    
+    ~P()
+	{ 
+        // dtor exempt
+    } 
+    
+    void Mutate(refvar this)
+	{ 
+        X = 100; 
+    }
+    
+    int Read(ref this)
+	{ 
+        return X; 
+    }
+}
+
+int main()
+{ 
+    var P p = P(10);
+    p.Mutate();
+    Console.WriteLine(p.Read());
+    return 0; 
+}

@@ -1,0 +1,24 @@
+/// <summary>
+/// Verifies that a [StrictMutability] struct strictly rejects extension methods without receiver markers.
+/// </summary>
+/// <remarks>
+/// Tests the enforcement boundary. Auto-inference is disabled; unmarked methods must fail compilation.
+/// </remarks>
+[StrictMutability]
+struct P
+{ 
+    int X; 
+}
+
+extension P
+{
+    void Bad()
+	{ 
+        X = 100; // FAIL: Missing explicit marker
+    } 
+}
+
+int main()
+{ 
+    return 0; 
+}

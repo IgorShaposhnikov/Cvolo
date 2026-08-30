@@ -145,7 +145,17 @@ parameterList
 	;
 
 parameter
-	: attributeList* type Identifier
+	: receiverVarParameter
+	| receiverRefParameter
+	| attributeList* type Identifier
+	;
+
+receiverVarParameter
+	: REFVAR Identifier
+	;
+
+receiverRefParameter
+	: REF Identifier
 	;
 
 externParameterList

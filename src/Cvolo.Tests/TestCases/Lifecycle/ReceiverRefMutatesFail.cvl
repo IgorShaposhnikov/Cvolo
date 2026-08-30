@@ -1,0 +1,23 @@
+/// <summary>
+/// Verifies that an extension method marked 'ref this' cannot mutate its own fields.
+/// </summary>
+/// <remarks>
+/// The compiler's semantic pass must verify that the explicit 'ref this' contract is not violated
+/// by the method's internal AST body.
+/// </remarks>
+struct Point
+{ 
+    int X; 
+}
+
+extension Point {
+    void Bad(ref this)
+	{ 
+        X = 100; // FAIL: Marker says readonly but field is mutated
+    } 
+}
+
+int main()
+{ 
+    return 0; 
+}

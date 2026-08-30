@@ -1,0 +1,22 @@
+/// <summary>
+/// Verifies that calling a 'refvar this' method on an immutable 'val' instance is strictly rejected.
+/// </summary>
+/// <remarks>
+/// Enforces the §C Lifecycle mutability constraints. A mutating receiver contract cannot be fulfilled
+/// by a read-only local variable.
+/// </remarks>
+struct Point { 
+    int X; 
+}
+
+extension Point {
+    void Move(refvar this) { 
+        X = 100; 
+    }
+}
+
+int main() {
+    val Point p = Point { X: 10 };
+    p.Move(); // FAIL: Mutating an immutable var
+    return 0;
+}

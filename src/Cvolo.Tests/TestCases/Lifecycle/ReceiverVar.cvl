@@ -1,0 +1,31 @@
+/// <summary>
+/// Verifies that the 'refvar this' explicit receiver marker correctly compiles and allows field mutation.
+/// </summary>
+/// <remarks>
+/// This tests the new receiver syntax from §C Lifecycle Extension Blocks, ensuring
+/// that 'refvar this' properly promotes the receiver to a mutable pointer without warnings.
+/// </remarks>
+using System;
+
+struct Point { 
+    int X; 
+    int Y; 
+}
+
+extension Point {
+    void Move(refvar this, int dx, int dy) { 
+        X += dx; 
+        Y += dy; 
+    }
+    
+    int Sum() { 
+        return X + Y; 
+    }
+}
+
+int Main() {
+    var Point p = Point { X: 10, Y: 20 };
+    p.Move(5, 5);
+    Console.WriteLine(p.Sum());
+    return 0;
+}

@@ -40,4 +40,6 @@ public static class DiagnosticIds
 
 	/// <summary>'unbound' modifier on a function with no ref/refvar parameters.</summary>
 	public const string UnboundNoRefParams = "CVL1010";
+	/// <summary>Auto-inference chose mutability for an unmarked extension method.</summary>
+	public const string AutoInferMutationWarning = "CVL1011";
 }

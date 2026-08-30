@@ -1,0 +1,24 @@
+/// <summary>
+/// Verifies that an unmarked mutating extension method triggers the CVL1011 auto-inference warning.
+/// </summary>
+/// <remarks>
+/// As part of the gradual migration to explicit receiver markers, the compiler emits CVL1011
+/// whenever auto-inference selects mutability.
+/// </remarks>
+struct Point
+{ 
+    int X; 
+}
+
+extension Point
+{
+    void Move()
+	{ 
+        X = 100; // Emits CVL1011
+    } 
+}
+
+int main()
+{ 
+    return 0; 
+}

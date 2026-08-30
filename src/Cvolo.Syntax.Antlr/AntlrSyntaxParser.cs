@@ -13,11 +13,13 @@ namespace Cvolo.Syntax.Antlr;
 public sealed class AntlrSyntaxParser : ISyntaxParser
 {
 	private readonly DiagnosticBag _diagnostics = new();
+	private CompilationContext? _compilationContext;
 
 	public DiagnosticBag Diagnostics => _diagnostics;
 
 	public CompilationUnitSyntax? Parse(CompilationContext context)
 	{
+		_compilationContext = context;
 		var inputStream = new AntlrInputStream(context.Source);
 		var lexer = new CvoloLexer(inputStream);
 		var tokenStream = new CommonTokenStream(lexer);
@@ -126,10 +128,31 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		}
 
 		var parameters = new List<ParameterSyntax>();
+		var receiver = ReceiverContract.None;
 		if (context.parameterList() is { } paramList)
 		{
 			foreach (var param in paramList.parameter())
+			{
+				if (TryGetReceiverContract(param, out var contract, out var receiverName))
+				{
+					if (parameters.Count > 0)
+					{
+						ReportParseError(param, "Receiver parameter ('refvar this' / 'ref this') must be the first parameter of the method.");
+						continue;
+					}
+
+					if (receiverName != "this")
+					{
+						ReportParseError(param, $"Receiver parameter must be named 'this' (found '{receiverName}').");
+						continue;
+					}
+
+					receiver = contract;
+					continue;
+				}
+
 				parameters.Add(BuildParameter(param));
+			}
 		}
 
 		var body = BuildBlockStatement(context.blockStatement());
@@ -140,7 +163,34 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		if (context.functionModifier() is { } modCtx)
 			modifier = modCtx.GetText() == "unsafe" ? SafetyTier.Unsafe : SafetyTier.Unbound;
 
-		return new FunctionDeclarationSyntax(SpanOf(context), returnType, name, generics, parameters, body, attributes, modifier);
+		return new FunctionDeclarationSyntax(SpanOf(context), returnType, name, generics, parameters, body, attributes, modifier, receiver);
+	}
+
+	private bool TryGetReceiverContract(CvoloParser.ParameterContext context, out ReceiverContract contract, out string receiverName)
+	{
+		if (context.receiverVarParameter() is { } rv)
+		{
+			contract = ReceiverContract.Refvar;
+			receiverName = rv.Identifier().GetText();
+			return true;
+		}
+
+		if (context.receiverRefParameter() is { } rr)
+		{
+			contract = ReceiverContract.Ref;
+			receiverName = rr.Identifier().GetText();
+			return true;
+		}
+
+		contract = ReceiverContract.None;
+		receiverName = "";
+		return false;
+	}
+
+	private void ReportParseError(Antlr4.Runtime.ParserRuleContext context, string message)
+	{
+		if (_compilationContext is not null)
+			_diagnostics.Report(_compilationContext, SpanOf(context), message);
 	}
 
 	private List<AttributeSyntax> BuildAttributeList(IEnumerable<CvoloParser.AttributeListContext> contexts)
@@ -703,7 +753,15 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			if (ctorCtx.parameterList() is { } paramListCtx)
 			{
 				foreach (var param in paramListCtx.parameter())
+				{
+					if (TryGetReceiverContract(param, out _, out _))
+					{
+						ReportParseError(param, "Receiver parameter ('refvar this' / 'ref this') is only allowed on extension methods.");
+						continue;
+					}
+
 					ctorParams.Add(BuildParameter(param));
+				}
 			}
 
 			var ctorAttributes = BuildAttributeList(ctorCtx.attributeList());
@@ -745,7 +803,15 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			if (memberCtx.parameterList() is { } paramListCtx)
 			{
 				foreach (var param in paramListCtx.parameter())
+				{
+					if (TryGetReceiverContract(param, out _, out _))
+					{
+						ReportParseError(param, "Receiver parameter ('refvar this' / 'ref this') is only allowed on extension methods.");
+						continue;
+					}
+
 					parameters.Add(BuildParameter(param));
+				}
 			}
 
 			members.Add(new InterfaceMethodDeclarationSyntax(SpanOf(memberCtx), returnType, memberName, parameters));
@@ -778,7 +844,15 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			if (memberCtx.parameterList() is { } paramListCtx)
 			{
 				foreach (var param in paramListCtx.parameter())
+				{
+					if (TryGetReceiverContract(param, out _, out _))
+					{
+						ReportParseError(param, "Receiver parameter ('refvar this' / 'ref this') is only allowed on extension methods.");
+						continue;
+					}
+
 					parameters.Add(BuildParameter(param));
+				}
 			}
 
 			members.Add(new ProtocolMethodDeclarationSyntax(SpanOf(memberCtx), returnType, memberName, parameters));

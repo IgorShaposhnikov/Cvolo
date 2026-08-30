@@ -12,7 +12,8 @@ public sealed class FunctionDeclarationSyntax(
 	IReadOnlyList<ParameterSyntax> parameters,
 	BlockStatementSyntax body,
 	IReadOnlyList<AttributeSyntax>? attributes = null,
-	SafetyTier? modifier = null) : SyntaxNode(span)
+	SafetyTier? modifier = null,
+	ReceiverContract receiver = ReceiverContract.None) : SyntaxNode(span)
 {
 	public override SyntaxKind Kind => SyntaxKind.FunctionDeclaration;
 
@@ -23,6 +24,7 @@ public sealed class FunctionDeclarationSyntax(
 	public BlockStatementSyntax Body { get; } = body;
 	public IReadOnlyList<AttributeSyntax> Attributes { get; } = attributes ?? [];
 	public SafetyTier? Modifier { get; } = modifier;
+	public ReceiverContract Receiver { get; } = receiver;
 
 	public override IEnumerable<SyntaxNode> GetChildren()
 	{

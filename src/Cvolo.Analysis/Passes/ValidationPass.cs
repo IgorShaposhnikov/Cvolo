@@ -35,13 +35,15 @@ public sealed class ValidationPass(BindingContext context)
 					var ifaceTemplateName = context.GetMangledName(func.Name, context.CurrentNamespace);
 					var isInterfaceTemplate = context.InterfaceFunctionTemplates.ContainsKey(ifaceTemplateName);
 
-					if (isInterfaceTemplate) continue;
+					if (isInterfaceTemplate)
+						continue;
 
 					// Protocol-parameterized functions are likewise implicit templates: a protocol name has
 					// no value representation, so the body is validated when monomorphized at a call site.
 					var isProtocolTemplate = context.ProtocolFunctionTemplates.ContainsKey(ifaceTemplateName);
 
-					if (isProtocolTemplate) continue;
+					if (isProtocolTemplate)
+						continue;
 
 					if (!isTemplate)
 					{
@@ -84,12 +86,14 @@ public sealed class ValidationPass(BindingContext context)
 		var validatedMonomorphized = new HashSet<string>();
 		while (true)
 		{
-			var pending = context.MonomorphizedExtensionDecls.Where(d => {
+			var pending = context.MonomorphizedExtensionDecls.Where(d =>
+			{
 				var name = context.MonomorphizedExtensionNames[d];
 				return !validatedMonomorphized.Contains(name);
 			}).ToList();
 
-			if (pending.Count == 0) break;
+			if (pending.Count == 0)
+				break;
 
 			foreach (var decl in pending)
 			{
@@ -119,7 +123,8 @@ public sealed class ValidationPass(BindingContext context)
 	private void CheckConstructorBody(string extendedTypeName, ConstructorDeclarationSyntax ctor)
 	{
 		var extendedType = context.ResolveType(extendedTypeName) as StructTypeSymbol;
-		if (extendedType is null) return;
+		if (extendedType is null)
+			return;
 
 		var wrapper = ctor.ToFunctionDeclaration();
 
@@ -312,7 +317,7 @@ public sealed class ValidationPass(BindingContext context)
 				initializerType = ptr.ReferencedType;
 			}
 
-if (resolvedType != null && initializerType != null && !resolvedType.Equals(initializerType))
+			if (resolvedType != null && initializerType != null && !resolvedType.Equals(initializerType))
 			{
 				var isValidNull = initializerType.Equals(TypeSymbol.Null) &&
 								  (resolvedType is RawPointerTypeSymbol ||
@@ -403,9 +408,11 @@ if (resolvedType != null && initializerType != null && !resolvedType.Equals(init
 				{
 					context.Diagnostics.Report(context.FileContexts[context.CurrentUnit!], heapArr.CountExpression.Span, "Heap array allocation size must be an integer.");
 				}
+
 				break;
 			case ArrayInitializationExpressionSyntax arrInit:
-				foreach (var el in arrInit.Elements) CheckExpression(el, scope);
+				foreach (var el in arrInit.Elements)
+					CheckExpression(el, scope);
 				break;
 			case ArrayReplicationExpressionSyntax arrRepl:
 				CheckExpression(arrRepl.Value, scope);
@@ -415,6 +422,7 @@ if (resolvedType != null && initializerType != null && !resolvedType.Equals(init
 					var currentFileContext = context.FileContexts[context.CurrentUnit!];
 					context.Diagnostics.Report(currentFileContext, arrRepl.Count.Span, "Array replication count must be an integer.");
 				}
+
 				break;
 			case ParenthesizedStructInitializerExpressionSyntax parenStruct:
 				CheckParenthesizedStructInitialization(parenStruct, scope);
@@ -443,16 +451,16 @@ if (resolvedType != null && initializerType != null && !resolvedType.Equals(init
 							context.Diagnostics.Report(currentFileContext, call.Span, "sizeof expects exactly 1 type argument.");
 						}
 
-					if (call.Arguments.Count != 0)
-					{
-						var currentFileContext = context.FileContexts[context.CurrentUnit!];
-						context.Diagnostics.Report(currentFileContext, call.Span, "sizeof does not accept value arguments.");
+						if (call.Arguments.Count != 0)
+						{
+							var currentFileContext = context.FileContexts[context.CurrentUnit!];
+							context.Diagnostics.Report(currentFileContext, call.Span, "sizeof does not accept value arguments.");
+						}
+
+						break;
 					}
 
-					break;
-				}
-
-				if (call.TypeArguments.Count > 0)
+					if (call.TypeArguments.Count > 0)
 					{
 						// Reconstruct and resolve the struct/union instantiation name to check if this is a generic constructor call
 						var structNameWithArgs = $"{call.FunctionName}<{string.Join(", ", call.TypeArguments)}>";
@@ -482,6 +490,7 @@ if (resolvedType != null && initializerType != null && !resolvedType.Equals(init
 						{
 							func = TryResolveFlagsHasFlag(call, argTypes, scope);
 						}
+
 						if (func is null)
 						{
 							func = ResolveOverloadedFunction(call.FunctionName, argTypes, scope);
@@ -495,7 +504,8 @@ if (resolvedType != null && initializerType != null && !resolvedType.Equals(init
 							// diagnostics are reported inside. Return early so the generic
 							// "no overload" message is not also emitted.
 							func = TryResolveInterfaceCall(call, argTypes, scope);
-							if (func is null) return;
+							if (func is null)
+								return;
 						}
 
 						// No concrete overload matched: fall back to protocol-parameterized
@@ -507,7 +517,8 @@ if (resolvedType != null && initializerType != null && !resolvedType.Equals(init
 							// arg-count diagnostics are reported inside. Return early so the
 							// generic "no overload" message is not also emitted.
 							func = TryResolveProtocolCall(call, argTypes, scope);
-							if (func is null) return;
+							if (func is null)
+								return;
 						}
 					}
 
@@ -548,55 +559,56 @@ if (resolvedType != null && initializerType != null && !resolvedType.Equals(init
 						for (var i = 0; i < call.Arguments.Count; i++)
 						{
 							var paramIndex = isExtensionCall ? i + 1 : i;
-							if (paramIndex >= func.Parameters.Count) break;
+							if (paramIndex >= func.Parameters.Count)
+								break;
 							CheckLargeUnionByValueArgument(call.Arguments[i], func.Parameters[paramIndex].Type, scope);
 						}
 					}
 
 					break;
 				}
-case BinaryExpressionSyntax bin:
-			{
-				if (bin.Operator == "=")
+			case BinaryExpressionSyntax bin:
 				{
-					// 1. Evaluate the right-hand side first (reads and moves happen here)
-					CheckExpression(bin.Right, scope);
-
-					// 2. Evaluate the left-hand side second (re-initialization happens here)
-					if (bin.Left is IdentifierExpressionSyntax id)
+					if (bin.Operator == "=")
 					{
-						var varSymbol = scope.Lookup(id.Name) as VariableSymbol;
-						if (varSymbol is not null)
+						// 1. Evaluate the right-hand side first (reads and moves happen here)
+						CheckExpression(bin.Right, scope);
+
+						// 2. Evaluate the left-hand side second (re-initialization happens here)
+						if (bin.Left is IdentifierExpressionSyntax id)
 						{
-							var isMutable = varSymbol.IsMutable || (varSymbol.Type is PointerTypeSymbol ptr && ptr.IsMutable);
-							if (!isMutable)
+							var varSymbol = scope.Lookup(id.Name) as VariableSymbol;
+							if (varSymbol is not null)
+							{
+								var isMutable = varSymbol.IsMutable || (varSymbol.Type is PointerTypeSymbol ptr && ptr.IsMutable);
+								if (!isMutable)
+								{
+									var currentFileContext = context.FileContexts[context.CurrentUnit!];
+									context.Diagnostics.Report(currentFileContext, id.Span, $"Cannot assign to immutable variable '{id.Name}'");
+								}
+
+								CheckEnumIntMismatch(varSymbol.Type, GetExpressionType(bin.Right, scope), bin.Span);
+							}
+							else
 							{
 								var currentFileContext = context.FileContexts[context.CurrentUnit!];
-								context.Diagnostics.Report(currentFileContext, id.Span, $"Cannot assign to immutable variable '{id.Name}'");
+								context.Diagnostics.Report(currentFileContext, id.Span, $"Undefined variable '{id.Name}'");
 							}
-
-							CheckEnumIntMismatch(varSymbol.Type, GetExpressionType(bin.Right, scope), bin.Span);
 						}
 						else
 						{
-							var currentFileContext = context.FileContexts[context.CurrentUnit!];
-							context.Diagnostics.Report(currentFileContext, id.Span, $"Undefined variable '{id.Name}'");
+							CheckExpression(bin.Left, scope);
 						}
 					}
 					else
 					{
 						CheckExpression(bin.Left, scope);
+						CheckExpression(bin.Right, scope);
+						CheckEnumIntMismatch(GetExpressionType(bin.Left, scope), GetExpressionType(bin.Right, scope), bin.Span);
 					}
-				}
-				else
-				{
-					CheckExpression(bin.Left, scope);
-					CheckExpression(bin.Right, scope);
-					CheckEnumIntMismatch(GetExpressionType(bin.Left, scope), GetExpressionType(bin.Right, scope), bin.Span);
-				}
 
-				break;
-			}
+					break;
+				}
 			case UnaryExpressionSyntax unary:
 				CheckExpression(unary.Operand, scope);
 				CheckUnaryCast(unary, scope);
@@ -635,7 +647,8 @@ case BinaryExpressionSyntax bin:
 
 		CheckExpression(expr.Expression, scope);
 		var leftType = GetExpressionType(expr.Expression, scope);
-		if (leftType is null) return null;
+		if (leftType is null)
+			return null;
 
 		if (leftType is PointerTypeSymbol pointerType)
 		{
@@ -664,6 +677,7 @@ case BinaryExpressionSyntax bin:
 				context.Diagnostics.Report(currentFileContext, expr.Span, $"Union '{unionType.Name}' does not contain variant '{expr.MemberName}'");
 				return null;
 			}
+
 			return variantField.Type;
 		}
 
@@ -827,7 +841,8 @@ case BinaryExpressionSyntax bin:
 
 	private TypeSymbol? CheckArrayInitialization(ArrayInitializationExpressionSyntax expr, SymbolTable scope)
 	{
-		if (expr.Elements.Count == 0) return null; // Can't infer type of empty array easily yet
+		if (expr.Elements.Count == 0)
+			return null; // Can't infer type of empty array easily yet
 
 		var elementType = GetExpressionType(expr.Elements[0], scope) ?? TypeSymbol.Int;
 
@@ -848,13 +863,15 @@ case BinaryExpressionSyntax bin:
 	{
 		CheckExpression(expr.Expression, scope);
 		var innerType = GetExpressionType(expr.Expression, scope);
-		if (innerType is null) return null;
+		if (innerType is null)
+			return null;
 
 		var isVariableMutable = false;
 		if (expr.Expression is IdentifierExpressionSyntax id)
 		{
 			var symbol = scope.Lookup(id.Name) as VariableSymbol;
-			if (symbol is not null) isVariableMutable = symbol.IsMutable;
+			if (symbol is not null)
+				isVariableMutable = symbol.IsMutable;
 		}
 
 		if (expr.IsMutable && !isVariableMutable)
@@ -893,7 +910,8 @@ case BinaryExpressionSyntax bin:
 
 	private void CheckReturnStatement(ReturnStatementSyntax ret, SymbolTable scope, FunctionDeclarationSyntax currentFunc)
 	{
-		if (ret.Expression is null) return;
+		if (ret.Expression is null)
+			return;
 
 		CheckExpression(ret.Expression, scope);
 
@@ -983,16 +1001,20 @@ case BinaryExpressionSyntax bin:
 
 	private string? GetBaseIdentifierName(ExpressionSyntax expr)
 	{
-		if (expr is IdentifierExpressionSyntax id) return id.Name;
-		if (expr is MemberAccessExpressionSyntax m) return GetBaseIdentifierName(m.Expression);
-		if (expr is BorrowExpressionSyntax b) return GetBaseIdentifierName(b.Expression);
+		if (expr is IdentifierExpressionSyntax id)
+			return id.Name;
+		if (expr is MemberAccessExpressionSyntax m)
+			return GetBaseIdentifierName(m.Expression);
+		if (expr is BorrowExpressionSyntax b)
+			return GetBaseIdentifierName(b.Expression);
 		return null;
 	}
 
 	private string? ResolveFunctionTemplateName(string name, SymbolTable scope)
 	{
 		var localMangled = context.GetMangledName(name, context.CurrentNamespace);
-		if (context.GenericFunctionTemplates.ContainsKey(localMangled)) return localMangled;
+		if (context.GenericFunctionTemplates.ContainsKey(localMangled))
+			return localMangled;
 
 		if (context.CurrentUnit is not null)
 		{
@@ -1008,7 +1030,8 @@ case BinaryExpressionSyntax bin:
 			}
 		}
 
-		if (context.GenericFunctionTemplates.ContainsKey(name)) return name;
+		if (context.GenericFunctionTemplates.ContainsKey(name))
+			return name;
 		return null;
 	}
 
@@ -1096,7 +1119,8 @@ case BinaryExpressionSyntax bin:
 	private string? ResolveInterfaceFunctionTemplateName(string name, SymbolTable scope)
 	{
 		var localMangled = context.GetMangledName(name, context.CurrentNamespace);
-		if (context.InterfaceFunctionTemplates.ContainsKey(localMangled)) return localMangled;
+		if (context.InterfaceFunctionTemplates.ContainsKey(localMangled))
+			return localMangled;
 
 		if (context.CurrentUnit is not null)
 		{
@@ -1112,7 +1136,8 @@ case BinaryExpressionSyntax bin:
 			}
 		}
 
-		if (context.InterfaceFunctionTemplates.ContainsKey(name)) return name;
+		if (context.InterfaceFunctionTemplates.ContainsKey(name))
+			return name;
 		return null;
 	}
 
@@ -1132,7 +1157,8 @@ case BinaryExpressionSyntax bin:
 	private FunctionSymbol? TryResolveInterfaceCall(CallExpressionSyntax call, IReadOnlyList<TypeSymbol> argTypes, SymbolTable scope)
 	{
 		var templateName = ResolveInterfaceFunctionTemplateName(call.FunctionName, scope);
-		if (templateName is null) return null;
+		if (templateName is null)
+			return null;
 
 		var templateDecl = context.InterfaceFunctionTemplates[templateName];
 		var currentFileContext = context.FileContexts[context.CurrentUnit!];
@@ -1157,7 +1183,8 @@ case BinaryExpressionSyntax bin:
 				? (param.Type.StartsWith("refvar ", StringComparison.Ordinal) ? param.Type[7..] : param.Type[4..])
 				: param.Type;
 
-			if (context.ResolveType(interfaceTypeName) is not InterfaceTypeSymbol iface) continue;
+			if (context.ResolveType(interfaceTypeName) is not InterfaceTypeSymbol iface)
+				continue;
 
 			// For a ref/refvar interface parameter, the concrete argument arrives as a pointer;
 			// substitute the referent type name so the ref/refvar wrapper is supplied by the
@@ -1193,7 +1220,8 @@ case BinaryExpressionSyntax bin:
 			substitutionMap[interfaceTypeName] = concrete;
 		}
 
-		if (substitutionMap.Count == 0) return null;
+		if (substitutionMap.Count == 0)
+			return null;
 
 		return InstantiateInterfaceFunction(templateDecl, substitutionMap, scope);
 	}
@@ -1218,19 +1246,19 @@ case BinaryExpressionSyntax bin:
 	/// registers the instance, and validates the body once with the concrete types.
 	/// </summary>
 	private static string SubstituteTypeToken(string text, string key, string value)
-		{
-			// A generic-instantiated key (e.g. "IContainer<int>") can never be matched by a
-			// \b...\b regex pattern (a word boundary cannot be asserted after a non-word '>'),
-			// so generic keys are substituted as exact type tokens instead.
-			if (key.Contains('<'))
-				return text.Replace(key, value);
+	{
+		// A generic-instantiated key (e.g. "IContainer<int>") can never be matched by a
+		// \b...\b regex pattern (a word boundary cannot be asserted after a non-word '>'),
+		// so generic keys are substituted as exact type tokens instead.
+		if (key.Contains('<'))
+			return text.Replace(key, value);
 
-			return System.Text.RegularExpressions.Regex.Replace(text, $@"\b{System.Text.RegularExpressions.Regex.Escape(key)}\b", value);
-		}
+		return System.Text.RegularExpressions.Regex.Replace(text, $@"\b{System.Text.RegularExpressions.Regex.Escape(key)}\b", value);
+	}
 
-		private FunctionSymbol InstantiateDispatchFunction(
-		FunctionDeclarationSyntax templateDecl, Dictionary<string, TypeSymbol> substitutionMap, SymbolTable scope,
-		string templateMangledName)
+	private FunctionSymbol InstantiateDispatchFunction(
+	FunctionDeclarationSyntax templateDecl, Dictionary<string, TypeSymbol> substitutionMap, SymbolTable scope,
+	string templateMangledName)
 	{
 		var rawName = $"{templateMangledName}<{string.Join(",", substitutionMap.Values.Select(t => t.Name))}>";
 		var instName = context.NormalizeGenericName(rawName);
@@ -1303,7 +1331,8 @@ case BinaryExpressionSyntax bin:
 	private string? ResolveProtocolFunctionTemplateName(string name, SymbolTable scope)
 	{
 		var localMangled = context.GetMangledName(name, context.CurrentNamespace);
-		if (context.ProtocolFunctionTemplates.ContainsKey(localMangled)) return localMangled;
+		if (context.ProtocolFunctionTemplates.ContainsKey(localMangled))
+			return localMangled;
 
 		if (context.CurrentUnit is not null)
 		{
@@ -1319,7 +1348,8 @@ case BinaryExpressionSyntax bin:
 			}
 		}
 
-		if (context.ProtocolFunctionTemplates.ContainsKey(name)) return name;
+		if (context.ProtocolFunctionTemplates.ContainsKey(name))
+			return name;
 		return null;
 	}
 
@@ -1333,7 +1363,8 @@ case BinaryExpressionSyntax bin:
 	private bool StructurallyConformsToProtocol(TypeSymbol type, ProtocolTypeSymbol proto)
 	{
 		var baseType = type is PointerTypeSymbol ptr ? ptr.ReferencedType : type;
-		if (baseType is ProtocolTypeSymbol or InterfaceTypeSymbol) return false;
+		if (baseType is ProtocolTypeSymbol or InterfaceTypeSymbol)
+			return false;
 
 		// Width-lock invariant (Generic Contracts spec §6.A): a parameterized
 		// protocol strictly matches only structures sharing the identical
@@ -1360,7 +1391,8 @@ case BinaryExpressionSyntax bin:
 			if (!matched && HasSatisfyingDefault(member, proto))
 				matched = true;
 
-			if (!matched) return false;
+			if (!matched)
+				return false;
 		}
 
 		return true;
@@ -1378,7 +1410,8 @@ case BinaryExpressionSyntax bin:
 		if (proto.GenericTypeArguments is not null)
 		{
 			var openBracket = protoName.IndexOf('<');
-			if (openBracket > 0) protoName = protoName[..openBracket];
+			if (openBracket > 0)
+				protoName = protoName[..openBracket];
 		}
 
 		// The default for a member lives under the member's OWNING protocol
@@ -1405,10 +1438,13 @@ case BinaryExpressionSyntax bin:
 		var memberToken = ProtocolCanonicalizer.BuildMemberToken(member, ownerGenerics, context, selfReplacement: null, proto.GenericTypeArguments);
 		foreach (var (defaultName, decl) in defaults)
 		{
-			if (defaultName != member.Name) continue;
+			if (defaultName != member.Name)
+				continue;
 			var defaultToken = ProtocolCanonicalizer.BuildFunctionToken(decl, ownerGenerics, context, proto.GenericTypeArguments);
-			if (defaultToken == memberToken) return true;
+			if (defaultToken == memberToken)
+				return true;
 		}
+
 		return false;
 	}
 
@@ -1421,7 +1457,8 @@ case BinaryExpressionSyntax bin:
 	{
 		var name = baseType.Name;
 		var openBracket = name.LastIndexOf('<');
-		if (openBracket <= 0) return 0;
+		if (openBracket <= 0)
+			return 0;
 
 		var baseName = name[..openBracket];
 		if (context.GenericStructTemplates.TryGetValue(baseName, out var structTemplate))
@@ -1468,13 +1505,16 @@ case BinaryExpressionSyntax bin:
 
 	private bool MemberStructurallyMatches(ProtocolMethodDeclarationSyntax member, FunctionSymbol candidate, ProtocolTypeSymbol proto, TypeSymbol baseType)
 	{
-		if (candidate.Parameters.Count == 0 || candidate.Parameters[0].Name != "this") return false;
-		if (candidate.Parameters.Count - 1 != member.Parameters.Count) return false;
+		if (candidate.Parameters.Count == 0 || candidate.Parameters[0].Name != "this")
+			return false;
+		if (candidate.Parameters.Count - 1 != member.Parameters.Count)
+			return false;
 
 		// Phase-2 canonical pre-match: the token built from the concrete resolved
 		// symbol must be a protocol member token (O(1) set membership).
 		var concreteToken = BuildConcreteCanonicalToken(candidate, member.Name);
-		if (proto.CanonicalMembers.Contains(concreteToken)) return true;
+		if (proto.CanonicalMembers.Contains(concreteToken))
+			return true;
 
 		// `Self`-anchored members never match by set membership (their stored
 		// tokens keep the literal anchor): rebuild this member's canonical token
@@ -1489,11 +1529,13 @@ case BinaryExpressionSyntax bin:
 		for (var i = 0; i < member.Parameters.Count; i++)
 		{
 			var protoParamType = ResolveProtocolMemberType(member.Parameters[i].Type, baseType, proto);
-			if (protoParamType is null || !protoParamType.Equals(candidate.Parameters[i + 1].Type)) return false;
+			if (protoParamType is null || !protoParamType.Equals(candidate.Parameters[i + 1].Type))
+				return false;
 		}
 
 		var protoReturnType = ResolveProtocolMemberType(member.ReturnType, baseType, proto);
-		if (protoReturnType is not null && !protoReturnType.Equals(candidate.ReturnType)) return false;
+		if (protoReturnType is not null && !protoReturnType.Equals(candidate.ReturnType))
+			return false;
 
 		return true;
 	}
@@ -1508,8 +1550,16 @@ case BinaryExpressionSyntax bin:
 	{
 		var t = typeText.Trim();
 		var prefix = "";
-		if (t.StartsWith("refvar ", StringComparison.Ordinal)) { prefix = "refvar "; t = t[7..]; }
-		else if (t.StartsWith("ref ", StringComparison.Ordinal)) { prefix = "ref "; t = t[4..]; }
+		if (t.StartsWith("refvar ", StringComparison.Ordinal))
+		{
+			prefix = "refvar ";
+			t = t[7..];
+		}
+		else if (t.StartsWith("ref ", StringComparison.Ordinal))
+		{
+			prefix = "ref ";
+			t = t[4..];
+		}
 
 		if (ProtocolCanonicalizer.StripWrappers(t) == "Self")
 		{
@@ -1528,7 +1578,9 @@ case BinaryExpressionSyntax bin:
 				if (t == proto.GenericParameters[i])
 				{
 					var argType = context.ResolveType(proto.GenericTypeArguments[i]);
-					if (argType is null) return null;
+					if (argType is null)
+						return null;
+
 					return prefix switch
 					{
 						"refvar " => new PointerTypeSymbol(argType, isMutable: true),
@@ -1571,7 +1623,8 @@ case BinaryExpressionSyntax bin:
 	private FunctionSymbol? TryResolveProtocolCall(CallExpressionSyntax call, IReadOnlyList<TypeSymbol> argTypes, SymbolTable scope)
 	{
 		var templateName = ResolveProtocolFunctionTemplateName(call.FunctionName, scope);
-		if (templateName is null) return null;
+		if (templateName is null)
+			return null;
 
 		var templateDecl = context.ProtocolFunctionTemplates[templateName];
 		var currentFileContext = context.FileContexts[context.CurrentUnit!];
@@ -1600,7 +1653,8 @@ case BinaryExpressionSyntax bin:
 				? (param.Type.StartsWith("refvar ", StringComparison.Ordinal) ? param.Type[7..] : param.Type[4..])
 				: param.Type;
 
-			if (context.ResolveType(protocolTypeName) is not ProtocolTypeSymbol proto) continue;
+			if (context.ResolveType(protocolTypeName) is not ProtocolTypeSymbol proto)
+				continue;
 
 			// For a ref/refvar protocol parameter, the concrete argument arrives as a pointer;
 			// substitute the referent type name so ref/refvar is supplied by the template's
@@ -1650,7 +1704,8 @@ case BinaryExpressionSyntax bin:
 			substitutionMap[protocolTypeName] = concrete;
 		}
 
-		if (substitutionMap.Count == 0) return null;
+		if (substitutionMap.Count == 0)
+			return null;
 
 		// Inherited default implementations (spec §4): materialize a substituted
 		// copy of each default onto its conforming concrete type so calls inside
@@ -1719,6 +1774,7 @@ case BinaryExpressionSyntax bin:
 				return true;
 			}
 		}
+
 		return false;
 	}
 
@@ -1734,17 +1790,20 @@ case BinaryExpressionSyntax bin:
 	private void MaterializeProtocolDefaults(TypeSymbol concrete, ProtocolTypeSymbol proto)
 	{
 		var baseType = concrete is PointerTypeSymbol ptr ? ptr.ReferencedType : concrete;
-		if (baseType is not (StructTypeSymbol or UnionTypeSymbol)) return;
+		if (baseType is not (StructTypeSymbol or UnionTypeSymbol))
+			return;
 
 		var protoName = proto.Name;
 		if (proto.GenericTypeArguments is not null)
 		{
 			var openBracket = protoName.IndexOf('<');
-			if (openBracket > 0) protoName = protoName[..openBracket];
+			if (openBracket > 0)
+				protoName = protoName[..openBracket];
 		}
 
 		var materializationKey = $"{baseType.Name}|{protoName}";
-		if (!context.MaterializedProtocolDefaults.Add(materializationKey)) return;
+		if (!context.MaterializedProtocolDefaults.Add(materializationKey))
+			return;
 
 		// Collect the inherited defaults for this conformer: walk the effective
 		// member list and pick, for each member it does not implement itself, the
@@ -1756,23 +1815,28 @@ case BinaryExpressionSyntax bin:
 			foreach (var (owner, member) in effective)
 			{
 				var ownerGenerics = context.ProtocolTemplates.TryGetValue(owner, out var ownerDecl) ? ownerDecl.GenericParameters : proto.GenericParameters;
-				if (!context.ProtocolDefaults.TryGetValue(owner, out var ownerDefaults)) continue;
+				if (!context.ProtocolDefaults.TryGetValue(owner, out var ownerDefaults))
+					continue;
 
 				var memberToken = ProtocolCanonicalizer.BuildMemberToken(member, ownerGenerics, context, selfReplacement: null, proto.GenericTypeArguments);
 				foreach (var (dn, ddecl) in ownerDefaults)
 				{
-					if (dn != member.Name) continue;
+					if (dn != member.Name)
+						continue;
 					var defaultToken = ProtocolCanonicalizer.BuildFunctionToken(ddecl, ownerGenerics, context, proto.GenericTypeArguments);
-					if (defaultToken != memberToken) continue;
+					if (defaultToken != memberToken)
+						continue;
 					list.Add((dn, ddecl));
 					break;
 				}
 			}
+
 			inheritedDefaults = list;
 		}
 		else
 		{
-			if (!context.ProtocolDefaults.TryGetValue(protoName, out var flatDefaults)) return;
+			if (!context.ProtocolDefaults.TryGetValue(protoName, out var flatDefaults))
+				return;
 			inheritedDefaults = flatDefaults;
 		}
 
@@ -1786,16 +1850,25 @@ case BinaryExpressionSyntax bin:
 			foreach (var p in decl.Parameters)
 			{
 				var paramType = context.ResolveType(p.Type);
-				if (paramType is null) { hasBadParam = true; break; }
+				if (paramType is null)
+				{
+					hasBadParam = true;
+					break;
+				}
+
 				parameters.Add(new ParameterSymbol(p.Name, paramType));
 			}
-			if (hasBadParam) continue;
+
+			if (hasBadParam)
+				continue;
 
 			var returnType = context.ResolveType(decl.ReturnType);
-			if (returnType is null) continue;
+			if (returnType is null)
+				continue;
 
 			var overloadedName = context.GetOverloadedMangledName(baseMangledName, parameters.Select(q => q.Type).ToList());
-			if (context.Globals.Lookup(overloadedName) is not null) continue;
+			if (context.Globals.Lookup(overloadedName) is not null)
+				continue;
 
 			var newSymbol = new FunctionSymbol(overloadedName, returnType, parameters);
 			context.Globals.Declare(newSymbol);
@@ -1805,6 +1878,7 @@ case BinaryExpressionSyntax bin:
 				candidates = [];
 				context.OverloadedFunctions[baseMangledName] = candidates;
 			}
+
 			candidates.Add(newSymbol);
 
 			context.SymbolUnits[overloadedName] = context.CurrentUnit!;
@@ -1835,6 +1909,7 @@ case BinaryExpressionSyntax bin:
 						newType = SubstituteTypeToken(newType, kv.Key, kv.Value.Name);
 					}
 				}
+
 				return new VariableDeclarationSyntax(v.Span, v.IsMutable, newType, v.Name, v.Initializer != null ? SubstituteExpressionGenerics(v.Initializer, substitutionMap) : null);
 
 			case BlockStatementSyntax b:
@@ -1880,7 +1955,8 @@ case BinaryExpressionSyntax bin:
 				return new UnaryExpressionSyntax(unary.Span, newOp, SubstituteExpressionGenerics(unary.Operand, substitutionMap));
 
 			case CallExpressionSyntax call:
-				var newTypeArgs = call.TypeArguments.Select(t => {
+				var newTypeArgs = call.TypeArguments.Select(t =>
+				{
 					var substituted = t;
 					foreach (var kv in substitutionMap)
 					{
@@ -2199,7 +2275,8 @@ case BinaryExpressionSyntax bin:
 			}
 		}
 
-		if (isVariadic) score += 1;
+		if (isVariadic)
+			score += 1;
 
 		return score;
 	}
@@ -2218,12 +2295,14 @@ case BinaryExpressionSyntax bin:
 	private void CheckParenthesizedStructInitialization(ParenthesizedStructInitializerExpressionSyntax expr, SymbolTable scope)
 	{
 		var type = context.ResolveType(expr.ResolvedStructTypeName!);
-		if (type is not StructTypeSymbol structType) return;
+		if (type is not StructTypeSymbol structType)
+			return;
 
 		foreach (var init in expr.Initializers)
 		{
 			var field = structType.FindField(init.MemberName);
-			if (field is null) continue;
+			if (field is null)
+				continue;
 
 			if (init.Expression is ParenthesizedStructInitializerExpressionSyntax nestedSub)
 			{
@@ -2237,10 +2316,17 @@ case BinaryExpressionSyntax bin:
 		}
 	}
 
+	/// <summary>
+	/// Performs semantic validation on extension method bodies (including ctors/dtors).
+	/// 1. Determines mutability of 'this' (via auto-inference or explicit markers).
+	/// 2. Enforces [StrictMutability] contracts if the receiver type is restricted.
+	/// 3. Validates that read-only 'ref this' receivers do not perform field mutations.
+	/// 4. Upgrades the function symbol's 'this' parameter mutability for downstream codegen.
+	/// </summary>
 	private void CheckExtensionMethodBody(string extendedTypeName, FunctionDeclarationSyntax method, bool forceMutableThis = false)
 	{
 		var extendedType = context.ResolveType(extendedTypeName);
-		if (extendedType is ProtocolTypeSymbol)
+		if (extendedType != null && extendedType.GetType().Name == "ProtocolTypeSymbol")
 		{
 			// PROTOCOL DEFAULT BODIES: validated once at declaration against a
 			// this-free scope (no receiver object or flat struct fields exist).
@@ -2252,25 +2338,66 @@ case BinaryExpressionSyntax bin:
 			foreach (var p in method.Parameters)
 			{
 				var pt = context.ResolveType(p.Type);
-				if (pt is not null)
+				if (pt != null)
+				{
 					protoScope.Declare(new VariableSymbol(p.Name, pt, isMutable: false) { IsInitialized = true });
+				}
 			}
+
 			CheckBlock(method.Body, protoScope, method);
 			_unsafeDepth = baseUnsafeDepth;
 			return;
 		}
 
-		if (extendedType is not (StructTypeSymbol or UnionTypeSymbol or EnumTypeSymbol)) return;
+		// (EnumTypeSymbol is handled via reflection-like fallback in case it's in another branch)
+		if (extendedType is not (StructTypeSymbol or UnionTypeSymbol) && extendedType?.GetType().Name != "EnumTypeSymbol")
+			return;
 
 		var baseUnsafeDepth2 = _unsafeDepth;
 		_unsafeDepth = IsUnsafeFunction(method) ? 1 : 0;
 
-		// 1. Static AST Mutation Scan: Infer if the method modifies any fields
-		var isMutating = forceMutableThis || (extendedType is StructTypeSymbol structType && DetectFieldMutation(method.Body, structType));
+		var structType = extendedType as StructTypeSymbol;
+		bool isMutating;
+		var isCtorOrDtor = method.Name.StartsWith('~') || method.Name == extendedTypeName;
 
-		// 2. Locate the registered function symbol using the unmutated base registration
+		// 1. StrictMutability Enforcement
+		if (structType?.IsStrictMutability == true && method.Receiver == ReceiverContract.None && !isCtorOrDtor)
+		{
+			context.Diagnostics.Report(context.FileContexts[context.CurrentUnit!], method.Span,
+				$"Method '{method.Name}' must declare 'ref this' or 'refvar this' receiver in [StrictMutability] struct.");
+		}
+
+		// 2. Mutability Determination & Verification
+		if (method.Receiver == ReceiverContract.Refvar)
+		{
+			isMutating = true;
+		}
+		else if (method.Receiver == ReceiverContract.Ref)
+		{
+			isMutating = false;
+			if (structType != null && DetectFieldMutation(method.Body, structType))
+			{
+				context.Diagnostics.Report(context.FileContexts[context.CurrentUnit!], method.Span,
+					$"Extension method '{method.Name}' declares read-only 'ref this' receiver but mutates field(s) of '{extendedTypeName}'.");
+			}
+		}
+		else
+		{
+			// Fallback to auto-inference
+			isMutating = forceMutableThis || (structType != null && DetectFieldMutation(method.Body, structType));
+
+			// CVL1011 Warning if auto-inference chose mutation on a normal method
+			if (isMutating && !forceMutableThis && !isCtorOrDtor)
+			{
+				context.Diagnostics.ReportWarning(context.FileContexts[context.CurrentUnit!], method.Span,
+					$"Auto-inference chose mutability for method '{method.Name}'. Explicitly mark 'refvar this' to silence this warning.",
+					DiagnosticIds.AutoInferMutationWarning);
+			}
+		}
+
+		// 3. Locate the registered function symbol using the unmutated base registration
 		var baseMangledName = context.GetMangledName($"{extendedTypeName}.{method.Name}", context.CurrentNamespace);
-		var lookupThisType = new PointerTypeSymbol(extendedType, isMutable: false); // Must use 'false' to match DeclarationPass
+		var lookupThisType = new PointerTypeSymbol(extendedType!, isMutable: false); // Must use 'false' to match DeclarationPass
 		var lookupParams = new List<TypeSymbol> { lookupThisType };
 		foreach (var p in method.Parameters)
 		{
@@ -2282,16 +2409,20 @@ case BinaryExpressionSyntax bin:
 
 		if (funcSymbol is not null)
 		{
-			// Upgrade the registered symbol's "this" parameter mutability based on our scan!
-			var thisParamType = funcSymbol.Parameters[0].Type as PointerTypeSymbol;
-			if (thisParamType is not null)
+			// Upgrade the registered symbol's "this" parameter mutability based on our scan/markers!
+			if (funcSymbol.Parameters[0].Type is PointerTypeSymbol thisParamType)
 			{
 				thisParamType.IsMutable = isMutating;
 			}
 		}
 
-		// 3. Populate local scope with fields/variants so they can be written as flat local variables
+		// 4. Populate local scope with fields/variants so they can be written as flat local variables
 		var localScope = new SymbolTable(context.Globals);
+
+		// EXPLICITLY DECLARE 'this' in the local scope!
+		var thisPtrType = new PointerTypeSymbol(extendedType!, isMutable: isMutating);
+		localScope.Declare(new VariableSymbol("this", thisPtrType, isMutable: false) { IsInitialized = true });
+
 		if (extendedType is StructTypeSymbol st)
 		{
 			foreach (var field in st.Fields)
@@ -2306,14 +2437,13 @@ case BinaryExpressionSyntax bin:
 				localScope.Declare(new VariableSymbol(field.Name, field.Type, isMutable: true) { IsInitialized = true });
 			}
 		}
-		else if (extendedType is EnumTypeSymbol enumExtType)
+		else if (extendedType?.GetType().Name == "EnumTypeSymbol")
 		{
-			// Enums are flat scalars: 'this' reads as the enum value itself and the
-			// variant names (Active, Pending, ...) are visible without qualification.
-			localScope.Declare(new VariableSymbol("this", enumExtType, isMutable: false) { IsInitialized = true });
-			foreach (var variant in enumExtType.Variants)
+			// Restore the E7 logic: make enum variants accessible unqualified
+			dynamic enumType = extendedType;
+			foreach (var variant in enumType.Variants)
 			{
-				localScope.Declare(new VariableSymbol(variant.Name, enumExtType, isMutable: false) { IsInitialized = true });
+				localScope.Declare(new VariableSymbol((string)variant.Name, extendedType, isMutable: false) { IsInitialized = true });
 			}
 		}
 
@@ -2327,6 +2457,8 @@ case BinaryExpressionSyntax bin:
 		}
 
 		CheckBlock(method.Body, localScope, method);
+
+		// Restore original depth context
 		_unsafeDepth = baseUnsafeDepth2;
 	}
 
@@ -2354,7 +2486,8 @@ case BinaryExpressionSyntax bin:
 	{
 		CheckExpression(sw.Expression, scope);
 		var exprType = GetExpressionType(sw.Expression, scope);
-		if (exprType is null) return;
+		if (exprType is null)
+			return;
 
 		if (exprType is PointerTypeSymbol ptr)
 		{
@@ -2570,15 +2703,18 @@ case BinaryExpressionSyntax bin:
 
 	private void CheckEnumIntMismatch(TypeSymbol? left, TypeSymbol? right, TextSpan span)
 	{
-		if (left is null || right is null) return;
+		if (left is null || right is null)
+			return;
 
 		var leftIsEnum = left is EnumTypeSymbol;
 		var rightIsEnum = right is EnumTypeSymbol;
-		if (leftIsEnum == rightIsEnum) return;
+		if (leftIsEnum == rightIsEnum)
+			return;
 
 		var enumType = leftIsEnum ? left : right;
 		var otherType = leftIsEnum ? right : left;
-		if (!TypeSymbol.IsIntegerType(otherType)) return;
+		if (!TypeSymbol.IsIntegerType(otherType))
+			return;
 
 		var currentFileContext = context.FileContexts[context.CurrentUnit!];
 		context.Diagnostics.Report(currentFileContext, span,
@@ -2603,9 +2739,12 @@ case BinaryExpressionSyntax bin:
 	{
 		// (§3.B) `~` is only meaningful for [Flags] enums, where it is the masked bitwise
 		// complement (~v & CombinedAtomicMask).
-		if (unary.Operator != "~") return;
-		if (GetExpressionType(unary.Operand, scope) is not EnumTypeSymbol enumType) return;
-		if (enumType.IsFlags) return;
+		if (unary.Operator != "~")
+			return;
+		if (GetExpressionType(unary.Operand, scope) is not EnumTypeSymbol enumType)
+			return;
+		if (enumType.IsFlags)
+			return;
 
 		var currentFileContext = context.FileContexts[context.CurrentUnit!];
 		context.Diagnostics.Report(currentFileContext, unary.Span,
@@ -2627,10 +2766,10 @@ case BinaryExpressionSyntax bin:
 				return rawPtr.ElementType;
 			if (opType is PointerTypeSymbol ptr)
 				return ptr.ReferencedType;
-return null;
+			return null;
 		}
 
-		if (unary.Operator.Length >= 3 && unary.Operator.StartsWith("(") && unary.Operator.EndsWith(")"))
+		if (unary.Operator.Length >= 3 && unary.Operator.StartsWith('(') && unary.Operator.EndsWith(')'))
 		{
 			var result = context.ResolveType(unary.Operator[1..^1]);
 			if (result is EnumTypeSymbol castEnum && _unsafeDepth == 0)
@@ -2642,6 +2781,7 @@ return null;
 				if (operandType is not EnumTypeSymbol && TypeSymbol.IsIntegerType(operandType))
 					return context.ResolveType($"Option<{castEnum.Name}>") ?? result;
 			}
+
 			return result;
 		}
 
