@@ -1,0 +1,17 @@
+/// <summary>
+/// Feature: Enum Declarations & Scoped Variant Access (E1).
+/// </summary>
+/// <remarks>
+/// Rejection: duplicate enumerator names within a single enum are an error.
+/// </remarks>
+using System;
+
+enum Dupe {
+    A = 1,
+    B = 2,
+    A = 3
+}
+
+int main() {
+    return 0;
+}

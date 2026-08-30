@@ -1,0 +1,46 @@
+/// <summary>
+/// Feature: Enum Declarations & Scoped Variant Access (E1).
+/// </summary>
+/// <remarks>
+/// Declares byte- and (default) int-backed enums with explicit and auto-incremented
+/// variant values; verifies EnumName.Variant scoped access, enum-typed assignment,
+/// the flat scalar underlying model (sizeof), and enum-to-integer width casts.
+/// Compiler Target: CvoloLexer/CvoloParser enumDeclaration, EnumTypeSymbol,
+/// DeclareEnum storage allowed-set, BindingContext.EnumTypes, EnumDeclarationSyntax,
+/// ValidationPass scoped-variant member access, CodeGenerator const-int emission.
+/// Memory Layout: 100% flat scalar (underlying integer width), zero heap overhead.
+/// </remarks>
+using System;
+
+enum Level : byte {
+    Low = 1,
+    Mid = 2,
+    High = 3
+}
+
+enum Color {
+    Red,
+    Green = 5,
+    Blue
+}
+
+int main() {
+    Level l = Level.High;
+    Console.WriteLine((int)l);
+    Console.WriteLine((int)Level.Low);
+    Console.WriteLine((int)Level.Mid);
+
+    Color c = Color.Blue;
+    Console.WriteLine((int)c);
+    Console.WriteLine((int)Color.Red);
+    Console.WriteLine((int)Color.Green);
+
+    Console.WriteLine(sizeof<Level>());
+    Console.WriteLine(sizeof<Color>());
+
+    val long wide = (long)Level.High;
+    Console.WriteLine(wide);
+    val byte narrow = (byte)Color.Green;
+    Console.WriteLine(narrow);
+    return 0;
+}

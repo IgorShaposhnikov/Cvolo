@@ -50,6 +50,7 @@ public sealed class BindingContext
 	public Dictionary<SyntaxNode, string> MonomorphizedExtensionNames { get; } = [];
 	public Dictionary<string, UnionTypeSymbol> UnionTypes { get; } = [];
 	public Dictionary<string, UnionDeclarationSyntax> GenericUnionTemplates { get; } = [];
+	public Dictionary<string, EnumTypeSymbol> EnumTypes { get; } = [];
 
 	// Nominal interface declarations (mangled name -> declaration) and types.
 	public Dictionary<string, InterfaceDeclarationSyntax> InterfaceTemplates { get; } = [];
@@ -224,6 +225,8 @@ public sealed class BindingContext
 				candidates.Add(localInterface);
 			if (ProtocolTypes.TryGetValue(localMangled, out var localProtocol))
 				candidates.Add(localProtocol);
+			if (EnumTypes.TryGetValue(localMangled, out var localEnum))
+				candidates.Add(localEnum);
 		}
 
 		// Priority 2: Exact/Global Match (Only used if no local namespace match is found)
@@ -237,6 +240,8 @@ public sealed class BindingContext
 				candidates.Add(exactInterfaceMatch);
 			if (ProtocolTypes.TryGetValue(name, out var exactProtocolMatch))
 				candidates.Add(exactProtocolMatch);
+			if (EnumTypes.TryGetValue(name, out var exactEnumMatch))
+				candidates.Add(exactEnumMatch);
 		}
 
 		if (candidates.Count == 1)
@@ -268,6 +273,8 @@ public sealed class BindingContext
 					candidates.Add(interfaceMatch);
 				if (ProtocolTypes.TryGetValue(candidateMangled, out var protocolMatch))
 					candidates.Add(protocolMatch);
+				if (EnumTypes.TryGetValue(candidateMangled, out var enumMatch))
+					candidates.Add(enumMatch);
 			}
 		}
 

@@ -29,6 +29,8 @@ public void Process(IEnumerable<CompilationUnitSyntax> units)
 					DeclareInterface(interfaceDecl);
 				else if (member is ProtocolDeclarationSyntax protocolDecl)
 					DeclareProtocol(protocolDecl);
+				else if (member is EnumDeclarationSyntax enumDecl)
+					DeclareEnum(enumDecl);
 			}
 		}
 
@@ -1400,5 +1402,107 @@ PromoteEmbeddedMethods(units);
 
 		var unionSymbol = new UnionTypeSymbol(mangledName, fields);
 		context.UnionTypes[mangledName] = unionSymbol;
+	}
+
+	// E1 enum underlying storage types (§1.A). Enums are strictly flat, unmanaged
+	// scalar integers. 'char' is allowed as a 1-byte storage type.
+	private static readonly HashSet<string> AllowedEnumStorageTypes =
+	[
+		"int", "uint", "short", "ushort", "long", "ulong", "char", "byte", "sbyte"
+	];
+
+	private void DeclareEnum(EnumDeclarationSyntax enumDecl)
+	{
+		var mangledName = context.GetMangledName(enumDecl.Name, context.CurrentNamespace);
+
+		if (context.EnumTypes.ContainsKey(mangledName) || context.StructTypes.ContainsKey(mangledName)
+			|| context.UnionTypes.ContainsKey(mangledName) || context.InterfaceTypes.ContainsKey(mangledName)
+			|| context.ProtocolTypes.ContainsKey(mangledName) || TypeSymbol.FromName(enumDecl.Name) is not null)
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, enumDecl.Span, $"Duplicate type definition '{enumDecl.Name}'");
+			return;
+		}
+
+		_ = VerifyAttributes(enumDecl.Attributes, "Struct", new List<string>());
+
+		var storageName = enumDecl.StorageType ?? "int";
+		if (!AllowedEnumStorageTypes.Contains(storageName))
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, enumDecl.Span,
+				$"Invalid underlying storage type '{storageName}' for enum '{enumDecl.Name}'. Allowed storage types: int, uint, short, ushort, long, ulong, char, byte, sbyte.");
+			return;
+		}
+
+		// The Empty Restriction (§1.A): an enum must contain at least one variant.
+		if (enumDecl.Variants.Count == 0)
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, enumDecl.Span,
+				$"Enum '{enumDecl.Name}' must contain at least one variant (empty enums are prohibited).");
+			return;
+		}
+
+		context.SymbolUnits[mangledName] = context.CurrentUnit!;
+
+		var storageType = TypeSymbol.FromName(storageName)!;
+		var variants = new List<EnumVariantSymbol>();
+		var variantNames = new HashSet<string>();
+		var nextAuto = 0L;
+
+		foreach (var variant in enumDecl.Variants)
+		{
+			if (!variantNames.Add(variant.Name))
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, variant.Span, $"Duplicate variant '{variant.Name}' in enum '{enumDecl.Name}'");
+				continue;
+			}
+
+			long value;
+			if (variant.Value is null)
+			{
+				value = nextAuto;
+			}
+			else
+			{
+				var resolved = EvaluateEnumConstant(variant.Value);
+				if (resolved is null)
+				{
+					var currentFileContext = context.FileContexts[context.CurrentUnit!];
+					context.Diagnostics.Report(currentFileContext, variant.Value.Span,
+						$"Variant '{variant.Name}' in enum '{enumDecl.Name}' must be assigned a compile-time constant integer value.");
+					continue;
+				}
+
+				value = resolved.Value;
+			}
+
+			variants.Add(new EnumVariantSymbol(variant.Name, value));
+			nextAuto = value + 1;
+		}
+
+		var enumSymbol = new EnumTypeSymbol(mangledName, variants, storageType);
+		context.EnumTypes[mangledName] = enumSymbol;
+		context.ReplaceTypeInCache(mangledName, enumSymbol);
+	}
+
+	/// <summary>
+	/// E1 constant-evaluation subset for enum variant values: integer literals and
+	/// unary minus. The full expression evaluator lands with the [Flags] chunk (E5).
+	/// </summary>
+	private static long? EvaluateEnumConstant(ExpressionSyntax expr)
+	{
+		switch (expr)
+		{
+			case IntegerLiteralExpressionSyntax intLit:
+				return intLit.Value;
+			case UnaryExpressionSyntax { Operator: "-" } unary:
+				var operand = EvaluateEnumConstant(unary.Operand);
+				return operand is null ? null : -operand.Value;
+			default:
+				return null;
+		}
 	}
 }

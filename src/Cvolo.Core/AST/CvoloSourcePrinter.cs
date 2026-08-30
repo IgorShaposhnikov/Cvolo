@@ -107,6 +107,14 @@ public sealed class CvoloSourcePrinter
 				var uFields = string.Join("\n", u.Fields.Select(f => $"{ind}    {f.Type} {f.Name};"));
 				return $"\n{ind}union {u.Name}{uGenerics} {{\n{uFields}\n{ind}}}\n";
 
+			case EnumDeclarationSyntax e:
+				var storage = e.StorageType != null ? $" : {e.StorageType}" : "";
+				var variants = string.Join(", ", e.Variants.Select(v => v.Value != null ? $"{v.Name} = {Print(v.Value)}" : v.Name));
+				return $"\n{ind}enum {e.Name}{storage} {{ {variants} }}\n";
+
+			case EnumVariantDeclarationSyntax ev:
+				return ev.Value != null ? $"{ev.Name} = {Print(ev.Value)}" : ev.Name;
+
 			case SwitchStatementSyntax sw:
 				var casesStr = string.Join("", sw.Cases.Select(c => {
 					var patternStr = c.IsDefault ? "default" : (c.VariableName != null ? $"{c.VariantName} {c.VariableName}" : c.VariantName);

@@ -550,6 +550,23 @@ if (resolvedType != null && initializerType != null && !resolvedType.Equals(init
 
 	private TypeSymbol? CheckMemberAccessExpression(MemberAccessExpressionSyntax expr, SymbolTable scope)
 	{
+		// Enum scoped-variant access: EnumName.Variant (optionally namespaced). The
+		// receiver is a *type name*, not a value expression — resolve it before the
+		// scope lookup so the receiver is not reported as an undefined variable.
+		if (TryResolveEnumVariantReceiver(expr) is { } enumType)
+		{
+			var variant = enumType.FindVariant(expr.MemberName);
+			if (variant is null)
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, expr.Span,
+					$"Enum '{enumType.Name}' does not contain variant '{expr.MemberName}'");
+				return null;
+			}
+
+			return enumType;
+		}
+
 		CheckExpression(expr.Expression, scope);
 		var leftType = GetExpressionType(expr.Expression, scope);
 		if (leftType is null) return null;
@@ -562,6 +579,14 @@ if (resolvedType != null && initializerType != null && !resolvedType.Equals(init
 		if (leftType.Name.EndsWith("[]") && expr.MemberName == "Length")
 		{
 			return TypeSymbol.Int;
+		}
+
+		if (leftType is EnumTypeSymbol)
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, expr.Span,
+				$"Type '{leftType.Name}' is an enum; only scoped variant access ('{leftType.Name}.VariantName') is allowed.");
+			return null;
 		}
 
 		if (leftType is UnionTypeSymbol unionType)
@@ -592,6 +617,29 @@ if (resolvedType != null && initializerType != null && !resolvedType.Equals(init
 		}
 
 		return field.Type;
+	}
+
+	/// <summary>
+	/// Resolves an enum type name used as a scoped-variant-access receiver
+	/// (e.g. the 'Status' in 'Status.Active', possibly namespaced). Returns null
+	/// when the receiver is a value expression rather than an enum type name.
+	/// </summary>
+	private EnumTypeSymbol? TryResolveEnumVariantReceiver(MemberAccessExpressionSyntax m)
+	{
+		var dotted = GetDottedName(m.Expression);
+		if (dotted is null)
+			return null;
+
+		return context.ResolveType(dotted) as EnumTypeSymbol;
+	}
+
+	private static string? GetDottedName(ExpressionSyntax expr)
+	{
+		if (expr is IdentifierExpressionSyntax id)
+			return id.Name;
+		if (expr is MemberAccessExpressionSyntax m && GetDottedName(m.Expression) is { } baseName)
+			return $"{baseName}.{m.MemberName}";
+		return null;
 	}
 
 	private TypeSymbol? CheckStructInitializationExpression(StructInitializationExpressionSyntax expr, SymbolTable scope)

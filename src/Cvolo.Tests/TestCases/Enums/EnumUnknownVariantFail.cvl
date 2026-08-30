@@ -1,0 +1,19 @@
+/// <summary>
+/// Feature: Enum Declarations & Scoped Variant Access (E1).
+/// </summary>
+/// <remarks>
+/// Rejection: scoped variant access only resolves existing variant names;
+/// an unknown enumerator is an error.
+/// </remarks>
+using System;
+
+enum Level {
+    Low = 1,
+    High = 2
+}
+
+int main() {
+    val Level l = Level.High;
+    val int unknown = (int)Level.Missing;
+    return 0;
+}

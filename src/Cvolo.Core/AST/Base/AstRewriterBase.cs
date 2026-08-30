@@ -175,6 +175,18 @@ public abstract class AstRewriterBase
 			return new UnionFieldSyntax(unionField.Span, unionField.Type, unionField.Name);
 		}
 
+		if (node is EnumDeclarationSyntax enumDecl)
+		{
+			var rewrittenVariants = enumDecl.Variants.Select(Rewrite).Cast<EnumVariantDeclarationSyntax>().ToList();
+			return new EnumDeclarationSyntax(enumDecl.Span, enumDecl.Name, enumDecl.StorageType, rewrittenVariants, enumDecl.Attributes);
+		}
+
+		if (node is EnumVariantDeclarationSyntax enumVariant)
+		{
+			var rewrittenValue = enumVariant.Value != null ? (ExpressionSyntax)Rewrite(enumVariant.Value) : null;
+			return new EnumVariantDeclarationSyntax(enumVariant.Span, enumVariant.Name, rewrittenValue);
+		}
+
 		if (node is SwitchStatementSyntax sw)
 		{
 			var cond = (ExpressionSyntax)Rewrite(sw.Expression);

@@ -23,6 +23,7 @@ declaration
 	| externDeclaration
 	| structDeclaration
 	| unionDeclaration
+	| enumDeclaration
 	| extensionDeclaration
 	| interfaceDeclaration
 	| protocolDeclaration
@@ -64,6 +65,14 @@ unionDeclaration
 
 unionField
 	: type Identifier SEMI
+	;
+
+enumDeclaration
+	: attributeList* ENUM Identifier (COLON type)? LBRACE enumVariant (COMMA enumVariant)* RBRACE SEMI?
+	;
+
+enumVariant
+	: Identifier (ASSIGN expression)?
 	;
 
 extensionDeclaration

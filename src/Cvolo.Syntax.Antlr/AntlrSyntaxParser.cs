@@ -68,6 +68,8 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			return BuildStructDeclaration(structDecl);
 		if (context.unionDeclaration() is { } unionDecl)
 			return BuildUnionDeclaration(unionDecl);
+		if (context.enumDeclaration() is { } enumDecl)
+			return BuildEnumDeclaration(enumDecl);
 		if (context.extensionDeclaration() is { } extensionDecl)
 			return BuildExtensionDeclaration(extensionDecl);
 		if (context.interfaceDeclaration() is { } interfaceDecl)
@@ -801,6 +803,26 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 
 		var unionAttributes = BuildAttributeList(context.attributeList());
 		return new UnionDeclarationSyntax(SpanOf(context), name, generics, fields, unionAttributes);
+	}
+
+	private EnumDeclarationSyntax BuildEnumDeclaration(CvoloParser.EnumDeclarationContext context)
+	{
+		var name = context.Identifier().GetText();
+
+		var storageType = context.type() is { } storageCtx ? GetTypeName(storageCtx) : null;
+
+		var variants = new List<EnumVariantDeclarationSyntax>();
+		foreach (var variant in context.enumVariant())
+		{
+			ExpressionSyntax? value = null;
+			if (variant.expression() is { } exprCtx)
+				value = BuildExpression(exprCtx);
+
+			variants.Add(new EnumVariantDeclarationSyntax(SpanOf(variant), variant.Identifier().GetText(), value));
+		}
+
+		var enumAttributes = BuildAttributeList(context.attributeList());
+		return new EnumDeclarationSyntax(SpanOf(context), name, storageType, variants, enumAttributes);
 	}
 
 	private SyntaxNode BuildSwitchStatement(CvoloParser.SwitchStatementContext context)

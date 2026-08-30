@@ -100,6 +100,7 @@ public sealed class ClassificationAnalyzer(BindingContext context)
 			UnionTypeSymbol u => u.IsNpoEligible
 				? 8 // Null-Pointer Optimization: a flat Option<ref T> / <refvar T> is a single 8-byte pointer.
 				: 1 + u.Fields.Where(f => !f.IsVoidVariant).Select(f => CalculateByteSize(f.Type)).DefaultIfEmpty(0).Max(),
+			EnumTypeSymbol e => CalculateByteSize(e.StorageType),
 			ArrayTypeSymbol a => CalculateByteSize(a.ElementType) * a.Size,
 			SliceTypeSymbol => 16,
 			PointerTypeSymbol => 8,

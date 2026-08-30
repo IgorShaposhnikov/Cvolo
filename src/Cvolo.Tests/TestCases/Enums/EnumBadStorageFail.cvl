@@ -1,0 +1,16 @@
+/// <summary>
+/// Feature: Enum Declarations & Scoped Variant Access (E1).
+/// </summary>
+/// <remarks>
+/// Rejection: the underlying storage type must be one of the allowed unmanaged
+/// integer types (int, uint, short, ushort, long, ulong, char, byte, sbyte).
+/// </remarks>
+using System;
+
+enum Bad : float {
+    A = 1
+}
+
+int main() {
+    return 0;
+}

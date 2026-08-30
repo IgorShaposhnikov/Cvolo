@@ -32,6 +32,7 @@ STRING: 'string';
 CHAR: 'char';
 STRUCT: 'struct';
 UNION: 'union';
+ENUM: 'enum';
 UNSAFE: 'unsafe';
 UNBOUND: 'unbound';
 PANIC: 'panic';

@@ -1,0 +1,16 @@
+/// <summary>
+/// Feature: Enum Declarations & Scoped Variant Access (E1).
+/// </summary>
+/// <remarks>
+/// Rejection: The Empty Restriction (§1.A) — an enum must contain at least one
+/// variant. `enum Empty { }` is a syntax error because the grammar requires at
+/// least one enumerator.
+/// </remarks>
+using System;
+
+enum Empty {
+}
+
+int main() {
+    return 0;
+}

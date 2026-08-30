@@ -1,0 +1,18 @@
+/// <summary>
+/// Feature: Enum Declarations & Scoped Variant Access (E1).
+/// </summary>
+/// <remarks>
+/// Rejection: enums are strictly typed scalars; a raw integer literal cannot be
+/// implicitly assigned to an enum-typed variable (§6.B, no implicit conversions).
+/// </remarks>
+using System;
+
+enum Level {
+    Low = 1,
+    High = 2
+}
+
+int main() {
+    Level l = 5;
+    return 0;
+}

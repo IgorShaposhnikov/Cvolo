@@ -1,0 +1,20 @@
+/// <summary>
+/// Feature: Enum Declarations & Scoped Variant Access (E1).
+/// </summary>
+/// <remarks>
+/// Rejection: an enum type name colliding with an existing type (here a struct)
+/// is reported as a duplicate type definition.
+/// </remarks>
+using System;
+
+struct Collide {
+    int x;
+}
+
+enum Collide {
+    A = 1
+}
+
+int main() {
+    return 0;
+}

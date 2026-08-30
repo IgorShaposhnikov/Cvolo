@@ -654,11 +654,18 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				return LLVMValueRef.CreateConstPointerNull(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0));
 			case IdentifierExpressionSyntax id:
 				return Load(id.Name);
-			case MemberAccessExpressionSyntax m:
+case MemberAccessExpressionSyntax m:
+			{
+				// Enum scoped-variant access: EnumName.Variant is a compile-time constant.
+				if (TryResolveEnumVariantReceiver(m) is { } enumConstType
+					&& enumConstType.FindVariant(m.MemberName) is { } enumConstVariant)
 				{
-					var (ptr, type) = GetFieldPointer(m);
-					return _builder.BuildLoad2(GetLLVMType(type), ptr, "member_val");
+					return LLVMValueRef.CreateConstInt(GetLLVMType(enumConstType), unchecked((ulong)enumConstVariant.Value));
 				}
+
+				var (ptr, type) = GetFieldPointer(m);
+				return _builder.BuildLoad2(GetLLVMType(type), ptr, "member_val");
+			}
 			case IndexExpressionSyntax idx:
 				{
 					var (ptr, type) = GetFieldPointer(idx);
@@ -1211,17 +1218,22 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			if (targetType.Handle == operandLlvmType.Handle)
 				return operand;
 
-			var targetIsInt = TypeSymbol.IsIntegerType(targetTypeSymbol);
-			var operandIsInt = TypeSymbol.IsIntegerType(operandType);
+			// Enums are flat scalar integers (§1): reduce to their underlying storage
+			// type so the width-adjustment branches below can operate on them directly.
+			var effectiveTarget = targetTypeSymbol is EnumTypeSymbol targetEnum ? targetEnum.StorageType : targetTypeSymbol;
+			var effectiveOperand = operandType is EnumTypeSymbol operandEnum ? operandEnum.StorageType : operandType;
+
+			var targetIsInt = TypeSymbol.IsIntegerType(effectiveTarget);
+			var operandIsInt = TypeSymbol.IsIntegerType(effectiveOperand);
 
 			// Integer to Float (any signed int -> double)
-			if (targetTypeSymbol.Equals(TypeSymbol.Double) && operandIsInt)
+			if (effectiveTarget.Equals(TypeSymbol.Double) && operandIsInt)
 			{
 				return _builder.BuildSIToFP(operand, targetType, "cast_sitofp");
 			}
 
 			// Float to Integer (double -> any int)
-			if (operandType.Equals(TypeSymbol.Double) && targetIsInt)
+			if (effectiveOperand.Equals(TypeSymbol.Double) && targetIsInt)
 			{
 				return _builder.BuildFPToSI(operand, targetType, "cast_fptosi");
 			}
@@ -1229,8 +1241,8 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			// Integer <-> Integer width conversion (byte/char/short/int/long and unsigned variants)
 			if (operandIsInt && targetIsInt)
 			{
-				var operandWidth = TypeSymbol.IntegerBitWidth(operandType);
-				var targetWidth = TypeSymbol.IntegerBitWidth(targetTypeSymbol);
+				var operandWidth = TypeSymbol.IntegerBitWidth(effectiveOperand);
+				var targetWidth = TypeSymbol.IntegerBitWidth(effectiveTarget);
 
 				if (operandWidth > targetWidth)
 				{
@@ -1241,7 +1253,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				if (operandWidth < targetWidth)
 				{
 					// Widening: sign-extend signed sources, zero-extend unsigned sources
-					return TypeSymbol.IsSignedIntegerType(operandType)
+					return TypeSymbol.IsSignedIntegerType(effectiveOperand)
 						? _builder.BuildSExt(operand, targetType, "cast_sext")
 						: _builder.BuildZExt(operand, targetType, "cast_zext");
 				}
@@ -1747,6 +1759,10 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 	private TypeSymbol GetMemberAccessType(MemberAccessExpressionSyntax m)
 	{
+		// Enum scoped-variant access: the receiver is an enum type name, not a value.
+		if (TryResolveEnumVariantReceiver(m) is { } enumType)
+			return enumType;
+
 		var parentType = GetExprType(m.Expression);
 		if (parentType is PointerTypeSymbol ptr)
 		{
@@ -1771,6 +1787,29 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		}
 
 		return TypeSymbol.Int;
+	}
+
+	/// <summary>
+	/// Resolves an enum type name used as a scoped-variant-access receiver
+	/// (e.g. the 'Status' in 'Status.Active', possibly namespaced). Returns null
+	/// when the receiver is a value expression rather than an enum type name.
+	/// </summary>
+	private EnumTypeSymbol? TryResolveEnumVariantReceiver(MemberAccessExpressionSyntax m)
+	{
+		var dotted = GetDottedName(m.Expression);
+		if (dotted is null)
+			return null;
+
+		return _bindingContext!.ResolveType(dotted) as EnumTypeSymbol;
+	}
+
+	private static string? GetDottedName(ExpressionSyntax expr)
+	{
+		if (expr is IdentifierExpressionSyntax id)
+			return id.Name;
+		if (expr is MemberAccessExpressionSyntax m && GetDottedName(m.Expression) is { } baseName)
+			return $"{baseName}.{m.MemberName}";
+		return null;
 	}
 
 	private TypeSymbol GetIndexExpressionType(IndexExpressionSyntax idx)
@@ -2075,6 +2114,9 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 		if (t is UnionTypeSymbol union && union.IsNpoEligible)
 			return LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0);
+
+		if (t is EnumTypeSymbol enumType)
+			return GetLLVMType(enumType.StorageType);
 
 		if (t is StructTypeSymbol || t is UnionTypeSymbol)
 		{
@@ -2741,6 +2783,9 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			var maxPayload = unionType.Fields.Where(f => !f.IsVoidVariant).Select(f => GetByteSize(f.Type)).DefaultIfEmpty(0).Max();
 			return 1 + maxPayload;
 		}
+
+		if (type is EnumTypeSymbol enumType)
+			return GetByteSize(enumType.StorageType);
 
 		return 4; // Fallback
 	}
