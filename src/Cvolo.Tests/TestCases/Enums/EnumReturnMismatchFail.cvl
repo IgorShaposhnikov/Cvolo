@@ -1,0 +1,26 @@
+/// <summary>
+/// Feature: Enum Cast Safety — Implicit Enum/Int Rejections (E2).
+/// </summary>
+/// <remarks>
+/// §6.B: returning an enum value from an integer-returning function is an implicit
+/// conversion and must be rejected; the caller must cast explicitly.
+/// Expected diagnostics:
+///   Function 'getIt' expects return type 'int' but found 'Status'
+/// Compiler Target: ValidationPass.CheckReturnStatement enum-vs-int return rejection.
+/// </remarks>
+using System;
+
+enum Status : byte {
+    Active = 1,
+    Pending = 2,
+    Inactive = 3
+}
+
+int getIt() {
+    Status s = Status.Active;
+    return s;
+}
+
+int main() {
+    return getIt();
+}

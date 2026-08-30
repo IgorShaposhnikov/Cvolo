@@ -1,0 +1,26 @@
+/// <summary>
+/// Feature: Enum Cast Safety — Implicit Enum/Int Rejections (E2).
+/// </summary>
+/// <remarks>
+/// §6.B: no implicit conversion between enums and integer types in any expression
+/// context. Comparing an enum value against an integer literal must fail analysis
+/// with the explicit-cast guidance; this case exercises the binary-operator path.
+/// Expected diagnostics:
+///   Implicit conversion between enum 'Status' and 'int' is forbidden; use an explicit cast.
+/// Compiler Target: ValidationPass.CheckExpression binary enum/mixed-type check.
+/// </remarks>
+using System;
+
+enum Status : byte {
+    Active = 1,
+    Pending = 2,
+    Inactive = 3
+}
+
+int main() {
+    Status s = Status.Active;
+    if (s == 5) {
+        Console.WriteLine("bad");
+    }
+    return 0;
+}

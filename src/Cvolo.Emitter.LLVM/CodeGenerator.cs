@@ -38,6 +38,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	private CompilationContext? _compilationContext; // Renamed to avoid LLVM _context conflict
 	private CompilationUnitSyntax? _currentUnit;
 	private readonly HashSet<string> _disposedVars = [];
+	private int _unsafeDepth;
 	public CodeGenerator(string moduleName, ILLVMOptimizer? optimizer = null)
 	{
 		_context = LLVMContextRef.Global;
@@ -451,6 +452,9 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		_movedVars.Clear();
 		_disposedVars.Clear();
 
+		var funcSymbol = _bindingContext!.Globals.Lookup(mangledName) as FunctionSymbol;
+		_unsafeDepth = funcSymbol is not null && (funcSymbol.SafetyTier == SafetyTier.Unsafe || funcSymbol.IsUnsafeBody) ? 1 : 0;
+
 		// Seed data-segment globals into the local symbol table: a GlobalVariable IS a pointer,
 		// so loads/stores/field GEPs work through the ordinary machinery (locals shadow on redeclare).
 		foreach (var (globalName, globalRef) in _globalVariables)
@@ -509,6 +513,8 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			EmitCleanup([.. _locals.Keys]);
 			_builder.BuildRetVoid();
 		}
+
+		_unsafeDepth = 0;
 	}
 
 	private void EmitBlock(BlockStatementSyntax block)
@@ -560,7 +566,9 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				EmitForStatement(forStmt);
 				break;
 			case UnsafeBlockStatementSyntax unsafeBlock:
+				_unsafeDepth++;
 				EmitBlock(unsafeBlock.Body);
+				_unsafeDepth--;
 				break;
 		}
 	}
@@ -1214,6 +1222,19 @@ case MemberAccessExpressionSyntax m:
 			var operandType = GetExprType(unary.Operand);
 			var operandLlvmType = GetLLVMType(operandType);
 
+			// Safe/unbound zone: (Enum)integer yields Option<Enum> — a checked conversion
+			// comparing against every declared variant value (None when no match). The raw
+			// enum scalar is only produced by this cast inside unsafe code.
+			if (targetTypeSymbol is EnumTypeSymbol safeCastEnum && _unsafeDepth == 0 &&
+				operandType is not EnumTypeSymbol && TypeSymbol.IsIntegerType(operandType))
+			{
+				if (_bindingContext.ResolveType($"Option<{safeCastEnum.Name}>") is UnionTypeSymbol optionUnion)
+				{
+					var (optionPtr, optionTy) = MaterializeEnumCastOption(safeCastEnum, operand, operandType, optionUnion);
+					return _builder.BuildLoad2(GetLLVMType(optionTy), optionPtr, "enum_cast_option");
+				}
+			}
+
 			// If casting between the identical LLVM type, return early
 			if (targetType.Handle == operandLlvmType.Handle)
 				return operand;
@@ -1715,7 +1736,16 @@ case MemberAccessExpressionSyntax m:
 		if (u.Operator.StartsWith("(") && u.Operator.EndsWith(")"))
 		{
 			var typeName = u.Operator.Substring(1, u.Operator.Length - 2);
-			return _bindingContext!.ResolveType(typeName)!;
+			var result = _bindingContext!.ResolveType(typeName)!;
+			if (result is EnumTypeSymbol castEnum && _unsafeDepth == 0)
+			{
+				// Mirrors ValidationPass.GetUnaryExpressionType: safe-zone enum casts
+				// from integers produce Option<Enum>; unsafe code gets the raw enum.
+				var operandType = GetExprType(u.Operand);
+				if (operandType is not EnumTypeSymbol && TypeSymbol.IsIntegerType(operandType))
+					return _bindingContext.ResolveType($"Option<{castEnum.Name}>") ?? result;
+			}
+			return result;
 		}
 		return GetExprType(u.Operand);
 	}
@@ -2306,9 +2336,25 @@ case MemberAccessExpressionSyntax m:
 				return (elementPtr, arrayType.ElementType);
 			}
 		}
-		else if (expr is BorrowExpressionSyntax b)
+else if (expr is BorrowExpressionSyntax b)
 		{
 			return GetFieldPointer(b.Expression); // Unpack the inner expression pointer recursively
+		}
+		else if (expr is UnaryExpressionSyntax castExpr && castExpr.Operator.StartsWith("(") && castExpr.Operator.EndsWith(")") && _unsafeDepth == 0)
+		{
+			// A safe-zone (Enum)integer cast evaluates to Option<Enum>; as a field-pointer
+			// (used by switch over the cast), materialize the tagged-union temporary.
+			var castTypeName = castExpr.Operator.Substring(1, castExpr.Operator.Length - 2);
+			if (_bindingContext!.ResolveType(castTypeName) is EnumTypeSymbol castEnum)
+			{
+				var castOperandType = GetExprType(castExpr.Operand);
+				if (castOperandType is not EnumTypeSymbol && TypeSymbol.IsIntegerType(castOperandType) &&
+					_bindingContext.ResolveType($"Option<{castEnum.Name}>") is UnionTypeSymbol castOption)
+				{
+					var castOperand = EmitExpression(castExpr.Operand);
+					return MaterializeEnumCastOption(castEnum, castOperand, castOperandType, castOption);
+				}
+			}
 		}
 
 		throw new InvalidOperationException($"Unsupported {expr.GetType()} field pointer expression");
@@ -2338,6 +2384,69 @@ case MemberAccessExpressionSyntax m:
 		}
 
 		throw new KeyNotFoundException($"Variant {name} not found in union {type.Name}");
+	}
+
+	/// <summary>
+	/// Builds a tagged-union Option&lt;Enum&gt; temporary for a safe-zone (Enum)integer cast:
+	/// the operand is normalized to the enum's storage width, then compared against every
+	/// declared variant value; a match stores the Some tag + payload, otherwise the None tag.
+	/// </summary>
+	private (LLVMValueRef ptr, UnionTypeSymbol unionType) MaterializeEnumCastOption(
+		EnumTypeSymbol enumType, LLVMValueRef operand, TypeSymbol operandType, UnionTypeSymbol optionUnion)
+	{
+		var storageTy = GetLLVMType(enumType.StorageType);
+
+		var normalized = operand;
+		var operandWidth = TypeSymbol.IntegerBitWidth(operandType);
+		var storageWidth = TypeSymbol.IntegerBitWidth(enumType.StorageType);
+		if (operandWidth > storageWidth)
+			normalized = _builder.BuildTrunc(normalized, storageTy, "ecast_trunc");
+		else if (operandWidth < storageWidth)
+			normalized = TypeSymbol.IsSignedIntegerType(operandType)
+				? _builder.BuildSExt(normalized, storageTy, "ecast_sext")
+				: _builder.BuildZExt(normalized, storageTy, "ecast_zext");
+
+		var unionLayout = GetLLVMType(optionUnion);
+		var tmp = _builder.BuildAlloca(unionLayout, "ecast_tmp");
+
+		var someIndex = GetFieldIndex(optionUnion, "Some");
+		var noneIndex = GetFieldIndex(optionUnion, "None");
+		var someTag = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, (ulong)someIndex);
+		var noneTag = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, (ulong)noneIndex);
+
+		var zero = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0);
+		var one = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1);
+		var tagPtr = _builder.BuildGEP2(unionLayout, tmp, new LLVMValueRef[] { zero, zero }, "ecast_tag");
+		var payloadPtr = _builder.BuildGEP2(unionLayout, tmp, new LLVMValueRef[] { zero, one }, "ecast_payload");
+
+		var currentFunc = _builder.InsertBlock.Parent;
+		var join = currentFunc.AppendBasicBlock("ecast_join");
+		var nextCheck = _builder.InsertBlock;
+
+		foreach (var variant in enumType.Variants)
+		{
+			var matchBlock = currentFunc.AppendBasicBlock($"ecast_{variant.Name}");
+			var afterBlock = currentFunc.AppendBasicBlock($"ecast_{variant.Name}_next");
+
+			_builder.PositionAtEnd(nextCheck);
+			var variantConst = LLVMValueRef.CreateConstInt(storageTy, unchecked((ulong)variant.Value));
+			var matches = _builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, normalized, variantConst, "ecast_cmp");
+			_builder.BuildCondBr(matches, matchBlock, afterBlock);
+
+			_builder.PositionAtEnd(matchBlock);
+			_builder.BuildStore(someTag, tagPtr);
+			_builder.BuildStore(normalized, payloadPtr);
+			_builder.BuildBr(join);
+
+			nextCheck = afterBlock;
+		}
+
+		_builder.PositionAtEnd(nextCheck);
+		_builder.BuildStore(noneTag, tagPtr);
+		_builder.BuildBr(join);
+
+		_builder.PositionAtEnd(join);
+		return (tmp, optionUnion);
 	}
 
 	private LLVMValueRef EmitStructInitialization(StructInitializationExpressionSyntax expr)

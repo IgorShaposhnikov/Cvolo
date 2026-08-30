@@ -1,0 +1,25 @@
+/// <summary>
+/// Feature: Enum Cast Safety — Implicit Enum/Int Rejections (E2).
+/// </summary>
+/// <remarks>
+/// §6.B: passing an enum value where an integer parameter is declared is an implicit
+/// conversion and must fail overload resolution; the caller must cast explicitly.
+/// Expected diagnostics:
+///   No overload of function 'takeInt' matches argument types (Status)
+/// Compiler Target: overload scoring rejects enum-vs-int parameter (no candidate).
+/// </remarks>
+using System;
+
+enum Status : byte {
+    Active = 1,
+    Pending = 2,
+    Inactive = 3
+}
+
+void takeInt(int x) { }
+
+int main() {
+    Status s = Status.Active;
+    takeInt(s);
+    return 0;
+}

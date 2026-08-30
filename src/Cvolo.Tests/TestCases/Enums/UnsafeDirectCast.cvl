@@ -1,0 +1,34 @@
+/// <summary>
+/// Feature: Enum Cast Safety — Unsafe Direct Casts (E2).
+/// </summary>
+/// <remarks>
+/// Inside an 'unsafe' block, (Enum)integer casts bypass the Option&lt;Enum&gt; checked cast and
+/// produce the raw flat scalar enum value directly (the value is truncated/widened to the
+/// enum's storage width exactly like an integer conversion). Unmatched values are legal;
+/// this is the explicit opt-in escape hatch from the safe zone's checked conversion.
+/// Compiler Target: ValidationPass unsafe-depth tracking (unsafe block push/pop),
+/// CheckVariableDeclaration enum initializer acceptance, CodeGenerator. EmitUnaryExpression
+/// (no Option materialization), raw scalar storage &lt;byte&gt;.
+/// Memory Layout: 100% flat scalar (underlying integer width), zero heap overhead.
+/// </remarks>
+using System;
+
+enum Status : byte {
+    Active = 1,
+    Pending = 2,
+    Inactive = 3
+}
+
+int main() {
+    unsafe {
+        Status s = (Status)7;
+        Console.WriteLine($"raw: {(int)s}");
+
+        Status s2 = (Status)5;
+        Console.WriteLine($"raw2: {(int)s2}");
+
+        Status s3 = (Status)Status.Pending;
+        Console.WriteLine($"raw3: {(int)s3}");
+    }
+    return 0;
+}

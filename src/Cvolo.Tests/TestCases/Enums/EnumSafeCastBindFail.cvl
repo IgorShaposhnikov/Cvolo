@@ -1,0 +1,23 @@
+/// <summary>
+/// Feature: Enum Cast Safety — Checked Cast Not Bindable to Raw Enum (E2).
+/// </summary>
+/// <remarks>
+/// §4.A: in safe code (Status)integer yields Option&lt;Status&gt;, so binding it to a plain
+/// enum-typed variable is a type mismatch — the Option must be destructured (switch).
+/// Expected diagnostics:
+///   Cannot initialize variable of type 'Status' with value of type 'System.Option&lt;Status&gt;'
+/// Compiler Target: ValidationPass.GetUnaryExpressionType safe-zone Option typing.
+/// </remarks>
+using System;
+
+enum Status : byte {
+    Active = 1,
+    Pending = 2,
+    Inactive = 3
+}
+
+int main() {
+    Status s = (Status)7;
+    Console.WriteLine((int)s);
+    return 0;
+}

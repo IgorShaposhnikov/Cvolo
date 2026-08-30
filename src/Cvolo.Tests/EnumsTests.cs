@@ -68,12 +68,43 @@ public sealed class EnumsTests : CompilerTestBase
 	}
 
 	[Theory]
+	[InlineData("SafeCast", "None\nSome: 1\nSome: 2\nSome: 3\nNone\nTemp: -2\nTemp: -1\nTemp: 0\nNoTemp\nNoTemp\nNoTemp\nNoTemp\nNoTemp\nActive: 1\n")]
+	public void Enum_SafeCast_Produces_Option(string caseName, string expected)
+	{
+		var fileName = $"{Category}/{caseName}.cvl";
+		var (exitCode, stdout, stderr) = RunCompiler(fileName);
+		AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
+
+		var (runCode, runStdout) = ExecuteBinary(caseName, Category);
+		Assert.Equal(0, runCode);
+		Assert.Equal(expected.Replace("\r\n", "\n").Trim(), runStdout.Replace("\r\n", "\n").Trim());
+	}
+
+	[Theory]
+	[InlineData("UnsafeDirectCast", "raw: 7\nraw2: 5\nraw3: 2\n")]
+	public void Enum_UnsafeDirectCast_Produces_RawValue(string caseName, string expected)
+	{
+		var fileName = $"{Category}/{caseName}.cvl";
+		var (exitCode, stdout, stderr) = RunCompiler(fileName);
+		AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
+
+		var (runCode, runStdout) = ExecuteBinary(caseName, Category);
+		Assert.Equal(0, runCode);
+		Assert.Equal(expected.Replace("\r\n", "\n").Trim(), runStdout.Replace("\r\n", "\n").Trim());
+	}
+
+	[Theory]
 	[InlineData("EnumEmptyFail.cvl", "missing Identifier at '}'")]
 	[InlineData("EnumDuplicateVariantFail.cvl", "Duplicate variant 'A' in enum 'Dupe'")]
 	[InlineData("EnumDuplicateTypeFail.cvl", "Duplicate type definition 'Collide'")]
 	[InlineData("EnumBadStorageFail.cvl", "Invalid underlying storage type 'float' for enum 'Bad'")]
 	[InlineData("EnumUnknownVariantFail.cvl", "Enum 'Level' does not contain variant 'Missing'")]
 	[InlineData("EnumImplicitIntFail.cvl", "Cannot initialize variable of type 'Level' with value of type 'int'")]
+	[InlineData("EnumImplicitBinaryFail.cvl", "Implicit conversion between enum 'Status' and 'int' is forbidden; use an explicit cast.")]
+	[InlineData("EnumImplicitAssignFail.cvl", "Implicit conversion between enum 'Status' and 'int' is forbidden; use an explicit cast.")]
+	[InlineData("EnumImplicitArgFail.cvl", "No overload of function 'takeInt' matches argument types (Status)")]
+	[InlineData("EnumSafeCastBindFail.cvl", "Cannot initialize variable of type 'Status' with value of type 'System.Option<Status>'")]
+	[InlineData("EnumReturnMismatchFail.cvl", "Function 'getIt' expects return type 'int' but found 'Status'")]
 	public void Enum_Rejections(string caseName, string expectedError)
 	{
 		var (exitCode, stdout, stderr) = RunCompiler($"{Category}/{caseName}");

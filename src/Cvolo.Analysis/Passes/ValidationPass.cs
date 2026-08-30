@@ -6,6 +6,7 @@ using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
 using Cvolo.Core.AST.Expressions;
 using Cvolo.Core.AST.Statements;
+using Cvolo.Core.Diagnostics;
 
 namespace Cvolo.Analysis.Passes;
 
@@ -13,6 +14,7 @@ public sealed class ValidationPass(BindingContext context)
 {
 	private ClassificationAnalyzer? _classification;
 	private ClassificationAnalyzer Classification => _classification ??= new ClassificationAnalyzer(context);
+	private int _unsafeDepth;
 
 	public void Process(IEnumerable<CompilationUnitSyntax> units)
 	{
@@ -169,6 +171,8 @@ public sealed class ValidationPass(BindingContext context)
 
 	private void CheckFunctionBody(FunctionDeclarationSyntax func)
 	{
+		var baseUnsafeDepth = _unsafeDepth;
+		_unsafeDepth = IsUnsafeFunction(func) ? 1 : 0;
 		var localScope = new SymbolTable(context.Globals);
 
 		foreach (var param in func.Parameters)
@@ -196,7 +200,13 @@ public sealed class ValidationPass(BindingContext context)
 				$"Function '{func.Name}' is declared to return '{func.ReturnType}' but is missing a return statement."
 			);
 		}
+
+		_unsafeDepth = baseUnsafeDepth;
 	}
+
+	private static bool IsUnsafeFunction(FunctionDeclarationSyntax func) =>
+		func.Modifier == SafetyTier.Unsafe ||
+		func.Attributes.Any(static a => string.Equals(a.Name, "UnsafeBody", StringComparison.OrdinalIgnoreCase));
 
 	private void CheckBlock(BlockStatementSyntax block, SymbolTable scope, FunctionDeclarationSyntax currentFunc)
 	{
@@ -242,7 +252,9 @@ public sealed class ValidationPass(BindingContext context)
 					break;
 				}
 			case UnsafeBlockStatementSyntax unsafeBlock:
+				_unsafeDepth++;
 				CheckBlock(unsafeBlock.Body, new SymbolTable(scope), currentFunc);
+				_unsafeDepth--;
 				break;
 			case SwitchStatementSyntax sw:
 				CheckSwitchStatement(sw, scope, currentFunc);
@@ -505,40 +517,48 @@ if (resolvedType != null && initializerType != null && !resolvedType.Equals(init
 
 					break;
 				}
-			case BinaryExpressionSyntax bin:
+case BinaryExpressionSyntax bin:
+			{
+				if (bin.Operator == "=")
 				{
-					if (bin.Operator == "=")
-					{
-						// 1. Evaluate the right-hand side first (reads and moves happen here)
-						CheckExpression(bin.Right, scope);
+					// 1. Evaluate the right-hand side first (reads and moves happen here)
+					CheckExpression(bin.Right, scope);
 
-						// 2. Evaluate the left-hand side second (re-initialization happens here)
-						if (bin.Left is IdentifierExpressionSyntax id)
+					// 2. Evaluate the left-hand side second (re-initialization happens here)
+					if (bin.Left is IdentifierExpressionSyntax id)
+					{
+						var varSymbol = scope.Lookup(id.Name) as VariableSymbol;
+						if (varSymbol is not null)
 						{
-							var varSymbol = scope.Lookup(id.Name) as VariableSymbol;
-							if (varSymbol is not null)
-							{
-								var isMutable = varSymbol.IsMutable || (varSymbol.Type is PointerTypeSymbol ptr && ptr.IsMutable);
-								if (!isMutable)
-								{
-									var currentFileContext = context.FileContexts[context.CurrentUnit!];
-									context.Diagnostics.Report(currentFileContext, id.Span, $"Cannot assign to immutable variable '{id.Name}'");
-								}
-							}
-							else
+							var isMutable = varSymbol.IsMutable || (varSymbol.Type is PointerTypeSymbol ptr && ptr.IsMutable);
+							if (!isMutable)
 							{
 								var currentFileContext = context.FileContexts[context.CurrentUnit!];
-								context.Diagnostics.Report(currentFileContext, id.Span, $"Undefined variable '{id.Name}'");
+								context.Diagnostics.Report(currentFileContext, id.Span, $"Cannot assign to immutable variable '{id.Name}'");
 							}
+
+							CheckEnumIntMismatch(varSymbol.Type, GetExpressionType(bin.Right, scope), bin.Span);
 						}
 						else
 						{
-							CheckExpression(bin.Left, scope);
+							var currentFileContext = context.FileContexts[context.CurrentUnit!];
+							context.Diagnostics.Report(currentFileContext, id.Span, $"Undefined variable '{id.Name}'");
 						}
 					}
-
-					break;
+					else
+					{
+						CheckExpression(bin.Left, scope);
+					}
 				}
+				else
+				{
+					CheckExpression(bin.Left, scope);
+					CheckExpression(bin.Right, scope);
+					CheckEnumIntMismatch(GetExpressionType(bin.Left, scope), GetExpressionType(bin.Right, scope), bin.Span);
+				}
+
+				break;
+			}
 			case UnaryExpressionSyntax unary:
 				CheckExpression(unary.Operand, scope);
 				CheckUnaryCast(unary, scope);
@@ -2090,6 +2110,8 @@ if (resolvedType != null && initializerType != null && !resolvedType.Equals(init
 			// this-free scope (no receiver object or flat struct fields exist).
 			// A default body may only reference globals/functions and its own
 			// explicit parameters.
+			var baseUnsafeDepth = _unsafeDepth;
+			_unsafeDepth = IsUnsafeFunction(method) ? 1 : 0;
 			var protoScope = new SymbolTable(context.Globals);
 			foreach (var p in method.Parameters)
 			{
@@ -2098,10 +2120,14 @@ if (resolvedType != null && initializerType != null && !resolvedType.Equals(init
 					protoScope.Declare(new VariableSymbol(p.Name, pt, isMutable: false) { IsInitialized = true });
 			}
 			CheckBlock(method.Body, protoScope, method);
+			_unsafeDepth = baseUnsafeDepth;
 			return;
 		}
 
 		if (extendedType is not (StructTypeSymbol or UnionTypeSymbol)) return;
+
+		var baseUnsafeDepth2 = _unsafeDepth;
+		_unsafeDepth = IsUnsafeFunction(method) ? 1 : 0;
 
 		// 1. Static AST Mutation Scan: Infer if the method modifies any fields
 		var isMutating = forceMutableThis || (extendedType is StructTypeSymbol structType && DetectFieldMutation(method.Body, structType));
@@ -2155,6 +2181,7 @@ if (resolvedType != null && initializerType != null && !resolvedType.Equals(init
 		}
 
 		CheckBlock(method.Body, localScope, method);
+		_unsafeDepth = baseUnsafeDepth2;
 	}
 
 	private bool DetectFieldMutation(SyntaxNode node, StructTypeSymbol structType)
@@ -2298,6 +2325,23 @@ if (resolvedType != null && initializerType != null && !resolvedType.Equals(init
 		}
 	}
 
+	private void CheckEnumIntMismatch(TypeSymbol? left, TypeSymbol? right, TextSpan span)
+	{
+		if (left is null || right is null) return;
+
+		var leftIsEnum = left is EnumTypeSymbol;
+		var rightIsEnum = right is EnumTypeSymbol;
+		if (leftIsEnum == rightIsEnum) return;
+
+		var enumType = leftIsEnum ? left : right;
+		var otherType = leftIsEnum ? right : left;
+		if (!TypeSymbol.IsIntegerType(otherType)) return;
+
+		var currentFileContext = context.FileContexts[context.CurrentUnit!];
+		context.Diagnostics.Report(currentFileContext, span,
+			$"Implicit conversion between enum '{enumType.Name}' and '{otherType.Name}' is forbidden; use an explicit cast.");
+	}
+
 	private void CheckUnaryCast(UnaryExpressionSyntax unary, SymbolTable scope)
 	{
 		if (!unary.Operator.StartsWith("(") || !unary.Operator.EndsWith("*)") || unary.Operator.Length < 4)
@@ -2332,7 +2376,17 @@ return null;
 
 		if (unary.Operator.Length >= 3 && unary.Operator.StartsWith("(") && unary.Operator.EndsWith(")"))
 		{
-			return context.ResolveType(unary.Operator[1..^1]);
+			var result = context.ResolveType(unary.Operator[1..^1]);
+			if (result is EnumTypeSymbol castEnum && _unsafeDepth == 0)
+			{
+				// Safe/unbound zone: an explicit (Enum)integer cast is a checked
+				// conversion yielding Option<Enum> (None when the value matches no
+				// declared variant); the raw enum is only available in unsafe code.
+				var operandType = GetExpressionType(unary.Operand, scope);
+				if (operandType is not EnumTypeSymbol && TypeSymbol.IsIntegerType(operandType))
+					return context.ResolveType($"Option<{castEnum.Name}>") ?? result;
+			}
+			return result;
 		}
 
 		return GetExpressionType(unary.Operand, scope);

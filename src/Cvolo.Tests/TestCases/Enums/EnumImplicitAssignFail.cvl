@@ -1,0 +1,24 @@
+/// <summary>
+/// Feature: Enum Cast Safety — Implicit Enum/Int Rejections (E2).
+/// </summary>
+/// <remarks>
+/// §6.B: reassigning an integer to an enum-typed mutable variable is an implicit
+/// conversion and must be rejected even though the variable is mutable.
+/// Expected diagnostics:
+///   Implicit conversion between enum 'Status' and 'int' is forbidden; use an explicit cast.
+/// Compiler Target: ValidationPass.CheckExpression assignment enum/mixed-type check.
+/// </remarks>
+using System;
+
+enum Status : byte {
+    Active = 1,
+    Pending = 2,
+    Inactive = 3
+}
+
+int main() {
+    var Status s = Status.Active;
+    s = 5;
+    Console.WriteLine((int)s);
+    return 0;
+}

@@ -1,0 +1,51 @@
+/// <summary>
+/// Feature: Enum Cast Safety — Checked Casts to Option&lt;Enum&gt; (E2).
+/// </summary>
+/// <remarks>
+/// In the safe zone an explicit (Enum)integer cast is a CHECKED conversion that returns
+/// Option&lt;Enum&gt;: the operand is compared against every declared variant value and the
+/// result is Some(v) on a match or None otherwise. Switching on the cast pattern-matches
+/// the tagged union Exactly like any Option. Covers byte-backed enums with a first
+/// variant not at zero, and int-backed enums with negative variant values; also verifies
+/// explicit enum→int scalar casts remain available in safe code.
+/// Compiler Target: ValidationPass.GetUnaryExpressionType safe-zone Option typing,
+/// CodeGenerator.MaterializeEnumCastOption (tag compare chain Some/None), GetFieldPointer
+/// cast case for switch-over-cast targets.
+/// Memory Layout: Option&lt;Status&gt; = { i8 tag, payload }; no heap, no NPO.
+/// </remarks>
+using System;
+
+enum Status : byte {
+    Active = 1,
+    Pending = 2,
+    Inactive = 3
+}
+
+enum Temp : int {
+    Freezing = -2,
+    Cold = -1,
+    Mild = 0
+}
+
+int main() {
+    for (int i = 0; i < 5; i++) {
+        switch ((Status)i) {
+            case Some s:
+                Console.WriteLine($"Some: {(int)s}");
+            case None:
+                Console.WriteLine("None");
+        }
+    }
+
+    for (int t = -2; t <= 5; t++) {
+        switch ((Temp)t) {
+            case Some v:
+                Console.WriteLine($"Temp: {(int)v}");
+            case None:
+                Console.WriteLine("NoTemp");
+        }
+    }
+
+    Console.WriteLine($"Active: {(int)Status.Active}");
+    return 0;
+}
