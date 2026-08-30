@@ -1,0 +1,39 @@
+/// <summary>
+/// Feature: Exhaustive Enum Switch — Full Variant Coverage + Trap (E4).
+/// </summary>
+/// <remarks>
+/// Switching on a scoped enum value must cover every declared variant. The compiler
+/// emits an implicit fallback that calls llvm.trap and unreachable for any enum
+/// runtime value that matches no case (unsafe-poisoning protection). This case uses
+/// a checked (Status)i cast so a None arm is also present; the inner switch covers
+/// every variant of Status.
+/// Compiler Target: ValidationPass.CheckEnumSwitch exhaustiveness, CodeGenerator
+/// EmitEnumSwitch const-compare dispatch + EmitEnumSwitchTrapDefault.
+/// Memory: scalar enum value tested against each variant constant; no heap.
+/// </remarks>
+using System;
+
+enum Status : byte {
+    Active = 1,
+    Pending = 2,
+    Inactive = 3
+}
+
+int main() {
+    for (int i = 0; i < 5; i++) {
+        switch ((Status)i) {
+            case Some s:
+                switch (s) {
+                    case Active:
+                        Console.WriteLine("Active");
+                    case Pending:
+                        Console.WriteLine("Pending");
+                    case Inactive:
+                        Console.WriteLine("Inactive");
+                }
+            case None:
+                Console.WriteLine("None");
+        }
+    }
+    return 0;
+}

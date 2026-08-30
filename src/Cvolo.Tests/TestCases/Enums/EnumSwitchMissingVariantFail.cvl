@@ -1,0 +1,23 @@
+/// <summary>
+/// Feature: Exhaustive Enum Switch — Missing Variant Rejected (E4).
+/// </summary>
+/// <remarks>
+/// Switching on an enum without a default/case _ and leaving any declared variant
+/// uncovered must be rejected at compile time. Here Inactive has no case and there
+/// is no default, so the switch is non-exhaustive.
+/// Compiler Target: CheckEnumSwitch exhaustiveness enumeration.
+/// </remarks>
+using System;
+
+enum Status : byte { Active = 1, Pending = 2, Inactive = 3 }
+
+int main() {
+    var Status s = Status.Active;
+    switch (s) {
+        case Active:
+            Console.WriteLine("Active");
+        case Pending:
+            Console.WriteLine("Pending");
+    }
+    return 0;
+}

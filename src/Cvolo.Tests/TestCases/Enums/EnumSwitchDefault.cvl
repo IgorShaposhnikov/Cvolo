@@ -1,0 +1,28 @@
+/// <summary>
+/// Feature: Exhaustive Enum Switch — Developer Default Disables Trap (E4).
+/// </summary>
+/// <remarks>
+/// A switch that provides its own default/case _ arm is exempt from both the
+/// exhaustiveness error and the implicit llvm.trap fallback (the default body
+/// handles every unmasked value). Only a subset of variants needs explicit cases.
+/// Compiler Target: CheckEnumSwitch hasDefault short-circuit, EmitEnumSwitch
+/// default body branch replacing the trap.
+/// Memory: no heap; scalar enum dispatch.
+/// </remarks>
+using System;
+
+enum Status : byte {
+    Active = 1,
+    Pending = 2
+}
+
+int main() {
+    var Status s = Status.Pending;
+    switch (s) {
+        case Active:
+            Console.WriteLine("Active");
+        default:
+            Console.WriteLine("Other");
+    }
+    return 0;
+}

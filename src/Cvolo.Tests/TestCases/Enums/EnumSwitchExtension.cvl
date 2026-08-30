@@ -1,0 +1,43 @@
+/// <summary>
+/// Feature: Exhaustive Enum Switch — Unqualified Variant Cases (E4).
+/// </summary>
+/// <remarks>
+/// Inside an enum extension method body, switch (this) can pattern-match the enum
+/// using unqualified variant names (case Active: ...). Every variant must have a
+/// case (here the switch is exhaustive); the trailing return exists because the
+/// missing-return guard is syntactic and does not treat a terminal switch as one.
+/// Compiler Target: CheckExpression switch-over-this typing (enum-referent pointer
+/// deref), CheckEnumSwitch, CodeGenerator EmitEnumSwitch with scalar this value.
+/// Memory: this is read by reference; no copy.
+/// </remarks>
+using System;
+
+enum Status : byte {
+    Active = 1,
+    Pending = 2,
+    Inactive = 3
+}
+
+extension Status {
+    int Describe() {
+        switch (this) {
+            case Active:
+                return 10;
+            case Pending:
+                return 20;
+            case Inactive:
+                return 30;
+        }
+        return 0;
+    }
+}
+
+int main() {
+    var Status s = Status.Active;
+    Console.WriteLine(s.Describe());
+    var Status p = Status.Pending;
+    Console.WriteLine(p.Describe());
+    var Status i = Status.Inactive;
+    Console.WriteLine(i.Describe());
+    return 0;
+}

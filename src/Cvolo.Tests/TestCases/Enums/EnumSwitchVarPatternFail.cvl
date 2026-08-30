@@ -1,0 +1,23 @@
+/// <summary>
+/// Feature: Exhaustive Enum Switch — Promoted Variable Rejected (E4).
+/// </summary>
+/// <remarks>
+/// Enum variants are pure scalar constants; they cannot carry a promoted variable
+/// (the 'case Active a:' union-style binding is meaningless for an enum). Such a
+/// case must be rejected.
+/// Compiler Target: CheckEnumSwitch VariableName guard.
+/// </remarks>
+using System;
+
+enum Status : byte { Active = 1, Pending = 2 }
+
+int main() {
+    var Status s = Status.Active;
+    switch (s) {
+        case Active a:
+            Console.WriteLine("Active");
+        case Pending:
+            Console.WriteLine("Pending");
+    }
+    return 0;
+}

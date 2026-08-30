@@ -2225,6 +2225,12 @@ case BinaryExpressionSyntax bin:
 			exprType = ptr.ReferencedType;
 		}
 
+		if (exprType is EnumTypeSymbol enumType)
+		{
+			CheckEnumSwitch(sw, enumType, scope, currentFunc);
+			return;
+		}
+
 		if (exprType is not UnionTypeSymbol unionType)
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
@@ -2307,6 +2313,52 @@ case BinaryExpressionSyntax bin:
 		if (!hasDefault)
 		{
 			foreach (var variant in unionType.Fields)
+			{
+				if (!matchedVariants.Contains(variant.Name))
+				{
+					var currentFileContext = context.FileContexts[context.CurrentUnit!];
+					context.Diagnostics.Report(currentFileContext, sw.Span, $"Switch statement is not exhaustive. Missing case for variant '{variant.Name}'.");
+				}
+			}
+		}
+	}
+
+	private void CheckEnumSwitch(SwitchStatementSyntax sw, EnumTypeSymbol enumType, SymbolTable scope, FunctionDeclarationSyntax currentFunc)
+	{
+		var matchedVariants = new HashSet<string>();
+		var hasDefault = false;
+
+		foreach (var c in sw.Cases)
+		{
+			if (c.IsDefault || c.VariantName == "_")
+			{
+				hasDefault = true;
+				CheckBlock(new BlockStatementSyntax(c.Span, c.Body), new SymbolTable(scope), currentFunc);
+				continue;
+			}
+
+			if (c.VariableName is not null)
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, c.Span, "Enum variants cannot carry a promoted variable.");
+				continue;
+			}
+
+			matchedVariants.Add(c.VariantName);
+			var variant = enumType.FindVariant(c.VariantName);
+			if (variant is null)
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, c.Span, $"Enum '{enumType.Name}' does not contain variant '{c.VariantName}'");
+				continue;
+			}
+
+			CheckBlock(new BlockStatementSyntax(c.Span, c.Body), new SymbolTable(scope), currentFunc);
+		}
+
+		if (!hasDefault)
+		{
+			foreach (var variant in enumType.Variants)
 			{
 				if (!matchedVariants.Contains(variant.Name))
 				{

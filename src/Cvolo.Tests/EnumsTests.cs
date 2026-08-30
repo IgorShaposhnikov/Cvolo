@@ -120,6 +120,33 @@ public sealed class EnumsTests : CompilerTestBase
 	}
 
 	[Theory]
+	[InlineData("EnumSwitchCover", "None\nActive\nPending\nInactive\nNone\n")]
+	[InlineData("EnumSwitchExtension", "10\n20\n30\n")]
+	[InlineData("EnumSwitchDefault", "Other\n")]
+	public void Enum_EnumSwitch_ExhaustiveDispatch(string caseName, string expected)
+	{
+		var fileName = $"{Category}/{caseName}.cvl";
+		var (exitCode, stdout, stderr) = RunCompiler(fileName);
+		AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
+
+		var (runCode, runStdout) = ExecuteBinary(caseName, Category);
+		Assert.Equal(0, runCode);
+		Assert.Equal(expected.Replace("\r\n", "\n").Trim(), runStdout.Replace("\r\n", "\n").Trim());
+	}
+
+	[Theory]
+	[InlineData("EnumSwitchMissingVariantFail.cvl", "Switch statement is not exhaustive. Missing case for variant 'Inactive'.")]
+	[InlineData("EnumSwitchUnknownVariantFail.cvl", "Enum 'Status' does not contain variant 'Bogus'")]
+	[InlineData("EnumSwitchVarPatternFail.cvl", "Enum variants cannot carry a promoted variable.")]
+	[InlineData("EnumSwitchIntTargetFail.cvl", "Switch statement target must be a union type.")]
+	public void Enum_EnumSwitch_Rejections(string caseName, string expectedError)
+	{
+		var (exitCode, stdout, stderr) = RunCompiler($"{Category}/{caseName}");
+		Assert.NotEqual(0, exitCode);
+		Assert.Contains(expectedError, stderr);
+	}
+
+	[Theory]
 	[InlineData("EnumEmptyFail.cvl", "missing Identifier at '}'")]
 	[InlineData("EnumDuplicateVariantFail.cvl", "Duplicate variant 'A' in enum 'Dupe'")]
 	[InlineData("EnumDuplicateTypeFail.cvl", "Duplicate type definition 'Collide'")]

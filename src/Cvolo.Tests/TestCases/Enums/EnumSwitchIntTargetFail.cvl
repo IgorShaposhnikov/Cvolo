@@ -1,0 +1,20 @@
+/// <summary>
+/// Feature: Exhaustive Enum Switch — Non-Enum Target Rejected (E4).
+/// </summary>
+/// <remarks>
+/// switch only accepts union or (exhaustive) enum targets. Switching on a plain
+/// integer must be rejected with the union-target error regardless of any default.
+/// Compiler Target: CheckSwitchStatement non-enum non-union guard.
+/// </remarks>
+using System;
+
+enum Status : byte { Active = 1, Pending = 2 }
+
+int main() {
+    int x = 5;
+    switch (x) {
+        default:
+            Console.WriteLine("int target");
+    }
+    return 0;
+}

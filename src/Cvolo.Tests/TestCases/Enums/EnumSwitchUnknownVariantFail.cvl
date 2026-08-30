@@ -1,0 +1,22 @@
+/// <summary>
+/// Feature: Exhaustive Enum Switch — Unknown Variant Case Rejected (E4).
+/// </summary>
+/// <remarks>
+/// A switch case whose name is not a variant of the switched-on enum must be
+/// rejected rather than silently ignored, even when a default exists.
+/// Compiler Target: CheckEnumSwitch FindVariant validation.
+/// </remarks>
+using System;
+
+enum Status : byte { Active = 1, Pending = 2 }
+
+int main() {
+    var Status s = Status.Active;
+    switch (s) {
+        case Bogus:
+            Console.WriteLine("Bogus");
+        default:
+            Console.WriteLine("Other");
+    }
+    return 0;
+}

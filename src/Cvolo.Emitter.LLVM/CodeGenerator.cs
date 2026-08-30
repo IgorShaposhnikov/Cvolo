@@ -39,6 +39,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	private CompilationUnitSyntax? _currentUnit;
 	private readonly HashSet<string> _disposedVars = [];
 	private int _unsafeDepth;
+	private (LLVMTypeRef Type, LLVMValueRef Func)? _llvmTrap;
 	public CodeGenerator(string moduleName, ILLVMOptimizer? optimizer = null)
 	{
 		_context = LLVMContextRef.Global;
@@ -2934,6 +2935,24 @@ else if (expr is BorrowExpressionSyntax b)
 
 	private void EmitSwitchStatement(SwitchStatementSyntax sw)
 	{
+		var switchTargetType = GetExprType(sw.Expression);
+		EnumTypeSymbol? enumTarget = null;
+		if (switchTargetType is EnumTypeSymbol et)
+		{
+			enumTarget = et;
+		}
+		else if (switchTargetType is PointerTypeSymbol pt && pt.ReferencedType is EnumTypeSymbol pet)
+		{
+			enumTarget = pet;
+		}
+
+		if (enumTarget is not null)
+		{
+			var value = EmitExpression(sw.Expression);
+			EmitEnumSwitch(sw, enumTarget, value);
+			return;
+		}
+
 		var (targetVal, unionType) = GetFieldPointer(sw.Expression);
 		var isRefTarget = GetExprType(sw.Expression) is PointerTypeSymbol;
 		var isMutableRef = GetExprType(sw.Expression) is PointerTypeSymbol ptrSymbol && ptrSymbol.IsMutable; // Capture original reference mutability
@@ -3020,6 +3039,75 @@ else if (expr is BorrowExpressionSyntax b)
 			_builder.BuildBr(endBlock);
 
 		_builder.PositionAtEnd(endBlock);
+	}
+
+	private void EmitEnumSwitch(SwitchStatementSyntax sw, EnumTypeSymbol enumTarget, LLVMValueRef value)
+	{
+		var storageTy = GetLLVMType(enumTarget);
+		var currentFunc = _builder.InsertBlock.Parent;
+		var endBlock = currentFunc.AppendBasicBlock("sw_end");
+		var nextCheckBlock = _builder.InsertBlock;
+		var hasDefault = false;
+
+		for (int i = 0; i < sw.Cases.Count; i++)
+		{
+			var c = sw.Cases[i];
+			_builder.PositionAtEnd(nextCheckBlock);
+
+			if (c.IsDefault || c.VariantName == "_")
+			{
+				hasDefault = true;
+				var bodyBlock = currentFunc.AppendBasicBlock("default_body");
+				_builder.BuildBr(bodyBlock);
+
+				_builder.PositionAtEnd(bodyBlock);
+				EmitBlock(new BlockStatementSyntax(c.Span, c.Body));
+				if (_builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
+					_builder.BuildBr(endBlock);
+
+				break;
+			}
+			else
+			{
+				var variant = enumTarget.FindVariant(c.VariantName) ?? enumTarget.Variants[0];
+
+				var caseBodyBlock = currentFunc.AppendBasicBlock($"enum_case_{c.VariantName}_body");
+				nextCheckBlock = currentFunc.AppendBasicBlock($"enum_case_{c.VariantName}_next");
+
+				var cond = _builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, value,
+					LLVMValueRef.CreateConstInt(storageTy, unchecked((ulong)variant.Value)), "enum_switch_match");
+				_builder.BuildCondBr(cond, caseBodyBlock, nextCheckBlock);
+
+				_builder.PositionAtEnd(caseBodyBlock);
+				EmitBlock(new BlockStatementSyntax(c.Span, c.Body));
+				if (_builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
+					_builder.BuildBr(endBlock);
+			}
+		}
+
+		_builder.PositionAtEnd(nextCheckBlock);
+		if (!hasDefault)
+		{
+			EmitEnumSwitchTrapDefault();
+		}
+		else if (_builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
+		{
+			_builder.BuildBr(endBlock);
+		}
+
+		_builder.PositionAtEnd(endBlock);
+	}
+
+	private void EmitEnumSwitchTrapDefault()
+	{
+		if (_llvmTrap is null)
+		{
+			var trapFnType = LLVMTypeRef.CreateFunction(LLVMTypeRef.Void, []);
+			_llvmTrap = (trapFnType, _module.AddFunction("llvm.trap", trapFnType));
+		}
+
+		_builder.BuildCall2(_llvmTrap.Value.Type, _llvmTrap.Value.Func, new LLVMValueRef[] { }, "");
+		_builder.BuildUnreachable();
 	}
 
 	private void EmitSwitchCaseBody(SwitchCaseSyntax c, LLVMValueRef targetVal, TypeSymbol unionType, string variantName, bool isDefault, bool isRefTarget, bool isMutableRef)
