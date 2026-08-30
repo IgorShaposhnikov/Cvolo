@@ -64,9 +64,11 @@ public abstract class CompilerTestBase
 		};
 
 		using var proc = Process.Start(psi)!;
-		var stdout = proc.StandardOutput.ReadToEnd();
+		var stdoutTask = proc.StandardOutput.ReadToEndAsync();
 		var stderr = proc.StandardError.ReadToEnd();
 		proc.WaitForExit();
+
+		var stdout = stdoutTask.GetAwaiter().GetResult();
 
 		return (proc.ExitCode, stdout, stderr);
 	}
@@ -150,8 +152,11 @@ public abstract class CompilerTestBase
 		proc.StandardInput.Flush();
 		proc.StandardInput.Close();
 
-		var stdout = proc.StandardOutput.ReadToEnd();
+		// Use async reading if your compiled binaries print large text blobs
+		var stdoutTask = proc.StandardOutput.ReadToEndAsync();
 		proc.WaitForExit();
+
+		var stdout = stdoutTask.GetAwaiter().GetResult();
 
 		return (proc.ExitCode, stdout);
 	}
