@@ -1,0 +1,24 @@
+/// <summary>
+/// Feature: Enum Metaprogramming — [Flags] Values and Count (E6).
+/// </summary>
+/// <remarks>
+/// For [Flags] enums the synthesized Values slice contains ONLY the atomic prime
+/// variants (strict powers of two), excluding the zero variant and any composite
+/// bitmask combinations. Count likewise counts atomic primes. Verifies that the
+/// slice and count reflect the atomic-only view of a [Flags] enum.
+/// Compiler Target: CodeGenerator.GetOrCreateEnumValuesGlobal atomic filtering.
+/// Memory: Values lives in .rodata; no heap allocation.
+/// </remarks>
+using System;
+
+[Flags]
+enum Permissions : byte { None = 0, Read = 1, Write = 2, All = Read | Write }
+
+int main() {
+    for (int j = 0; j < Permissions.Values.Length; j++) {
+        Console.WriteLine($"{(int)Permissions.Values[j]}");
+    }
+
+    Console.WriteLine(Permissions.Count);
+    return 0;
+}

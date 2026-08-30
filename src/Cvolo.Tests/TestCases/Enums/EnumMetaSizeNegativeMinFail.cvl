@@ -1,0 +1,17 @@
+/// <summary>
+/// Feature: Enum Metaprogramming — Negative Min/Max Sizing Rejected (E6).
+/// </summary>
+/// <remarks>
+/// Per spec §5.C, using Min or Max for static array sizing is forbidden when the
+/// enum has any negative variant value. The size expression must fail type
+/// resolution rather than produce a negative or ambiguous extent.
+/// Compiler Target: BindingContext.ResolveEnumSizeTerm negative-variant guard.
+/// </remarks>
+using System;
+
+enum Mood : int { Happy = -1, Neutral = 0, Sad = 1 }
+
+int main() {
+    var int[Mood.Min + 1] bad = {};
+    return 0;
+}

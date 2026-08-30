@@ -1,0 +1,32 @@
+/// <summary>
+/// Feature: Enum Metaprogramming — Name() and Values (E6).
+/// </summary>
+/// <remarks>
+/// Every enum gains a synthesized zero-arg Name() method returning the declared
+/// variant name as an O(1) .rodata string constant, and an implicit static
+/// EnumName.Values read-only slice of the enum backed by a .rodata array.
+/// Verifies Name() on byte- and int-backed enums (including negative values) and
+/// slice iteration over Values (Values.Length bounds-checked indexing).
+/// Compiler Target: ValidationPass.TryResolveEnumName + CheckMemberAccessExpression
+/// meta members; CodeGenerator select-chain Name() lowering and MeasureEnumValues
+/// slice materialization.
+/// Memory: string contents and Values live in .rodata; no heap allocation.
+/// </remarks>
+using System;
+
+enum Level : byte { Low = 1, Mid = 2, High = 4 }
+
+enum Mood : int { Happy = -1, Neutral = 0, Sad = 1 }
+
+int main() {
+    var Level l = Level.Mid;
+    Console.WriteLine(l.Name());
+
+    var Mood m = Mood.Happy;
+    Console.WriteLine(m.Name());
+
+    for (int i = 0; i < Level.Values.Length; i++) {
+        Console.WriteLine($"{(int)Level.Values[i]}");
+    }
+    return 0;
+}

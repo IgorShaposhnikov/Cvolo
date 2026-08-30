@@ -1,0 +1,32 @@
+/// <summary>
+/// Feature: Enum Metaprogramming — Min, Max, Count and Sized Arrays (E6).
+/// </summary>
+/// <remarks>
+/// Count is the number of declared variants; Min and Max are the smallest and
+/// largest variant values, all synthesized compile-time constants. Enum constants
+/// may appear inside static array-size expressions (int[Level.Max + 1]); the size
+/// expression is folded at type-resolution time. Verifies printing the constants
+/// and slicing correctly sized fixed arrays.
+/// Compiler Target: BindingContext.TryEvaluateEnumSizeConstant (static size folding),
+/// ValidationPass meta-member typing, CodeGenerator const-int emission.
+/// Memory: all fixed arrays remain stack slots; no heap allocation.
+/// </remarks>
+using System;
+
+enum Level : byte { Low = 1, Mid = 2, High = 4 }
+
+int main() {
+    Console.WriteLine(Level.Count);
+    Console.WriteLine(Level.Min);
+    Console.WriteLine(Level.Max);
+
+    var int[Level.Max + 1] counters = {};
+    counters[4] = 40;
+    counters[1] = 10;
+
+    var int[Level.Min] small = {};
+    small[0] = 7;
+
+    Console.WriteLine($"{(int)counters[4]} {(int)counters[1]} {(int)small[0]}");
+    return 0;
+}

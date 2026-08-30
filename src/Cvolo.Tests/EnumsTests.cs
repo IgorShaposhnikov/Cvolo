@@ -175,6 +175,33 @@ public sealed class EnumsTests : CompilerTestBase
 	}
 
 	[Theory]
+	[InlineData("NameValues", "Mid\nHappy\n1\n2\n4\n")]
+	[InlineData("MinMaxCount", "3\n1\n4\n40 10 7\n")]
+	[InlineData("FlagsValues", "1\n2\n2\n")]
+	public void Enum_EnumMetaprogramming_Dispatch(string caseName, string expected)
+	{
+		var fileName = $"{Category}/{caseName}.cvl";
+		var (exitCode, stdout, stderr) = RunCompiler(fileName);
+		AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
+
+		var (runCode, runStdout) = ExecuteBinary(caseName, Category);
+		Assert.Equal(0, runCode);
+		Assert.Equal(expected.Replace("\r\n", "\n").Trim(), runStdout.Replace("\r\n", "\n").Trim());
+	}
+
+	[Theory]
+	[InlineData("EnumMetaSizeNegativeMinFail.cvl", "Cannot resolve type 'int[Mood.Min+1]'.")]
+	[InlineData("EnumMetaSizeUnknownFail.cvl", "Cannot resolve type 'int[wibble]'.")]
+	[InlineData("EnumMetaStackGuardFail.cvl", "Array size exceeds stack allocation safety threshold")]
+	[InlineData("EnumMetaNameArgsFail.cvl", "Name expects no arguments.")]
+	public void Enum_EnumMetaprogramming_Rejections(string caseName, string expectedError)
+	{
+		var (exitCode, stdout, stderr) = RunCompiler($"{Category}/{caseName}");
+		Assert.NotEqual(0, exitCode);
+		Assert.Contains(expectedError, stderr);
+	}
+
+	[Theory]
 	[InlineData("EnumEmptyFail.cvl", "missing Identifier at '}'")]
 	[InlineData("EnumDuplicateVariantFail.cvl", "Duplicate variant 'A' in enum 'Dupe'")]
 	[InlineData("EnumDuplicateTypeFail.cvl", "Duplicate type definition 'Collide'")]

@@ -1,0 +1,16 @@
+/// <summary>
+/// Feature: Enum Metaprogramming — Name() With Arguments Rejected (E6).
+/// </summary>
+/// <remarks>
+/// Name() is a zero-arg synthesized method; passing arguments must be rejected.
+/// Compiler Target: ValidationPass.TryResolveEnumName arg-count misuse report.
+/// </remarks>
+using System;
+
+enum Level : byte { Low = 1, Mid = 2, High = 4 }
+
+int main() {
+    var Level l = Level.Mid;
+    Console.WriteLine(l.Name(5));
+    return 0;
+}

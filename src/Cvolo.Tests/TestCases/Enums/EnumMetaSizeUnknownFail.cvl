@@ -1,0 +1,18 @@
+/// <summary>
+/// Feature: Enum Metaprogramming — Unknown Size Term Rejected (E6).
+/// </summary>
+/// <remarks>
+/// A static array-size expression that is neither a literal nor a resolvable enum
+/// metaprogramming constant must fail type resolution with a clear message instead
+/// of silently degrading to int.
+/// Compiler Target: BindingContext.TryEvaluateEnumSizeConstant, ValidationPass
+/// explicit-type resolve check.
+/// </remarks>
+using System;
+
+enum Level : byte { Low = 1, Mid = 2, High = 4 }
+
+int main() {
+    var int[wibble] bad = {};
+    return 0;
+}

@@ -516,7 +516,11 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			// Check if it is a REPLICATED ARRAY or a SCALAR STRUCT initializer
 			if (typeCtx is CvoloParser.ArrayTypeContext arrayCtx)
 			{
-				var countVal = int.Parse(arrayCtx.IntegerLiteral().GetText());
+				var sizeText = arrayCtx.expression().GetText();
+				if (!int.TryParse(sizeText, NumberStyles.None, CultureInfo.InvariantCulture, out var countVal))
+				{
+					throw new InvalidOperationException($"Array replication size must be a literal integer: '{sizeText}'.");
+				}
 				var countExpr = new IntegerLiteralExpressionSyntax(SpanOf(arrayCtx), countVal);
 				var implicitInitializer = new ArrayReplicationExpressionSyntax(SpanOf(context), valueExpr, countExpr);
 				return new VariableDeclarationSyntax(SpanOf(context), isMutable, baseTypeName, name, implicitInitializer);
@@ -614,7 +618,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 
 		if (context is CvoloParser.ArrayTypeContext arrCtx)
 		{
-			return $"{GetTypeName(arrCtx.type())}[{arrCtx.IntegerLiteral().GetText()}]";
+			return $"{GetTypeName(arrCtx.type())}[{arrCtx.expression().GetText()}]";
 		}
 
 		if (context is CvoloParser.SliceTypeContext sliceCtx)

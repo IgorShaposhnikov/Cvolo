@@ -40,6 +40,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	private readonly HashSet<string> _disposedVars = [];
 	private int _unsafeDepth;
 	private (LLVMTypeRef Type, LLVMValueRef Func)? _llvmTrap;
+	private readonly Dictionary<string, LLVMValueRef> _enumValuesGlobals = new();
 	public CodeGenerator(string moduleName, ILLVMOptimizer? optimizer = null)
 	{
 		_context = LLVMContextRef.Global;
@@ -672,6 +673,31 @@ case MemberAccessExpressionSyntax m:
 					return LLVMValueRef.CreateConstInt(GetLLVMType(enumConstType), unchecked((ulong)enumConstVariant.Value));
 				}
 
+				// Enum metaprogramming surface (spec §5): Values is a read-only slice
+				// materialized from a .rodata global; Min/Max/Count are compile-time ints.
+				if (TryResolveEnumVariantReceiver(m) is { } enumMetaType)
+				{
+					if (m.MemberName == "Values")
+					{
+						var (valuesPtr, valuesType) = EmitEnumValuesSlicePointer(enumMetaType);
+						return _builder.BuildLoad2(GetLLVMType(valuesType), valuesPtr, "enum_values");
+					}
+
+					if (m.MemberName is "Min" or "Max" or "Count")
+					{
+						long metaValue = m.MemberName switch
+						{
+							"Min" => enumMetaType.Variants.Min(v => v.Value),
+							"Max" => enumMetaType.Variants.Max(v => v.Value),
+							"Count" => enumMetaType.IsFlags
+								? enumMetaType.Variants.Count(v => v.Value > 0 && IsPowerOfTwo(v.Value))
+								: enumMetaType.Variants.Count,
+							_ => 0,
+						};
+						return LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, unchecked((ulong)metaValue));
+					}
+				}
+
 				var (ptr, type) = GetFieldPointer(m);
 				return _builder.BuildLoad2(GetLLVMType(type), ptr, "member_val");
 			}
@@ -765,6 +791,39 @@ case MemberAccessExpressionSyntax m:
 			var targetType = _bindingContext!.ResolveType(targetTypeName)!;
 			var size = GetByteSize(targetType);
 			return LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (ulong)size);
+		}
+
+		// (§5.A) Name() is synthesized on every enum and returns the declared variant
+		// name as an O(1) .rodata string constant.
+		if (_bindingContext!.ResolvedCalls.TryGetValue(call, out var nameFunc)
+			&& nameFunc.Name.StartsWith("$Name$", StringComparison.Ordinal))
+		{
+			var receiverName = call.FunctionName[..call.FunctionName.IndexOf('.')];
+			var receiverType = _variableTypes[receiverName];
+			var enumType = receiverType is PointerTypeSymbol namePtr
+				? namePtr.ReferencedType as EnumTypeSymbol
+				: receiverType as EnumTypeSymbol;
+			if (enumType is null)
+			{
+				throw new InvalidOperationException($"Name() requires an enum receiver but found '{receiverName}'.");
+			}
+
+			var receiverValue = Load(receiverName);
+			var storageTy = GetLLVMType(enumType);
+
+			// Every per-variant name is the address of a .rodata global (a compile-time
+			// constant i8*), so a nested select chain performs the dispatch without any
+			// control-flow blocks.
+			var nameResult = _builder.BuildGlobalStringPtr("(unknown)", $"enum_name_{enumType.Name}_unknown");
+			foreach (var variant in enumType.Variants)
+			{
+				var isMatch = _builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, receiverValue,
+					LLVMValueRef.CreateConstInt(storageTy, unchecked((ulong)variant.Value)), "enum_name_cmp");
+				nameResult = _builder.BuildSelect(isMatch,
+					_builder.BuildGlobalStringPtr(variant.Name, $"enum_name_{enumType.Name}_{variant.Name}"),
+					nameResult, "enum_name_result");
+			}
+			return nameResult;
 		}
 
 		// (§3.C) HasFlag is synthesized on [Flags] enums and lowered inline to (p & f) == f.
@@ -1860,8 +1919,17 @@ case MemberAccessExpressionSyntax m:
 	private TypeSymbol GetMemberAccessType(MemberAccessExpressionSyntax m)
 	{
 		// Enum scoped-variant access: the receiver is an enum type name, not a value.
-		if (TryResolveEnumVariantReceiver(m) is { } enumType)
-			return enumType;
+		// Also exposes the metaprogramming surface: Values (slice), Min/Max/Count (int).
+		if (TryResolveEnumVariantReceiver(m) is { } enumMetaType)
+		{
+			if (enumMetaType.FindVariant(m.MemberName) is not null)
+				return enumMetaType;
+			if (m.MemberName == "Values")
+				return new SliceTypeSymbol(enumMetaType);
+			if (m.MemberName is "Min" or "Max" or "Count")
+				return TypeSymbol.Int;
+			return enumMetaType;
+		}
 
 		var parentType = GetExprType(m.Expression);
 		if (parentType is PointerTypeSymbol ptr)
@@ -2316,6 +2384,14 @@ case MemberAccessExpressionSyntax m:
 		}
 		else if (expr is MemberAccessExpressionSyntax m)
 		{
+			// Enum metaprogramming: EnumName.Values is a slice backed by a .rodata global.
+			// The receiver is a type name (not a value), so it must be handled before the
+			// parent lookup below.
+			if (TryResolveEnumVariantReceiver(m) is { } enumValuesType && m.MemberName == "Values")
+			{
+				return EmitEnumValuesSlicePointer(enumValuesType);
+			}
+
 			var (parentPtr, parentType) = GetFieldPointer(m.Expression);
 
 			if (parentType is SliceTypeSymbol sliceType && m.MemberName == "Length")
@@ -2455,6 +2531,51 @@ else if (expr is BorrowExpressionSyntax b)
 
 		throw new KeyNotFoundException($"Variant {name} not found in union {type.Name}");
 	}
+
+	/// <summary>
+	/// (§5.B) Materializes EnumName.Values as a read-only slice backed by a single
+	/// .rodata global. Returns the address of a stack temp holding the slice.
+	/// </summary>
+	private (LLVMValueRef ptr, TypeSymbol type) EmitEnumValuesSlicePointer(EnumTypeSymbol enumType)
+	{
+		var sliceType = new SliceTypeSymbol(enumType);
+		var sliceLayout = GetLLVMType(sliceType);
+		var elementTy = GetLLVMType(enumType.StorageType);
+		var count = enumType.IsFlags
+			? enumType.Variants.Count(v => v.Value > 0 && IsPowerOfTwo(v.Value))
+			: enumType.Variants.Count;
+		var global = GetOrCreateEnumValuesGlobal(enumType, elementTy, count);
+
+		var tmp = _builder.BuildAlloca(sliceLayout, "values_slice");
+		var zero = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0);
+		var one = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1);
+		var arrPtr = _builder.BuildGEP2(sliceLayout, tmp, new LLVMValueRef[] { zero, zero }, "values_arr_ptr");
+		_builder.BuildStore(_builder.BuildBitCast(global, LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), "values_arr_cast"), arrPtr);
+		var lenPtr = _builder.BuildGEP2(sliceLayout, tmp, new LLVMValueRef[] { zero, one }, "values_len_ptr");
+		_builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)count), lenPtr);
+		return (tmp, sliceType);
+	}
+
+	private LLVMValueRef GetOrCreateEnumValuesGlobal(EnumTypeSymbol enumType, LLVMTypeRef elementTy, int count)
+	{
+		if (_enumValuesGlobals.TryGetValue(enumType.Name, out var existing))
+		{
+			return existing;
+		}
+
+		var constElems = enumType.IsFlags
+			? enumType.Variants.Where(v => v.Value > 0 && IsPowerOfTwo(v.Value))
+				.Select(v => LLVMValueRef.CreateConstInt(elementTy, unchecked((ulong)v.Value))).ToArray()
+			: enumType.Variants
+				.Select(v => LLVMValueRef.CreateConstInt(elementTy, unchecked((ulong)v.Value))).ToArray();
+		var global = _module.AddGlobal(LLVMTypeRef.CreateArray(elementTy, (uint)count), $"enum_values_{enumType.Name}");
+		global.Initializer = LLVMValueRef.CreateConstArray(elementTy, constElems);
+		global.IsGlobalConstant = true;
+		_enumValuesGlobals[enumType.Name] = global;
+		return global;
+	}
+
+	private static bool IsPowerOfTwo(long value) => value > 0 && (value & (value - 1)) == 0;
 
 	/// <summary>
 	/// Builds a tagged-union Option&lt;Enum&gt; temporary for a safe-zone (Enum)integer cast:

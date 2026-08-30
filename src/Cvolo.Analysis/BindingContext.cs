@@ -133,16 +133,16 @@ public sealed class BindingContext
 			return ptrType;
 		}
 
-		// 4. Resolve Static Array Types (e.g., int[5])
+		// 4. Resolve Static Array Types (e.g., int[5] or int[Color.Max + 1])
 		if (name.EndsWith(']'))
 		{
 			var openBracket = name.LastIndexOf('[');
 			var sizePart = name.Substring(openBracket + 1, name.Length - openBracket - 2);
 			var innerName = name.Substring(0, openBracket);
 			var innerType = ResolveType(innerName);
-			if (innerType is not null && int.TryParse(sizePart, out var size))
+			if (innerType is not null && TryEvaluateEnumSizeConstant(sizePart) is { } computedSize && computedSize <= int.MaxValue)
 			{
-				var arrType = new ArrayTypeSymbol(innerType, size);
+				var arrType = new ArrayTypeSymbol(innerType, (int)computedSize);
 				_typeCache[name] = arrType;
 				return arrType;
 			}
@@ -288,7 +288,85 @@ public sealed class BindingContext
 	}
 
 	/// <summary>
-	/// Resolves a comma-separated generic type-argument list (e.g. "ref Node").
+	/// Evaluates a static array size expression used inside a type (e.g. "Color.Max + 1").
+	/// Supports plain literals and left-to-right integer arithmetic over literals and
+	/// enum metaprogramming constants (Min, Max, Count). Returns null when the expression
+	/// cannot be resolved to a constant (caller treats the type as unresolvable).
+	/// Per spec §5.C: using Min or Max on an enum with negative variant values is forbidden.
+	/// </summary>
+	private long? TryEvaluateEnumSizeConstant(string text)
+	{
+		var trimmed = text.Trim();
+		var parts = new List<string>();
+		var ops = new List<char>();
+		var current = new System.Text.StringBuilder();
+		foreach (var ch in trimmed)
+		{
+			if (ch is '+' or '-' or '*' or '/')
+			{
+				if (current.Length > 0)
+				{
+					parts.Add(current.ToString());
+					current.Clear();
+				}
+				ops.Add(ch);
+			}
+			else
+			{
+				current.Append(ch);
+			}
+		}
+		if (current.Length > 0)
+			parts.Add(current.ToString());
+
+		if (parts.Count == 0)
+			return null;
+
+		long? result = ResolveEnumSizeTerm(parts[0]);
+		for (var i = 0; i < ops.Count && result is not null; i++)
+		{
+			var rhs = ResolveEnumSizeTerm(parts[i + 1]);
+			if (rhs is null)
+				return null;
+			result = ops[i] switch
+			{
+				'+' => result + rhs,
+				'-' => result - rhs,
+				'*' => result * rhs,
+				'/' when rhs != 0 => result / rhs,
+				_ => null,
+			};
+		}
+		return result;
+	}
+
+	private long? ResolveEnumSizeTerm(string term)
+	{
+		var trimmed = term.Trim();
+		if (long.TryParse(trimmed, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var literal))
+			return literal;
+
+		var dot = trimmed.LastIndexOf('.');
+		if (dot <= 0 || dot == trimmed.Length - 1)
+			return null;
+		var enumName = trimmed[..dot];
+		var member = trimmed[(dot + 1)..];
+		if (ResolveType(enumName) is not EnumTypeSymbol targetEnum)
+			return null;
+
+		bool hasNegative = targetEnum.Variants.Any(v => v.Value < 0);
+		if (member == "Min")
+			return hasNegative ? null : targetEnum.Variants.Min(v => v.Value);
+		if (member == "Max")
+			return hasNegative ? null : targetEnum.Variants.Max(v => v.Value);
+		if (member == "Count")
+			return targetEnum.IsFlags
+				? targetEnum.Variants.Count(v => v.Value > 0 && IsPowerOfTwo(v.Value))
+				: targetEnum.Variants.Count;
+		return null;
+	}
+
+	private static bool IsPowerOfTwo(long value) => value > 0 && (value & (value - 1)) == 0;
 	/// Returns false with a diagnostic if any argument cannot be resolved, so a
 	/// null type is never smuggled into generic instantiation (which would NRE).
 	/// </summary>

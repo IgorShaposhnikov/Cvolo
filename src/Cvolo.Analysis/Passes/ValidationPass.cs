@@ -296,6 +296,14 @@ public sealed class ValidationPass(BindingContext context)
 		{
 			resolvedType = context.ResolveType(varDecl.Type);
 
+			// Array types with computed sizes (e.g. int[Color.Max + 1]) must fully resolve;
+			// a failure means the size expression referenced an unknown/invalid constant.
+			if (resolvedType is null && varDecl.Type.Contains('[') && !varDecl.Type.Contains("[]"))
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, varDecl.Span, $"Cannot resolve type '{varDecl.Type}'.");
+			}
+
 			var initializerType = varDecl.Initializer != null ? GetExpressionType(varDecl.Initializer, scope) : null;
 
 			// Implicit Dereference: If target is value but initializer is a pointer, unwrap it
@@ -332,11 +340,33 @@ if (resolvedType != null && initializerType != null && !resolvedType.Equals(init
 
 		resolvedType ??= TypeSymbol.Int;
 
+		// Stack Allocation Guard: block any single local array whose byte size would
+		// exceed the 1 MB safety threshold (spec §5.C.2).
+		if (resolvedType is ArrayTypeSymbol stackArray && StackByteSize(stackArray) > 1_048_576)
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, varDecl.Span, "Array size exceeds stack allocation safety threshold");
+		}
+
 		var varSymbol = new VariableSymbol(varDecl.Name, resolvedType, varDecl.IsMutable) { IsInitialized = varDecl.Initializer != null };
 
 		scope.Declare(varSymbol);
 		context.VariableSymbols[varDecl] = varSymbol;
 	}
+
+	private static int StackByteSize(TypeSymbol type) => type switch
+	{
+		ArrayTypeSymbol arr => StackByteSize(arr.ElementType) * arr.Size,
+		PointerTypeSymbol => 8,
+		RawPointerTypeSymbol => 8,
+		SliceTypeSymbol => 16,
+		EnumTypeSymbol enumType => StackByteSize(enumType.StorageType),
+		StructTypeSymbol structType => structType.Fields.Sum(f => StackByteSize(f.Type)),
+		UnionTypeSymbol unionType => unionType.IsOption && unionType.IsNpoEligible
+			? 8
+			: 1 + (unionType.Fields.Count == 0 ? 0 : unionType.Fields.Max(f => StackByteSize(f.Type))),
+		_ => TypeSymbol.PrimitiveByteSize(type),
+	};
 
 	private void CheckExpression(ExpressionSyntax expr, SymbolTable scope)
 	{
@@ -447,7 +477,11 @@ if (resolvedType != null && initializerType != null && !resolvedType.Equals(init
 					else
 					{
 						// Use overload resolution logic for standard non-generic functions / constructors
-						func = TryResolveFlagsHasFlag(call, argTypes, scope);
+						func = TryResolveEnumName(call, argTypes, scope);
+						if (func is null)
+						{
+							func = TryResolveFlagsHasFlag(call, argTypes, scope);
+						}
 						if (func is null)
 						{
 							func = ResolveOverloadedFunction(call.FunctionName, argTypes, scope);
@@ -583,6 +617,13 @@ case BinaryExpressionSyntax bin:
 			var variant = enumType.FindVariant(expr.MemberName);
 			if (variant is null)
 			{
+				// Enum metaprogramming constants (spec §5): Min, Max, Count are
+				// compile-time integers; Values is a read-only slice of the enum.
+				if (expr.MemberName is "Min" or "Max" or "Count")
+					return TypeSymbol.Int;
+				if (expr.MemberName == "Values")
+					return new SliceTypeSymbol(enumType);
+
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
 				context.Diagnostics.Report(currentFileContext, expr.Span,
 					$"Enum '{enumType.Name}' does not contain variant '{expr.MemberName}'");
@@ -1890,6 +1931,43 @@ case BinaryExpressionSyntax bin:
 		ReturnStatementSyntax => true,
 		_ => false,
 	};
+
+	private FunctionSymbol? TryResolveEnumName(CallExpressionSyntax call, IReadOnlyList<TypeSymbol> argTypes, SymbolTable scope)
+	{
+		// (§5.A) Name() is a synthesized zero-arg method on every enum: no stdlib symbol
+		// exists, so we synthesize a validation-side FunctionSymbol and lower the call
+		// to an O(1) .rodata string lookup in the CodeGenerator.
+		if (!call.FunctionName.Contains('.') || !call.FunctionName.EndsWith(".Name", StringComparison.Ordinal))
+		{
+			return null;
+		}
+
+		var receiverName = call.FunctionName[..call.FunctionName.IndexOf('.')];
+		if (scope.Lookup(receiverName) is not VariableSymbol receiverSymbol)
+		{
+			return null;
+		}
+
+		var receiverType = receiverSymbol.Type;
+		if (receiverType is PointerTypeSymbol receiverPtr)
+		{
+			receiverType = receiverPtr.ReferencedType;
+		}
+
+		if (receiverType is not EnumTypeSymbol enumType)
+		{
+			return null;
+		}
+
+		if (argTypes.Count != 0)
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, call.Span, "Name expects no arguments.");
+		}
+
+		return new FunctionSymbol($"$Name${receiverName}", TypeSymbol.String,
+			[new ParameterSymbol("this", new PointerTypeSymbol(enumType, isMutable: false))]);
+	}
 
 	private FunctionSymbol? TryResolveFlagsHasFlag(CallExpressionSyntax call, IReadOnlyList<TypeSymbol> argTypes, SymbolTable scope)
 	{

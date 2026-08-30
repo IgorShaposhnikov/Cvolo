@@ -1,0 +1,18 @@
+/// <summary>
+/// Feature: Enum Metaprogramming — Stack Allocation Guard (E6).
+/// </summary>
+/// <remarks>
+/// Any single local array whose computed byte size exceeds the 1 MB stack
+/// allocation safety threshold must be rejected at declaration time. Verifies the
+/// guard on a 300000-element int array (1.2 MB).
+/// Compiler Target: ValidationPass.StackByteSize + CheckVariableDeclaration guard.
+/// Memory: no codegen occurs; the block happens before emission.
+/// </remarks>
+using System;
+
+enum Level : byte { Low = 1, Mid = 2, High = 4 }
+
+int main() {
+    var int[300000] huge = {};
+    return 0;
+}

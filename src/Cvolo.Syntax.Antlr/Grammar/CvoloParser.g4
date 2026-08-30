@@ -117,7 +117,7 @@ type
 	| qualifiedName                                     # qualifiedType
 	| Identifier                                        # identifierType
 	| type LBRACK RBRACK                                # sliceType
-	| type LBRACK IntegerLiteral RBRACK                 # arrayType
+	| type LBRACK expression RBRACK                     # arrayType
 	| type LT typeList GT                               # genericInstantiationType
 	| type STAR                                         # pointerType
 	| REFVAR type                                       # refVarType
