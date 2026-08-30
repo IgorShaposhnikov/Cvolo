@@ -1,0 +1,47 @@
+/// <summary>
+/// Feature: [Flags] Enums — Synthesized Operators and HasFlag (E5).
+/// </summary>
+/// <remarks>
+/// The safe bitwise operators |, &amp;, ^ are synthesized for [Flags] enums and
+/// preserve the enum type. The unary '~' is lowered to (~value) &amp;
+/// CombinedAtomicMask in the storage width, so complementing Read|Write (3)
+/// over the 1|2|3|4 mask yields Execute (4). HasFlag is lowered inline to
+/// (p &amp; f) == f; non-matching flags report false.
+/// Compiler Target: GetFlagsBinaryType typing, CodeGenerator flags-masked '~',
+/// inline HasFlag lowering in EmitCallExpressionCore.
+/// Memory: flat scalar storage (byte); single-bitwise HasFlag check, no heap.
+/// </remarks>
+using System;
+
+[Flags]
+enum Permissions : byte {
+    None,
+    Read,
+    Write,
+    ReadWrite = Read | Write,
+    Execute
+}
+
+int main() {
+    var Permissions p = Permissions.Read | Permissions.Write;
+    Console.WriteLine((int)p);
+
+    var Permissions inverted = ~p;
+    Console.WriteLine((int)inverted);
+
+    var Permissions andP = p & Permissions.Read;
+    Console.WriteLine((int)andP);
+
+    var Permissions xorP = p ^ Permissions.Read;
+    Console.WriteLine((int)xorP);
+
+    if (p.HasFlag(Permissions.Write)) {
+        Console.WriteLine("has write");
+    }
+
+    if (p.HasFlag(Permissions.Execute)) {
+        Console.WriteLine("has execute");
+    }
+
+    return 0;
+}

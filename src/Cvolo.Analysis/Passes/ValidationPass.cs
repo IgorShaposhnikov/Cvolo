@@ -447,7 +447,11 @@ if (resolvedType != null && initializerType != null && !resolvedType.Equals(init
 					else
 					{
 						// Use overload resolution logic for standard non-generic functions / constructors
-						func = ResolveOverloadedFunction(call.FunctionName, argTypes, scope);
+						func = TryResolveFlagsHasFlag(call, argTypes, scope);
+						if (func is null)
+						{
+							func = ResolveOverloadedFunction(call.FunctionName, argTypes, scope);
+						}
 
 						// No concrete overload matched: fall back to interface-parameterized dispatch
 						// (implicit generic templates monomorphized with the concrete conforming arg types).
@@ -562,6 +566,7 @@ case BinaryExpressionSyntax bin:
 			case UnaryExpressionSyntax unary:
 				CheckExpression(unary.Operand, scope);
 				CheckUnaryCast(unary, scope);
+				CheckUnaryEnumTilde(unary, scope);
 				break;
 			case VoidLiteralExpressionSyntax:
 				break;
@@ -919,8 +924,20 @@ case BinaryExpressionSyntax bin:
 			TernaryExpressionSyntax t => CheckTernaryExpression(t, scope),
 			VoidLiteralExpressionSyntax => TypeSymbol.Void,
 			UnaryExpressionSyntax unary => GetUnaryExpressionType(unary, scope),
+			BinaryExpressionSyntax bin when bin.Operator is "|" or "&" or "^" => GetFlagsBinaryType(bin, scope),
 			_ => null
 		};
+	}
+
+	private TypeSymbol? GetFlagsBinaryType(BinaryExpressionSyntax bin, SymbolTable scope)
+	{
+		// (§3.B) Typing for the synthesized [Flags] operators: '|', '&', '^' preserve the
+		// enum type. Mixed/int operands are caught by CheckEnumIntMismatch during
+		// CheckExpression; for pure-integer binaries keep the historical null result
+		// (vars fall back to int) so nothing changes for non-enum code.
+		var left = GetExpressionType(bin.Left, scope);
+		var right = GetExpressionType(bin.Right, scope);
+		return left is EnumTypeSymbol ? left : right is EnumTypeSymbol ? right : null;
 	}
 
 	private string? GetBaseIdentifierName(ExpressionSyntax expr)
@@ -1874,6 +1891,47 @@ case BinaryExpressionSyntax bin:
 		_ => false,
 	};
 
+	private FunctionSymbol? TryResolveFlagsHasFlag(CallExpressionSyntax call, IReadOnlyList<TypeSymbol> argTypes, SymbolTable scope)
+	{
+		// (§3.C) HasFlag is a synthesized method on [Flags] enums: no stdlib symbol
+		// exists, so we synthesize a validation-side FunctionSymbol and lower the call
+		// to (p & f) == f in the CodeGenerator.
+		if (!call.FunctionName.Contains('.') || !call.FunctionName.EndsWith(".HasFlag", StringComparison.Ordinal))
+		{
+			return null;
+		}
+
+		var receiverName = call.FunctionName[..call.FunctionName.IndexOf('.')];
+		if (scope.Lookup(receiverName) is not VariableSymbol receiverSymbol)
+		{
+			return null;
+		}
+
+		var receiverType = receiverSymbol.Type;
+		if (receiverType is PointerTypeSymbol receiverPtr)
+		{
+			receiverType = receiverPtr.ReferencedType;
+		}
+
+		if (receiverType is not EnumTypeSymbol { IsFlags: true } flagsEnum)
+		{
+			return null;
+		}
+
+		if (argTypes.Count != 1 || argTypes[0] != flagsEnum)
+		{
+			// Report the misuse but still return a synthetic symbol so the generic
+			// "No overload" error is not emitted a second time.
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, call.Span,
+				$"HasFlag expects exactly one argument of the same [Flags] enum type '{flagsEnum.Name}'.");
+		}
+
+		var receiverParam = new ParameterSymbol("this", new PointerTypeSymbol(flagsEnum, isMutable: false));
+		var flagParam = new ParameterSymbol("flag", flagsEnum);
+		return new FunctionSymbol($"$HasFlag${flagsEnum.Name}", TypeSymbol.Bool, [receiverParam, flagParam]);
+	}
+
 	private FunctionSymbol? ResolveOverloadedFunction(string name, IReadOnlyList<TypeSymbol> argTypes, SymbolTable scope, CallExpressionSyntax? call = null)
 	{
 		var candidates = new List<FunctionSymbol>();
@@ -2356,7 +2414,10 @@ case BinaryExpressionSyntax bin:
 			CheckBlock(new BlockStatementSyntax(c.Span, c.Body), new SymbolTable(scope), currentFunc);
 		}
 
-		if (!hasDefault)
+		// (§6.A) 'Exhaustive Switch-Matching check'. [Flags] enums are RELAXED: composite
+		// masks make total coverage impossible, so a flags switch never demands a case
+		// for every variant (a default remains optional; the trap fallback guards the rest).
+		if (!hasDefault && !enumType.IsFlags)
 		{
 			foreach (var variant in enumType.Variants)
 			{
@@ -2418,6 +2479,19 @@ case BinaryExpressionSyntax bin:
 			$"Cannot cast nullable reference option '{optionUnion.Name}' directly to a raw pointer; pattern-match it (switch on 'ref'/'refvar') to extract a non-null reference first.");
 	}
 
+	private void CheckUnaryEnumTilde(UnaryExpressionSyntax unary, SymbolTable scope)
+	{
+		// (§3.B) `~` is only meaningful for [Flags] enums, where it is the masked bitwise
+		// complement (~v & CombinedAtomicMask).
+		if (unary.Operator != "~") return;
+		if (GetExpressionType(unary.Operand, scope) is not EnumTypeSymbol enumType) return;
+		if (enumType.IsFlags) return;
+
+		var currentFileContext = context.FileContexts[context.CurrentUnit!];
+		context.Diagnostics.Report(currentFileContext, unary.Span,
+			$"Operator '~' cannot be applied to non-[Flags] enum '{enumType.Name}'.");
+	}
+
 	private TypeSymbol? GetUnaryExpressionType(UnaryExpressionSyntax unary, SymbolTable scope)
 	{
 		if (unary.Operator == "&")
@@ -2449,6 +2523,13 @@ return null;
 					return context.ResolveType($"Option<{castEnum.Name}>") ?? result;
 			}
 			return result;
+		}
+
+		// (§3.B) `~` on a [Flags] enum yields the enum again (inverted bits, masked at codegen).
+		if (unary.Operator == "~")
+		{
+			if (GetExpressionType(unary.Operand, scope) is EnumTypeSymbol enumType)
+				return enumType;
 		}
 
 		return GetExpressionType(unary.Operand, scope);

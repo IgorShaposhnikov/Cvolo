@@ -767,6 +767,26 @@ case MemberAccessExpressionSyntax m:
 			return LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (ulong)size);
 		}
 
+		// (§3.C) HasFlag is synthesized on [Flags] enums and lowered inline to (p & f) == f.
+		if (_bindingContext!.ResolvedCalls.TryGetValue(call, out var hasFlagFunc)
+			&& hasFlagFunc.Name.StartsWith("$HasFlag$", StringComparison.Ordinal))
+		{
+			var receiverName = call.FunctionName[..call.FunctionName.IndexOf('.')];
+			LLVMValueRef receiverValue;
+			if (_locals.TryGetValue(receiverName, out var hasFlagReceiverPtr))
+			{
+				receiverValue = Load(receiverName);
+			}
+			else
+			{
+				receiverValue = EmitExpression(call.Arguments[0]);
+			}
+
+			var flagValue = EmitExpression(call.Arguments[0]);
+			var andVal = _builder.BuildAnd(receiverValue, flagValue, "hasflag_and");
+			return _builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, andVal, flagValue, "hasflag_result");
+		}
+
 		string emitName;
 
 		// Retrieve the pre-resolved overload from the binder context
@@ -1291,7 +1311,23 @@ case MemberAccessExpressionSyntax m:
 			case "!":
 				return _builder.BuildNot(operand);
 			case "~":
+			{
+				// (§3.B) On a [Flags] enum, '~' is the masked bitwise complement:
+				// (~value) & CombinedAtomicMask, truncated/width-locked to storage width.
+				if (GetExprType(unary.Operand) is EnumTypeSymbol { IsFlags: true } flagsEnum)
+				{
+					var storeTy = GetLLVMType(flagsEnum);
+					var notVal = _builder.BuildNot(operand, "flags_not");
+					var combinedMask = 0L;
+					foreach (var flagVar in flagsEnum.Variants)
+					{
+						combinedMask |= flagVar.Value;
+					}
+					return _builder.BuildAnd(notVal,
+						LLVMValueRef.CreateConstInt(storeTy, unchecked((ulong)combinedMask)), "flags_masked");
+				}
 				return _builder.BuildXor(operand, LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, unchecked((ulong)-1)));
+			}
 			case "*":
 			{
 				var operandType = GetExprType(unary.Operand);

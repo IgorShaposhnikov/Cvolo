@@ -1,0 +1,20 @@
+/// <summary>
+/// Feature: [Flags] Enums — Zero-Variant Naming Enforced (E5).
+/// </summary>
+/// <remarks>
+/// Any variant holding the value 0 in a [Flags] enum must be named None, Empty,
+/// Unset, or Zero so the empty mask reads canonically; assigning 0 to another
+/// name must fail.
+/// Compiler Target: DeclareEnum IsZeroFlagName guard.
+/// </remarks>
+using System;
+
+[Flags]
+enum Bad : byte {
+    Active = 1,
+    Something = 0
+}
+
+int main() {
+    return 0;
+}

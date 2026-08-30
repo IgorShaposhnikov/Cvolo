@@ -147,6 +147,34 @@ public sealed class EnumsTests : CompilerTestBase
 	}
 
 	[Theory]
+	[InlineData("FlagsAutoBitmask", "0\n1\n2\n3\n4\n")]
+	[InlineData("FlagsOperators", "3\n4\n1\n2\nhas write\n")]
+	[InlineData("EnumFlagsSwitchRelaxed", "read\n")]
+	public void Enum_Flags_Dispatch(string caseName, string expected)
+	{
+		var fileName = $"{Category}/{caseName}.cvl";
+		var (exitCode, stdout, stderr) = RunCompiler(fileName);
+		AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
+
+		var (runCode, runStdout) = ExecuteBinary(caseName, Category);
+		Assert.Equal(0, runCode);
+		Assert.Equal(expected.Replace("\r\n", "\n").Trim(), runStdout.Replace("\r\n", "\n").Trim());
+	}
+
+	[Theory]
+	[InlineData("EnumFlagsSignedStorageFail.cvl", "Invalid underlying storage type 'int' for [Flags] enum 'Bad': [Flags] enums require unsigned storage (uint, ushort, byte, ulong, or char).")]
+	[InlineData("EnumFlagsZeroNameFail.cvl", "Variant 'Something' in [Flags] enum 'Bad' has value 0 and must be named None, Empty, Unset, or Zero.")]
+	[InlineData("EnumFlagsCollisionFail.cvl", "Variant 'ReadAlso' in [Flags] enum 'Bad' collides with an existing value '2'.")]
+	[InlineData("EnumFlagsTildeNonFlagsFail.cvl", "Operator '~' cannot be applied to non-[Flags] enum 'Plain'.")]
+	[InlineData("EnumFlagsHasFlagArgFail.cvl", "HasFlag expects exactly one argument of the same [Flags] enum type 'Permissions'.")]
+	public void Enum_Flags_Rejections(string caseName, string expectedError)
+	{
+		var (exitCode, stdout, stderr) = RunCompiler($"{Category}/{caseName}");
+		Assert.NotEqual(0, exitCode);
+		Assert.Contains(expectedError, stderr);
+	}
+
+	[Theory]
 	[InlineData("EnumEmptyFail.cvl", "missing Identifier at '}'")]
 	[InlineData("EnumDuplicateVariantFail.cvl", "Duplicate variant 'A' in enum 'Dupe'")]
 	[InlineData("EnumDuplicateTypeFail.cvl", "Duplicate type definition 'Collide'")]

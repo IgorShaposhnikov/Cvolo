@@ -1,0 +1,31 @@
+/// <summary>
+/// Feature: [Flags] Enums — Relaxed Switch Exhaustiveness (E5).
+/// </summary>
+/// <remarks>
+/// Switch statements over [Flags] enums are EXEMPT from the exhaustive-coverage
+/// requirement: composite masks make total coverage impossible, so a flags
+/// switch may cover only some variants with no default. Uncovered values fall
+/// through to the implicit llvm.trap guard at runtime, so this test only
+/// executes covered paths (Read and None).
+/// Compiler Target: CheckEnumSwitch IsFlags relaxation.
+/// Memory: flat scalar switch dispatch; trap fallback guards uncovered masks.
+/// </remarks>
+using System;
+
+[Flags]
+enum Permissions : byte {
+    None,
+    Read,
+    Write
+}
+
+int main() {
+    var Permissions p = Permissions.Read;
+    switch (p) {
+        case Read:
+            Console.WriteLine("read");
+        case None:
+            Console.WriteLine("none");
+    }
+    return 0;
+}

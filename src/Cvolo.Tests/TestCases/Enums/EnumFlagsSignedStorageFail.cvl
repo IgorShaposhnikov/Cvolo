@@ -1,0 +1,20 @@
+/// <summary>
+/// Feature: [Flags] Enums — Signed Storage Rejected (E5).
+/// </summary>
+/// <remarks>
+/// Bitmask enums are only well-formed over unsigned storage: a [Flags] enum over
+/// int/short/long/sbyte must fail so that the synthesized '~' never produces
+/// negative intermediate values.
+/// Compiler Target: DeclareEnum [Flags] signed-storage guard.
+/// </remarks>
+using System;
+
+[Flags]
+enum Bad : int {
+    None = 0,
+    Read = 1
+}
+
+int main() {
+    return 0;
+}

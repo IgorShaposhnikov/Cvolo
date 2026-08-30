@@ -693,7 +693,8 @@ PromoteEmbeddedMethods(units);
 	{
 		["UnsafeBody"] = (["Function", "Method", "Constructor", "Destructor"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
 		["NoAlias"] = (["Function", "Method", "Parameter"], [SafetyTier.Unbound, SafetyTier.Unsafe]),
-		["SuppressWarning"] = (["Struct", "Function", "Method", "Constructor", "Destructor", "Parameter"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe])
+		["SuppressWarning"] = (["Struct", "Function", "Method", "Constructor", "Destructor", "Parameter"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
+		["Flags"] = (["Struct"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe])
 	};
 
 	private static readonly HashSet<string> KnownWarningIds = [DiagnosticIds.UnsafeBodyNoEffect, DiagnosticIds.UnknownAttribute, DiagnosticIds.UnboundNoRefParams];
@@ -1424,7 +1425,8 @@ PromoteEmbeddedMethods(units);
 			return;
 		}
 
-		_ = VerifyAttributes(enumDecl.Attributes, "Struct", new List<string>());
+		var appliedAttributes = VerifyAttributes(enumDecl.Attributes, "Struct", new List<string>());
+		var isFlags = appliedAttributes.Contains("Flags");
 
 		var storageName = enumDecl.StorageType ?? "int";
 		if (!AllowedEnumStorageTypes.Contains(storageName))
@@ -1432,6 +1434,16 @@ PromoteEmbeddedMethods(units);
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
 			context.Diagnostics.Report(currentFileContext, enumDecl.Span,
 				$"Invalid underlying storage type '{storageName}' for enum '{enumDecl.Name}'. Allowed storage types: int, uint, short, ushort, long, ulong, char, byte, sbyte.");
+			return;
+		}
+
+		// [Flags] (§3.A.1): a bitmask enum is only well-formed over unsigned storage,
+		// otherwise the synthesized ~ operator could produce negative intermediate values.
+		if (isFlags && storageName is "int" or "short" or "long" or "sbyte")
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, enumDecl.Span,
+				$"Invalid underlying storage type '{storageName}' for [Flags] enum '{enumDecl.Name}': [Flags] enums require unsigned storage (uint, ushort, byte, ulong, or char).");
 			return;
 		}
 
@@ -1451,6 +1463,11 @@ PromoteEmbeddedMethods(units);
 		var variantNames = new HashSet<string>();
 		var nextAuto = 0L;
 
+		// [Flags] bookkeeping (§3.A): every produced/consumed value must be unique, and
+		// auto-generated unvalued variants advance relative to the highest atomic bit.
+		var usedFlagValues = isFlags ? new HashSet<long>() : null;
+		long? highestAtomicFlag = null;
+
 		foreach (var variant in enumDecl.Variants)
 		{
 			if (!variantNames.Add(variant.Name))
@@ -1463,11 +1480,31 @@ PromoteEmbeddedMethods(units);
 			long value;
 			if (variant.Value is null)
 			{
-				value = nextAuto;
+				if (!isFlags)
+				{
+					value = nextAuto;
+				}
+				else if (highestAtomicFlag is null)
+				{
+					// (§3.A.3) First unvalued flag: a leading None/Zero names the empty
+					// mask (0); anything else starts the sequence at the first bit (1).
+					value = IsZeroFlagName(variant.Name) ? 0 : 1;
+					if (value != 0)
+					{
+						highestAtomicFlag = value;
+					}
+				}
+				else
+				{
+					// (§3.A.4) Relative auto-advance: next bit above the highest atomic flag.
+					value = highestAtomicFlag.Value << 1;
+					highestAtomicFlag = value;
+				}
 			}
 			else
 			{
-				var resolved = EvaluateEnumConstant(variant.Value);
+				var resolved = EvaluateEnumConstant(variant.Value,
+					name => variants.FirstOrDefault(v => v.Name == name)?.Value);
 				if (resolved is null)
 				{
 					var currentFileContext = context.FileContexts[context.CurrentUnit!];
@@ -1477,30 +1514,78 @@ PromoteEmbeddedMethods(units);
 				}
 
 				value = resolved.Value;
+				if (isFlags && value > 0 && IsPowerOfTwo(value) && (highestAtomicFlag is null || value > highestAtomicFlag.Value))
+				{
+					highestAtomicFlag = value;
+				}
+			}
+
+			if (isFlags)
+			{
+				// (§3.A.2) The zero mask must be explicitly named None/Empty/Unset/Zero.
+				if (value == 0 && !IsZeroFlagName(variant.Name))
+				{
+					var currentFileContext = context.FileContexts[context.CurrentUnit!];
+					context.Diagnostics.Report(currentFileContext, variant.Span,
+						$"Variant '{variant.Name}' in [Flags] enum '{enumDecl.Name}' has value 0 and must be named None, Empty, Unset, or Zero.");
+					continue;
+				}
+
+				// (§3.A.4) Collision detection: composite masks and atomic bits are all
+				// reserved; a duplicate (incl. two identical auto/explicit values) is an error.
+				if (!usedFlagValues!.Add(value))
+				{
+					var currentFileContext = context.FileContexts[context.CurrentUnit!];
+					context.Diagnostics.Report(currentFileContext, variant.Span,
+						$"Variant '{variant.Name}' in [Flags] enum '{enumDecl.Name}' collides with an existing value '{value}'.");
+					continue;
+				}
 			}
 
 			variants.Add(new EnumVariantSymbol(variant.Name, value));
 			nextAuto = value + 1;
 		}
 
-		var enumSymbol = new EnumTypeSymbol(mangledName, variants, storageType);
+		var enumSymbol = new EnumTypeSymbol(mangledName, variants, storageType) { IsFlags = isFlags };
 		context.EnumTypes[mangledName] = enumSymbol;
 		context.ReplaceTypeInCache(mangledName, enumSymbol);
 	}
 
+	// [Flags] (§3.A.2): a zero-valued variant must carry the canonical empty-mask name.
+	private static bool IsZeroFlagName(string name) => name is "None" or "Empty" or "Unset" or "Zero";
+
+	// [Flags] (§3.A.4): a positive value with exactly one bit set is an atomic flag.
+	private static bool IsPowerOfTwo(long value) => value > 0 && (value & (value - 1)) == 0;
+
 	/// <summary>
-	/// E1 constant-evaluation subset for enum variant values: integer literals and
-	/// unary minus. The full expression evaluator lands with the [Flags] chunk (E5).
+	/// Compile-time constant evaluator for enum variant values: integer literals, unary
+	/// minus, in-[Flags]-enum bitwise combinations (|, &amp;, ^) and references to
+	/// already-declared sibling variants (used for composite masks like Read | Write).
 	/// </summary>
-	private static long? EvaluateEnumConstant(ExpressionSyntax expr)
+	private static long? EvaluateEnumConstant(ExpressionSyntax expr, Func<string, long?>? variantLookup = null)
 	{
 		switch (expr)
 		{
 			case IntegerLiteralExpressionSyntax intLit:
 				return intLit.Value;
 			case UnaryExpressionSyntax { Operator: "-" } unary:
-				var operand = EvaluateEnumConstant(unary.Operand);
+				var operand = EvaluateEnumConstant(unary.Operand, variantLookup);
 				return operand is null ? null : -operand.Value;
+			case IdentifierExpressionSyntax id when variantLookup is not null:
+				return variantLookup(id.Name);
+			case BinaryExpressionSyntax bin when bin.Operator is "|" or "&" or "^":
+				var left = EvaluateEnumConstant(bin.Left, variantLookup);
+				var right = EvaluateEnumConstant(bin.Right, variantLookup);
+				if (left is null || right is null)
+				{
+					return null;
+				}
+				return bin.Operator switch
+				{
+					"|" => left.Value | right.Value,
+					"&" => left.Value & right.Value,
+					_ => left.Value ^ right.Value,
+				};
 			default:
 				return null;
 		}

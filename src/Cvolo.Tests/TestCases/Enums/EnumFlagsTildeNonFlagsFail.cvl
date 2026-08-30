@@ -1,0 +1,22 @@
+/// <summary>
+/// Feature: [Flags] Enums — '~' Restricted to Flags Enums (E5).
+/// </summary>
+/// <remarks>
+/// Bitwise complement is only meaningful for bitmask enums; applying '~' to a
+/// plain non-[Flags] enum must fail (the masked complement has no well-formed
+/// domain over sequential ordinal values).
+/// Compiler Target: CheckUnaryEnumTilde guard.
+/// </remarks>
+using System;
+
+enum Plain : byte {
+    A = 1,
+    B = 2
+}
+
+int main() {
+    var Plain p = Plain.A;
+    var Plain q = ~p;
+    Console.WriteLine((int)q);
+    return 0;
+}

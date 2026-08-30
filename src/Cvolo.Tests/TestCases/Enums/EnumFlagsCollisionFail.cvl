@@ -1,0 +1,23 @@
+/// <summary>
+/// Feature: [Flags] Enums — Value Collision Rejected (E5).
+/// </summary>
+/// <remarks>
+/// Every value in a [Flags] enum is reserved — atomic bits AND composite masks
+/// alike. Two variants resolving to the same value must fail with the collision
+/// diagnostic (here ReadAlso explicitly repeats Write's bit).
+/// Compiler Target: DeclareEnum usedFlagValues uniqueness guard.
+/// </remarks>
+using System;
+
+[Flags]
+enum Bad : byte {
+    None = 0,
+    Read = 1,
+    Write = 2,
+    ReadWrite = Read | Write,
+    ReadAlso = 2
+}
+
+int main() {
+    return 0;
+}

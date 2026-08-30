@@ -1,0 +1,32 @@
+/// <summary>
+/// Feature: [Flags] Enums — Auto Bitmask Synthesis (E5).
+/// </summary>
+/// <remarks>
+/// A [Flags] enum with unsigned storage auto-assigns powers of two to unvalued
+/// variants. A leading unvalued 'None' gets the empty mask 0, then Read/Write
+/// advance 1, 2, and an unvalued variant AFTER an explicit composite keeps
+/// advancing relative to the highest atomic bit (Execute -> 4). Referencing
+/// earlier variants in a composite (ReadWrite = Read | Write) is allowed.
+/// Compiler Target: DeclarationPass.DeclareEnum flags machinery +
+/// EvaluateEnumConstant bitwise/identifier extension.
+/// Memory: flat scalar storage (byte); no heap.
+/// </remarks>
+using System;
+
+[Flags]
+enum Permissions : byte {
+    None,
+    Read,
+    Write,
+    ReadWrite = Read | Write,
+    Execute
+}
+
+int main() {
+    Console.WriteLine((int)Permissions.None);
+    Console.WriteLine((int)Permissions.Read);
+    Console.WriteLine((int)Permissions.Write);
+    Console.WriteLine((int)Permissions.ReadWrite);
+    Console.WriteLine((int)Permissions.Execute);
+    return 0;
+}

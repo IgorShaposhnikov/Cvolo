@@ -1,0 +1,25 @@
+/// <summary>
+/// Feature: [Flags] Enums — HasFlag Argument Contract (E5).
+/// </summary>
+/// <remarks>
+/// HasFlag is a synthesized method taking exactly one argument of the same
+/// [Flags] enum type; invoking it with the wrong arity must fail with the
+/// HasFlag-specific diagnostic.
+/// Compiler Target: TryResolveFlagsHasFlag argument validation.
+/// </remarks>
+using System;
+
+[Flags]
+enum Permissions : byte {
+    None,
+    Read,
+    Write
+}
+
+int main() {
+    var Permissions p = Permissions.Read;
+    if (p.HasFlag()) {
+        Console.WriteLine("bad");
+    }
+    return 0;
+}
