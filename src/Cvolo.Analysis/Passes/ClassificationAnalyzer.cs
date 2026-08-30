@@ -109,11 +109,6 @@ public sealed class ClassificationAnalyzer(BindingContext context)
 
 	private static int GetPrimitiveSize(TypeSymbol type)
 	{
-		if (type == TypeSymbol.Int) return 4;
-		if (type == TypeSymbol.Double) return 8;
-		if (type == TypeSymbol.Bool) return 1;
-		if (type == TypeSymbol.Char) return 1;
-		if (type == TypeSymbol.String) return 8;
-		return 0;
+		return TypeSymbol.PrimitiveByteSize(type);
 	}
 }

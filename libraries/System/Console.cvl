@@ -45,6 +45,62 @@ void WriteLine(char value) {
 }
 
 /// <summary>
+/// Writes the specified 8-bit unsigned integer, followed by the current line terminator, to the standard output stream.
+/// </summary>
+/// <param name="value">The byte value to write to the console.</param>
+void WriteLine(byte value) {
+    printf("%hhu\n", (int)value);
+}
+
+/// <summary>
+/// Writes the specified 8-bit signed integer, followed by the current line terminator, to the standard output stream.
+/// </summary>
+/// <param name="value">The sbyte value to write to the console.</param>
+void WriteLine(sbyte value) {
+    printf("%hhd\n", (int)value);
+}
+
+/// <summary>
+/// Writes the specified 16-bit signed integer, followed by the current line terminator, to the standard output stream.
+/// </summary>
+/// <param name="value">The short value to write to the console.</param>
+void WriteLine(short value) {
+    printf("%hd\n", (int)value);
+}
+
+/// <summary>
+/// Writes the specified 16-bit unsigned integer, followed by the current line terminator, to the standard output stream.
+/// </summary>
+/// <param name="value">The ushort value to write to the console.</param>
+void WriteLine(ushort value) {
+    printf("%hu\n", (int)value);
+}
+
+/// <summary>
+/// Writes the specified 32-bit unsigned integer, followed by the current line terminator, to the standard output stream.
+/// </summary>
+/// <param name="value">The uint value to write to the console.</param>
+void WriteLine(uint value) {
+    printf("%u\n", (int)value);
+}
+
+/// <summary>
+/// Writes the specified 64-bit signed integer, followed by the current line terminator, to the standard output stream.
+/// </summary>
+/// <param name="value">The long value to write to the console.</param>
+void WriteLine(long value) {
+    printf("%lld\n", value);
+}
+
+/// <summary>
+/// Writes the specified 64-bit unsigned integer, followed by the current line terminator, to the standard output stream.
+/// </summary>
+/// <param name="value">The ulong value to write to the console.</param>
+void WriteLine(ulong value) {
+    printf("%llu\n", value);
+}
+
+/// <summary>
 /// Writes the specified string value to the standard output stream.
 /// </summary>
 /// <param name="value">The string value to write to the console.</param>
@@ -82,6 +138,62 @@ void Write(bool value) {
 /// <param name="value">The character to write to the console.</param>
 void Write(char value) {
     printf("%c", value);
+}
+
+/// <summary>
+/// Writes the specified 8-bit unsigned integer to the standard output stream.
+/// </summary>
+/// <param name="value">The byte value to write to the console.</param>
+void Write(byte value) {
+    printf("%hhu", (int)value);
+}
+
+/// <summary>
+/// Writes the specified 8-bit signed integer to the standard output stream.
+/// </summary>
+/// <param name="value">The sbyte value to write to the console.</param>
+void Write(sbyte value) {
+    printf("%hhd", (int)value);
+}
+
+/// <summary>
+/// Writes the specified 16-bit signed integer to the standard output stream.
+/// </summary>
+/// <param name="value">The short value to write to the console.</param>
+void Write(short value) {
+    printf("%hd", (int)value);
+}
+
+/// <summary>
+/// Writes the specified 16-bit unsigned integer to the standard output stream.
+/// </summary>
+/// <param name="value">The ushort value to write to the console.</param>
+void Write(ushort value) {
+    printf("%hu", (int)value);
+}
+
+/// <summary>
+/// Writes the specified 32-bit unsigned integer to the standard output stream.
+/// </summary>
+/// <param name="value">The uint value to write to the console.</param>
+void Write(uint value) {
+    printf("%u", (int)value);
+}
+
+/// <summary>
+/// Writes the specified 64-bit signed integer to the standard output stream.
+/// </summary>
+/// <param name="value">The long value to write to the console.</param>
+void Write(long value) {
+    printf("%lld", value);
+}
+
+/// <summary>
+/// Writes the specified 64-bit unsigned integer to the standard output stream.
+/// </summary>
+/// <param name="value">The ulong value to write to the console.</param>
+void Write(ulong value) {
+    printf("%llu", value);
 }
 
 /// <summary>

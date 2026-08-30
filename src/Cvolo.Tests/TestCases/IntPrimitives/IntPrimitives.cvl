@@ -1,0 +1,48 @@
+/// <summary>
+/// Feature: Exact-Width Integer Primitives (byte/sbyte/short/ushort/uint/long/ulong).
+/// Verifies that the seven exact-width integer storage types parse, size correctly (sizeof),
+/// support explicit width-conversion casts in both directions, and print via Console
+/// Write/WriteLine overloads without losing the LLVM target width.
+/// </summary>
+/// <remarks>
+/// Compiler Target: Lexer/Parser primitiveType, TypeSymbol, ClassificationAnalyzer
+/// (GetPrimitiveSize), CodeGenerator (GetLLVMType Int8/16/32/64, GetByteSize,
+/// EmitUnaryExpression truncate/sext/zext, EmitBinaryExpression width promotion).
+/// Memory Layout: 100% Flat contiguous stack frame allocation, zero heap overhead.
+/// </remarks>
+using System;
+
+int main() {
+    val byte b = 200;
+    val sbyte sb = -5;
+    val short s = -1234;
+    val ushort us = 5678;
+    val uint u = 4000000000;
+    val long l = 9000000000;
+    val ulong ul = 18000000000;
+    Console.WriteLine(b);
+    Console.WriteLine(sb);
+    Console.WriteLine(s);
+    Console.WriteLine(us);
+    Console.WriteLine(u);
+    Console.WriteLine(l);
+    Console.WriteLine(ul);
+
+    val byte b2 = (byte)s;
+    Console.WriteLine(b2);
+    val long widened = (long)b;
+    Console.WriteLine(widened);
+    val int i = (int)ul;
+    Console.WriteLine(i);
+    val byte b3 = 120;
+    val byte b4 = (byte)(b3 + 10);
+    Console.WriteLine(b4);
+    val uint big = 4000000000;
+    val ushort narrowed = (ushort)big;
+    Console.WriteLine(narrowed);
+    Console.WriteLine(sizeof<byte>());
+    Console.WriteLine(sizeof<ulong>());
+    Console.Write(b);
+    Console.WriteLine("");
+    return 0;
+}

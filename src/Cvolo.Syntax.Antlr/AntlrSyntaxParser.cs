@@ -286,7 +286,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				}
 
 			case CvoloParser.IntegerLiteralExpressionContext intCtx:
-				return new IntegerLiteralExpressionSyntax(SpanOf(intCtx), int.Parse(intCtx.IntegerLiteral().GetText(), CultureInfo.InvariantCulture));
+				return new IntegerLiteralExpressionSyntax(SpanOf(intCtx), long.Parse(intCtx.IntegerLiteral().GetText(), CultureInfo.InvariantCulture));
 			case CvoloParser.DoubleLiteralExpressionContext dblCtx:
 				return new DoubleLiteralExpressionSyntax(SpanOf(dblCtx), double.Parse(dblCtx.DoubleLiteral().GetText(), CultureInfo.InvariantCulture));
 			case CvoloParser.BooleanLiteralExpressionContext boolCtx:

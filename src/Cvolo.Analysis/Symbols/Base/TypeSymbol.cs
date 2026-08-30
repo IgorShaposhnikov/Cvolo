@@ -4,8 +4,15 @@ public class TypeSymbol(string name) : IEquatable<TypeSymbol>
 {
 	public virtual string Name { get; } = name;
 
-	public static readonly TypeSymbol Void = new("void");
+public static readonly TypeSymbol Void = new("void");
 	public static readonly TypeSymbol Int = new("int");
+	public static readonly TypeSymbol UInt = new("uint");
+	public static readonly TypeSymbol Long = new("long");
+	public static readonly TypeSymbol ULong = new("ulong");
+	public static readonly TypeSymbol Short = new("short");
+	public static readonly TypeSymbol UShort = new("ushort");
+	public static readonly TypeSymbol Byte = new("byte");
+	public static readonly TypeSymbol SByte = new("sbyte");
 	public static readonly TypeSymbol Double = new("double");
 	public static readonly TypeSymbol Bool = new("bool");
 	public static readonly TypeSymbol String = new("string");
@@ -16,12 +23,56 @@ public class TypeSymbol(string name) : IEquatable<TypeSymbol>
 	{
 		"void" => Void,
 		"int" => Int,
+		"uint" => UInt,
+		"long" => Long,
+		"ulong" => ULong,
+		"short" => Short,
+		"ushort" => UShort,
+		"byte" => Byte,
+		"sbyte" => SByte,
 		"double" => Double,
 		"bool" => Bool,
 		"string" => String,
 		"char" => Char,
 		"null" => Null,
 		_ => null,
+	};
+
+	public static bool IsSignedIntegerType(TypeSymbol t) => t.Name switch
+	{
+		"sbyte" or "short" or "int" or "long" => true,
+		_ => false,
+	};
+
+	public static bool IsIntegerType(TypeSymbol t) => t.Name switch
+	{
+		"sbyte" or "byte" or "short" or "ushort" or "int" or "uint" or "long" or "ulong" or "char" => true,
+		_ => false,
+	};
+
+	public static bool IsNumericIntegerType(TypeSymbol t) => t.Name switch
+	{
+		"sbyte" or "byte" or "short" or "ushort" or "int" or "uint" or "long" or "ulong" => true,
+		_ => false,
+	};
+
+	public static int IntegerBitWidth(TypeSymbol t) => t.Name switch
+	{
+		"sbyte" or "byte" or "char" => 8,
+		"short" or "ushort" => 16,
+		"int" or "uint" => 32,
+		"long" or "ulong" => 64,
+		_ => 0,
+	};
+
+	public static int PrimitiveByteSize(TypeSymbol t) => t.Name switch
+	{
+		"bool" or "sbyte" or "byte" or "char" => 1,
+		"short" or "ushort" => 2,
+		"int" or "uint" => 4,
+		"long" or "ulong" or "double" => 8,
+		"string" => 8,
+		_ => 0,
 	};
 
 	public bool Equals(TypeSymbol? other) => other is not null && Name == other.Name;

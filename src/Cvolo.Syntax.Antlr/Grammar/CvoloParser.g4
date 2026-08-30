@@ -117,6 +117,13 @@ type
 
 primitiveType
 	: INT
+	| UINT
+	| LONG
+	| ULONG
+	| SHORT
+	| USHORT
+	| BYTE
+	| SBYTE
 	| DOUBLE
 	| BOOL
 	| STRING

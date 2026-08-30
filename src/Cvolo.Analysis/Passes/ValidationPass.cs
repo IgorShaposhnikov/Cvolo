@@ -292,13 +292,18 @@ public sealed class ValidationPass(BindingContext context)
 				initializerType = ptr.ReferencedType;
 			}
 
-			if (resolvedType != null && initializerType != null && !resolvedType.Equals(initializerType))
+if (resolvedType != null && initializerType != null && !resolvedType.Equals(initializerType))
 			{
 				var isValidNull = initializerType.Equals(TypeSymbol.Null) &&
 								  (resolvedType is RawPointerTypeSymbol ||
 								  (resolvedType is UnionTypeSymbol union && union.IsOption));
 
-				if (!isValidNull)
+				// Integer width family: implicit conversion between exact-width integers
+				// (byte/short/int/long and unsigned variants) is allowed.
+				var isIntegerWidthConversion = TypeSymbol.IsNumericIntegerType(resolvedType)
+					&& TypeSymbol.IsNumericIntegerType(initializerType);
+
+				if (!isValidNull && !isIntegerWidthConversion)
 				{
 					var currentFileContext = context.FileContexts[context.CurrentUnit!];
 					if (initializerType.Equals(TypeSymbol.Null))
@@ -826,7 +831,7 @@ public sealed class ValidationPass(BindingContext context)
 		return expr switch
 		{
 			IdentifierExpressionSyntax id => (scope.Lookup(id.Name) as VariableSymbol)?.Type,
-			IntegerLiteralExpressionSyntax => TypeSymbol.Int,
+			IntegerLiteralExpressionSyntax intLit => intLit.Value is > int.MaxValue or < int.MinValue ? TypeSymbol.Long : TypeSymbol.Int,
 			DoubleLiteralExpressionSyntax => TypeSymbol.Double,
 			BooleanLiteralExpressionSyntax => TypeSymbol.Bool,
 			NullLiteralExpressionSyntax => TypeSymbol.Null,
@@ -1976,6 +1981,10 @@ public sealed class ValidationPass(BindingContext context)
 			{
 				score += 1; // Implicit numeric promotion (int -> double)
 			}
+			else if (TypeSymbol.IsNumericIntegerType(param) && TypeSymbol.IsNumericIntegerType(arg) && !param.Equals(arg))
+			{
+				score += 1; // Implicit integer width conversion (byte->int, int->long, etc.)
+			}
 			else if (param.Name == "string" && ((arg is ArrayTypeSymbol arrSymbol && arrSymbol.ElementType.Name == "char") || (arg is SliceTypeSymbol sliceSymbol && sliceSymbol.ElementType.Name == "char")))
 			{
 				score += 1; // Implicit char array/slice to string decay
@@ -1996,7 +2005,7 @@ public sealed class ValidationPass(BindingContext context)
 		var valueType = GetExpressionType(expr.Value, scope) ?? TypeSymbol.Int;
 		if (expr.Count is IntegerLiteralExpressionSyntax countLit)
 		{
-			return new ArrayTypeSymbol(valueType, countLit.Value);
+			return new ArrayTypeSymbol(valueType, checked((int)countLit.Value));
 		}
 
 		return new ArrayTypeSymbol(valueType, 0);

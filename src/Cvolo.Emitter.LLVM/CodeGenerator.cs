@@ -636,7 +636,11 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		switch (expr)
 		{
 			case IntegerLiteralExpressionSyntax intLit:
-				return LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (ulong)intLit.Value);
+			{
+				// Out-of-int-range literals are 64-bit; in-range literals stay int.
+				var litTy = intLit.Value is > int.MaxValue or < int.MinValue ? TypeSymbol.Long : TypeSymbol.Int;
+				return LLVMValueRef.CreateConstInt(GetLLVMType(litTy), unchecked((ulong)intLit.Value));
+			}
 			case DoubleLiteralExpressionSyntax dblLit:
 				return LLVMValueRef.CreateConstReal(LLVMTypeRef.Double, dblLit.Value);
 			case BooleanLiteralExpressionSyntax boolLit:
@@ -919,6 +923,16 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				right = _builder.BuildSIToFP(right, LLVMTypeRef.Double, "sitofp_right");
 			}
 
+			if (TypeSymbol.IsIntegerType(lTy) && !lTy.Equals(TypeSymbol.Int))
+			{
+				left = _builder.BuildSIToFP(left, LLVMTypeRef.Double, "sitofp_left");
+			}
+
+			if (TypeSymbol.IsIntegerType(rTy) && !rTy.Equals(TypeSymbol.Int))
+			{
+				right = _builder.BuildSIToFP(right, LLVMTypeRef.Double, "sitofp_right");
+			}
+
 			return bin.Operator switch
 			{
 				"+" => _builder.BuildFAdd(left, right),
@@ -934,6 +948,37 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				">=" => _builder.BuildFCmp(LLVMRealPredicate.LLVMRealOGE, left, right),
 				_ => throw new InvalidOperationException($"Unknown double operator '{bin.Operator}'"),
 			};
+		}
+
+		// Integer width promotion: when mixing integer widths, zext/sext the narrower
+		// operand up to the wider operand's width before the operation.
+		if (TypeSymbol.IsIntegerType(lTy) && TypeSymbol.IsIntegerType(rTy))
+		{
+			var lWidth = TypeSymbol.IntegerBitWidth(lTy);
+			var rWidth = TypeSymbol.IntegerBitWidth(rTy);
+
+			if (lWidth < rWidth)
+			{
+				left = TypeSymbol.IsSignedIntegerType(lTy)
+					? _builder.BuildSExt(left, GetLLVMType(rTy), "promote_left_sext")
+					: _builder.BuildZExt(left, GetLLVMType(rTy), "promote_left_zext");
+			}
+			else if (rWidth < lWidth)
+			{
+				right = TypeSymbol.IsSignedIntegerType(rTy)
+					? _builder.BuildSExt(right, GetLLVMType(lTy), "promote_right_sext")
+					: _builder.BuildZExt(right, GetLLVMType(lTy), "promote_right_zext");
+			}
+
+			// Signed division/modulo must be relaxed for unsigned operands
+			if (bin.Operator is "/" or "%" && (!TypeSymbol.IsSignedIntegerType(lTy) || !TypeSymbol.IsSignedIntegerType(rTy)))
+			{
+				return bin.Operator switch
+				{
+					"/" => _builder.BuildUDiv(left, right),
+					_ => _builder.BuildURem(left, right),
+				};
+			}
 		}
 
 		return bin.Operator switch
@@ -959,6 +1004,27 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			">>>" => _builder.BuildLShr(left, right),
 			_ => throw new InvalidOperationException($"Unknown binary operator '{bin.Operator}'"),
 		};
+	}
+
+	private LLVMValueRef CoerceIntegerWidth(LLVMValueRef value, TypeSymbol fromType, TypeSymbol toType)
+	{
+		if (!TypeSymbol.IsIntegerType(fromType) || !TypeSymbol.IsIntegerType(toType))
+			return value;
+
+		var fromWidth = TypeSymbol.IntegerBitWidth(fromType) is var fw ? fw : 0;
+		var toWidth = TypeSymbol.IntegerBitWidth(toType) is var tw ? tw : 0;
+
+		if (fromWidth == toWidth)
+			return value;
+
+		var llvmTarget = GetLLVMType(toType);
+
+		if (fromWidth > toWidth)
+			return _builder.BuildTrunc(value, llvmTarget, "store_trunc");
+
+		return TypeSymbol.IsSignedIntegerType(fromType)
+			? _builder.BuildSExt(value, llvmTarget, "store_sext")
+			: _builder.BuildZExt(value, llvmTarget, "store_zext");
 	}
 
 	private LLVMValueRef EmitAssignStore(BinaryExpressionSyntax bin)
@@ -1145,28 +1211,40 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			if (targetType.Handle == operandLlvmType.Handle)
 				return operand;
 
-			// Integer Truncation (e.g. i32 to i8/char)
-			if (targetTypeSymbol.Equals(TypeSymbol.Char) && operandType.Equals(TypeSymbol.Int))
-			{
-				return _builder.BuildTrunc(operand, targetType, "cast_trunc");
-			}
+			var targetIsInt = TypeSymbol.IsIntegerType(targetTypeSymbol);
+			var operandIsInt = TypeSymbol.IsIntegerType(operandType);
 
-			// Integer Zero-Extension (e.g. i8/char to i32/int)
-			if (targetTypeSymbol.Equals(TypeSymbol.Int) && operandType.Equals(TypeSymbol.Char))
-			{
-				return _builder.BuildZExt(operand, targetType, "cast_zext");
-			}
-
-			// Signed Integer to Float (int -> double)
-			if (targetTypeSymbol.Equals(TypeSymbol.Double) && operandType.Equals(TypeSymbol.Int))
+			// Integer to Float (any signed int -> double)
+			if (targetTypeSymbol.Equals(TypeSymbol.Double) && operandIsInt)
 			{
 				return _builder.BuildSIToFP(operand, targetType, "cast_sitofp");
 			}
 
-			// Float to Signed Integer (double -> int)
-			if (targetTypeSymbol.Equals(TypeSymbol.Int) && operandType.Equals(TypeSymbol.Double))
+			// Float to Integer (double -> any int)
+			if (operandType.Equals(TypeSymbol.Double) && targetIsInt)
 			{
 				return _builder.BuildFPToSI(operand, targetType, "cast_fptosi");
+			}
+
+			// Integer <-> Integer width conversion (byte/char/short/int/long and unsigned variants)
+			if (operandIsInt && targetIsInt)
+			{
+				var operandWidth = TypeSymbol.IntegerBitWidth(operandType);
+				var targetWidth = TypeSymbol.IntegerBitWidth(targetTypeSymbol);
+
+				if (operandWidth > targetWidth)
+				{
+					// Narrowing: truncate the source to the target width
+					return _builder.BuildTrunc(operand, targetType, "cast_trunc");
+				}
+
+				if (operandWidth < targetWidth)
+				{
+					// Widening: sign-extend signed sources, zero-extend unsigned sources
+					return TypeSymbol.IsSignedIntegerType(operandType)
+						? _builder.BuildSExt(operand, targetType, "cast_sext")
+						: _builder.BuildZExt(operand, targetType, "cast_zext");
+				}
 			}
 
 			return _builder.BuildBitCast(operand, targetType, "cast_bitcast");
@@ -1343,6 +1421,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 						&& (varDecl.Initializer is MemberAccessExpressionSyntax or IndexExpressionSyntax)
 						? EmitRefToValue(value, GetExprType(varDecl.Initializer!))
 						: value;
+					coerced = CoerceIntegerWidth(coerced, GetExprType(varDecl.Initializer!) ?? typeSymbol, typeSymbol);
 					_builder.BuildStore(coerced, alloca);
 				}
 			}
@@ -1589,7 +1668,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 		return expr switch
 		{
-			IntegerLiteralExpressionSyntax => TypeSymbol.Int,
+			IntegerLiteralExpressionSyntax intLit => intLit.Value is > int.MaxValue or < int.MinValue ? TypeSymbol.Long : TypeSymbol.Int,
 			DoubleLiteralExpressionSyntax => TypeSymbol.Double,
 			BooleanLiteralExpressionSyntax => TypeSymbol.Bool,
 			StringLiteralExpressionSyntax => TypeSymbol.String,
@@ -1653,6 +1732,14 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		if (lTy.Equals(TypeSymbol.Double) || rTy.Equals(TypeSymbol.Double))
 		{
 			return TypeSymbol.Double;
+		}
+
+		// Integer width promotion: mixed widths yield the wider operand's type
+		if (TypeSymbol.IsIntegerType(lTy) && TypeSymbol.IsIntegerType(rTy))
+		{
+			var lWidth = TypeSymbol.IntegerBitWidth(lTy);
+			var rWidth = TypeSymbol.IntegerBitWidth(rTy);
+			if (rWidth > lWidth) return rTy;
 		}
 
 		return lTy;
@@ -1999,6 +2086,13 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		{
 			"void" => LLVMTypeRef.Void,
 			"int" => LLVMTypeRef.Int32,
+			"uint" => LLVMTypeRef.Int32,
+			"long" => LLVMTypeRef.Int64,
+			"ulong" => LLVMTypeRef.Int64,
+			"short" => LLVMTypeRef.Int16,
+			"ushort" => LLVMTypeRef.Int16,
+			"byte" => LLVMTypeRef.Int8,
+			"sbyte" => LLVMTypeRef.Int8,
 			"double" => LLVMTypeRef.Double,
 			"bool" => LLVMTypeRef.Int1,
 			"string" or "ptr" => LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0),
@@ -2481,7 +2575,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	private LLVMValueRef EmitArrayReplication(ArrayReplicationExpressionSyntax expr)
 	{
 		var valueType = GetExprType(expr.Value);
-		var countVal = (expr.Count is IntegerLiteralExpressionSyntax countLit) ? countLit.Value : 0;
+		var countVal = (expr.Count is IntegerLiteralExpressionSyntax countLit) ? (int)countLit.Value : 0;
 		var arrayTypeSymbol = new ArrayTypeSymbol(valueType, countVal);
 		var arrayLayout = GetLLVMType(arrayTypeSymbol);
 
@@ -2619,12 +2713,12 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	public int GetByteSize(TypeSymbol type)
 	{
 		if (type is null) return 0;
-		if (type.Equals(TypeSymbol.Int)) return 4;
-		if (type.Equals(TypeSymbol.Double)) return 8;
-		if (type.Equals(TypeSymbol.Bool)) return 1;
-		if (type.Equals(TypeSymbol.Char)) return 1;
 		if (type.Equals(TypeSymbol.String) || type is PointerTypeSymbol) return 8; // 64-bit pointers
 		if (type is SliceTypeSymbol) return 16; // Fat Pointer: { ptr, i32 }
+		if (type.Equals(TypeSymbol.Int) || type.Equals(TypeSymbol.UInt)) return 4;
+		if (type.Equals(TypeSymbol.Long) || type.Equals(TypeSymbol.ULong) || type.Equals(TypeSymbol.Double)) return 8;
+		if (type.Equals(TypeSymbol.Short) || type.Equals(TypeSymbol.UShort)) return 2;
+		if (type.Equals(TypeSymbol.SByte) || type.Equals(TypeSymbol.Byte) || type.Equals(TypeSymbol.Bool) || type.Equals(TypeSymbol.Char)) return 1;
 		if (type is ArrayTypeSymbol arr) return GetByteSize(arr.ElementType) * arr.Size;
 		if (type is StructTypeSymbol structType)
 		{
