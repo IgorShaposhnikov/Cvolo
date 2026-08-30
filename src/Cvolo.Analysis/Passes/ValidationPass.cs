@@ -2495,7 +2495,14 @@ case BinaryExpressionSyntax bin:
 		// (§6.A) 'Exhaustive Switch-Matching check'. [Flags] enums are RELAXED: composite
 		// masks make total coverage impossible, so a flags switch never demands a case
 		// for every variant (a default remains optional; the trap fallback guards the rest).
-		if (!hasDefault && !enumType.IsFlags)
+		// [NonExhaustive] (§6.C) keeps its exhaustive contract in the DEFINING unit; only a
+		// consumer in a different unit (no cross-package model, so 'unit' is the file group)
+		// is exempt - it must instead synthesize a developer default below.
+		var isExternalConsumer = enumType.IsNonExhaustive
+			&& context.SymbolUnits.TryGetValue(enumType.Name, out var declaringUnit)
+			&& !ReferenceEquals(declaringUnit, context.CurrentUnit);
+
+		if (!hasDefault && !enumType.IsFlags && !isExternalConsumer)
 		{
 			foreach (var variant in enumType.Variants)
 			{
@@ -2506,7 +2513,42 @@ case BinaryExpressionSyntax bin:
 				}
 			}
 		}
+
+		// (§6.C) Consumer side: unhandled runtime values must flow to a developer-written
+		// default / case _, never to the implicit default: llvm.trap fallback.
+		if (isExternalConsumer && !hasDefault)
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, sw.Span,
+				$"[NonExhaustive] enum '{enumType.Name}' is consumed from another unit and requires an explicit 'default' or 'case _' branch.");
+		}
+
+		// (§6.A) Non-Void Return Verification: a [NonExhaustive] switch in a non-void
+		// function must be able to leave a value behind - its default block must terminate
+		// (return or a diverging call). When the switch is NOT the last statement of the
+		// body, the syntactic trailing-return guard separately guarantees a downstream
+		// return exists, so only the body-terminal case needs this check.
+		if (enumType.IsNonExhaustive && currentFunc.ReturnType != "void" && hasDefault
+			&& currentFunc.Body is BlockStatementSyntax fnBody && fnBody.Statements.Count > 0
+			&& ReferenceEquals(fnBody.Statements[^1], sw))
+		{
+			var defaultCase = sw.Cases.First(c => c.IsDefault || c.VariantName == "_");
+			if (!EndsWithDivergingStatement(defaultCase.Body))
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, defaultCase.Span,
+					$"The 'default' branch of a switch over [NonExhaustive] enum '{enumType.Name}' must terminate with a 'return' but ends in non-terminating statement(s).");
+			}
+		}
 	}
+
+	/// <summary>A statement list that can leave a non-void function: ends in a return, or a diverging call such as exit()/panic().</summary>
+	private static bool EndsWithDivergingStatement(IReadOnlyList<SyntaxNode> body) => body.Count > 0 && body[^1] switch
+	{
+		ReturnStatementSyntax => true,
+		ExpressionStatementSyntax { Expression: CallExpressionSyntax call } when call.FunctionName == "exit" || call.FunctionName == "panic" => true,
+		_ => false,
+	};
 
 	private void CheckLargeUnionByValueArgument(ExpressionSyntax arg, TypeSymbol? paramType, SymbolTable scope)
 	{

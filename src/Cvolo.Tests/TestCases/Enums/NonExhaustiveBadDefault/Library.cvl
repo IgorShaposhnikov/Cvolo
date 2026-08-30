@@ -1,0 +1,16 @@
+/// <summary>
+/// Feature: [NonExhaustive] Enums — Non-Void Return Verification (E7, rejection).
+/// </summary>
+/// <remarks>
+/// Library side: declares the [NonExhaustive] enum consumed by Main.cvl, whose
+/// non-void function ends in a [NonExhaustive] switch whose default branch does not
+/// terminate.
+/// Compiler Target: DeclareEnum (IsNonExhaustive, SymbolUnits cross-unit tracking).
+/// </remarks>
+
+[NonExhaustive]
+enum Status : byte {
+    Active = 1,
+    Pending = 2,
+    Inactive = 3
+}

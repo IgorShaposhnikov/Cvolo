@@ -1,0 +1,17 @@
+/// <summary>
+/// Feature: [NonExhaustive] Enums — Consumer Fallback (E7).
+/// </summary>
+/// <remarks>
+/// Library side of the cross-unit test: declares the [NonExhaustive] enum. Because
+/// there is no cross-package import model, 'different unit' is approximated as a
+/// different compilation unit (file) in the same folder project: Main.cvl consumes
+/// Status from a unit that does not reference-equal the defining unit of Status.
+/// Compiler Target: DeclareEnum (IsNonExhaustive, SymbolUnits cross-unit tracking).
+/// </remarks>
+
+[NonExhaustive]
+enum Status : byte {
+    Active = 1,
+    Pending = 2,
+    Inactive = 3
+}

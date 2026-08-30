@@ -1,0 +1,17 @@
+/// <summary>
+/// Feature: [NonExhaustive] Enums — Consumer Default Required (E7, rejection).
+/// </summary>
+/// <remarks>
+/// Library side: declares the [NonExhaustive] enum consumed by Main.cvl, which omits
+/// the developer default. A consumer in a different unit must always supply an
+/// explicit default / case _ because the compiler never emits the implicit
+/// default: llvm.trap for a [NonExhaustive] enum consumed elsewhere.
+/// Compiler Target: DeclareEnum (IsNonExhaustive, SymbolUnits cross-unit tracking).
+/// </remarks>
+
+[NonExhaustive]
+enum Status : byte {
+    Active = 1,
+    Pending = 2,
+    Inactive = 3
+}

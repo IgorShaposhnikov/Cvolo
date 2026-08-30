@@ -694,7 +694,8 @@ PromoteEmbeddedMethods(units);
 		["UnsafeBody"] = (["Function", "Method", "Constructor", "Destructor"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
 		["NoAlias"] = (["Function", "Method", "Parameter"], [SafetyTier.Unbound, SafetyTier.Unsafe]),
 		["SuppressWarning"] = (["Struct", "Function", "Method", "Constructor", "Destructor", "Parameter"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
-		["Flags"] = (["Struct"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe])
+		["Flags"] = (["Struct"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
+		["NonExhaustive"] = (["Struct"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe])
 	};
 
 	private static readonly HashSet<string> KnownWarningIds = [DiagnosticIds.UnsafeBodyNoEffect, DiagnosticIds.UnknownAttribute, DiagnosticIds.UnboundNoRefParams];
@@ -1427,6 +1428,7 @@ PromoteEmbeddedMethods(units);
 
 		var appliedAttributes = VerifyAttributes(enumDecl.Attributes, "Struct", new List<string>());
 		var isFlags = appliedAttributes.Contains("Flags");
+		var isNonExhaustive = appliedAttributes.Contains("NonExhaustive");
 
 		var storageName = enumDecl.StorageType ?? "int";
 		if (!AllowedEnumStorageTypes.Contains(storageName))
@@ -1546,7 +1548,7 @@ PromoteEmbeddedMethods(units);
 			nextAuto = value + 1;
 		}
 
-		var enumSymbol = new EnumTypeSymbol(mangledName, variants, storageType) { IsFlags = isFlags };
+		var enumSymbol = new EnumTypeSymbol(mangledName, variants, storageType) { IsFlags = isFlags, IsNonExhaustive = isNonExhaustive };
 		context.EnumTypes[mangledName] = enumSymbol;
 		context.ReplaceTypeInCache(mangledName, enumSymbol);
 	}

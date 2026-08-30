@@ -219,4 +219,57 @@ public sealed class EnumsTests : CompilerTestBase
 		Assert.NotEqual(0, exitCode);
 		Assert.Contains(expectedError, stderr);
 	}
+
+	[Fact]
+	public void AnalyzeProject_Enum_NonExhaustive_Is_Flagged()
+	{
+		var (asts, context) = AnalyzeProject($"{Category}/NonExhaustiveInternal.cvl");
+
+		var status = Assert.IsType<EnumTypeSymbol>(context.ResolveType("Status"));
+		Assert.True(status.IsNonExhaustive);
+		Assert.False(status.IsFlags);
+		Assert.Equal(3, status.Variants.Count);
+	}
+
+	[Fact]
+	public void Enum_NonExhaustive_Internal_Stays_Exhaustive()
+	{
+		var fileName = $"{Category}/NonExhaustiveInternal.cvl";
+		var (exitCode, stdout, stderr) = RunCompiler(fileName);
+		AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
+
+		var (runCode, runStdout) = ExecuteBinary("NonExhaustiveInternal", Category);
+		Assert.Equal(0, runCode);
+		Assert.Equal("pending", runStdout.Replace("\r\n", "\n").Trim());
+	}
+
+	[Fact]
+	public void Enum_NonExhaustive_External_Consumer_Defaults_To_Fallback()
+	{
+		var projectPath = $"{Category}/NonExhaustive";
+		var (exitCode, stdout, stderr) = RunCompiler(projectPath);
+		AssertCompilationSucceeded(exitCode, stdout, stderr, projectPath);
+
+		var (runCode, runStdout) = ExecuteBinary("NonExhaustive", projectPath);
+		Assert.Equal(0, runCode);
+		Assert.Equal("fallback", runStdout.Replace("\r\n", "\n").Trim());
+	}
+
+	[Fact]
+	public void Enum_NonExhaustive_External_Consumer_Requires_Default()
+	{
+		var projectPath = $"{Category}/NonExhaustiveNoDefault";
+		var (exitCode, stdout, stderr) = RunCompiler(projectPath);
+		Assert.NotEqual(0, exitCode);
+		Assert.Contains("[NonExhaustive] enum 'Status' is consumed from another unit and requires an explicit 'default' or 'case _' branch.", stderr);
+	}
+
+	[Fact]
+	public void Enum_NonExhaustive_NonVoid_Requires_Terminating_Default()
+	{
+		var projectPath = $"{Category}/NonExhaustiveBadDefault";
+		var (exitCode, stdout, stderr) = RunCompiler(projectPath);
+		Assert.NotEqual(0, exitCode);
+		Assert.Contains("must terminate with a 'return' but ends in non-terminating statement(s).", stderr);
+	}
 }

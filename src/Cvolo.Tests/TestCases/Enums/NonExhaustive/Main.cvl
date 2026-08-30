@@ -1,0 +1,26 @@
+/// <summary>
+/// Feature: [NonExhaustive] Enums — Consumer Fallback (E7).
+/// </summary>
+/// <remarks>
+/// Consumer side: switches a [NonExhaustive] enum declared in a DIFFERENT unit
+/// (Library.cvl). §6.C relaxes exhaustiveness for external consumers and forbids the
+/// implicit default: llvm.trap - unhandled values must route to a developer-written
+/// default / case _. Here Status.Active is not covered by any case, so the runtime
+/// reaches the mandatory default and prints the fallback: no trap, no missing-case
+/// error for the unscanned variants.
+/// Compiler Target: ValidationPass CheckEnumSwitch isExternalConsumer path,
+/// CodeGenerator EmitEnumSwitch (developer default, trap never emitted for consumers).
+/// Memory: no heap allocations.
+/// </remarks>
+using System;
+
+int main() {
+    var Status s = Status.Active;
+    switch (s) {
+        case Pending:
+            Console.WriteLine("pending");
+        default:
+            Console.WriteLine("fallback");
+    }
+    return 0;
+}

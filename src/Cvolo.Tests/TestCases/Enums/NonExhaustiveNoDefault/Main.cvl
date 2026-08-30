@@ -1,0 +1,21 @@
+/// <summary>
+/// Feature: [NonExhaustive] Enums — Consumer Default Required (E7, rejection).
+/// </summary>
+/// <remarks>
+/// Consumer side: switches the [NonExhaustive] enum declared in Library.cvl with no
+/// default / case _. This is a cross-unit consumer, so the compiler must reject the
+/// switch: exhaustiveness is relaxed for external consumers, and unhandled runtime
+/// values would otherwise fall off the end without a trap.
+/// Compiler Target: ValidationPass CheckEnumSwitch isExternalConsumer path.
+/// Expected: error '...requires an explicit default or case _ branch.'.
+/// </remarks>
+using System;
+
+int main() {
+    var Status s = Status.Active;
+    switch (s) {
+        case Active:
+            Console.WriteLine("active");
+    }
+    return 0;
+}

@@ -1,0 +1,25 @@
+/// <summary>
+/// Feature: [NonExhaustive] Enums — Non-Void Return Verification (E7, rejection).
+/// </summary>
+/// <remarks>
+/// Consumer side: describe() is a non-void function whose body ends in the
+/// [NonExhaustive] switch and whose default branch ends in a non-terminating
+/// statement. §6.A Non-Void Return Verification must reject this: a body-terminal
+/// [NonExhaustive] switch needs a terminating default (return or diverging call);
+/// no downstream return exists to guarantee a value.
+/// Compiler Target: ValidationPass CheckEnumSwitch isExternalConsumer +
+/// EndsWithDivergingStatement.
+/// Expected: error '...must terminate with a return...'.
+/// </remarks>
+using System;
+
+int describe(Status s) {
+    switch (s) {
+        default:
+            Console.WriteLine("fallback");
+    }
+}
+
+int main() {
+    return describe(Status.Active);
+}

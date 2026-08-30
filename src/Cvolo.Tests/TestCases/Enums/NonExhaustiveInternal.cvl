@@ -1,0 +1,37 @@
+/// <summary>
+/// Feature: [NonExhaustive] Enums — Defining-Unit Contract is Strict (E7).
+/// </summary>
+/// <remarks>
+/// A [NonExhaustive] enum switched INSIDE the unit that declares it keeps the
+/// exhaustive switch contract of §6.A: every variant must have a case (or an
+/// explicit default). Exhaustiveness is only relaxed for consumers in a DIFFERENT
+/// unit (§6.C) - unit being the compilation unit (file group), since there is no
+/// cross-package import model. The attribute is an intrinsic (recognized, no CVL1002).
+/// Compiler Target: DeclarationPass IntrinsicAttributes / DeclareEnum
+/// (IsNonExhaustive), ValidationPass CheckEnumSwitch strict same-unit path.
+/// Memory: no heap allocations; the switch lowers to a lookup with the trap fallback.
+/// </remarks>
+using System;
+
+[NonExhaustive]
+enum Status : byte {
+    Active = 1,
+    Pending = 2,
+    Inactive = 3
+}
+
+int main() {
+    var Status s = Status.Pending;
+    switch (s) {
+        case Active:
+            Console.WriteLine("active");
+            return 0;
+        case Pending:
+            Console.WriteLine("pending");
+            return 0;
+        case Inactive:
+            Console.WriteLine("inactive");
+            return 0;
+    }
+    return 1;
+}
