@@ -2075,6 +2075,15 @@ case MemberAccessExpressionSyntax m:
 				EmitUnionTagCheckedCleanup(name, ptrAlloc, unionType);
 			}
 
+			// 1c. Reverse loop destructor for static arrays of resource-move element types.
+			//     The Memory & Safety spec (§2) requires that every element be destroyed in
+			//     decreasing index order (Length-1 .. 0) before the frame pops. Empty/trivially
+			//     destructible element types emit nothing.
+			if (type is ArrayTypeSymbol arrayType)
+			{
+				EmitArrayDestructorLoop(ptrAlloc, arrayType, name);
+			}
+
 			// 2. Free heap memory if it was heap-allocated
 			if (_heapAllocatedVars.Contains(name))
 			{
@@ -2170,11 +2179,102 @@ case MemberAccessExpressionSyntax m:
 			_builder.BuildCall2(disposeType, disposeCallee, new LLVMValueRef[] { castPtr }, "");
 			_builder.BuildBr(after);
 
-			_builder.PositionAtEnd(failBlock);
-		}
+		_builder.PositionAtEnd(failBlock);
+	}
 
 		_builder.PositionAtEnd(after);
 	}
+
+	/// <summary>
+	/// Emits the reverse-index Array Destructor Loop for a static array of a resource-move
+	/// element type (Memory &amp; Safety spec §2). Iterates from Size-1 down to 0, destroying
+	/// each element in place before re-joining the fall-through. Emits nothing when the
+	/// element type carries no destructor obligation.
+	/// </summary>
+	private void EmitArrayDestructorLoop(LLVMValueRef ptrAlloc, ArrayTypeSymbol arrayType, string name)
+	{
+		if (!TypeNeedsDestruction(arrayType.ElementType))
+		{
+			return;
+		}
+
+		var currentFunc = _builder.InsertBlock.Parent;
+		var arrayLayout = GetLLVMType(arrayType);
+
+		var indexAlloca = _builder.BuildAlloca(LLVMTypeRef.Int32, $"{name}_arr_i");
+		_builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (ulong)Math.Max(0, arrayType.Size - 1)), indexAlloca);
+
+		var condBlock = currentFunc.AppendBasicBlock($"{name}_arr_cond");
+		var bodyBlock = currentFunc.AppendBasicBlock($"{name}_arr_body");
+		var endBlock = currentFunc.AppendBasicBlock($"{name}_arr_end");
+
+		_builder.BuildBr(condBlock);
+
+		_builder.PositionAtEnd(condBlock);
+		var iVal = _builder.BuildLoad2(LLVMTypeRef.Int32, indexAlloca, $"{name}_arr_i_val");
+		var zero = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0);
+		var cond = _builder.BuildICmp(LLVMIntPredicate.LLVMIntSGE, iVal, zero, $"{name}_arr_cond");
+		_builder.BuildCondBr(cond, bodyBlock, endBlock);
+
+		_builder.PositionAtEnd(bodyBlock);
+		var elementPtr = _builder.BuildGEP2(arrayLayout, ptrAlloc, new LLVMValueRef[] {
+			LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
+			iVal
+		}, $"{name}_arr_elem");
+		EmitElementDestructor(elementPtr, arrayType.ElementType, name);
+		var next = _builder.BuildSub(iVal, LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1), $"{name}_arr_dec");
+		_builder.BuildStore(next, indexAlloca);
+		_builder.BuildBr(condBlock);
+
+		_builder.PositionAtEnd(endBlock);
+	}
+
+	/// <summary>
+	/// Emits the in-place destructor for a single value held at <paramref name="valuePtr"/>, based
+	/// on its type. Supports structs with their own destructor, tag-checked unions wrapping a move
+	/// type, and nested static arrays.
+	/// </summary>
+	private void EmitElementDestructor(LLVMValueRef valuePtr, TypeSymbol type, string name)
+	{
+		switch (type)
+		{
+			case StructTypeSymbol structType:
+				var disposeBase = $"{structType.Name}.~{structType.Name}";
+				if (_bindingContext!.OverloadedFunctions.TryGetValue(disposeBase, out var disposeSymbols))
+				{
+					var disposeSymbol = disposeSymbols.First();
+					var disposeCallee = _globals[disposeSymbol.Name];
+					var disposeType = _functionTypes[disposeSymbol.Name];
+					_builder.BuildCall2(disposeType, disposeCallee, new LLVMValueRef[] { valuePtr }, "");
+				}
+				return;
+
+			case UnionTypeSymbol unionType:
+				if (UnionNeedsTagCheckedCleanup(unionType))
+				{
+					EmitUnionTagCheckedCleanup(name, valuePtr, unionType);
+				}
+				return;
+
+			case ArrayTypeSymbol arrayType:
+				EmitArrayDestructorLoop(valuePtr, arrayType, name);
+				return;
+		}
+	}
+
+	/// <summary>
+	/// Whether a type carries any destructor obligation for the array-destruction loop: a struct
+	/// with its own destructor, a tag-checked union wrapping a move type, or a static array whose
+	/// element type needs destruction. Linear elements carry no obligation and are excluded.
+	/// </summary>
+	private bool TypeNeedsDestruction(TypeSymbol type) => type switch
+	{
+		StructTypeSymbol structType =>
+			_bindingContext!.OverloadedFunctions.ContainsKey($"{structType.Name}.~{structType.Name}"),
+		UnionTypeSymbol unionType => UnionNeedsTagCheckedCleanup(unionType),
+		ArrayTypeSymbol arrayType => TypeNeedsDestruction(arrayType.ElementType),
+		_ => false
+	};
 
 	private void InjectBoundsCheck(IndexExpressionSyntax idx, LLVMValueRef indexVal, LLVMValueRef limitVal)
 	{

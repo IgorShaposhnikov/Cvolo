@@ -1,0 +1,26 @@
+/// <summary>
+/// Verifies that array destructor loops also run for an array that is still alive when the
+/// enclosing function returns (destruction at the return/frame pop site).
+/// </summary>
+/// <remarks>
+/// The Memory &amp; Safety spec (§2) Array Destruction Invariant holds regardless of whether the
+/// array goes out of scope at an explicit block end or at function return; both must destroy
+/// every element in reverse index order before the frame pops.
+/// </remarks>
+using System;
+
+struct Resource {
+    int Handle;
+}
+
+extension Resource {
+    ~Resource() {
+        Console.WriteLine($"dtor {Handle}");
+    }
+}
+
+int main() {
+    var Resource[2] arr = { Resource { Handle: 10 }, Resource { Handle: 20 } };
+    Console.WriteLine("main end");
+    return 0;
+}

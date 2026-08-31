@@ -1,0 +1,27 @@
+/// <summary>
+/// Verifies the single-element edge case of the array destructor loop (Size == 1).
+/// </summary>
+/// <remarks>
+/// A one-element static array of a Resource Move type must still run its destructor exactly once
+/// when it goes out of scope, with the reverse-index loop degenerate to a single iteration.
+/// </remarks>
+using System;
+
+struct Resource {
+    int Handle;
+}
+
+extension Resource {
+    ~Resource() {
+        Console.WriteLine($"dtor {Handle}");
+    }
+}
+
+int main() {
+    {
+        var Resource[1] arr = { Resource { Handle: 7 } };
+        Console.WriteLine("in block");
+    }
+    Console.WriteLine("main end");
+    return 0;
+}

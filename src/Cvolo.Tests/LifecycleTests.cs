@@ -19,6 +19,27 @@ public sealed class LifecycleTests : CompilerTestBase
 		Assert.Contains(expected, runStdout);
 	}
 
+	[Theory]
+	[InlineData("ArrayDestructorLoop", "main start", "dtor 300", "dtor 200", "dtor 100")]
+	[InlineData("ArrayDestructorLoopMainScope", "main end", "dtor 20", "dtor 10", null)]
+	[InlineData("ArrayDestructorLoopOneElement", "in block", "dtor 7", null, null)]
+	public void ArrayDestructorLoop(string caseName, string midOutput, string firstDtor, string? secondDtor, string? thirdDtor)
+	{
+		var fileName = $"Lifecycle/{caseName}.cvl";
+		var (exitCode, stdout, stderr) = RunCompiler(fileName);
+		AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
+
+		var (runCode, runStdout) = ExecuteBinary(caseName, "Lifecycle");
+		Assert.Equal(0, runCode);
+
+		// Elements must be destroyed in reverse index order (Length-1 .. 0), so each
+		// destructor's output must appear after all later-indexed destructors.
+		var nl = Environment.NewLine;
+		var expectedSequence = string.Join(nl, new[] { midOutput, firstDtor, secondDtor, thirdDtor }
+			.Where(s => s is not null)!);
+		Assert.Contains(expectedSequence, runStdout);
+	}
+
 	[Fact]
 	public void AutoInferWarning_Emits_CVL1011()
 	{

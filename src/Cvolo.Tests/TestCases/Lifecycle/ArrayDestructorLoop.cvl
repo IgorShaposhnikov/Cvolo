@@ -1,0 +1,29 @@
+/// <summary>
+/// Verifies the Array Destruction Invariant: a static array of a Resource Move element type is
+/// destroyed element-by-element in reverse index order (Length-1 .. 0) when it goes out of scope.
+/// </summary>
+/// <remarks>
+/// The Memory &amp; Safety spec (§2) requires that every member of a static array of a resource-move
+/// element type be destroyed in decreasing index order before the frame pops. Each element
+/// destructor runs in place via the generated array destructor loop.
+/// </remarks>
+using System;
+
+struct Resource {
+    int Handle;
+}
+
+extension Resource {
+    ~Resource() {
+        Console.WriteLine($"dtor {Handle}");
+    }
+}
+
+int main() {
+    Console.WriteLine("main start");
+    {
+        var Resource[3] arr = { Resource { Handle: 100 }, Resource { Handle: 200 }, Resource { Handle: 300 } };
+    }
+    Console.WriteLine("main end");
+    return 0;
+}
