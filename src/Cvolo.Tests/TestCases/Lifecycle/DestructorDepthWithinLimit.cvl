@@ -1,0 +1,81 @@
+﻿using System;
+
+/// <summary>
+/// A destructor chain that stays within the compiler's nesting limit (1024) and must be
+/// accepted: each struct embeds the next by value, down to a leaf whose destructor runs
+/// when the outermost variable leaves scope.
+/// </summary>
+/// <remarks>
+/// Memory & Safety spec §2: the compiler enforces a maximum destructor nesting depth
+/// (default 1024). This 50-level chain is well under the cap, so it must compile and
+/// the leaf's destructor must fire on scope exit.
+/// </remarks>
+struct Leaf { int Handle; }
+
+extension Leaf {
+    ~Leaf() {
+        Console.WriteLine($"dtor {Handle}");
+    }
+}
+
+struct T_49 { Leaf N; int X; }
+struct T_48 { T_49 N; int X; }
+struct T_47 { T_48 N; int X; }
+struct T_46 { T_47 N; int X; }
+struct T_45 { T_46 N; int X; }
+struct T_44 { T_45 N; int X; }
+struct T_43 { T_44 N; int X; }
+struct T_42 { T_43 N; int X; }
+struct T_41 { T_42 N; int X; }
+struct T_40 { T_41 N; int X; }
+struct T_39 { T_40 N; int X; }
+struct T_38 { T_39 N; int X; }
+struct T_37 { T_38 N; int X; }
+struct T_36 { T_37 N; int X; }
+struct T_35 { T_36 N; int X; }
+struct T_34 { T_35 N; int X; }
+struct T_33 { T_34 N; int X; }
+struct T_32 { T_33 N; int X; }
+struct T_31 { T_32 N; int X; }
+struct T_30 { T_31 N; int X; }
+struct T_29 { T_30 N; int X; }
+struct T_28 { T_29 N; int X; }
+struct T_27 { T_28 N; int X; }
+struct T_26 { T_27 N; int X; }
+struct T_25 { T_26 N; int X; }
+struct T_24 { T_25 N; int X; }
+struct T_23 { T_24 N; int X; }
+struct T_22 { T_23 N; int X; }
+struct T_21 { T_22 N; int X; }
+struct T_20 { T_21 N; int X; }
+struct T_19 { T_20 N; int X; }
+struct T_18 { T_19 N; int X; }
+struct T_17 { T_18 N; int X; }
+struct T_16 { T_17 N; int X; }
+struct T_15 { T_16 N; int X; }
+struct T_14 { T_15 N; int X; }
+struct T_13 { T_14 N; int X; }
+struct T_12 { T_13 N; int X; }
+struct T_11 { T_12 N; int X; }
+struct T_10 { T_11 N; int X; }
+struct T_9 { T_10 N; int X; }
+struct T_8 { T_9 N; int X; }
+struct T_7 { T_8 N; int X; }
+struct T_6 { T_7 N; int X; }
+struct T_5 { T_6 N; int X; }
+struct T_4 { T_5 N; int X; }
+struct T_3 { T_4 N; int X; }
+struct T_2 { T_3 N; int X; }
+struct T_1 { T_2 N; int X; }
+struct T_0 { T_1 N; int X; }
+
+int main() {
+    Console.WriteLine("main start");
+    {
+        T_0 v;
+        Console.WriteLine("in block");
+    }
+    Console.WriteLine("main end");
+    return 0;
+}
+

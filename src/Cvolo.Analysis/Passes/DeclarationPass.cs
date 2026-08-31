@@ -1,5 +1,6 @@
 using Cvolo.Analysis.Symbols;
 using Cvolo.Analysis.Symbols.Base;
+using Cvolo.Analysis.Symbols.Collections;
 using Cvolo.Analysis.Symbols.Structs;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
@@ -35,6 +36,14 @@ public sealed class DeclarationPass(BindingContext context)
 	[
 		"int", "uint", "short", "ushort", "long", "ulong", "char", "byte", "sbyte"
 	];
+
+	// Memory & Safety spec §2: the destructor nesting depth is capped. Dropping a value of a
+	// deeply nested (by-value) move type would recurse once per nested owner; past this bound we
+	// refuse to compile rather than risk unbounded cleanup recursion.
+	private const int MaxDestructorNestingDepth = 1024;
+
+	private const string CyclicDestructorDepthError =
+		"Cyclic destructor nesting depth exceeded. Please use an arena allocator or manual cleanup.";
 
 	public void Process(IEnumerable<CompilationUnitSyntax> units)
 	{
@@ -107,6 +116,137 @@ public sealed class DeclarationPass(BindingContext context)
 		// embeds them — `w.TakeDamage(20)` on a struct that `embed`s BaseEntity
 		// resolves BaseEntity's extension with the outer struct as `this`.
 		PromoteEmbeddedMethods(units);
+
+		// Pass 2: Enforce the destructor nesting-depth limit (Memory & Safety §2). Run after every
+		// struct symbol (embeds included) is fully materialized so the transitive ownership graph
+		// is complete.
+		CheckDestructorDepth(units);
+	}
+
+	/// <summary>
+	/// Pass 2. Enforce the destructor nesting-depth cap. Walks each struct's transitive
+	/// owned (non-pointer) move field graph computing how deeply cleanup would recurse; a depth
+	/// beyond <see cref="MaxDestructorNestingDepth"/> is a compile error. Genuine by-value cycles
+	/// are inexpressible in safe source (a field type must already be declared, so a chain can never
+	/// loop), but the walk keeps a path set so a cycle — if ever reachable through other means — is
+	/// reported with the same diagnostic rather than recursing forever. Pointer fields are excluded:
+	/// they are not owned, their cleanup responsibility lies with the pointer consumer.
+	/// </summary>
+	private void CheckDestructorDepth(IEnumerable<CompilationUnitSyntax> units)
+	{
+		foreach (var unit in units)
+		{
+			context.CurrentUnit = unit;
+			context.CurrentNamespace = unit.NamespaceDeclaration?.Name;
+
+			var members = context.CurrentNamespace != null ? unit.NamespaceDeclaration!.Members : unit.Members;
+			foreach (var member in members)
+			{
+				if (member is not StructDeclarationSyntax structDecl)
+					continue;
+
+				// Generic templates' fields are type-parameter placeholders; their concrete
+				// nesting is checked when an instantiation is registered.
+				if (structDecl.GenericParameters.Count > 0)
+					continue;
+
+				var mangledName = context.GetMangledName(structDecl.Name, context.CurrentNamespace);
+				if (!context.StructTypes.TryGetValue(mangledName, out var structType))
+					continue;
+
+				if (DestructorDepth(structType, new HashSet<string>()) > MaxDestructorNestingDepth)
+				{
+					var currentFileContext = context.FileContexts[context.CurrentUnit!];
+					context.Diagnostics.Report(currentFileContext, structDecl.Span, CyclicDestructorDepthError);
+				}
+			}
+		}
+	}
+
+	/// <summary>
+	/// True if dropping a value of <paramref name="type"/> runs any user-visible cleanup: it has its
+	/// own destructor, or it (transitively) embeds/contains a type that does. Mirrors the emitter's
+	/// owned-move-field rule. Pointer and primitive/type-parameter types own nothing.
+	/// </summary>
+	private bool DestructorNeedsCleanup(TypeSymbol type)
+	{
+		switch (type)
+		{
+			case ArrayTypeSymbol arr:
+				return DestructorNeedsCleanup(arr.ElementType);
+			case SliceTypeSymbol slice:
+				return DestructorNeedsCleanup(slice.ElementType);
+			case StructTypeSymbol structType:
+				if (HasOwnDestructor(structType))
+					return true;
+				return structType.Fields.Any(f => DestructorNeedsCleanup(f.Type));
+			case UnionTypeSymbol unionType:
+				return unionType.Fields.Any(f => !f.IsVoidVariant && DestructorNeedsCleanup(f.Type));
+			default:
+				return false;
+		}
+	}
+
+	private bool HasOwnDestructor(StructTypeSymbol structType) => context.Destructors.ContainsKey(structType.Name);
+
+	/// <summary>
+	/// Maximum cleanup-recursion depth reachable from <paramref name="type"/> over owned fields,
+	/// matching the emitter's nested-drop recursion (a struct with its own destructor is the base
+	/// case and does not recurse). The path set is a defensive cycle guard.
+	/// </summary>
+	private int DestructorDepth(TypeSymbol type, HashSet<string> path)
+	{
+		if (type is ArrayTypeSymbol arr)
+		{
+			if (!DestructorNeedsCleanup(arr.ElementType))
+				return 0;
+			if (!path.Add(type.Name))
+				return 0;
+			var depth = 1 + DestructorDepth(arr.ElementType, path);
+			path.Remove(type.Name);
+			return depth;
+		}
+
+		if (type is SliceTypeSymbol slice)
+		{
+			if (!DestructorNeedsCleanup(slice.ElementType))
+				return 0;
+			if (!path.Add(type.Name))
+				return 0;
+			var depth = 1 + DestructorDepth(slice.ElementType, path);
+			path.Remove(type.Name);
+			return depth;
+		}
+
+		if (type is UnionTypeSymbol unionType)
+		{
+			var variants = unionType.Fields.Where(f => !f.IsVoidVariant && DestructorNeedsCleanup(f.Type)).ToList();
+			if (variants.Count == 0)
+				return 0;
+			if (!path.Add(type.Name))
+				return 0;
+			var depth = 1 + variants.Max(f => DestructorDepth(f.Type, path));
+			path.Remove(type.Name);
+			return depth;
+		}
+
+		if (type is StructTypeSymbol structType)
+		{
+			// A struct with its own destructor takes responsibility for its whole payload.
+			if (HasOwnDestructor(structType))
+				return 0;
+
+			var fields = structType.Fields.Where(f => DestructorNeedsCleanup(f.Type)).ToList();
+			if (fields.Count == 0)
+				return 0;
+			if (!path.Add(type.Name))
+				return 0;
+			var result = 1 + fields.Max(f => DestructorDepth(f.Type, path));
+			path.Remove(type.Name);
+			return result;
+		}
+
+		return 0;
 	}
 
 	/// <summary>

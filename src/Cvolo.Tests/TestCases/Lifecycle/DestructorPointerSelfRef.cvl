@@ -1,0 +1,30 @@
+using System;
+
+/// <summary>
+/// A self-referential struct reached only through a pointer edge. Pointer (indirect) edges are not
+/// owned, so they introduce no destructor-nesting obligation: this must compile without a depth error.
+/// </summary>
+/// <remarks>
+/// Memory & Safety spec §2: the destructor graph follows owned (by-value) fields only. A pointer to
+/// the same type is a consumer edge, not an ownership edge, so a self-pointer introduces no cycle and
+/// the enclosing struct is free to run its own destructor normally.
+/// </remarks>
+struct Node {
+    int Id;
+    Node* next;
+}
+
+extension Node {
+    ~Node() {
+        Console.WriteLine($"dtor {Id}");
+    }
+}
+
+int main() {
+    Node n;
+    n.Id = 7;
+    n.next = null;
+    Console.WriteLine("done");
+    Console.WriteLine("main end");
+    return 0;
+}
