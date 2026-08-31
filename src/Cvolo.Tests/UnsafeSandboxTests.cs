@@ -44,6 +44,7 @@ public sealed class UnsafeSandboxTests : CompilerTestBase
 	[InlineData("DerefOutsideUnsafe", "Cannot dereference outside unsafe context.")]
 	[InlineData("AddrOfOutsideUnsafe", "Cannot take address outside unsafe context.")]
 	[InlineData("RawPtrDeclOutsideUnsafe", "Raw pointer variables cannot be declared outside unsafe context.")]
+	[InlineData("UnsafeCallFromSafe", "Cannot call unsafe function 'Compute' from safe code.")]
 	public void SandboxViolations(string caseName, string expectedError)
 	{
 		var fileName = $"Sandbox/Unsafe/{caseName}.cvl";

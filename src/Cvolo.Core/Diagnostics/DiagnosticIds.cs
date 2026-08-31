@@ -38,8 +38,14 @@ public static class DiagnosticIds
 	/// <summary>Reference cannot escape an unbound scope.</summary>
 	public const string RefEscapesUnboundScope = "CVL1008";
 
+	/// <summary>Calling a raw 'unsafe fn' from code that is not in an unsafe context.</summary>
+	public const string CallUnsafeFromSafe = "CVL1009";
+
 	/// <summary>'unbound' modifier on a function with no ref/refvar parameters.</summary>
 	public const string UnboundNoRefParams = "CVL1010";
 	/// <summary>Auto-inference chose mutability for an unmarked extension method.</summary>
 	public const string AutoInferMutationWarning = "CVL1011";
+
+	/// <summary>Writing to a ref/refvar structural reference field outside an 'unbound' context.</summary>
+	public const string RefFieldMutationInSafe = "CVL1012";
 }

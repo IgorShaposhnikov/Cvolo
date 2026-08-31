@@ -1,0 +1,27 @@
+using System;
+
+/// <summary>
+/// Writing a local unbound reference into a reference field of a LOCAL struct is legal: the
+/// struct stays within the same unbound scope, so no reference escapes. This must compile
+/// and run.
+/// </summary>
+/// <remarks>
+/// Memory &amp; Safety spec §2: escape is only a hazard when the target outlives the unbound
+/// scope (a parameter or global). A local struct's reference field keeps everything in scope.
+/// </remarks>
+struct S {
+    refvar int r;
+}
+
+unbound int Fill() {
+    var target = 100;
+    var s = S { r: refvar target };
+    var x = 5;
+    s.r = x;
+    return 0;
+}
+
+int Main() {
+    Fill();
+    return 0;
+}

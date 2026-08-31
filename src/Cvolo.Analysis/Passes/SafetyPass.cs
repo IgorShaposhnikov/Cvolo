@@ -366,6 +366,36 @@ public sealed class SafetyPass(BindingContext context)
 				else
 				{
 					CheckExpressionSafety(bin.Left, scope);
+
+					// Structural Field-Mutation Isolation (§2 Rule 7): safe code must not directly write
+					// to a struct's `refvar`/`ref` reference fields; it may only read or traverse them.
+					// Modifying a structural reference field requires an `unbound` block or function.
+					// Raw-pointer fields are unaffected (they are not references and remain freely writable).
+					if (bin.Operator == "="
+						&& bin.Left is MemberAccessExpressionSyntax fieldWrite
+						&& CurrentTier != SafetyTier.Unbound
+						&& GetRefFieldName(fieldWrite.Expression, fieldWrite.MemberName, scope) is { } mutRefField)
+					{
+						var baseName = GetBaseIdentifierName(fieldWrite.Expression) ?? "?";
+						context.Diagnostics.Report(context.CurrentUnit!.Context, bin.Span,
+							$"Cannot assign to reference field '{mutRefField}' of variable '{baseName}' in safe code. Use an 'unbound' block or function to modify structural reference fields.");
+					}
+
+					// CVL1008: Escape prevention for reference-field stores. A local reference declared
+					// inside unbound scope must not escape into a reference field of an external (non-local)
+					// struct object (a parameter or a global), which outlives the unbound scope and would
+					// otherwise dangle.
+					if (bin.Operator == "="
+						&& _currentTierStack.Contains(SafetyTier.Unbound)
+						&& IsLocalUnboundRef(bin.Right, scope)
+						&& bin.Left is MemberAccessExpressionSyntax member
+						&& IsExternalEscapeBase(member.Expression, scope)
+						&& GetRefFieldName(member.Expression, member.MemberName, scope) is { } refField)
+					{
+						var baseName = GetBaseIdentifierName(member.Expression) ?? "?";
+						context.Diagnostics.Report(context.CurrentUnit!.Context, bin.Span,
+							$"Reference cannot escape unbound scope: cannot assign local reference to reference field '{refField}' of non-local variable '{baseName}'");
+					}
 				}
 
 				break;
@@ -700,6 +730,39 @@ public sealed class SafetyPass(BindingContext context)
 		if (name == null) return false;
 		if (!_localRefsInUnboundScope.Contains(name)) return false;
 		return scope.Lookup(name) is VariableSymbol sym && sym.Type is PointerTypeSymbol;
+	}
+
+	/// <summary>
+	/// Returns true when the base of a member access resolves to a non-local ("external") variable: a function
+	/// parameter or a global. Such objects outlive the surrounding unbound scope, so a local unbound reference
+	/// stored into one of their reference fields would escape and dangle (CVL1008).
+	/// </summary>
+	private bool IsExternalEscapeBase(ExpressionSyntax baseExpr, SymbolTable scope)
+	{
+		var name = GetBaseIdentifierName(baseExpr);
+		if (name == null) return false;
+		return scope.Lookup(name) is VariableSymbol sym && (sym.IsGlobal || sym.Origin == OriginKind.Parameter);
+	}
+
+	/// <summary>
+	/// Resolves the named field on the struct type of the given base expression and returns its name if and only if
+	/// it is a reference (ref/refvar) field. Returns null for value fields or when the type cannot be resolved.
+	/// </summary>
+	private string? GetRefFieldName(ExpressionSyntax baseExpr, string fieldName, SymbolTable scope)
+	{
+		var name = GetBaseIdentifierName(baseExpr);
+		if (name == null || scope.Lookup(name) is not VariableSymbol sym) return null;
+
+		var structType = sym.Type switch
+		{
+			StructTypeSymbol s => s,
+			PointerTypeSymbol p when p.ReferencedType is StructTypeSymbol s => s,
+			_ => null
+		};
+		if (structType?.FindField(fieldName) is not { } field)
+			return null;
+
+		return field.Type is PointerTypeSymbol ? field.Name : null;
 	}
 
 	private void CheckSwitchStatementSafety(SwitchStatementSyntax sw, SymbolTable scope, FunctionDeclarationSyntax func)

@@ -48,4 +48,34 @@ public sealed class UnboundSandboxTests : CompilerTestBase
 		Assert.NotEqual(0, exitCode);
 		Assert.Contains("Reference cannot escape unbound scope", stderr);
 	}
+
+	[Fact]
+	public void RefEscapeToStructField_Rejected()
+	{
+		var fileName = "Sandbox/Unbound/RefEscapeToStructField.cvl";
+		var (exitCode, stdout, stderr) = RunCompiler(fileName);
+		Assert.NotEqual(0, exitCode);
+		Assert.Contains("Reference cannot escape unbound scope", stderr);
+		Assert.Contains("reference field", stderr);
+	}
+
+	[Fact]
+	public void RefFieldStoreLocal_Accepted()
+	{
+		var fileName = "Sandbox/Unbound/RefFieldStoreLocal.cvl";
+		var (exitCode, stdout, stderr) = RunCompiler(fileName);
+		AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
+
+		var (runCode, runStdout) = ExecuteBinary("RefFieldStoreLocal", "Sandbox/Unbound");
+		Assert.Equal(0, runCode);
+	}
+
+	[Fact]
+	public void RefFieldMutateInSafe_Rejected()
+	{
+		var fileName = "Sandbox/Unbound/RefFieldMutateInSafe.cvl";
+		var (exitCode, stdout, stderr) = RunCompiler(fileName);
+		Assert.NotEqual(0, exitCode);
+		Assert.Contains("Cannot assign to reference field", stderr);
+	}
 }

@@ -5,10 +5,7 @@ unsafe int Compute(int a, int b) {
 }
 
 int Main() {
-    var result = 0;
-    unsafe {
-        result = Compute(10, 20);
-    }
+    int result = Compute(10, 20);
     Console.WriteLine(result);
     return 0;
 }

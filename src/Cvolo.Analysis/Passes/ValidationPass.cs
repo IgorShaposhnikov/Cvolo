@@ -522,16 +522,26 @@ public sealed class ValidationPass(BindingContext context)
 						}
 					}
 
-					if (func is null)
-					{
-						var currentFileContext = context.FileContexts[context.CurrentUnit!];
-						var sigString = string.Join(", ", argTypes.Select(t => t.Name));
-						context.Diagnostics.Report(currentFileContext, call.Span, $"No overload of function '{call.FunctionName}' matches argument types ({sigString})");
-						return;
-					}
+				if (func is null)
+				{
+					var currentFileContext = context.FileContexts[context.CurrentUnit!];
+					var sigString = string.Join(", ", argTypes.Select(t => t.Name));
+					context.Diagnostics.Report(currentFileContext, call.Span, $"No overload of function '{call.FunctionName}' matches argument types ({sigString})");
+					return;
+				}
 
-					// Record the resolved overload for CodeGenerator consumption
-					context.ResolvedCalls[call] = func;
+				// Caller-side unsafe invocation check (Memory & Safety spec §6.A): a raw 'unsafe fn'
+				// (form A) must be invoked from an unsafe context. '[UnsafeBody]' functions expose a safe
+				// API (form B) and are exempt, as are calls already inside an unsafe context.
+				if (func.SafetyTier == SafetyTier.Unsafe && !func.IsUnsafeBody && _unsafeDepth == 0)
+				{
+					var currentFileContext = context.FileContexts[context.CurrentUnit!];
+					context.Diagnostics.Report(currentFileContext, call.Span,
+						$"Cannot call unsafe function '{call.FunctionName}' from safe code. Wrap the call in an 'unsafe {{ }}' block or mark this function 'unsafe'.");
+				}
+
+				// Record the resolved overload for CodeGenerator consumption
+				context.ResolvedCalls[call] = func;
 
 					var argCount = call.Arguments.Count;
 					var paramCount = func.Parameters.Count;

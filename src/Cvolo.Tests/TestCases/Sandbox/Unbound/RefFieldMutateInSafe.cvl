@@ -1,0 +1,23 @@
+using System;
+
+/// <summary>
+/// Safe code must not directly write to a struct's `refvar` reference fields. Only reads and
+/// traversal are allowed; structural reference-field mutation requires an `unbound` block or
+/// function. This must be rejected (Structural Field-Mutation Isolation, §2 Rule 7).
+/// </summary>
+/// <remarks>
+/// Memory &amp; Safety spec §2 Rule 7: writing `s.r = ...` from safe code is forbidden. The same
+/// write is legal inside an `unbound` function (see RefFieldStoreLocal.cvl), keeping the safety
+/// and optimization boundary predictable.
+/// </remarks>
+struct S {
+    refvar int r;
+}
+
+int Main() {
+    var a = 1;
+    var s = S { r: refvar a };
+    var x = 5;
+    s.r = x;
+    return 0;
+}

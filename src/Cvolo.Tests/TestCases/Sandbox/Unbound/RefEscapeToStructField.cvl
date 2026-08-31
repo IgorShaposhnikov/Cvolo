@@ -1,0 +1,28 @@
+using System;
+
+/// <summary>
+/// A local unbound reference must not be stored into a reference field of a non-local
+/// (function parameter or global) struct: that would let the unbound-scoped reference
+/// outlive its scope. This must be rejected (CVL1008).
+/// </summary>
+/// <remarks>
+/// Memory &amp; Safety spec §2: a reference created inside an unbound scope cannot escape into
+/// storage owned by a caller or a global. Assigning such a reference to a `refvar` reference
+/// field of a parameter or global struct is an escape through the struct boundary.
+/// </remarks>
+struct S {
+    refvar int r;
+}
+
+unbound void Fill(refvar S s, refvar int x) {
+    refvar int local = x;
+    s.r = local;
+}
+
+int Main() {
+    var a = 1;
+    var s = S { r: refvar a };
+    var b = 2;
+    Fill(refvar s, refvar b);
+    return 0;
+}
