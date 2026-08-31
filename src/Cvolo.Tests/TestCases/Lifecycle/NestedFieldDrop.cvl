@@ -1,0 +1,34 @@
+using System;
+
+/// <summary>
+/// A struct with no destructor of its own that embeds a resource-move field with a destructor.
+/// When the enclosing struct goes out of scope, the nested field's `~Inner()` must still run.
+/// </summary>
+/// <remarks>
+/// Memory & Safety spec §2: a struct without a destructor must still drop the runtime resources
+/// it transitively owns. Construct the inner field positionally and never move the outer struct,
+/// so the scope-exit cleanup is the only place the inner destructor can run.
+/// </remarks>
+struct Inner {
+    int Handle;
+}
+
+extension Inner {
+    ~Inner() {
+        Console.WriteLine($"dtor {Handle}");
+    }
+}
+
+struct Outer {
+    Inner I;
+}
+
+int main() {
+    Console.WriteLine("main start");
+    {
+        var Outer o = Outer { I: Inner { Handle: 42 } };
+        Console.WriteLine("in block");
+    }
+    Console.WriteLine("main end");
+    return 0;
+}

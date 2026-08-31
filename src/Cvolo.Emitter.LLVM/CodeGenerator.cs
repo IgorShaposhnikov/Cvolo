@@ -2040,10 +2040,22 @@ case MemberAccessExpressionSyntax m:
 			var ptrAlloc = _locals[name];
 			var type = _variableTypes[name];
 
-			// 1. Call the type's '~T()' destructor ONLY for owned StructTypeSymbol variables
+			// 1. Call the type's '~T()' destructor ONLY for owned StructTypeSymbol variables. When the
+			//    struct has no destructor of its own, still drop any resource-move fields it
+			//    transitively owns on scope exit (Memory & Safety spec §2).
 			if (type is StructTypeSymbol structType)
 			{
 				var disposeBaseName = $"{structType.Name}.~{structType.Name}";
+
+				LLVMValueRef thisPtr;
+				if (_heapAllocatedVars.Contains(name))
+				{
+					thisPtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), ptrAlloc, "this_ptr");
+				}
+				else
+				{
+					thisPtr = ptrAlloc;
+				}
 
 				if (_bindingContext!.OverloadedFunctions.TryGetValue(disposeBaseName, out var candidates) && candidates.Count > 0)
 				{
@@ -2051,19 +2063,11 @@ case MemberAccessExpressionSyntax m:
 					var callee = _globals[disposeSymbol.Name];
 					var funcType = _functionTypes[disposeSymbol.Name];
 
-					var isHeap = _heapAllocatedVars.Contains(name);
-
-					LLVMValueRef thisPtr;
-					if (isHeap)
-					{
-						thisPtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), ptrAlloc, "this_ptr");
-					}
-					else
-					{
-						thisPtr = ptrAlloc;
-					}
-
 					_builder.BuildCall2(funcType, callee, new LLVMValueRef[] { thisPtr }, "");
+				}
+				else
+				{
+					EmitNestedFieldDestruction(thisPtr, structType, name);
 				}
 			}
 
@@ -2113,8 +2117,7 @@ case MemberAccessExpressionSyntax m:
 	/// </summary>
 	private bool UnionNeedsTagCheckedCleanup(UnionTypeSymbol unionType)
 	{
-		return unionType.Fields.Any(f => !f.IsVoidVariant
-			&& _bindingContext!.OverloadedFunctions.ContainsKey($"{f.Type.Name}.~{f.Type.Name}"));
+		return unionType.Fields.Any(f => !f.IsVoidVariant && TypeNeedsDestruction(f.Type));
 	}
 
 	/// <summary>
@@ -2129,7 +2132,7 @@ case MemberAccessExpressionSyntax m:
 		var dropped = unionType.Fields
 			.Where(f => !f.IsVoidVariant)
 			.Select(f => (Field: f, Index: GetFieldIndex(unionType, f!.Name)))
-			.Where(t => _bindingContext!.OverloadedFunctions.ContainsKey($"{t.Field.Type.Name}.~{t.Field.Type.Name}"))
+			.Where(t => TypeNeedsDestruction(t.Field.Type))
 			.ToList();
 
 		if (dropped.Count == 0)
@@ -2172,11 +2175,7 @@ case MemberAccessExpressionSyntax m:
 				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1)
 			}, $"{name}_payload");
 			var castPtr = _builder.BuildBitCast(payloadPtr, LLVMTypeRef.CreatePointer(GetLLVMType(field.Type), 0), $"{name}_payload_ptr");
-			var disposeBase = $"{field.Type.Name}.~{field.Type.Name}";
-			var disposeSymbol = _bindingContext!.OverloadedFunctions[disposeBase].First();
-			var disposeCallee = _globals[disposeSymbol.Name];
-			var disposeType = _functionTypes[disposeSymbol.Name];
-			_builder.BuildCall2(disposeType, disposeCallee, new LLVMValueRef[] { castPtr }, "");
+			EmitElementDestructor(castPtr, field.Type, $"{name}_u");
 			_builder.BuildBr(after);
 
 		_builder.PositionAtEnd(failBlock);
@@ -2247,6 +2246,10 @@ case MemberAccessExpressionSyntax m:
 					var disposeType = _functionTypes[disposeSymbol.Name];
 					_builder.BuildCall2(disposeType, disposeCallee, new LLVMValueRef[] { valuePtr }, "");
 				}
+				else
+				{
+					EmitNestedFieldDestruction(valuePtr, structType, name);
+				}
 				return;
 
 			case UnionTypeSymbol unionType:
@@ -2263,14 +2266,39 @@ case MemberAccessExpressionSyntax m:
 	}
 
 	/// <summary>
-	/// Whether a type carries any destructor obligation for the array-destruction loop: a struct
-	/// with its own destructor, a tag-checked union wrapping a move type, or a static array whose
-	/// element type needs destruction. Linear elements carry no obligation and are excluded.
+	/// Drops every resource-move field of a struct that lacks its own destructor, in declaration
+	/// order, so a struct-without-a-dtor still releases the runtime resources it transitively owns
+	/// on scope exit (Memory & Safety spec §2). Fields that need no destruction are skipped.
+	/// </summary>
+	private void EmitNestedFieldDestruction(LLVMValueRef valuePtr, StructTypeSymbol structType, string name)
+	{
+		var structLayout = GetLLVMType(structType);
+		foreach (var field in structType.Fields)
+		{
+			if (!TypeNeedsDestruction(field.Type))
+				continue;
+
+			var fieldPtr = _builder.BuildGEP2(structLayout, valuePtr, new LLVMValueRef[] {
+				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
+				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (ulong)GetFieldIndex(structType, field.Name))
+			}, $"{name}_f_{field.Name}");
+			EmitElementDestructor(fieldPtr, field.Type, name);
+		}
+	}
+
+	/// <summary>
+	/// Whether a type carries any destructor obligation: a struct with its own destructor (or,
+	/// lacking one, any transitively owned resource-move field), a union whose active payload
+	/// variant may need dropping, or a static array whose element type needs destruction. Linear
+	/// elements carry no obligation and are excluded.
 	/// </summary>
 	private bool TypeNeedsDestruction(TypeSymbol type) => type switch
 	{
+		// A struct needs destruction if it has its own destructor, or (lacking one) it transitively
+		// embeds a resource-move field that must be dropped on scope exit (Memory & Safety spec §2).
 		StructTypeSymbol structType =>
-			_bindingContext!.OverloadedFunctions.ContainsKey($"{structType.Name}.~{structType.Name}"),
+			_bindingContext!.OverloadedFunctions.ContainsKey($"{structType.Name}.~{structType.Name}")
+			|| structType.Fields.Any(f => TypeNeedsDestruction(f.Type)),
 		UnionTypeSymbol unionType => UnionNeedsTagCheckedCleanup(unionType),
 		ArrayTypeSymbol arrayType => TypeNeedsDestruction(arrayType.ElementType),
 		_ => false

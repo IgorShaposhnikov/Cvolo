@@ -1,0 +1,42 @@
+using System;
+
+/// <summary>
+/// Transitive nested-field drop: a struct without its own destructor embeds a field whose type is
+/// itself a struct without a destructor, which in turn embeds the resource-move leaf. All levels
+/// must be traversed so the deepest `~Leaf()` still runs on scope exit.
+/// </summary>
+/// <remarks>
+/// Memory & Safety spec §2: dropping a struct-without-a-destructor must recurse through nested
+/// struct fields until a destructor-bearing (or resource-move) leaf is reached. The array loop
+/// must likewise drive the deepest destructor for each element in reverse index order.
+/// </remarks>
+struct Leaf {
+    int Handle;
+}
+
+extension Leaf {
+    ~Leaf() {
+        Console.WriteLine($"dtor {Handle}");
+    }
+}
+
+struct Mid {
+    Leaf L;
+}
+
+struct Top {
+    Mid M;
+}
+
+int main() {
+    Console.WriteLine("main start");
+    {
+        var Top[2] arr = {
+            Top { M: Mid { L: Leaf { Handle: 100 } } },
+            Top { M: Mid { L: Leaf { Handle: 200 } } }
+        };
+        Console.WriteLine("in block");
+    }
+    Console.WriteLine("main end");
+    return 0;
+}

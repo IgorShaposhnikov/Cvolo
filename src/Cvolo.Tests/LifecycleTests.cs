@@ -40,6 +40,26 @@ public sealed class LifecycleTests : CompilerTestBase
 		Assert.Contains(expectedSequence, runStdout);
 	}
 
+	[Theory]
+	[InlineData("NestedFieldDrop", "in block", "dtor 42", null)]
+	[InlineData("NestedFieldDropTransitive", "in block", "dtor 200", "dtor 100")]
+	public void NestedFieldDrop(string caseName, string midOutput, string firstDtor, string? secondDtor)
+	{
+		var fileName = $"Lifecycle/{caseName}.cvl";
+		var (exitCode, stdout, stderr) = RunCompiler(fileName);
+		AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
+
+		var (runCode, runStdout) = ExecuteBinary(caseName, "Lifecycle");
+		Assert.Equal(0, runCode);
+
+		// A struct without its own destructor must still drop its transitively embedded
+		// resource-move fields; array elements must be dropped deepest-first in reverse order.
+		var nl = Environment.NewLine;
+		var expectedSequence = string.Join(nl, new[] { midOutput, firstDtor, secondDtor }
+			.Where(s => s is not null)!);
+		Assert.Contains(expectedSequence, runStdout);
+	}
+
 	[Fact]
 	public void AutoInferWarning_Emits_CVL1011()
 	{
