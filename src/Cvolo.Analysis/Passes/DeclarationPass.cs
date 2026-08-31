@@ -585,6 +585,14 @@ public sealed class DeclarationPass(BindingContext context)
 
 	private void DeclareFunction(FunctionDeclarationSyntax func)
 	{
+		// Receiver markers ('ref this' / 'refvar this') are only valid on extension methods.
+		if (func.Receiver != ReceiverContract.None)
+		{
+			context.Diagnostics.Report(context.FileContexts[context.CurrentUnit!], func.Span,
+				"Receiver parameter ('refvar this' / 'ref this') is only allowed on extension methods.");
+			return;
+		}
+
 		// Entry point (main / Main) is always global, lowercase, and unmangled
 		var mangledName = func.Name == "main" || func.Name == "Main"
 			? "main"

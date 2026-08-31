@@ -2367,7 +2367,20 @@ public sealed class ValidationPass(BindingContext context)
 				$"Method '{method.Name}' must declare 'ref this' or 'refvar this' receiver in [StrictMutability] struct.");
 		}
 
-		// 2. Mutability Determination & Verification
+		// 2. Locate the registered function symbol using the unmutated base registration.
+		//    Resolved early so declaration-level [SuppressWarning("CVL1011")] can be honored.
+		var baseMangledName = context.GetMangledName($"{extendedTypeName}.{method.Name}", context.CurrentNamespace);
+		var lookupThisType = new PointerTypeSymbol(extendedType!, isMutable: false); // Must use 'false' to match DeclarationPass
+		var lookupParams = new List<TypeSymbol> { lookupThisType };
+		foreach (var p in method.Parameters)
+		{
+			lookupParams.Add(context.ResolveType(p.Type)!);
+		}
+
+		var lookupOverloadedName = context.GetOverloadedMangledName(baseMangledName, lookupParams);
+		var funcSymbol = context.Globals.Lookup(lookupOverloadedName) as FunctionSymbol;
+
+		// 3. Mutability Determination & Verification
 		if (method.Receiver == ReceiverContract.Refvar)
 		{
 			isMutating = true;
@@ -2387,25 +2400,16 @@ public sealed class ValidationPass(BindingContext context)
 			isMutating = forceMutableThis || (structType != null && DetectFieldMutation(method.Body, structType));
 
 			// CVL1011 Warning if auto-inference chose mutation on a normal method
-			if (isMutating && !forceMutableThis && !isCtorOrDtor)
+			// (suppressed by '--nowarn CVL1011' at the driver level, or by
+			// declaration-level [SuppressWarning("CVL1011")]).
+			if (isMutating && !forceMutableThis && !isCtorOrDtor
+				&& funcSymbol?.SuppressedWarnings.Contains(DiagnosticIds.AutoInferMutationWarning) != true)
 			{
 				context.Diagnostics.ReportWarning(context.FileContexts[context.CurrentUnit!], method.Span,
 					$"Auto-inference chose mutability for method '{method.Name}'. Explicitly mark 'refvar this' to silence this warning.",
 					DiagnosticIds.AutoInferMutationWarning);
 			}
 		}
-
-		// 3. Locate the registered function symbol using the unmutated base registration
-		var baseMangledName = context.GetMangledName($"{extendedTypeName}.{method.Name}", context.CurrentNamespace);
-		var lookupThisType = new PointerTypeSymbol(extendedType!, isMutable: false); // Must use 'false' to match DeclarationPass
-		var lookupParams = new List<TypeSymbol> { lookupThisType };
-		foreach (var p in method.Parameters)
-		{
-			lookupParams.Add(context.ResolveType(p.Type)!);
-		}
-
-		var lookupOverloadedName = context.GetOverloadedMangledName(baseMangledName, lookupParams);
-		var funcSymbol = context.Globals.Lookup(lookupOverloadedName) as FunctionSymbol;
 
 		if (funcSymbol is not null)
 		{

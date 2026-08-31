@@ -1,0 +1,33 @@
+/// <summary>Verifies declaration-level [SuppressWarning("CVL1011")] suppresses the
+/// auto-inference mutability warning for an unmarked mutating extension method.</summary>
+/// <remarks>Covers Increment 4.5 receiver markers: an unmarked method whose body
+/// mutates a struct field normally triggers CVL1011; the per-declaration attribute
+/// must silence it while preserving behavior (the call still works, returns 100).</remarks>
+using System;
+
+struct Point
+{
+	int X;
+}
+
+extension Point
+{
+	[SuppressWarning("CVL1011")]
+	void Mutate()
+	{
+		X = 100;
+	}
+
+	int Read()
+	{
+		return X;
+	}
+}
+
+int Main()
+{
+	var Point p = Point { X: 0 };
+	p.Mutate();
+	Console.WriteLine(p.Read());
+	return 0;
+}
