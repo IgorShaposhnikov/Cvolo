@@ -159,17 +159,29 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 						DeclareExternFunction(ext);
 						break;
 					case FunctionDeclarationSyntax func when func.GenericParameters.Count == 0 && !func.Name.Contains('<'):
-						// Keep 'main' / 'Main' global and unmangled
+						// Skip abstract interface/protocol templates and bodyless intrinsic functions
+						var ifaceTemplateName = bindingContext.GetMangledName(func.Name, ns);
+						if (bindingContext.InterfaceFunctionTemplates.ContainsKey(ifaceTemplateName) ||
+							bindingContext.ProtocolFunctionTemplates.ContainsKey(ifaceTemplateName) ||
+							!func.HasBody ||
+							func.Attributes.Any(a => a.Name is "Intrinsic" or "System.Intrinsic" or "IntrinsicAttribute"))
+						{
+							continue;
+						}
+
 						var mangledName = (func.Name == "main" || func.Name == "Main")
 							? "main"
 							: bindingContext.GetMangledName(func.Name, ns);
 
-						// --- FIX: Mangle function registration based on parameter types ---
 						var paramTypes = func.Parameters.Select(p => bindingContext.ResolveType(p.Type)!).ToList();
 						var overloadedMangledName = bindingContext.GetOverloadedMangledName(mangledName, paramTypes);
 						DeclareFunction(func, overloadedMangledName);
 						break;
 					case ExtensionDeclarationSyntax extDecl:
+						// Skip protocol extension defaults in Pass C (they are materialized onto concrete conformers)
+						if (bindingContext.ResolveType(extDecl.ExtendedTypeName) is ProtocolTypeSymbol)
+							continue;
+
 						foreach (var method in extDecl.Methods
 							.Concat(extDecl.Destructors.Select(static d => d.ToFunctionDeclaration())))
 						{
@@ -451,6 +463,10 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 	private void EmitFunctionBody(FunctionDeclarationSyntax func, string mangledName)
 	{
+		// Bodyless intrinsic functions don't generate function bodies (calls are lowered directly to LLVM instructions)
+		if (!func.HasBody)
+			return;
+
 		if (!_globals.TryGetValue(mangledName, out var llvmFunc))
 			return;
 
@@ -852,6 +868,31 @@ case MemberAccessExpressionSyntax m:
 			var targetType = _bindingContext!.ResolveType(targetTypeName)!;
 			var size = GetByteSize(targetType);
 			return LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (ulong)size);
+		}
+
+		// Check if the resolved callee is decorated with [Intrinsic("llvm.xxx")]
+		if (_bindingContext!.ResolvedCalls.TryGetValue(call, out var intrinsicFunc) && !string.IsNullOrEmpty(intrinsicFunc.IntrinsicName))
+		{
+			var intrinsicArgs = new List<LLVMValueRef>();
+			foreach (var arg in call.Arguments)
+			{
+				intrinsicArgs.Add(EmitExpression(arg));
+			}
+
+			var retTy = GetLLVMType(intrinsicFunc.ReturnType);
+			var intrinsicCallee = GetOrDeclareIntrinsic(intrinsicFunc.IntrinsicName, intrinsicArgs, retTy);
+
+			var fullIntrinsicName = intrinsicFunc.IntrinsicName;
+			if (intrinsicArgs.Count > 0 && !fullIntrinsicName.EndsWith(".f64") && !fullIntrinsicName.EndsWith(".f32"))
+			{
+				if (intrinsicArgs[0].TypeOf.Kind == LLVMTypeKind.LLVMDoubleTypeKind)
+					fullIntrinsicName = $"{intrinsicFunc.IntrinsicName}.f64";
+				else if (intrinsicArgs[0].TypeOf.Kind == LLVMTypeKind.LLVMFloatTypeKind)
+					fullIntrinsicName = $"{intrinsicFunc.IntrinsicName}.f32";
+			}
+
+			var intrinsicFuncType = _functionTypes[fullIntrinsicName];
+			return _builder.BuildCall2(intrinsicFuncType, intrinsicCallee, intrinsicArgs.ToArray(), "intrinsic_call");
 		}
 
 		// (§5.A) Name() is synthesized on every enum and returns the declared variant
@@ -3673,5 +3714,28 @@ else if (expr is BorrowExpressionSyntax b)
 		}
 
 		EmitBlock(new BlockStatementSyntax(c.Span, c.Body));
+	}
+
+	private LLVMValueRef GetOrDeclareIntrinsic(string intrinsicBaseName, IReadOnlyList<LLVMValueRef> args, LLVMTypeRef returnType)
+	{
+		// Normalize name (e.g. "llvm.sqrt" -> "llvm.sqrt.f64")
+		var fullIntrinsicName = intrinsicBaseName;
+		if (args.Count > 0 && !intrinsicBaseName.EndsWith(".f64") && !intrinsicBaseName.EndsWith(".f32"))
+		{
+			if (args[0].TypeOf.Kind == LLVMTypeKind.LLVMDoubleTypeKind)
+				fullIntrinsicName = $"{intrinsicBaseName}.f64";
+			else if (args[0].TypeOf.Kind == LLVMTypeKind.LLVMFloatTypeKind)
+				fullIntrinsicName = $"{intrinsicBaseName}.f32";
+		}
+
+		if (_globals.TryGetValue(fullIntrinsicName, out var existing))
+			return existing;
+
+		var paramTypes = args.Select(a => a.TypeOf).ToArray();
+		var funcType = LLVMTypeRef.CreateFunction(returnType, paramTypes);
+		var func = _module.AddFunction(fullIntrinsicName, funcType);
+		_globals[fullIntrinsicName] = func;
+		_functionTypes[fullIntrinsicName] = funcType;
+		return func;
 	}
 }

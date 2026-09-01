@@ -42,6 +42,9 @@ public sealed class SafetyPass(BindingContext context)
 
 	private void CheckFunctionSafety(FunctionDeclarationSyntax func)
 	{
+		if (!func.HasBody)
+			return;
+
 		_activeBorrows.Clear();
 		_activeRefs.Clear();
 		_parentLocks.Clear();
@@ -77,6 +80,9 @@ public sealed class SafetyPass(BindingContext context)
 
 	private void CheckBlockSafety(BlockStatementSyntax block, SymbolTable scope, FunctionDeclarationSyntax func)
 	{
+		if (block is null)
+			return;
+
 		var borrowCountBefore = _activeBorrows.Count;
 		var refsAtEntry = new HashSet<string>(_activeRefs.Keys);
 		var stmts = block.Statements;
@@ -184,6 +190,9 @@ public sealed class SafetyPass(BindingContext context)
 
 	private void CheckStatementSafety(SyntaxNode stmt, SymbolTable scope, FunctionDeclarationSyntax func)
 	{
+		if (stmt is null)
+			return;
+
 		switch (stmt)
 		{
 			case VariableDeclarationSyntax v:

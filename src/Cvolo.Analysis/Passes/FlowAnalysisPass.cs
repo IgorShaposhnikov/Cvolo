@@ -27,6 +27,9 @@ public sealed class FlowAnalysisPass(BindingContext context)
 
 	private void AnalyzeFunctionFlow(FunctionDeclarationSyntax func)
 	{
+		if (!func.HasBody)
+			return;
+
 		var scope = new SymbolTable(context.Globals);
 
 		// 1. Parameters are always initialized on entry
@@ -39,14 +42,20 @@ public sealed class FlowAnalysisPass(BindingContext context)
 		AnalyzeBlock(func.Body, scope);
 	}
 
-	private void AnalyzeBlock(BlockStatementSyntax block, SymbolTable scope)
+	private void AnalyzeBlock(BlockStatementSyntax? block, SymbolTable scope)
 	{
+		if (block is null)
+			return;
+
 		foreach (var stmt in block.Statements)
 			AnalyzeStatement(stmt, scope);
 	}
 
 	private void AnalyzeStatement(SyntaxNode stmt, SymbolTable scope)
 	{
+		if (stmt is null)
+			return;
+
 		switch (stmt)
 		{
 			case VariableDeclarationSyntax v:
@@ -64,6 +73,7 @@ public sealed class FlowAnalysisPass(BindingContext context)
 						sym.IsInitialized = false;
 					}
 				}
+
 				break;
 
 			case IfStatementSyntax i:

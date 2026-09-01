@@ -23,6 +23,7 @@ public sealed class DeclarationPass(BindingContext context)
 		["Flags"] = (["Struct"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
 		["NonExhaustive"] = (["Struct"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
 		["StrictMutability"] = (["Struct"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
+		["Intrinsic"] = (["Function", "Method"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
 	};
 
 	private static readonly HashSet<string> KnownWarningIds =
@@ -518,7 +519,6 @@ public sealed class DeclarationPass(BindingContext context)
 			return;
 		}
 
-		// No intrinsic targets structs; verify so unknown/misapplied attributes still surface.
 		var appliedAttrs = VerifyAttributes(structDecl.Attributes, "Struct", new List<string>());
 
 		// If this is a generic struct template (e.g. struct Point<T>)
@@ -529,7 +529,6 @@ public sealed class DeclarationPass(BindingContext context)
 
 			var placeholderFields = new List<StructFieldSymbol>();
 
-			// MAKE SURE IsStrictMutability is set here too!
 			var templateSymbol = new StructTypeSymbol(mangledName, placeholderFields)
 			{
 				IsStrictMutability = appliedAttrs.Contains("StrictMutability")
@@ -541,12 +540,11 @@ public sealed class DeclarationPass(BindingContext context)
 
 		context.SymbolUnits[mangledName] = context.CurrentUnit!;
 
-		// Register a placeholder symbol BEFORE resolving fields so that
+		// 1. Register a placeholder symbol BEFORE resolving fields so that
 		// self-referential field types (e.g. `Option<ref Node>`) can resolve
 		// the enclosing struct's own name during generic instantiation.
-		// The fully-built symbol replaces it below; equality/codegen are
-		// name-driven, so the placeholder identity is invisible downstream.
-		context.StructTypes[mangledName] = new StructTypeSymbol(mangledName, []);
+		var placeholder = new StructTypeSymbol(mangledName, []);
+		context.StructTypes[mangledName] = placeholder;
 
 		var fields = new List<StructFieldSymbol>();
 		var fieldNames = new HashSet<string>();
@@ -571,17 +569,13 @@ public sealed class DeclarationPass(BindingContext context)
 			fields.Add(new StructFieldSymbol(field.Name, fieldType));
 		}
 
-		// Populate the placeholder registered above IN PLACE rather than
-		// replacing it with a new object. Reference field types resolved during
-		// field population capture a PointerTypeSymbol whose ReferencedType is
-		// the placeholder; mutating it keeps those references valid, so
-		// `a.refField.value` member access resolves the populated fields.
-		var structSymbol = context.StructTypes[mangledName];
-		structSymbol.Fields.AddRange(fields);
-		structSymbol.IsStrictMutability = appliedAttrs.Contains("StrictMutability");
-		// Ensure the canonical cache serves the (now populated) struct so later
-		// ResolveType("Node") returns the same field-ful symbol.
-		context.ReplaceTypeInCache(mangledName, structSymbol);
+		// 2. Populate the placeholder IN PLACE rather than creating a new object.
+		// Reference field types resolved during field population captured a PointerTypeSymbol
+		// whose ReferencedType is this placeholder; mutating its Fields keeps those references valid.
+		placeholder.PopulateFields(fields);
+		placeholder.IsStrictMutability = appliedAttrs.Contains("StrictMutability");
+
+		context.ReplaceTypeInCache(mangledName, placeholder);
 	}
 
 	private void DeclareInterface(InterfaceDeclarationSyntax interfaceDecl)
@@ -848,7 +842,12 @@ public sealed class DeclarationPass(BindingContext context)
 
 		var newSymbol = new FunctionSymbol(overloadedMangledName, type, parameters) { SafetyTier = safetyTier };
 		var suppressedWarnings = new List<string>();
-		ApplyFunctionAttributes(VerifyAttributes(func.Attributes, "Function", suppressedWarnings, safetyTier), newSymbol, suppressedWarnings);
+
+		ApplyFunctionAttributes(
+			VerifyAttributes(func.Attributes, "Function", suppressedWarnings, safetyTier),
+			newSymbol,
+			suppressedWarnings,
+			func.Attributes);
 
 		// [UnsafeBody] promotes to Unsafe tier even without the unsafe modifier
 		if (newSymbol.IsUnsafeBody)
@@ -861,9 +860,10 @@ public sealed class DeclarationPass(BindingContext context)
 		// (spec §5 Rule 9 heap-relative escape), so the warning is suppressed in that case.
 		if (safetyTier == SafetyTier.Unbound && !suppressedWarnings.Contains(DiagnosticIds.UnboundNoRefParams))
 		{
-			var hasRefParams = parameters.Any(p => p.Type is PointerTypeSymbol { IsMutable: true } or PointerTypeSymbol { IsMutable: false });
-			var returnsMove = type is not null && new ClassificationAnalyzer(context).Classify(type) == CopyKind.ResourceMove;
-			if (!hasRefParams && !returnsMove)
+			var hasRefParams = parameters.Any(p => p.Type is PointerTypeSymbol);
+			var returnsRefStruct = type is StructTypeSymbol st && st.Fields.Any(f => f.Type is PointerTypeSymbol);
+			var hasUnboundBody = func.HasBody && HasUnboundConstructs(func.Body!);
+			if (!hasRefParams && !returnsRefStruct && !hasUnboundBody)
 			{
 				ReportDeclarationWarning(func, "'unbound' modifier has no effect because function has no ref/refvar parameters.", DiagnosticIds.UnboundNoRefParams);
 			}
@@ -989,13 +989,22 @@ public sealed class DeclarationPass(BindingContext context)
 		suppressedWarnings?.Add(warningId);
 	}
 
-	private static void ApplyFunctionAttributes(List<string> appliedKeys, FunctionSymbol symbol, List<string> suppressedWarnings)
+private static void ApplyFunctionAttributes(List<string> appliedKeys, FunctionSymbol symbol, List<string> suppressedWarnings, IReadOnlyList<AttributeSyntax>? attributes = null)
 	{
 		if (appliedKeys.Contains("UnsafeBody"))
 			symbol.IsUnsafeBody = true;
 
 		if (appliedKeys.Contains("NoAlias"))
 			symbol.IsNoAlias = true;
+
+		if (appliedKeys.Contains("Intrinsic") && attributes is not null)
+		{
+			var intrinsicAttr = attributes.FirstOrDefault(a => a.Name is "Intrinsic" or "System.Intrinsic" or "IntrinsicAttribute");
+			if (intrinsicAttr?.Arguments.Count > 0 && intrinsicAttr.Arguments[0] is StringLiteralExpressionSyntax str)
+			{
+				symbol.IntrinsicName = str.Value;
+			}
+		}
 
 		foreach (var warningId in suppressedWarnings)
 			symbol.SuppressedWarnings.Add(warningId);
@@ -1004,8 +1013,11 @@ public sealed class DeclarationPass(BindingContext context)
 	/// <summary>
 	/// Flags [UnsafeBody] declarations whose bodies contain nothing unsafe; suppressible via [SuppressWarning].
 	/// </summary>
-	private void WarnIfUnsafeBodyUnused(Core.Diagnostics.TextSpan declarationSpan, SyntaxNode body, FunctionSymbol symbol, List<string> suppressedWarnings)
+	private void WarnIfUnsafeBodyUnused(TextSpan declarationSpan, SyntaxNode body, FunctionSymbol symbol, List<string> suppressedWarnings)
 	{
+		if (body is null)
+			return;
+
 		if (!symbol.IsUnsafeBody || suppressedWarnings.Contains(DiagnosticIds.UnsafeBodyNoEffect))
 			return;
 
@@ -1203,7 +1215,8 @@ public sealed class DeclarationPass(BindingContext context)
 			ApplyFunctionAttributes(
 				VerifyAttributes(method.Attributes, method.Name.StartsWith('~') ? "Destructor" : "Method", methodSuppressedWarnings),
 				newSymbol,
-				methodSuppressedWarnings);
+				methodSuppressedWarnings,
+				method.Attributes);
 			WarnIfUnsafeBodyUnused(method.Span, method.Body, newSymbol, methodSuppressedWarnings);
 
 			// COLLISION RULE: an extension may not re-declare a method the type already
@@ -1806,5 +1819,19 @@ public sealed class DeclarationPass(BindingContext context)
 			default:
 				return null;
 		}
+	}
+
+	private static bool HasUnboundConstructs(SyntaxNode node)
+	{
+		foreach (var child in node.GetChildren())
+		{
+			if (child is VariableDeclarationSyntax v && (v.Type is "refvar" or "ref" || (v.Type != null && v.Type.StartsWith("ref"))))
+				return true;
+			if (child is BorrowExpressionSyntax)
+				return true;
+			if (HasUnboundConstructs(child))
+				return true;
+		}
+		return false;
 	}
 }

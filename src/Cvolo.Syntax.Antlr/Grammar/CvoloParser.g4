@@ -48,7 +48,7 @@ functionModifier
 	;
 
 functionDeclaration
-	: attributeList* functionModifier? returnType Identifier (LT typeList GT)? LPAREN parameterList? RPAREN blockStatement
+	: attributeList* functionModifier? returnType Identifier (LT typeList GT)? LPAREN parameterList? RPAREN (blockStatement | SEMI)
 	;
 
 externDeclaration

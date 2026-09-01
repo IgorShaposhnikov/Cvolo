@@ -4,7 +4,8 @@ namespace Cvolo.Analysis.Symbols.Structs;
 
 public sealed class StructTypeSymbol(string name, IReadOnlyList<StructFieldSymbol> fields, StructTypeSymbol? embeddedType = null) : TypeSymbol(name)
 {
-	public List<StructFieldSymbol> Fields { get; } = fields.ToList();
+	private readonly List<StructFieldSymbol> _fields = [.. fields];
+	public List<StructFieldSymbol> Fields => _fields;
 
 	/// <summary>
 	/// The resolved, flattened embedded type composition this struct
@@ -16,6 +17,16 @@ public sealed class StructTypeSymbol(string name, IReadOnlyList<StructFieldSymbo
 	/// Every extension method must explicitly mark 'ref this' or 'refvar this'.
 	/// </summary>
 	public bool IsStrictMutability { get; set; } = false;
+
+	/// <summary>
+	/// Populates fields into a placeholder symbol during two-phase struct declaration.
+	/// Keeps existing PointerTypeSymbol references to this instance intact.
+	/// </summary>
+	public void PopulateFields(IEnumerable<StructFieldSymbol> fields)
+	{
+		_fields.Clear();
+		_fields.AddRange(fields);
+	}
 
 	public StructFieldSymbol? FindField(string name) => Fields.FirstOrDefault(f => f.Name == name);
 }

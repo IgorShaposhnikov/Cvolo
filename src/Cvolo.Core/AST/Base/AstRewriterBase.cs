@@ -60,7 +60,7 @@ public abstract class AstRewriterBase
 
 		if (node is FunctionDeclarationSyntax func)
 		{
-			var rewrittenBody = (BlockStatementSyntax)Rewrite(func.Body);
+			var rewrittenBody = func.Body != null ? (BlockStatementSyntax)Rewrite(func.Body) : null;
 			return new FunctionDeclarationSyntax(func.Span, func.ReturnType, func.Name, func.GenericParameters, func.Parameters, rewrittenBody, func.Attributes, func.Modifier, func.Receiver);
 		}
 

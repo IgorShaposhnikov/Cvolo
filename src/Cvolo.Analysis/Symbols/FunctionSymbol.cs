@@ -21,6 +21,9 @@ public sealed class FunctionSymbol(
 	/// <summary>Intrinsic [NoAlias] marker - emitter attaches LLVM noalias to reference params (unbound/unsafe tiers).</summary>
 	public bool IsNoAlias { get; set; }
 
+	/// <summary>Target LLVM intrinsic name when decorated with [Intrinsic("llvm.name")].</summary>
+	public string? IntrinsicName { get; set; }
+
 	/// <summary>Warning ids suppressed via [SuppressWarning("id")] on this declaration.</summary>
 	public List<string> SuppressedWarnings { get; } = [];
 

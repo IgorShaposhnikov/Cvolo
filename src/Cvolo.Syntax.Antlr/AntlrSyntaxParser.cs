@@ -155,7 +155,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			}
 		}
 
-		var body = BuildBlockStatement(context.blockStatement());
+		var body = context.blockStatement() is { } blockCtx ? BuildBlockStatement(blockCtx) : null;
 		var attributes = BuildAttributeList(context.attributeList());
 
 		// Extract optional function modifier (unsafe / unbound)

@@ -22,13 +22,16 @@ public sealed class FunctionDeclarationSyntax(
 	public IReadOnlyList<string> GenericParameters { get; } = genericParameters;
 	public IReadOnlyList<ParameterSyntax> Parameters { get; } = parameters;
 	public BlockStatementSyntax Body { get; } = body;
+	public bool HasBody => Body is not null;
 	public IReadOnlyList<AttributeSyntax> Attributes { get; } = attributes ?? [];
 	public SafetyTier? Modifier { get; } = modifier;
 	public ReceiverContract Receiver { get; } = receiver;
 
 	public override IEnumerable<SyntaxNode> GetChildren()
 	{
-		foreach (var p in Parameters) yield return p;
-		yield return Body;
+		foreach (var p in Parameters)
+			yield return p;
+		if (Body is not null)
+			yield return Body;
 	}
 }

@@ -177,9 +177,22 @@ public sealed class ValidationPass(BindingContext context)
 
 	private void CheckFunctionBody(FunctionDeclarationSyntax func)
 	{
+		// 1. Guard for bodyless functions: must have [Intrinsic]
+		if (!func.HasBody)
+		{
+			var hasIntrinsic = func.Attributes.Any(a => a.Name is "Intrinsic" or "System.Intrinsic" or "IntrinsicAttribute");
+			if (!hasIntrinsic)
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, func.Span, $"Function '{func.Name}' must declare a body unless decorated with '[Intrinsic]'.");
+			}
+
+			return;
+		}
+
 		var baseUnsafeDepth = _unsafeDepth;
-		_unsafeDepth = IsUnsafeFunction(func) ? 1 : 0;
 		var baseInUnbound = _inUnbound;
+		_unsafeDepth = IsUnsafeFunction(func) ? 1 : 0;
 		_inUnbound = func.Modifier == SafetyTier.Unbound;
 		var localScope = new SymbolTable(context.Globals);
 
@@ -197,10 +210,10 @@ public sealed class ValidationPass(BindingContext context)
 			}
 		}
 
-		CheckBlock(func.Body, localScope, func);
+		CheckBlock(func.Body!, localScope, func);
 
 		// Guard: Ensure non-void functions end with a return statement
-		if (func.ReturnType != "void" && !EndsWithReturn(func.Body))
+		if (func.ReturnType != "void" && !EndsWithReturn(func.Body!))
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
 			context.Diagnostics.Report(
@@ -218,8 +231,11 @@ public sealed class ValidationPass(BindingContext context)
 		func.Modifier == SafetyTier.Unsafe ||
 		func.Attributes.Any(static a => string.Equals(a.Name, "UnsafeBody", StringComparison.OrdinalIgnoreCase));
 
-	private void CheckBlock(BlockStatementSyntax block, SymbolTable scope, FunctionDeclarationSyntax currentFunc)
+	private void CheckBlock(BlockStatementSyntax? block, SymbolTable scope, FunctionDeclarationSyntax currentFunc)
 	{
+		if (block is null)
+			return;
+
 		foreach (var stmt in block.Statements)
 		{
 			CheckStatement(stmt, scope, currentFunc);
@@ -361,12 +377,12 @@ public sealed class ValidationPass(BindingContext context)
 		var varSymbol = new VariableSymbol(varDecl.Name, resolvedType, varDecl.IsMutable)
 		{
 			IsInitialized = varDecl.Initializer != null,
-			IsHeapAllocated = varDecl.Initializer is HeapAllocationExpressionSyntax
+			IsHeapAllocated = varDecl.Initializer is HeapAllocationExpressionSyntax or HeapArrayAllocationExpressionSyntax
 		};
 
 		scope.Declare(varSymbol);
-		context.VariableSymbols[varDecl] = varSymbol;
-	}
+        context.VariableSymbols[varDecl] = varSymbol;
+    }
 
 	private static int StackByteSize(TypeSymbol type) => type switch
 	{
@@ -870,7 +886,7 @@ public sealed class ValidationPass(BindingContext context)
 				// Rule 10 (Deferred Reference Initialization): inside an unbound context, reference
 				// fields (`ref`/`refvar`) that point to self-referential structures are exempted from
 				// strict immediate-initialization; they are filled in subsequently within the unbound body.
-				if (_inUnbound && field.Type is PointerTypeSymbol)
+				if ((_inUnbound || _unsafeDepth > 0) && field.Type is PointerTypeSymbol)
 					continue;
 
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
@@ -2775,10 +2791,13 @@ public sealed class ValidationPass(BindingContext context)
 
 	private void CheckUnaryCast(UnaryExpressionSyntax unary, SymbolTable scope)
 	{
-		if (!unary.Operator.StartsWith("(") || !unary.Operator.EndsWith("*)") || unary.Operator.Length < 4)
+		if (!unary.Operator.StartsWith('(') || !unary.Operator.EndsWith("*)") || unary.Operator.Length < 4)
 			return;
 
 		var operandType = GetExpressionType(unary.Operand, scope);
+		if (operandType is null)
+			return;
+
 		if (operandType is UnionTypeSymbol optionUnion && optionUnion.IsNpoEligible)
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
@@ -2790,14 +2809,21 @@ public sealed class ValidationPass(BindingContext context)
 		// Destructive cast '(T*)x' extracts the owning heap pointer from a heap-allocated
 		// handle. A plain stack value has no hidden pointer to extract, so reject it here
 		// (function parameters are allowed: they may already carry a handle by value).
-		if (operandType is StructTypeSymbol structH
-			&& unary.Operand is IdentifierExpressionSyntax castId
-			&& scope.Lookup(castId.Name) is VariableSymbol { Origin: OriginKind.Local } castSym
-			&& !castSym.IsHeapAllocated)
+		var targetTypeName = unary.Operator.Substring(1, unary.Operator.Length - 3);
+		var targetType = context.ResolveType(targetTypeName);
+
+		if (targetType is not null && targetType.Equals(operandType))
 		{
-			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.Report(currentFileContext, unary.Span,
-				$"Destructive cast '({structH.Name}*)' requires an owning heap handle; '{castId.Name}' is a stack value. Allocate it with 'heap {structH.Name} {{ ... }}' or 'heap {structH.Name}(...)', or cast its address with '&{castId.Name}'.");
+			if (unary.Operand is IdentifierExpressionSyntax id)
+			{
+				var sym = scope.Lookup(id.Name) as VariableSymbol;
+				if (sym is not null && !sym.IsHeapAllocated && sym.Origin != OriginKind.Parameter)
+				{
+					var currentFileContext = context.FileContexts[context.CurrentUnit!];
+					context.Diagnostics.Report(currentFileContext, unary.Span,
+						$"Destructive cast '({targetTypeName}*)' requires an owning heap handle; '{id.Name}' is a stack value. Allocate it with 'heap {targetTypeName} {{ ... }}' or 'heap {targetTypeName}(...)', or cast its address with '&{id.Name}'.");
+				}
+			}
 		}
 	}
 
