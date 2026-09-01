@@ -41,7 +41,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	private readonly HashSet<string> _disposedVars = [];
 	private int _unsafeDepth;
 	private (LLVMTypeRef Type, LLVMValueRef Func)? _llvmTrap;
-	private readonly Dictionary<string, LLVMValueRef> _enumValuesGlobals = new();
+	private readonly Dictionary<string, LLVMValueRef> _enumValuesGlobals = [];
 	public CodeGenerator(string moduleName, ILLVMOptimizer? optimizer = null)
 	{
 		_context = LLVMContextRef.Global;
@@ -873,26 +873,7 @@ case MemberAccessExpressionSyntax m:
 		// Check if the resolved callee is decorated with [Intrinsic("llvm.xxx")]
 		if (_bindingContext!.ResolvedCalls.TryGetValue(call, out var intrinsicFunc) && !string.IsNullOrEmpty(intrinsicFunc.IntrinsicName))
 		{
-			var intrinsicArgs = new List<LLVMValueRef>();
-			foreach (var arg in call.Arguments)
-			{
-				intrinsicArgs.Add(EmitExpression(arg));
-			}
-
-			var retTy = GetLLVMType(intrinsicFunc.ReturnType);
-			var intrinsicCallee = GetOrDeclareIntrinsic(intrinsicFunc.IntrinsicName, intrinsicArgs, retTy);
-
-			var fullIntrinsicName = intrinsicFunc.IntrinsicName;
-			if (intrinsicArgs.Count > 0 && !fullIntrinsicName.EndsWith(".f64") && !fullIntrinsicName.EndsWith(".f32"))
-			{
-				if (intrinsicArgs[0].TypeOf.Kind == LLVMTypeKind.LLVMDoubleTypeKind)
-					fullIntrinsicName = $"{intrinsicFunc.IntrinsicName}.f64";
-				else if (intrinsicArgs[0].TypeOf.Kind == LLVMTypeKind.LLVMFloatTypeKind)
-					fullIntrinsicName = $"{intrinsicFunc.IntrinsicName}.f32";
-			}
-
-			var intrinsicFuncType = _functionTypes[fullIntrinsicName];
-			return _builder.BuildCall2(intrinsicFuncType, intrinsicCallee, intrinsicArgs.ToArray(), "intrinsic_call");
+			return EmitIntrinsicCall(call, intrinsicFunc);
 		}
 
 		// (§5.A) Name() is synthesized on every enum and returns the declared variant
@@ -3715,6 +3696,48 @@ else if (expr is BorrowExpressionSyntax b)
 
 		EmitBlock(new BlockStatementSyntax(c.Span, c.Body));
 	}
+
+	/// <summary>
+	/// Dynamically resolves and emits an LLVM intrinsic call based on the [Intrinsic("...")] attribute.
+	/// Automatically appends type suffixes (e.g. "sqrt" + double -> "llvm.sqrt.f64").
+	/// </summary>
+	private LLVMValueRef EmitIntrinsicCall(CallExpressionSyntax call, FunctionSymbol func)
+	{
+		var args = call.Arguments.Select(EmitExpression).ToArray();
+		var baseName = func.IntrinsicName!;
+
+		// If full name specified (e.g. "llvm.trap"), use directly; otherwise build "llvm.<name>.<typeSuffix>"
+		string targetName;
+		if (baseName.StartsWith("llvm.", StringComparison.Ordinal))
+		{
+			targetName = baseName;
+		}
+		else
+		{
+			var typeSuffix = args.Length > 0 ? GetTypeSuffix(args[0].TypeOf) : "";
+			targetName = string.IsNullOrEmpty(typeSuffix)
+				? $"llvm.{baseName}"
+				: $"llvm.{baseName}.{typeSuffix}";
+		}
+
+		var retTy = GetLLVMType(func.ReturnType);
+		var callee = GetOrDeclareIntrinsic(targetName, args, retTy);
+		var funcType = _functionTypes[targetName];
+
+		var callName = retTy.Kind == LLVMTypeKind.LLVMVoidTypeKind ? "" : "intrinsic_call";
+		return _builder.BuildCall2(funcType, callee, args, callName);
+	}
+
+	private static string GetTypeSuffix(LLVMTypeRef type) => type.Kind switch
+	{
+		LLVMTypeKind.LLVMDoubleTypeKind => "f64",
+		LLVMTypeKind.LLVMFloatTypeKind => "f32",
+		LLVMTypeKind.LLVMIntegerTypeKind when type.IntWidth == 64 => "i64",
+		LLVMTypeKind.LLVMIntegerTypeKind when type.IntWidth == 32 => "i32",
+		LLVMTypeKind.LLVMIntegerTypeKind when type.IntWidth == 16 => "i16",
+		LLVMTypeKind.LLVMIntegerTypeKind when type.IntWidth == 8 => "i8",
+		_ => ""
+	};
 
 	private LLVMValueRef GetOrDeclareIntrinsic(string intrinsicBaseName, IReadOnlyList<LLVMValueRef> args, LLVMTypeRef returnType)
 	{
