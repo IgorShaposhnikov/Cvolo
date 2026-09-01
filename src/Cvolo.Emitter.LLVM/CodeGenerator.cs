@@ -74,6 +74,14 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		_functionTypes["exit"] = exitType;
 		_globals["exit"] = _module.AddFunction("exit", exitType);
 
+		// Register return-type symbols for the built-in runtime functions so the call
+		// emitter knows not to name void returns (void calls must have no instruction name).
+		_functionReturnTypes["malloc"] = TypeSymbol.String;
+		_functionReturnTypes["free"] = TypeSymbol.Void;
+		_functionReturnTypes["puts"] = TypeSymbol.Int;
+		_functionReturnTypes["exit"] = TypeSymbol.Void;
+		_functionReturnTypes["memset"] = TypeSymbol.String;
+
 		// memset(void* dest, int value, size_t count) -> void* — used for `{}` zero-init arrays
 		var memsetType = LLVMTypeRef.CreateFunction(
 			LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0),
@@ -1038,7 +1046,9 @@ case MemberAccessExpressionSyntax m:
 			args.Add(val);
 		}
 
-		var retTypeSymbol = _functionReturnTypes.TryGetValue(emitName, out var ret) ? ret : TypeSymbol.Int;
+		var retTypeSymbol = _functionReturnTypes.TryGetValue(emitName, out var ret)
+			? ret
+			: (resolvedFunc is { ReturnType: not null } resolvedFn ? resolvedFn.ReturnType : TypeSymbol.Int);
 		var instName = retTypeSymbol.Equals(TypeSymbol.Void) ? "" : "call_val";
 
 		return _builder.BuildCall2(funcType, callee, args.ToArray(), instName);
@@ -1180,6 +1190,20 @@ case MemberAccessExpressionSyntax m:
 		var right = EmitExpression(bin.Right);
 		var rTy = GetExprType(bin.Right);
 		var llvmTy = GetLLVMType(rTy);
+
+		// A heap-allocated owning handle assigned to a reference-typed target denotes its
+		// own heap block (address-of the handle), so ref fields / ref variables bind to the
+		// block pointer rather than to a bogus struct value.
+		if (bin.Right is IdentifierExpressionSyntax heapId
+			&& _heapAllocatedVars.Contains(heapId.Name)
+			&& _locals.TryGetValue(heapId.Name, out var handleSlot)
+			&& GetExprType(bin.Left) is PointerTypeSymbol)
+		{
+			right = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), handleSlot, "handle_addr");
+			if (rTy is StructTypeSymbol handleStruct)
+				rTy = new PointerTypeSymbol(handleStruct, isMutable: false);
+			llvmTy = GetLLVMType(rTy);
+		}
 
 		// Dereference aggregate pointers before storing them into value targets
 		if (right.TypeOf.Kind == LLVMTypeKind.LLVMPointerTypeKind && (rTy is StructTypeSymbol || rTy is ArrayTypeSymbol))
@@ -1373,6 +1397,34 @@ case MemberAccessExpressionSyntax m:
 				{
 					var (optionPtr, optionTy) = MaterializeEnumCastOption(safeCastEnum, operand, operandType, optionUnion);
 					return _builder.BuildLoad2(GetLLVMType(optionTy), optionPtr, "enum_cast_option");
+				}
+			}
+
+			// Destructive cast (T*)<handle>: recover the raw heap pointer instead of
+			// bitcasting the whole owning handle. For a heap-allocated handle the block
+			// pointer lives in the handle slot (the hidden pointer field of the handle).
+			if (targetTypeSymbol is RawPointerTypeSymbol)
+			{
+				if (unary.Operand is IdentifierExpressionSyntax ownerId
+					&& _locals.TryGetValue(ownerId.Name, out var handleSlot)
+					&& _heapAllocatedVars.Contains(ownerId.Name))
+				{
+					var rawHeapPtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), handleSlot, "handle_ptr");
+					return rawHeapPtr.TypeOf.Handle == targetType.Handle
+						? rawHeapPtr
+						: _builder.BuildBitCast(rawHeapPtr, targetType, "handle_cast");
+				}
+
+				// By-value handle (e.g. a heap node returned then passed by value): the
+				// aggregate's first field carries the owning pointer; extract it rather than
+				// casting the struct itself.
+				if (operandType is StructTypeSymbol handleStruct
+					&& handleStruct.Fields.Count > 0
+					&& handleStruct.Fields[0].Type is PointerTypeSymbol or RawPointerTypeSymbol
+					&& operand.TypeOf.Kind == LLVMTypeKind.LLVMStructTypeKind)
+				{
+					var hiddenPtr = _builder.BuildExtractValue(operand, 0, "handle_hidden_ptr");
+					return _builder.BuildBitCast(hiddenPtr, targetType, "handle_cast");
 				}
 			}
 
@@ -1763,6 +1815,16 @@ case MemberAccessExpressionSyntax m:
 		}
 
 		var type = _variableTypes[name];
+
+		// A heap-allocated owning handle read as a whole denotes the value stored in its
+		// heap block (the slot itself only holds the block pointer).
+		if (_heapAllocatedVars.Contains(name) && type is StructTypeSymbol heapStruct)
+		{
+			var innerTy = GetLLVMType(heapStruct);
+			var blockPtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), ptr, "heap_block_ptr");
+			return _builder.BuildLoad2(innerTy, blockPtr, "heap_load_val");
+		}
+
 		var ty = GetLLVMType(type);
 
 		var reg = _builder.BuildLoad2(ty, ptr, "load_val");

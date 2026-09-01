@@ -190,7 +190,8 @@ public sealed class ValidationPass(BindingContext context)
 			{
 				var varSymbol = new VariableSymbol(param.Name, paramType, isMutable: false)
 				{
-					IsInitialized = true
+					IsInitialized = true,
+					Origin = OriginKind.Parameter
 				};
 				localScope.Declare(varSymbol);
 			}
@@ -357,7 +358,11 @@ public sealed class ValidationPass(BindingContext context)
 			context.Diagnostics.Report(currentFileContext, varDecl.Span, "Array size exceeds stack allocation safety threshold");
 		}
 
-		var varSymbol = new VariableSymbol(varDecl.Name, resolvedType, varDecl.IsMutable) { IsInitialized = varDecl.Initializer != null };
+		var varSymbol = new VariableSymbol(varDecl.Name, resolvedType, varDecl.IsMutable)
+		{
+			IsInitialized = varDecl.Initializer != null,
+			IsHeapAllocated = varDecl.Initializer is HeapAllocationExpressionSyntax
+		};
 
 		scope.Declare(varSymbol);
 		context.VariableSymbols[varDecl] = varSymbol;
@@ -1138,7 +1143,7 @@ public sealed class ValidationPass(BindingContext context)
 		var localScope = new SymbolTable(context.Globals);
 		foreach (var p in parameters)
 		{
-			localScope.Declare(new VariableSymbol(p.Name, p.Type, p.Type is PointerTypeSymbol { IsMutable: true }) { IsInitialized = true });
+			localScope.Declare(new VariableSymbol(p.Name, p.Type, p.Type is PointerTypeSymbol { IsMutable: true }) { IsInitialized = true, Origin = OriginKind.Parameter });
 		}
 
 		CheckBlock(instBody, localScope, instDecl);
@@ -1349,7 +1354,7 @@ public sealed class ValidationPass(BindingContext context)
 		var localScope = new SymbolTable(context.Globals);
 		foreach (var p in parameters)
 		{
-			localScope.Declare(new VariableSymbol(p.Name, p.Type, p.Type is PointerTypeSymbol { IsMutable: true }) { IsInitialized = true });
+			localScope.Declare(new VariableSymbol(p.Name, p.Type, p.Type is PointerTypeSymbol { IsMutable: true }) { IsInitialized = true, Origin = OriginKind.Parameter });
 		}
 
 		CheckBlock(instBody, localScope, instDecl);
@@ -2379,7 +2384,7 @@ public sealed class ValidationPass(BindingContext context)
 				var pt = context.ResolveType(p.Type);
 				if (pt != null)
 				{
-					protoScope.Declare(new VariableSymbol(p.Name, pt, isMutable: false) { IsInitialized = true });
+					protoScope.Declare(new VariableSymbol(p.Name, pt, isMutable: false) { IsInitialized = true, Origin = OriginKind.Parameter });
 				}
 			}
 
@@ -2498,7 +2503,7 @@ public sealed class ValidationPass(BindingContext context)
 			var paramType = context.ResolveType(param.Type);
 			if (paramType is not null)
 			{
-				localScope.Declare(new VariableSymbol(param.Name, paramType, isMutable: false) { IsInitialized = true });
+				localScope.Declare(new VariableSymbol(param.Name, paramType, isMutable: false) { IsInitialized = true, Origin = OriginKind.Parameter });
 			}
 		}
 
@@ -2774,12 +2779,26 @@ public sealed class ValidationPass(BindingContext context)
 			return;
 
 		var operandType = GetExpressionType(unary.Operand, scope);
-		if (operandType is not UnionTypeSymbol optionUnion || !optionUnion.IsNpoEligible)
+		if (operandType is UnionTypeSymbol optionUnion && optionUnion.IsNpoEligible)
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, unary.Span,
+				$"Cannot cast nullable reference option '{optionUnion.Name}' directly to a raw pointer; pattern-match it (switch on 'ref'/'refvar') to extract a non-null reference first.");
 			return;
+		}
 
-		var currentFileContext = context.FileContexts[context.CurrentUnit!];
-		context.Diagnostics.Report(currentFileContext, unary.Span,
-			$"Cannot cast nullable reference option '{optionUnion.Name}' directly to a raw pointer; pattern-match it (switch on 'ref'/'refvar') to extract a non-null reference first.");
+		// Destructive cast '(T*)x' extracts the owning heap pointer from a heap-allocated
+		// handle. A plain stack value has no hidden pointer to extract, so reject it here
+		// (function parameters are allowed: they may already carry a handle by value).
+		if (operandType is StructTypeSymbol structH
+			&& unary.Operand is IdentifierExpressionSyntax castId
+			&& scope.Lookup(castId.Name) is VariableSymbol { Origin: OriginKind.Local } castSym
+			&& !castSym.IsHeapAllocated)
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, unary.Span,
+				$"Destructive cast '({structH.Name}*)' requires an owning heap handle; '{castId.Name}' is a stack value. Allocate it with 'heap {structH.Name} {{ ... }}' or 'heap {structH.Name}(...)', or cast its address with '&{castId.Name}'.");
+		}
 	}
 
 	private void CheckUnaryEnumTilde(UnaryExpressionSyntax unary, SymbolTable scope)

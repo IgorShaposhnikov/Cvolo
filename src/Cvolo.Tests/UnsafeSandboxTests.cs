@@ -52,4 +52,29 @@ public sealed class UnsafeSandboxTests : CompilerTestBase
 		Assert.Equal(1, exitCode);
 		Assert.Contains(expectedError, stderr);
 	}
+
+	[Fact]
+	public void Increment8_DestructiveCastOnHeapHandle_Compile_And_Run()
+	{
+		var fileName = "Sandbox/Increment8/DestructiveCast.cvl";
+		var (exitCode, stdout, stderr) = RunCompiler(fileName);
+		AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
+
+		var (runCode, runStdout) = ExecuteBinary("DestructiveCast", "Sandbox/Increment8");
+		Assert.Equal(0, runCode);
+		Assert.Contains("Point(10, 20)", runStdout);
+		Assert.Contains("After move: Point(15, 15)", runStdout);
+		Assert.Contains("Color is Green", runStdout);
+		Assert.Contains("Node value: 42", runStdout);
+	}
+
+	[Fact]
+	public void Increment8_DestructiveCastOnStackValue_Rejected()
+	{
+		var fileName = "Sandbox/Increment8/DestructiveCastStackVarFail.cvl";
+		var (exitCode, _, stderr) = RunCompiler(fileName);
+		Assert.Equal(1, exitCode);
+		Assert.Contains("requires an owning heap handle", stderr);
+		Assert.Contains("'node' is a stack value", stderr);
+	}
 }

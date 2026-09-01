@@ -1,0 +1,22 @@
+using System;
+
+struct Node {
+	refvar Node next;
+	refvar Node prev;
+	int value;
+}
+
+unbound Node MakeNode(int v) {
+	var Node n = heap Node { value: v };
+	n.next = n;
+	n.prev = n;
+	return n;
+}
+
+int Main() {
+	var Node node = MakeNode(1);
+	unsafe {
+		Node* p = (Node*)node;
+	}
+	return 0;
+}

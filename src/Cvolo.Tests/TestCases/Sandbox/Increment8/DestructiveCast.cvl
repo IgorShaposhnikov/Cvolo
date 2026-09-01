@@ -1,0 +1,82 @@
+using System;
+using System.Console;
+
+extern void* malloc(ulong size);
+extern void free(void* ptr);
+
+enum Color : int {
+	Red = 1,
+	Green = 2,
+	Blue = 3
+}
+
+interface IPrintable {
+	void Print();
+}
+
+struct Point {
+	int X;
+	int Y;
+}
+
+extension Point : IPrintable {
+	Point(int x, int y) {
+		this.X = x;
+		this.Y = y;
+	}
+
+	void Print() {
+		printf("Point(%d, %d)\n", this.X, this.Y);
+	}
+
+	void Move(refvar this, int dx, int dy) {
+		this.X = this.X + dx;
+		this.Y = this.Y + dy;
+	}
+}
+
+struct Node {
+	refvar Node next;
+	refvar Node prev;
+	int value;
+}
+
+unbound Node CreateNode(int v) {
+	var Node n = heap Node { value: v };
+	n.next = n;
+	n.prev = n;
+	return n;
+}
+
+void PrintNode(ref Node n) {
+	printf("Node value: %d\n", n.value);
+}
+
+unsafe void FreeNode(Node n) {
+	Node* p = (Node*)n;
+	if (p != null) {
+		free((void*)p);
+	}
+}
+
+int Main() {
+	var Point pt = Point(10, 20);
+	pt.Print();
+	pt.Move(5, -5);
+	printf("After move: ");
+	pt.Print();
+
+	var Color c = Color.Green;
+	if (c == Color.Green) {
+		printf("Color is Green\n");
+	}
+
+	var Node node = CreateNode(42);
+	PrintNode(ref node);
+
+	unsafe {
+		FreeNode(node);
+	}
+
+	return 0;
+}
