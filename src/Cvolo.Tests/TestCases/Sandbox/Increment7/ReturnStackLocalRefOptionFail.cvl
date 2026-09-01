@@ -1,0 +1,29 @@
+using System;
+
+struct Node {
+    Option<refvar Node> next;
+    Option<refvar Node> prev;
+    int value;
+}
+
+extension Node {
+    Node(int va) {
+        this.value = va;
+        this.next = Option<refvar Node> { None: void };
+        this.prev = Option<refvar Node> { None: void };
+    }
+}
+
+[SuppressWarning("CVL1010")]
+unbound Option<ref Node> BadFactory(int v) {
+    var Node localNode = Node(v);
+    refvar Node head = refvar localNode;
+    head.next = Option<refvar Node> { Some: head };
+    return Option<ref Node> { Some: head };
+}
+
+int Main() {
+    var Option<ref Node> o = BadFactory(5);
+    Console.WriteLine("done");
+    return 0;
+}

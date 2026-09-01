@@ -19,6 +19,8 @@ public sealed class SafetyPass(BindingContext context)
 	private readonly Dictionary<string, HashSet<string>> _structRefTargets = []; // structVar -> set of variable names that ref fields point to
 	private readonly Stack<SafetyTier> _currentTierStack = [];
 	private readonly HashSet<string> _localRefsInUnboundScope = []; // refvar/ref variables declared inside the current unbound scope (including nested unsafe blocks)
+	private readonly Dictionary<string, string> _refVarTargets = []; // ref/refvar (and nullable-reference-option) variable -> base identifier it currently points to
+	private readonly HashSet<string> _heapVariables = []; // local variables initialized with `heap ...` (their storage outlives the function — heap-relative provenance)
 	private ClassificationAnalyzer? _classification;
 
 	private ClassificationAnalyzer Classification => _classification ??= new ClassificationAnalyzer(context);
@@ -45,6 +47,8 @@ public sealed class SafetyPass(BindingContext context)
 		_parentLocks.Clear();
 		_structRefTargets.Clear();
 		_localRefsInUnboundScope.Clear();
+		_refVarTargets.Clear();
+		_heapVariables.Clear();
 
 		// Look up the resolved function symbol to get the actual tier
 		var baseName = func.Name == "main" ? "main" : context.GetMangledName(func.Name, context.CurrentNamespace);
@@ -92,6 +96,7 @@ public sealed class SafetyPass(BindingContext context)
 			_activeRefs.Remove(name);
 			ReleaseParentLock(name);
 			_structRefTargets.Remove(name);
+			_refVarTargets.Remove(name);
 		}
 	}
 
@@ -196,6 +201,20 @@ public sealed class SafetyPass(BindingContext context)
 							var borrowedName = GetBaseIdentifierName(borrowExpr.Expression);
 							if (borrowedName != null && scope.Lookup(borrowedName) is VariableSymbol borrowed)
 								sym.Origin = borrowed.Origin;
+						}
+
+						// Heap-relative provenance: variables initialized with `heap ...` own
+						// heap-allocated storage that deliberately outlives the function.
+						if (v.Initializer is HeapAllocationExpressionSyntax)
+							_heapVariables.Add(v.Name);
+
+						// Track what ref/refvar and nullable-reference-option variables point to,
+						// so return-time provenance can resolve through reference chains.
+						if (sym.Type is PointerTypeSymbol || (sym.Type is UnionTypeSymbol optU && optU.IsOption && optU.IsNpoEligible))
+						{
+							var targetBase = TryGetPayloadBase(v.Initializer, scope);
+							if (targetBase != null)
+								_refVarTargets[v.Name] = targetBase;
 						}
 
 						// Track refvar/ref declarations inside unbound scope for CVL1008
@@ -330,6 +349,16 @@ public sealed class SafetyPass(BindingContext context)
 						// Track ref field targets for struct reassignment (§3C)
 						if (leftSymbol.Type is StructTypeSymbol)
 							TrackStructRefTargets(leftId.Name, bin.Right, scope);
+
+						// Track ref/refvar and nullable-reference-option reassignment for return-time provenance
+						if (leftSymbol.Type is PointerTypeSymbol || (leftSymbol.Type is UnionTypeSymbol optU && optU.IsOption && optU.IsNpoEligible))
+						{
+							var targetBase = TryGetPayloadBase(bin.Right, scope);
+							if (targetBase != null)
+								_refVarTargets[leftId.Name] = targetBase;
+							else
+								_refVarTargets.Remove(leftId.Name);
+						}
 
 						// Propagate origin on ref/refvar reassignment
 						if (leftSymbol.Type is PointerTypeSymbol)
@@ -542,7 +571,7 @@ public sealed class SafetyPass(BindingContext context)
 		// Case 1: return ref expr; — BorrowExpressionSyntax wrapping an identifier
 		if (ret.Expression is BorrowExpressionSyntax borrow && borrow.Expression is IdentifierExpressionSyntax bid)
 		{
-			if (scope.Lookup(bid.Name) is VariableSymbol sym && sym.Origin == OriginKind.Local)
+			if (IsDanglingTarget(bid.Name, scope))
 			{
 				context.Diagnostics.Report(context.CurrentUnit!.Context, ret.Expression.Span, $"Cannot return reference to local variable '{bid.Name}' (dangling reference)");
 			}
@@ -552,7 +581,7 @@ public sealed class SafetyPass(BindingContext context)
 		// Case 2: return r; where r is a ref/refvar variable (PointerTypeSymbol)
 		if (ret.Expression is IdentifierExpressionSyntax id)
 		{
-			if (scope.Lookup(id.Name) is VariableSymbol idSym && idSym.Type is PointerTypeSymbol && idSym.Origin == OriginKind.Local)
+			if (scope.Lookup(id.Name) is VariableSymbol idSym && idSym.Type is PointerTypeSymbol && IsDanglingTarget(id.Name, scope))
 			{
 				context.Diagnostics.Report(context.CurrentUnit!.Context, ret.Expression.Span, $"Cannot return reference to local variable '{id.Name}' (dangling reference)");
 			}
@@ -569,7 +598,16 @@ public sealed class SafetyPass(BindingContext context)
 			{
 				VerifyStructByValueReturn(retStruct, id.Name, ret.Expression.Span, scope);
 			}
+
+			return;
 		}
+
+		// Case 5: return a pointer-bearing value constructed inline (struct literal, non-nullable
+		// reference option literal, or a reference-field member access). Every reachable reference
+		// payload must ultimately point at heap, global, or parameter storage; a non-heap stack local
+		// would dangle once the caller takes ownership of the returned graph (heap-relative provenance).
+		if (ResolveExpressionType(ret.Expression, scope) is { } returnType && TypeTransitivelyHasRefs(returnType))
+			VerifyHeapRelativeReturn(ret.Expression, returnType, ret.Expression.Span, scope);
 	}
 
 	/// <summary>
@@ -597,7 +635,7 @@ public sealed class SafetyPass(BindingContext context)
 				{
 					foreach (var target in targets)
 					{
-						if (scope.Lookup(target) is VariableSymbol targetSym && targetSym.Origin == OriginKind.Local)
+						if (IsDanglingTarget(target, scope))
 						{
 							context.Diagnostics.Report(context.CurrentUnit!.Context, span,
 								$"Cannot return '{varName}' by value: reference field '{field.Name}' targets local variable '{target}' (dangling reference)");
@@ -615,7 +653,7 @@ public sealed class SafetyPass(BindingContext context)
 				{
 					foreach (var target in targets)
 					{
-						if (scope.Lookup(target) is VariableSymbol targetSym && targetSym.Origin == OriginKind.Local)
+						if (IsDanglingTarget(target, scope))
 						{
 							context.Diagnostics.Report(context.CurrentUnit!.Context, span,
 								$"Cannot return '{varName}' by value: reference field '{field.Name}' targets local variable '{target}' (dangling reference)");
@@ -625,6 +663,143 @@ public sealed class SafetyPass(BindingContext context)
 				}
 			}
 		}
+	}
+
+	/// <summary>
+	/// For a ref/refvar or nullable-reference-option initializer, return the base identifier the
+	/// reference ultimately points at (the payload expression for a reference option literal).
+	/// </summary>
+	private string? TryGetPayloadBase(ExpressionSyntax expr, SymbolTable scope)
+	{
+		if (expr is StructInitializationExpressionSyntax init && init.Initializers.Count == 1)
+		{
+			if (ResolveExpressionType(init, scope) is UnionTypeSymbol ut)
+			{
+				var variant = ut.FindField(init.Initializers[0].MemberName);
+				if (variant?.Type is PointerTypeSymbol)
+					return GetBaseIdentifierName(init.Initializers[0].Expression);
+				return null;
+			}
+		}
+
+		return GetBaseIdentifierName(expr);
+	}
+
+	/// <summary>
+	/// Resolve a variable name through reference chains to the concrete variable whose storage the
+	/// reference ultimately points at (heap-relative provenance). Cycle-safe.
+	/// </summary>
+	private string? ResolveUltimateTarget(string name, SymbolTable scope)
+	{
+		var visited = new HashSet<string>();
+		var current = name;
+		while (current != null && visited.Add(current) && _refVarTargets.TryGetValue(current, out var next))
+			current = next;
+		return current;
+	}
+
+	/// <summary>
+	/// True when a reference target points at a non-heap stack-local variable that would dangle once
+	/// ownership of the returned graph transfers to a caller. Heap allocations, globals, and parameters
+	/// all outlive the function and are therefore safe escape targets.
+	/// </summary>
+	private bool IsDanglingTarget(string targetName, SymbolTable scope)
+	{
+		var ultimate = ResolveUltimateTarget(targetName, scope) ?? targetName;
+		if (_heapVariables.Contains(ultimate)) return false;
+		if (scope.Lookup(ultimate) is not VariableSymbol symbol) return false;
+		return symbol.Origin == OriginKind.Local;
+	}
+
+	private static bool TypeTransitivelyHasRefs(TypeSymbol type)
+	{
+		return type switch
+		{
+			PointerTypeSymbol => true,
+			StructTypeSymbol st => st.Fields.Any(f => TypeTransitivelyHasRefs(f.Type)),
+			UnionTypeSymbol ut => ut.Fields.Any(f => !f.IsVoidVariant && TypeTransitivelyHasRefs(f.Type)),
+			ArrayTypeSymbol arr => TypeTransitivelyHasRefs(arr.ElementType),
+			SliceTypeSymbol sl => TypeTransitivelyHasRefs(sl.ElementType),
+			_ => false
+		};
+	}
+
+	/// <summary>
+	/// Verify a pointer-bearing value returned by value: every reachable reference payload must not
+	/// dangle. Collects the base identifiers of all reference payloads in the expression, then checks
+	/// each one against heap/global/parameter provenance.
+	/// </summary>
+	private void VerifyHeapRelativeReturn(ExpressionSyntax retExpr, TypeSymbol retType, TextSpan span, SymbolTable scope)
+	{
+		var targets = new HashSet<string>();
+		CollectPointerPayloadBases(retExpr, retType, scope, targets, []);
+
+		foreach (var target in targets)
+		{
+			if (IsDanglingTarget(target, scope))
+			{
+				context.Diagnostics.Report(context.CurrentUnit!.Context, span,
+					$"Cannot return value: reference '{target}' targets local variable '{ResolveUltimateTarget(target, scope)}' (dangling reference)");
+				return;
+			}
+		}
+	}
+
+	private void CollectPointerPayloadBases(ExpressionSyntax expr, TypeSymbol type, SymbolTable scope,
+		HashSet<string> targets, HashSet<string> visited)
+	{
+		if (type is PointerTypeSymbol)
+		{
+			var baseId = GetBaseIdentifierName(expr);
+			if (baseId != null)
+				targets.Add(baseId);
+			return;
+		}
+
+		if (expr is StructInitializationExpressionSyntax init)
+		{
+			if (type is StructTypeSymbol st)
+			{
+				if (!visited.Add("S:" + st.Name)) return;
+				foreach (var memberInit in init.Initializers)
+				{
+					var field = st.FindField(memberInit.MemberName);
+					if (field == null) continue;
+					if (field.Type is PointerTypeSymbol)
+					{
+						var baseId = GetBaseIdentifierName(memberInit.Expression);
+						if (baseId != null)
+							targets.Add(baseId);
+					}
+					else if (field.Type is StructTypeSymbol or UnionTypeSymbol)
+					{
+						CollectPointerPayloadBases(memberInit.Expression, field.Type, scope, targets, visited);
+					}
+				}
+			}
+			else if (type is UnionTypeSymbol ut && init.Initializers.Count == 1)
+			{
+				var variant = ut.FindField(init.Initializers[0].MemberName);
+				if (variant == null || variant.IsVoidVariant) return;
+				if (variant.Type is PointerTypeSymbol)
+				{
+					var baseId2 = GetBaseIdentifierName(init.Initializers[0].Expression);
+					if (baseId2 != null)
+						targets.Add(baseId2);
+				}
+				else if (variant.Type is StructTypeSymbol or UnionTypeSymbol)
+				{
+					CollectPointerPayloadBases(init.Initializers[0].Expression, variant.Type, scope, targets, visited);
+				}
+			}
+			return;
+		}
+
+		// Non-literal pointer-bearing expression (reference-field member access, graph-handle call, or
+		// a reference/option variable): fall back to the base identifier; chains resolve via _refVarTargets.
+		var baseId3 = GetBaseIdentifierName(expr);
+		if (baseId3 != null)
+			targets.Add(baseId3);
 	}
 
 	/// <summary>

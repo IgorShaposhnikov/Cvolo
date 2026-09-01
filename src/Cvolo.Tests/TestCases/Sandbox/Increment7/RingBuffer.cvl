@@ -1,0 +1,70 @@
+using System;
+
+struct Node {
+    Option<refvar Node> next;
+    Option<refvar Node> prev;
+    int value;
+}
+
+extension Node {
+    Node(int va) {
+        this.value = va;
+        this.next = Option<refvar Node> { None: void };
+        this.prev = Option<refvar Node> { None: void };
+    }
+}
+
+[SuppressWarning("CVL1010")]
+unbound Option<ref Node> CreateRingBuffer(int size) {
+    if (size <= 0) return Option<ref Node> { None: void };
+
+    var Node headOwner = heap Node(0);
+    refvar Node head = refvar headOwner;
+    head.next = Option<refvar Node> { Some: head };
+    head.prev = Option<refvar Node> { Some: head };
+
+    var int i = 1;
+    refvar Node curr = head;
+
+    while (i < size) {
+        var Node newNodeOwner = heap Node(i);
+        refvar Node newNode = refvar newNodeOwner;
+        newNode.prev = Option<refvar Node> { Some: curr };
+        newNode.next = Option<refvar Node> { Some: head };
+        curr.next = Option<refvar Node> { Some: newNode };
+        head.prev = Option<refvar Node> { Some: newNode };
+        curr = newNode;
+        i += 1;
+    }
+
+    return Option<ref Node> { Some: head };
+}
+
+int Main() {
+    var Option<ref Node> ringOpt = CreateRingBuffer(5);
+    switch (ref ringOpt) {
+        case Some ring:
+            var ref Node curr = ring;
+            var int count = 0;
+            while (count < 10) {
+                Console.WriteLine($"Node value: {curr.value}");
+                var Option<ref Node> nextOpt = Option<ref Node> { None: void };
+                switch (ref curr.next) {
+                    case Some nextNode:
+                        nextOpt = Option<ref Node> { Some: nextNode };
+                    case None:
+                }
+
+                switch (ref nextOpt) {
+                    case Some nxt:
+                        curr = nxt;
+                    case None:
+                        count = 10;
+                }
+                count += 1;
+            }
+        case None:
+            Console.WriteLine("Ring buffer creation failed");
+    }
+    return 0;
+}

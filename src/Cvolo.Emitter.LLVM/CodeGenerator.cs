@@ -28,6 +28,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	private readonly Dictionary<string, TypeSymbol> _variableTypes = [];
 	private readonly HashSet<string> _heapAllocatedVars = [];
 	private readonly HashSet<string> _movedVars = [];
+	private bool _ownershipTransferFunction;
 	private readonly Dictionary<string, StructDeclarationSyntax> _astStructs = [];
 	private readonly Dictionary<string, ExternDeclarationSyntax> _astExterns = [];
 	private readonly Dictionary<string, List<TypeSymbol>> _functionParameterTypes = [];
@@ -457,6 +458,14 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		var funcSymbol = _bindingContext!.Globals.Lookup(mangledName) as FunctionSymbol;
 		_unsafeDepth = funcSymbol is not null && (funcSymbol.SafetyTier == SafetyTier.Unsafe || funcSymbol.IsUnsafeBody) ? 1 : 0;
 
+		// An 'unbound' factory that returns a heap-escaping graph handle transfers ownership of
+		// its heap allocations to the caller ('heap-relative provenance'), so inner-block scopes
+		// must NOT free them (that would sever the self-referential graph mid-construction).
+		_ownershipTransferFunction = funcSymbol is not null
+			&& funcSymbol.SafetyTier == SafetyTier.Unbound
+			&& _functionReturnTypes.TryGetValue(mangledName, out var retType)
+			&& TypeEscapesHeap(retType);
+
 		// Seed data-segment globals into the local symbol table: a GlobalVariable IS a pointer,
 		// so loads/stores/field GEPs work through the ordinary machinery (locals shadow on redeclare).
 		foreach (var (globalName, globalRef) in _globalVariables)
@@ -535,7 +544,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 		if (!EndsWithReturn(block))
 		{
-			EmitCleanup(blockVars);
+			EmitCleanup(blockVars, skipHeapFree: _ownershipTransferFunction);
 		}
 	}
 
@@ -623,7 +632,9 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				materialized = _builder.BuildLoad2(layout, value, "struct_ret_val");
 			}
 
-			EmitCleanup([.. _locals.Keys]);
+			var skipHeapFree = ComputeOwnershipTransfer(type);
+
+			EmitCleanup([.. _locals.Keys], skipHeapFree: skipHeapFree);
 
 			if (materialized is not null)
 			{
@@ -638,6 +649,48 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		{
 			EmitCleanup([.. _locals.Keys]);
 			_builder.BuildRetVoid();
+		}
+	}
+
+	/// <summary>
+	/// True when the current function is an <c>unbound</c> factory whose return type is a
+	/// heap-escaping graph handle (a type transitively carrying <c>ref</c>/<c>refvar</c>
+	/// reference fields). In that case the local heap allocations that form the self-referential
+	/// graph must NOT be freed on the return path, because ownership transfers to the caller
+	/// ('heap-relative provenance'): the references it returns point back into those blocks.
+	/// </summary>
+	private bool ComputeOwnershipTransfer(TypeSymbol returnType)
+	{
+		if (!TypeEscapesHeap(returnType))
+			return false;
+
+		var funcName = _builder.InsertBlock.Parent.Name;
+		return _bindingContext?.Globals.Lookup(funcName) is FunctionSymbol fs && fs.SafetyTier == SafetyTier.Unbound;
+	}
+
+	/// <summary>
+	/// True if the given type (or any type it transitively contains: struct fields, union
+	/// variant payloads, array/slice element types) carries a reference field
+	/// (<see cref="PointerTypeSymbol"/> / <see cref="RawPointerTypeSymbol"/>). Such a type is a
+	/// graph handle that can point back into a function's heap-allocated data.
+	/// </summary>
+	private static bool TypeEscapesHeap(TypeSymbol type)
+	{
+		switch (type)
+		{
+			case PointerTypeSymbol:
+			case RawPointerTypeSymbol:
+				return true;
+			case StructTypeSymbol structType:
+				return structType.Fields.Any(f => TypeEscapesHeap(f.Type));
+			case UnionTypeSymbol unionType:
+				return unionType.Fields.Any(f => TypeEscapesHeap(f.Type));
+			case ArrayTypeSymbol arrayType:
+				return TypeEscapesHeap(arrayType.ElementType);
+			case SliceTypeSymbol sliceType:
+				return TypeEscapesHeap(sliceType.ElementType);
+			default:
+				return false;
 		}
 	}
 
@@ -1163,9 +1216,17 @@ case MemberAccessExpressionSyntax m:
 				}
 				else if (type is PointerTypeSymbol)
 				{
-					if (bin.Right is BorrowExpressionSyntax)
+					// Re-seat the reference variable when the RHS is itself a reference
+					// (`a = ref expr`, or `a = b` where `b` is a ref/refvar value): store the new
+					// target pointer into the alloca. Otherwise (`a = value` where value is a plain
+					// value) write through the current pointer to the pointee.
+					// Re-seat only when the RHS is an explicit borrow, or the RHS is itself a
+					// reference whose referenced type escapes the heap (a pointer-bearing aggregate
+					// graph handle, e.g. advancing over linked nodes). For plain value types the
+					// referenced scalar (e.g. `int` in a generic Swap) we must write through.
+					if (bin.Right is BorrowExpressionSyntax
+						|| (rTy is PointerTypeSymbol rhsRef && TypeEscapesHeap(rhsRef.ReferencedType)))
 					{
-						// §3G: refvar reassignment (`a = ref expr`) stores the new pointer into the alloca
 						_builder.BuildStore(right, ptr);
 					}
 					else
@@ -2028,7 +2089,7 @@ case MemberAccessExpressionSyntax m:
 		return name;
 	}
 
-	private void EmitCleanup(IEnumerable<string> variableNames)
+	private void EmitCleanup(IEnumerable<string> variableNames, bool skipHeapFree = false)
 	{
 		foreach (var name in variableNames)
 		{
@@ -2088,8 +2149,11 @@ case MemberAccessExpressionSyntax m:
 				EmitArrayDestructorLoop(ptrAlloc, arrayType, name);
 			}
 
-			// 2. Free heap memory if it was heap-allocated
-			if (_heapAllocatedVars.Contains(name))
+			// 2. Free heap memory if it was heap-allocated. On an ownership-transferring return
+			//    (unbound factory returning a graph handle), the heap blocks are deliberately
+			//    leaked so the self-referential graph stays alive for the caller ('heap-relative
+			//    provenance'). 'skipHeapFree' suppresses only the free, never the destructors.
+			if (_heapAllocatedVars.Contains(name) && !skipHeapFree)
 			{
 				LLVMValueRef actualHeapPtr;
 				if (type is SliceTypeSymbol sliceType)
@@ -2911,16 +2975,57 @@ else if (expr is BorrowExpressionSyntax b)
 
 	private LLVMValueRef EmitHeapAllocation(HeapAllocationExpressionSyntax expr)
 	{
-		var structInit = (StructInitializationExpressionSyntax)expr.Expression;
-		var typeSymbol = _bindingContext!.ResolveType(structInit.StructTypeName) as StructTypeSymbol;
+		// The heap target is either a struct literal (`heap Node { ... }`) or a constructor
+		// call (`heap Node(args)`). Both allocate unmanaged memory and populate it in place.
+		StructTypeSymbol typeSymbol;
+		string structTypeName;
 
-		var structSize = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int64, (ulong)(typeSymbol!.Fields.Count * 8));
+		if (expr.Expression is StructInitializationExpressionSyntax structInit)
+		{
+			structTypeName = structInit.StructTypeName;
+		}
+		else if (expr.Expression is CallExpressionSyntax ctorCall)
+		{
+			// `heap T(args)`: resolve the receiver struct type from the constructor call name.
+			// Strip generic arguments (`Foo<T>` -> `Foo`) and any namespace prefix.
+			var callName = ctorCall.FunctionName;
+			var genericIdx = callName.IndexOf('<');
+			if (genericIdx >= 0)
+			{
+				callName = callName.Substring(0, genericIdx);
+			}
+			var dotIdx = callName.LastIndexOf('.');
+			structTypeName = dotIdx >= 0 ? callName.Substring(dotIdx + 1) : callName;
+		}
+		else
+		{
+			throw new InvalidOperationException($"Unsupported heap allocation target '{expr.Expression.Kind}'.");
+		}
+
+		typeSymbol = _bindingContext!.ResolveType(structTypeName) as StructTypeSymbol
+			?? throw new InvalidOperationException($"heap allocation requires a struct type, but '{structTypeName}' did not resolve to one.");
+
+		// Size the allocation from the real LLVM store size (handles alignment padding),
+		// not a heuristic field count.
+		var structSize = LLVMValueRef.CreateConstInt(
+			LLVMTypeRef.Int64,
+			(ulong)Math.Max(1, GetLLVMStoreSize(GetLLVMType(typeSymbol))));
 
 		var mallocFunc = _globals["malloc"];
 		var mallocType = _functionTypes["malloc"];
 		var rawPtr = _builder.BuildCall2(mallocType, mallocFunc, new LLVMValueRef[] { structSize }, "heap_alloc");
 
-		EmitStructInitializationInPlace(structInit, rawPtr);
+		if (expr.Expression is StructInitializationExpressionSyntax litInit)
+		{
+			EmitStructInitializationInPlace(litInit, rawPtr);
+		}
+		else if (expr.Expression is CallExpressionSyntax callInit)
+		{
+			// The constructor populates the freshly allocated memory via its implicit `this`
+			// pointer (a raw pointer to the allocation), so reference fields can be written.
+			EmitCallExpression(callInit, rawPtr);
+		}
+
 		return rawPtr;
 	}
 

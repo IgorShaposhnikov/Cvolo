@@ -736,6 +736,23 @@ public sealed class ValidationPass(BindingContext context)
 		return null;
 	}
 
+	/// <summary>
+	/// Whether a value of type <paramref name="source"/> may be used where type
+	/// <paramref name="target"/> is expected. Beyond exact equality, permits the safe
+	/// refvar→ref downcast (dropping mutability of a reference to the same type).
+	/// </summary>
+	private static bool TypesAssignable(TypeSymbol target, TypeSymbol source)
+	{
+		if (target.Equals(source)) return true;
+
+		if (source is PointerTypeSymbol srcPtr && target is PointerTypeSymbol tgtPtr &&
+			!tgtPtr.IsMutable && srcPtr.IsMutable &&
+			srcPtr.ReferencedType.Equals(tgtPtr.ReferencedType))
+			return true;
+
+		return false;
+	}
+
 	private TypeSymbol? CheckStructInitializationExpression(StructInitializationExpressionSyntax expr, SymbolTable scope)
 	{
 		var type = context.ResolveType(expr.StructTypeName);
@@ -775,7 +792,7 @@ public sealed class ValidationPass(BindingContext context)
 			}
 
 			var initType = GetExpressionType(init.Expression, scope);
-			if (initType is not null && !initType.Equals(field.Type))
+			if (initType is not null && !TypesAssignable(field.Type, initType))
 			{
 				var isValidNull = initType.Equals(TypeSymbol.Null) &&
 								  (field.Type is RawPointerTypeSymbol ||
@@ -834,7 +851,7 @@ public sealed class ValidationPass(BindingContext context)
 			}
 
 			var initType = GetExpressionType(init.Expression, scope);
-			if (initType is not null && !initType.Equals(field.Type))
+			if (initType is not null && !TypesAssignable(field.Type, initType))
 			{
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
 				context.Diagnostics.Report(currentFileContext, init.Span, $"Cannot initialize field '{init.MemberName}' of type '{field.Type.Name}' with value of type '{initType.Name}'");

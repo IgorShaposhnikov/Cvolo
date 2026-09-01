@@ -123,4 +123,29 @@ public sealed class UnboundSandboxTests : CompilerTestBase
 		Assert.NotEqual(0, exitCode);
 		Assert.Contains("Cannot assign to reference field", stderr);
 	}
+
+	// ---- Increment 7: unmanaged constructors & self-referential factories ----
+
+	[Fact]
+	public void Increment7_RingBufferFactory_Runs()
+	{
+		var fileName = "Sandbox/Increment7/RingBuffer.cvl";
+		var (exitCode, stdout, stderr) = RunCompiler(fileName);
+		AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
+
+		var (runCode, runStdout) = ExecuteBinary("RingBuffer", "Sandbox/Increment7");
+		Assert.Equal(0, runCode);
+		Assert.Contains("Node value: 0", runStdout);
+		Assert.Contains("Node value: 4", runStdout);
+	}
+
+	[Fact]
+	public void Increment7_ReturnStackLocalRefOption_Rejected()
+	{
+		var fileName = "Sandbox/Increment7/ReturnStackLocalRefOptionFail.cvl";
+		var (exitCode, stdout, stderr) = RunCompiler(fileName);
+		Assert.NotEqual(0, exitCode);
+		Assert.Contains("Cannot return value", stderr);
+		Assert.Contains("dangling reference", stderr);
+	}
 }
