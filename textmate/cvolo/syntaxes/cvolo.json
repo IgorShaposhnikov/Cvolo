@@ -20,14 +20,40 @@
       "begin": "//",
       "end": "$"
     },
-    "string_literal": {
-      "name": "string.quoted.double.cvolo",
-      "begin": "\"",
-      "end": "\"",
+    "string_literals": {
       "patterns": [
         {
-          "name": "constant.character.escape.cvolo",
-          "match": "\\\\([0nrt\"\\\\])"
+          "name": "string.interpolated.cvolo",
+          "begin": "$\"",
+          "end": "\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.cvolo",
+              "match": "\\\\([0nrt\"\\\\])"
+            }
+          ]
+        },
+        {
+          "name": "string.quoted.double.cvolo",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.cvolo",
+              "match": "\\\\([0nrt\"\\\\])"
+            }
+          ]
+        },
+        {
+          "name": "string.quoted.single.cvolo",
+          "begin": "'",
+          "end": "'",
+          "patterns": [
+            {
+              "name": "constant.character.escape.cvolo",
+              "match": "\\\\([0nrt\"\\\\]|')"
+            }
+          ]
         }
       ]
     },
@@ -45,21 +71,25 @@
     },
     "keywords": {
       "name": "keyword.other.cvolo",
-      "match": "\\b(val|var|ref|refvar|heap|ref|extern|unsafe|panic|namespace|using|return|if|else|while|for)\\b"
+      "match": "\\b(val|var|ref|refvar|heap|extern|unsafe|panic|namespace|using|return|if|else|while|for|null|union|enum|unsafe|unbound|extension|interface|protocol|embed|global|switch|case|default)\\b"
+    },
+    "storage_modifiers": {
+      "name": "storage.modifier.cvolo",
+      "match": "\\b(ref|refvar|unsafe|unbound|global|extern|embed)\\b"
     },
     "types": {
       "patterns": [
         {
-          "name": "storage.modifier.ref.cvolo",
-          "match": "\\b(ref|refvar)\\b"
-        },
-        {
           "name": "storage.type.primitive.cvolo",
-          "match": "\\b(void|int|double|bool|string|char)\\b"
+          "match": "\\b(void|int|uint|long|ulong|short|ushort|byte|sbyte|double|bool|string|char)\\b"
         },
         {
           "name": "storage.type.cvolo",
           "match": "\\b[A-Z][a-zA-Z0-9_]*\\b"
+        },
+        {
+          "name": "keyword.operator.cvolo",
+          "match": "(\\*) | (\\[\\])"
         }
       ]
     }
@@ -83,9 +113,9 @@
       }
     },
     {
-      "comment": "Struct declaration",
-      "begin": "\\b(struct)\\s+([a-zA-Z_][a-zA-Z0-9_]*)",
-      "end": "(?=\\{)",
+      "comment": "Struct, Union, Enum, Interface, Protocol, Extension declaration",
+      "begin": "\\b(struct|union|enum|interface|protocol|extension)\\s+([a-zA-Z_][a-zA-Z0-9_]*)",
+      "end": "(?=\\{|:)",
       "beginCaptures": {
         "1": {
           "name": "storage.modifier"
@@ -96,21 +126,23 @@
       }
     },
     {
-      "comment": "Struct Fields",
-      "match": "\\b(int|double|bool|string|char|void)\\b\\s+([a-zA-Z_][a-zA-Z0-9_]*)",
+      "comment": "Fields and Variables",
+      "match": "\\b(val|var|refvar|ref)?\\s*(void|int|uint|long|ulong|short|ushort|byte|sbyte|double|bool|string|char|[A-Z][a-zA-Z0-9_]*)\\b\\s*([a-zA-Z_][a-zA-Z0-9_]*)",
       "captures": {
-        "1": { "name": "storage.type" },
-        "2": { "name": "variable.other.member" }
+        "1": { "name": "storage.modifier" },
+        "2": { "name": "storage.type" },
+        "3": { "name": "variable.other.member" }
       }
     },
     {
       "comment": "Function definition",
-      "begin": "\\b(?:(ref|refvar)\\s+)?(void|int|double|bool|string|char|[a-zA-Z_][a-zA-Z0-9_]*)\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\s*(?=\\()",
+      "begin": "\\b(?:(unsafe|unbound)\\s+)?(?:(ref|refvar)\\s+)?(void|int|uint|long|ulong|short|ushort|byte|sbyte|double|bool|string|char|[a-zA-Z_][a-zA-Z0-9_]*)\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\s*(?=\\()",
       "end": "(?<=\\))",
       "beginCaptures": {
-        "1": { "name": "storage.modifier.ref.cvolo" },
-        "2": { "name": "storage.type.cvolo" },
-        "3": { "name": "entity.name.function.cvolo" }
+        "1": { "name": "storage.modifier" },
+        "2": { "name": "storage.modifier.ref.cvolo" },
+        "3": { "name": "storage.type.cvolo" },
+        "4": { "name": "entity.name.function.cvolo" }
       },
       "patterns": [
         {
@@ -126,7 +158,7 @@
         }
       ]
     },
-    { "include": "#string_literal" },
+    { "include": "#string_literals" },
     { "include": "#numbers" },
     {
       "match": "\\bheap\\b",
@@ -138,15 +170,16 @@
       "captures": { "1": { "name": "entity.name.function.cvolo" } }
     },
     { "include": "#keywords" },
+    { "include": "#storage_modifiers" },
     {
       "match": "\\b(true|false)\\b",
       "name": "constant.language.boolean.cvolo"
     },
     { "include": "#types" },
     {
-      "comment": "All operators including compound, bitwise, and ternary",
+      "comment": "All operators including compound, bitwise, ternary, and pointer",
       "name": "keyword.operator.cvolo",
-      "match": "(\\+\\+|--|<<=|>>=|>>>=|\\+=|\\-=|\\*=|/=|&=|\\|=|\\^=|<<|>>|>>>|==|!=|<=|>=|&&|\\|\\||->|\\.\\.\\.|\\+|\\-|\\*|/|%|&|\\||\\^|~|!|=|\\?|:|\\[|\\])"
+      "match": "(\\+\\+|--|<<=|>>=|>>>=|\\+=|\\-=|\\*=|/=|&=|\\|=|\\^=|<<|>>|>>>|==|!=|<=|>=|&&|\\|\\||->|\\.\\.\\.|\\+|\\-|\\*|/|%|&|\\||\\^|~|!|=|\\?|:|\\[|\\]|\\.\\s|\\.\\.|\\|\\>|\\<|\\>)"
     }
   ]
 }
