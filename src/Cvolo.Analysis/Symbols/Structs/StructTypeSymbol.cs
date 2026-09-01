@@ -4,7 +4,7 @@ namespace Cvolo.Analysis.Symbols.Structs;
 
 public sealed class StructTypeSymbol(string name, IReadOnlyList<StructFieldSymbol> fields, StructTypeSymbol? embeddedType = null) : TypeSymbol(name)
 {
-	public IReadOnlyList<StructFieldSymbol> Fields { get; } = fields;
+	public List<StructFieldSymbol> Fields { get; } = fields.ToList();
 
 	/// <summary>
 	/// The resolved, flattened embedded type composition this struct

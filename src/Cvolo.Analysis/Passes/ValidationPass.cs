@@ -15,6 +15,7 @@ public sealed class ValidationPass(BindingContext context)
 	private ClassificationAnalyzer? _classification;
 	private ClassificationAnalyzer Classification => _classification ??= new ClassificationAnalyzer(context);
 	private int _unsafeDepth;
+	private bool _inUnbound;
 
 	public void Process(IEnumerable<CompilationUnitSyntax> units)
 	{
@@ -178,6 +179,8 @@ public sealed class ValidationPass(BindingContext context)
 	{
 		var baseUnsafeDepth = _unsafeDepth;
 		_unsafeDepth = IsUnsafeFunction(func) ? 1 : 0;
+		var baseInUnbound = _inUnbound;
+		_inUnbound = func.Modifier == SafetyTier.Unbound;
 		var localScope = new SymbolTable(context.Globals);
 
 		foreach (var param in func.Parameters)
@@ -207,6 +210,7 @@ public sealed class ValidationPass(BindingContext context)
 		}
 
 		_unsafeDepth = baseUnsafeDepth;
+		_inUnbound = baseInUnbound;
 	}
 
 	private static bool IsUnsafeFunction(FunctionDeclarationSyntax func) =>
@@ -841,6 +845,12 @@ public sealed class ValidationPass(BindingContext context)
 		{
 			if (!initializedFields.Contains(field.Name))
 			{
+				// Rule 10 (Deferred Reference Initialization): inside an unbound context, reference
+				// fields (`ref`/`refvar`) that point to self-referential structures are exempted from
+				// strict immediate-initialization; they are filled in subsequently within the unbound body.
+				if (_inUnbound && field.Type is PointerTypeSymbol)
+					continue;
+
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
 				context.Diagnostics.Report(currentFileContext, expr.Span, $"Missing initializer for field '{field.Name}' of struct '{structType.Name}'");
 			}
@@ -2344,6 +2354,8 @@ public sealed class ValidationPass(BindingContext context)
 			// explicit parameters.
 			var baseUnsafeDepth = _unsafeDepth;
 			_unsafeDepth = IsUnsafeFunction(method) ? 1 : 0;
+			var baseInUnboundP = _inUnbound;
+			_inUnbound = method.Modifier == SafetyTier.Unbound;
 			var protoScope = new SymbolTable(context.Globals);
 			foreach (var p in method.Parameters)
 			{
@@ -2356,6 +2368,7 @@ public sealed class ValidationPass(BindingContext context)
 
 			CheckBlock(method.Body, protoScope, method);
 			_unsafeDepth = baseUnsafeDepth;
+			_inUnbound = baseInUnboundP;
 			return;
 		}
 
@@ -2365,6 +2378,8 @@ public sealed class ValidationPass(BindingContext context)
 
 		var baseUnsafeDepth2 = _unsafeDepth;
 		_unsafeDepth = IsUnsafeFunction(method) ? 1 : 0;
+		var baseInUnbound2 = _inUnbound;
+		_inUnbound = method.Modifier == SafetyTier.Unbound;
 
 		var structType = extendedType as StructTypeSymbol;
 		bool isMutating;
@@ -2474,6 +2489,7 @@ public sealed class ValidationPass(BindingContext context)
 
 		// Restore original depth context
 		_unsafeDepth = baseUnsafeDepth2;
+		_inUnbound = baseInUnbound2;
 	}
 
 	private bool DetectFieldMutation(SyntaxNode node, StructTypeSymbol structType)

@@ -2529,6 +2529,27 @@ case MemberAccessExpressionSyntax m:
 				return (lengthPtr, TypeSymbol.Int);
 			}
 
+			// Dot access through a reference field (auto-deref): parentPtr addresses a
+			// pointer slot holding the referenced struct; load it, then GEP into the
+			// referenced struct's field so both reads and writes work.
+			if (parentType is PointerTypeSymbol refPtrType)
+			{
+				var referred = refPtrType.ReferencedType;
+				if (referred is StructTypeSymbol refStructType)
+				{
+					var rawPtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), parentPtr, "reffield_load");
+					var refFieldIndex = GetFieldIndex(refStructType, m.MemberName);
+					var refFieldType = refStructType.Fields[refFieldIndex].Type;
+
+					var refStructLayoutTy = GetLLVMType(referred);
+					var refZero = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0);
+					var refIndex = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)refFieldIndex);
+
+					var refFieldPtr = _builder.BuildGEP2(refStructLayoutTy, rawPtr, new LLVMValueRef[] { refZero, refIndex }, "reffield_member_ptr");
+					return (refFieldPtr, refFieldType);
+				}
+			}
+
 			// Arrow operator: parentPtr is a pointer to a struct pointer; load it first
 			if (m.Operator == "->")
 			{
@@ -2845,9 +2866,11 @@ else if (expr is BorrowExpressionSyntax b)
 		var structType = (StructTypeSymbol)typeSymbol!;
 		var structLayout = GetLLVMType(structType);
 
+		var providedFields = new HashSet<string>();
 		foreach (var init in expr.Initializers)
 		{
 			var fieldIndex = GetFieldIndex(structType, init.MemberName);
+			providedFields.Add(init.MemberName);
 			var targetFieldPtr = _builder.BuildGEP2(structLayout, destPtr, new LLVMValueRef[]
 			{
 				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0), LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)fieldIndex)
@@ -2865,6 +2888,23 @@ else if (expr is BorrowExpressionSyntax b)
 			{
 				var value = EmitExpression(init.Expression);
 				_builder.BuildStore(value, targetFieldPtr);
+			}
+		}
+
+		// Deferred Reference Initialization (spec §5 Rule 10): reference fields (`ref`/`refvar`) that were
+		// omitted from the initializer (permitted inside unbound for self-referential structures) are seeded
+		// with a null marker. The compile-time dataflow pass guarantees they are overwritten with a valid
+		// reference before the unbound boundary is crossed, so this null is never dereferenced at runtime.
+		for (var f = 0; f < structType.Fields.Count; f++)
+		{
+			var field = structType.Fields[f];
+			if (field.Type is PointerTypeSymbol && !providedFields.Contains(field.Name))
+			{
+				var fieldPtr = _builder.BuildGEP2(structLayout, destPtr, new LLVMValueRef[]
+				{
+					LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0), LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)f)
+				}, "deferred_field_ptr");
+				_builder.BuildStore(LLVMValueRef.CreateConstPointerNull(GetLLVMType(field.Type)), fieldPtr);
 			}
 		}
 	}

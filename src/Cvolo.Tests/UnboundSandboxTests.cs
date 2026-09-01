@@ -78,4 +78,49 @@ public sealed class UnboundSandboxTests : CompilerTestBase
 		Assert.NotEqual(0, exitCode);
 		Assert.Contains("Cannot assign to reference field", stderr);
 	}
+
+	[Theory]
+	[InlineData("LinkedList", "6")]
+	[InlineData("DoublyLinkedList", "4")]
+	[InlineData("TreeWithParent", "30")]
+	[InlineData("CyclicGraph", "1")]
+	[InlineData("UnboundFactory", "100")]
+	public void Increment6_PositiveCorpus_Runs(string caseName, string expected)
+	{
+		var fileName = $"Sandbox/Increment6/{caseName}.cvl";
+		var (exitCode, stdout, stderr) = RunCompiler(fileName);
+		AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
+
+		var (runCode, runStdout) = ExecuteBinary(caseName, "Sandbox/Increment6");
+		Assert.Equal(0, runCode);
+		Assert.Contains(expected, runStdout);
+	}
+
+	[Fact]
+	public void Increment6_UnboundFactory_DoesNotWarnUnboundNoRefParams()
+	{
+		var fileName = "Sandbox/Increment6/UnboundFactory.cvl";
+		var (exitCode, stdout, stderr) = RunCompiler(fileName);
+		AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
+		Assert.DoesNotContain("'unbound' modifier has no effect", stderr);
+	}
+
+	[Fact]
+	public void Increment6_ReturnLocalRefStruct_Rejected()
+	{
+		var fileName = "Sandbox/Increment6/ReturnLocalRefStructFail.cvl";
+		var (exitCode, stdout, stderr) = RunCompiler(fileName);
+		Assert.NotEqual(0, exitCode);
+		Assert.Contains("Cannot return 'h' by value", stderr);
+		Assert.Contains("dangling reference", stderr);
+	}
+
+	[Fact]
+	public void Increment6_GlobalAssignRefFieldInSafe_Rejected()
+	{
+		var fileName = "Sandbox/Increment6/GlobalAssignRefFieldSafeFail.cvl";
+		var (exitCode, stdout, stderr) = RunCompiler(fileName);
+		Assert.NotEqual(0, exitCode);
+		Assert.Contains("Cannot assign to reference field", stderr);
+	}
 }

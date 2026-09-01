@@ -571,14 +571,16 @@ public sealed class DeclarationPass(BindingContext context)
 			fields.Add(new StructFieldSymbol(field.Name, fieldType));
 		}
 
-		var structSymbol = new StructTypeSymbol(mangledName, fields)
-		{
-			IsStrictMutability = appliedAttrs.Contains("StrictMutability")
-		};
-		context.StructTypes[mangledName] = structSymbol;
-		// Ensure the canonical cache no longer serves the (empty) placeholder
-		// registered above, or later ResolveType("Node") would return a
-		// field-less Node even after this replacement.
+		// Populate the placeholder registered above IN PLACE rather than
+		// replacing it with a new object. Reference field types resolved during
+		// field population capture a PointerTypeSymbol whose ReferencedType is
+		// the placeholder; mutating it keeps those references valid, so
+		// `a.refField.value` member access resolves the populated fields.
+		var structSymbol = context.StructTypes[mangledName];
+		structSymbol.Fields.AddRange(fields);
+		structSymbol.IsStrictMutability = appliedAttrs.Contains("StrictMutability");
+		// Ensure the canonical cache serves the (now populated) struct so later
+		// ResolveType("Node") returns the same field-ful symbol.
 		context.ReplaceTypeInCache(mangledName, structSymbol);
 	}
 
@@ -854,11 +856,14 @@ public sealed class DeclarationPass(BindingContext context)
 
 		WarnIfUnsafeBodyUnused(func.Span, func.Body, newSymbol, suppressedWarnings);
 
-		// Warn if 'unbound' is used but no ref/refvar parameters exist
+		// Warn if 'unbound' is used but no ref/refvar parameters exist. A by-value factory that returns
+		// a Move type (a struct with reference fields) still gains escape-relaxation value from 'unbound'
+		// (spec §5 Rule 9 heap-relative escape), so the warning is suppressed in that case.
 		if (safetyTier == SafetyTier.Unbound && !suppressedWarnings.Contains(DiagnosticIds.UnboundNoRefParams))
 		{
 			var hasRefParams = parameters.Any(p => p.Type is PointerTypeSymbol { IsMutable: true } or PointerTypeSymbol { IsMutable: false });
-			if (!hasRefParams)
+			var returnsMove = type is not null && new ClassificationAnalyzer(context).Classify(type) == CopyKind.ResourceMove;
+			if (!hasRefParams && !returnsMove)
 			{
 				ReportDeclarationWarning(func, "'unbound' modifier has no effect because function has no ref/refvar parameters.", DiagnosticIds.UnboundNoRefParams);
 			}

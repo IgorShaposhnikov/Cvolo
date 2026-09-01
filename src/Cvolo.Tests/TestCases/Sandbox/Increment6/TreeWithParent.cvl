@@ -1,0 +1,28 @@
+using System;
+
+/// <summary>
+/// Increment 6: binary tree with parent pointers (ref fields).
+/// </summary>
+struct TreeNode {
+    refvar TreeNode parent;
+    refvar TreeNode left;
+    refvar TreeNode right;
+    int value;
+}
+
+unbound int TreeTraverse() {
+    var root = TreeNode { value: 10 };
+    var left = TreeNode { value: 5 };
+    var right = TreeNode { value: 15 };
+    root.left = refvar left;
+    root.right = refvar right;
+    left.parent = refvar root;
+    right.parent = refvar root;
+    Console.WriteLine(root.left.value + root.right.value + left.parent.value);
+    return 0;
+}
+
+int Main() {
+    TreeTraverse();
+    return 0;
+}

@@ -1,0 +1,21 @@
+using System;
+
+/// <summary>
+/// Increment 6 negative: returning a struct by value where a ref field targets a local
+/// variable would leave a dangling reference. Must be rejected.
+/// </summary>
+struct Node {
+    refvar Node next;
+    int value;
+}
+
+unbound Node BadFactory(int v) {
+    var localNode = Node { value: v };
+    var h = Node { next: refvar localNode, value: v };
+    return h;
+}
+
+int Main() {
+    var n = BadFactory(1);
+    return 0;
+}

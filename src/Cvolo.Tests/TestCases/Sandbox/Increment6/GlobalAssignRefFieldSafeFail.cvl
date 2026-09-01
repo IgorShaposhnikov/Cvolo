@@ -1,0 +1,24 @@
+using System;
+
+/// <summary>
+/// Increment 6 negative: assigning to a reference field in safe code (outside an unbound
+/// scope) must be rejected (CVL1012).
+/// </summary>
+struct Node {
+    refvar Node next;
+    int value;
+}
+
+global var Node g;
+
+unbound void Setup() {
+    g = Node { value: 100 };
+    g.next = refvar g;
+}
+
+int Main() {
+    Setup();
+    var ok = Node { next: refvar g, value: 1 };
+    ok.next = refvar g;
+    return 0;
+}

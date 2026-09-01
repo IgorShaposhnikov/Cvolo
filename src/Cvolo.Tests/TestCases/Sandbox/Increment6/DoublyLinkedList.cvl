@@ -1,0 +1,26 @@
+using System;
+
+/// <summary>
+/// Increment 6: doubly-linked list with forward and backward ref fields.
+/// </summary>
+struct DLLNode {
+    refvar DLLNode next;
+    refvar DLLNode prev;
+    int value;
+}
+
+unbound int DLLSum() {
+    var n1 = DLLNode { value: 1 };
+    var n2 = DLLNode { value: 2 };
+    n1.next = refvar n2;
+    n2.prev = refvar n1;
+    var forward = n1.value + n1.next.value;
+    var backward = n2.prev.value;
+    Console.WriteLine(forward + backward);
+    return 0;
+}
+
+int Main() {
+    DLLSum();
+    return 0;
+}

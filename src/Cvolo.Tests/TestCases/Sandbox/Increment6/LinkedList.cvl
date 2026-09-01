@@ -1,0 +1,24 @@
+using System;
+
+/// <summary>
+/// Increment 6: single-linked list built from ref fields inside an unbound scope.
+/// </summary>
+struct Node {
+    refvar Node next;
+    int value;
+}
+
+unbound int LinkedListSum() {
+    var n1 = Node { value: 1 };
+    var n2 = Node { value: 2 };
+    var n3 = Node { value: 3 };
+    n1.next = refvar n2;
+    n2.next = refvar n3;
+    Console.WriteLine(n1.value + n1.next.value + n1.next.next.value);
+    return 0;
+}
+
+int Main() {
+    LinkedListSum();
+    return 0;
+}

@@ -1,0 +1,25 @@
+using System;
+
+/// <summary>
+/// Increment 6: cyclic graph (a -> b -> c -> a) using ref fields.
+/// </summary>
+struct GraphNode {
+    refvar GraphNode edge;
+    int value;
+}
+
+unbound int CycleTraverse() {
+    var a = GraphNode { value: 1 };
+    var b = GraphNode { value: 2 };
+    var c = GraphNode { value: 3 };
+    a.edge = refvar b;
+    b.edge = refvar c;
+    c.edge = refvar a;
+    Console.WriteLine(a.edge.edge.edge.value);
+    return 0;
+}
+
+int Main() {
+    CycleTraverse();
+    return 0;
+}

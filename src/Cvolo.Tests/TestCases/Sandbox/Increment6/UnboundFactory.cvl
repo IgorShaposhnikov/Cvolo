@@ -1,0 +1,27 @@
+using System;
+
+/// <summary>
+/// Increment 6: an unbound factory returning a self-referential struct by value.
+/// The 'unbound' modifier is required (ref-field mutation of a global) and should NOT
+/// produce the UnboundNoRefParams warning because the function returns a Move type.
+/// </summary>
+struct Node {
+    refvar Node next;
+    int value;
+}
+
+global var Node g;
+
+unbound Node AttachGlobal(int v) {
+    g = Node { value: 100 };
+    g.next = refvar g;
+    var h = Node { value: v };
+    h.next = refvar g;
+    return h;
+}
+
+int Main() {
+    var Node head = AttachGlobal(1);
+    Console.WriteLine(head.next.value);
+    return 0;
+}
