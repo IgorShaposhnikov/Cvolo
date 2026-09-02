@@ -723,11 +723,11 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		switch (expr)
 		{
 			case IntegerLiteralExpressionSyntax intLit:
-			{
-				// Out-of-int-range literals are 64-bit; in-range literals stay int.
-				var litTy = intLit.Value is > int.MaxValue or < int.MinValue ? TypeSymbol.Long : TypeSymbol.Int;
-				return LLVMValueRef.CreateConstInt(GetLLVMType(litTy), unchecked((ulong)intLit.Value));
-			}
+				{
+					// Out-of-int-range literals are 64-bit; in-range literals stay int.
+					var litTy = intLit.Value is > int.MaxValue or < int.MinValue ? TypeSymbol.Long : TypeSymbol.Int;
+					return LLVMValueRef.CreateConstInt(GetLLVMType(litTy), unchecked((ulong)intLit.Value));
+				}
 			case DoubleLiteralExpressionSyntax dblLit:
 				return LLVMValueRef.CreateConstReal(LLVMTypeRef.Double, dblLit.Value);
 			case BooleanLiteralExpressionSyntax boolLit:
@@ -741,43 +741,43 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				return LLVMValueRef.CreateConstPointerNull(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0));
 			case IdentifierExpressionSyntax id:
 				return Load(id.Name);
-case MemberAccessExpressionSyntax m:
-			{
-				// Enum scoped-variant access: EnumName.Variant is a compile-time constant.
-				if (TryResolveEnumVariantReceiver(m) is { } enumConstType
-					&& enumConstType.FindVariant(m.MemberName) is { } enumConstVariant)
+			case MemberAccessExpressionSyntax m:
 				{
-					return LLVMValueRef.CreateConstInt(GetLLVMType(enumConstType), unchecked((ulong)enumConstVariant.Value));
-				}
-
-				// Enum metaprogramming surface (spec §5): Values is a read-only slice
-				// materialized from a .rodata global; Min/Max/Count are compile-time ints.
-				if (TryResolveEnumVariantReceiver(m) is { } enumMetaType)
-				{
-					if (m.MemberName == "Values")
+					// Enum scoped-variant access: EnumName.Variant is a compile-time constant.
+					if (TryResolveEnumVariantReceiver(m) is { } enumConstType
+						&& enumConstType.FindVariant(m.MemberName) is { } enumConstVariant)
 					{
-						var (valuesPtr, valuesType) = EmitEnumValuesSlicePointer(enumMetaType);
-						return _builder.BuildLoad2(GetLLVMType(valuesType), valuesPtr, "enum_values");
+						return LLVMValueRef.CreateConstInt(GetLLVMType(enumConstType), unchecked((ulong)enumConstVariant.Value));
 					}
 
-					if (m.MemberName is "Min" or "Max" or "Count")
+					// Enum metaprogramming surface (spec §5): Values is a read-only slice
+					// materialized from a .rodata global; Min/Max/Count are compile-time ints.
+					if (TryResolveEnumVariantReceiver(m) is { } enumMetaType)
 					{
-						long metaValue = m.MemberName switch
+						if (m.MemberName == "Values")
 						{
-							"Min" => enumMetaType.Variants.Min(v => v.Value),
-							"Max" => enumMetaType.Variants.Max(v => v.Value),
-							"Count" => enumMetaType.IsFlags
-								? enumMetaType.Variants.Count(v => v.Value > 0 && IsPowerOfTwo(v.Value))
-								: enumMetaType.Variants.Count,
-							_ => 0,
-						};
-						return LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, unchecked((ulong)metaValue));
-					}
-				}
+							var (valuesPtr, valuesType) = EmitEnumValuesSlicePointer(enumMetaType);
+							return _builder.BuildLoad2(GetLLVMType(valuesType), valuesPtr, "enum_values");
+						}
 
-				var (ptr, type) = GetFieldPointer(m);
-				return _builder.BuildLoad2(GetLLVMType(type), ptr, "member_val");
-			}
+						if (m.MemberName is "Min" or "Max" or "Count")
+						{
+							long metaValue = m.MemberName switch
+							{
+								"Min" => enumMetaType.Variants.Min(v => v.Value),
+								"Max" => enumMetaType.Variants.Max(v => v.Value),
+								"Count" => enumMetaType.IsFlags
+									? enumMetaType.Variants.Count(v => v.Value > 0 && IsPowerOfTwo(v.Value))
+									: enumMetaType.Variants.Count,
+								_ => 0,
+							};
+							return LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, unchecked((ulong)metaValue));
+						}
+					}
+
+					var (ptr, type) = GetFieldPointer(m);
+					return _builder.BuildLoad2(GetLLVMType(type), ptr, "member_val");
+				}
 			case IndexExpressionSyntax idx:
 				{
 					var (ptr, type) = GetFieldPointer(idx);
@@ -816,40 +816,40 @@ case MemberAccessExpressionSyntax m:
 		return _builder.BuildGlobalStringPtr(value, "str");
 	}
 
-    private bool IsConstructorCall(CallExpressionSyntax call, TypeSymbol targetType)
-    {
-        // Strip generics from the target type name to match the call's function name (e.g. Point<int> -> Point)
-        var targetTypeName = targetType.Name;
-        if (targetTypeName.Contains('<'))
-        {
-            targetTypeName = targetTypeName.Substring(0, targetTypeName.IndexOf('<'));
-        }
+	private bool IsConstructorCall(CallExpressionSyntax call, TypeSymbol targetType)
+	{
+		// Strip generics from the target type name to match the call's function name (e.g. Point<int> -> Point)
+		var targetTypeName = targetType.Name;
+		if (targetTypeName.Contains('<'))
+		{
+			targetTypeName = targetTypeName.Substring(0, targetTypeName.IndexOf('<'));
+		}
 
-        // Get short names to ignore namespace differences
-        var shortTargetTypeName = targetTypeName.Contains('.')
-            ? targetTypeName.Substring(targetTypeName.LastIndexOf('.') + 1)
-            : targetTypeName;
+		// Get short names to ignore namespace differences
+		var shortTargetTypeName = targetTypeName.Contains('.')
+			? targetTypeName.Substring(targetTypeName.LastIndexOf('.') + 1)
+			: targetTypeName;
 
-        var shortCallName = call.FunctionName.Contains('.')
-            ? call.FunctionName.Substring(call.FunctionName.LastIndexOf('.') + 1)
-            : call.FunctionName;
+		var shortCallName = call.FunctionName.Contains('.')
+			? call.FunctionName.Substring(call.FunctionName.LastIndexOf('.') + 1)
+			: call.FunctionName;
 
-        if (!string.Equals(shortCallName, shortTargetTypeName, StringComparison.Ordinal))
-            return false;
+		if (!string.Equals(shortCallName, shortTargetTypeName, StringComparison.Ordinal))
+			return false;
 
-        // Look up either the concrete instantiated constructor or the base template constructor
-        if (!_bindingContext!.Constructors.TryGetValue(targetType.Name, out var ctors) &&
-            !_bindingContext.Constructors.TryGetValue(targetTypeName, out ctors))
-        {
-            return false;
-        }
+		// Look up either the concrete instantiated constructor or the base template constructor
+		if (!_bindingContext!.Constructors.TryGetValue(targetType.Name, out var ctors) &&
+			!_bindingContext.Constructors.TryGetValue(targetTypeName, out ctors))
+		{
+			return false;
+		}
 
-        return _bindingContext.ResolvedCalls.TryGetValue(call, out var resolved) &&
-               resolved.Parameters.Count > 0 &&
-               resolved.Parameters[0].Name == "this";
-    }
+		return _bindingContext.ResolvedCalls.TryGetValue(call, out var resolved) &&
+			   resolved.Parameters.Count > 0 &&
+			   resolved.Parameters[0].Name == "this";
+	}
 
-    private LLVMValueRef EmitCallExpression(CallExpressionSyntax call, LLVMValueRef? implicitThisPtr = null)
+	private LLVMValueRef EmitCallExpression(CallExpressionSyntax call, LLVMValueRef? implicitThisPtr = null)
 	{
 		var paramOffset = implicitThisPtr is not null ? 1 : 0;
 		return EmitCallExpressionCore(call, implicitThisPtr, paramOffset);
@@ -949,7 +949,7 @@ case MemberAccessExpressionSyntax m:
 		var callee = _globals[emitName];
 		var funcType = _functionTypes[emitName];
 
-		var args = new List<LLVMValueRef>();		if (call.FunctionName.Contains('.') && _bindingContext.ResolvedCalls.TryGetValue(call, out var extFunc))
+		var args = new List<LLVMValueRef>(); if (call.FunctionName.Contains('.') && _bindingContext.ResolvedCalls.TryGetValue(call, out var extFunc))
 		{
 			var receiverName = call.FunctionName.Split('.')[0];
 			if (_locals.TryGetValue(receiverName, out var receiverPtr))
@@ -1003,6 +1003,11 @@ case MemberAccessExpressionSyntax m:
 			else
 			{
 				val = EmitExpression(argExpr);
+			}
+
+			if (paramTy is StructTypeSymbol && val.TypeOf.Kind == LLVMTypeKind.LLVMPointerTypeKind)
+			{
+				val = _builder.BuildLoad2(GetLLVMType(paramTy), val, "loaded_struct_arg");
 			}
 
 			// Ownership transfer: passing a ResourceMove-style union by value transfers the
@@ -1392,194 +1397,222 @@ case MemberAccessExpressionSyntax m:
 					: right;
 				_builder.BuildStore(coerced, elementPtr);
 			}
+
+			return right;
+		}
+		else if (bin.Left is UnaryExpressionSyntax { Operator: "*" } deref)
+		{
+			var targetPtr = EmitExpression(deref.Operand);
+			var targetType = GetExprType(bin.Left);
+
+			if (targetType is UnionTypeSymbol elemUnion
+				&& UnionNeedsTagCheckedCleanup(elemUnion)
+				&& bin.Right is StructInitializationExpressionSyntax)
+			{
+				EmitUnionTagCheckedCleanup("deref", targetPtr, elemUnion);
+			}
+
+			if (targetType is UnionTypeSymbol && bin.Right is StructInitializationExpressionSyntax elemReinit)
+			{
+				EmitStructInitializationInPlace(elemReinit, targetPtr);
+			}
+			else
+			{
+				var coerced = (bin.Right is MemberAccessExpressionSyntax or IndexExpressionSyntax)
+					? EmitRefToValue(right, GetExprType(bin.Right))
+					: right;
+				coerced = CoerceIntegerWidth(coerced, GetExprType(bin.Right) ?? targetType, targetType);
+				_builder.BuildStore(coerced, targetPtr);
+			}
+
 			return right;
 		}
 
 		throw new InvalidOperationException("Invalid target assignment");
 	}
 
-    private LLVMValueRef EmitUnaryExpression(UnaryExpressionSyntax unary)
-    {
-        if (unary.Operator.EndsWith("_postfix") || unary.Operator.EndsWith("_prefix"))
-        {
-            return EmitIncrementDecrement(unary, unary.Operator.EndsWith("_prefix"), unary.Operator.StartsWith("++"));
-        }
+	private LLVMValueRef EmitUnaryExpression(UnaryExpressionSyntax unary)
+	{
+		if (unary.Operator.EndsWith("_postfix") || unary.Operator.EndsWith("_prefix"))
+		{
+			return EmitIncrementDecrement(unary, unary.Operator.EndsWith("_prefix"), unary.Operator.StartsWith("++"));
+		}
 
-        var operand = EmitExpression(unary.Operand);
+		var operand = EmitExpression(unary.Operand);
 
-        if (unary.Operator.StartsWith('(') && unary.Operator.EndsWith(')'))
-        {
-            var targetTypeName = unary.Operator.Substring(1, unary.Operator.Length - 2);
-            var targetTypeSymbol = _bindingContext!.ResolveType(targetTypeName)!;
-            var targetType = GetLLVMType(targetTypeSymbol);
+		if (unary.Operator.StartsWith('(') && unary.Operator.EndsWith(')'))
+		{
+			var targetTypeName = unary.Operator.Substring(1, unary.Operator.Length - 2);
+			var targetTypeSymbol = _bindingContext!.ResolveType(targetTypeName)!;
+			var targetType = GetLLVMType(targetTypeSymbol);
 
-            var operandType = GetExprType(unary.Operand);
-            var operandLlvmType = GetLLVMType(operandType);
+			var operandType = GetExprType(unary.Operand);
+			var operandLlvmType = GetLLVMType(operandType);
 
-            // Safe/unbound zone: (Enum)integer yields Option<Enum> — a checked conversion
-            // comparing against every declared variant value (None when no match). The raw
-            // enum scalar is only produced by this cast inside unsafe code.
-            if (targetTypeSymbol is EnumTypeSymbol safeCastEnum && _unsafeDepth == 0 &&
-                operandType is not EnumTypeSymbol && TypeSymbol.IsIntegerType(operandType))
-            {
-                if (_bindingContext.ResolveType($"Option<{safeCastEnum.Name}>") is UnionTypeSymbol optionUnion)
-                {
-                    var (optionPtr, optionTy) = MaterializeEnumCastOption(safeCastEnum, operand, operandType, optionUnion);
-                    return _builder.BuildLoad2(GetLLVMType(optionTy), optionPtr, "enum_cast_option");
-                }
-            }
+			// Safe/unbound zone: (Enum)integer yields Option<Enum> — a checked conversion
+			// comparing against every declared variant value (None when no match). The raw
+			// enum scalar is only produced by this cast inside unsafe code.
+			if (targetTypeSymbol is EnumTypeSymbol safeCastEnum && _unsafeDepth == 0 &&
+				operandType is not EnumTypeSymbol && TypeSymbol.IsIntegerType(operandType))
+			{
+				if (_bindingContext.ResolveType($"Option<{safeCastEnum.Name}>") is UnionTypeSymbol optionUnion)
+				{
+					var (optionPtr, optionTy) = MaterializeEnumCastOption(safeCastEnum, operand, operandType, optionUnion);
+					return _builder.BuildLoad2(GetLLVMType(optionTy), optionPtr, "enum_cast_option");
+				}
+			}
 
-            // Destructive cast (T*)<handle>: recover the raw heap pointer instead of
-            // bitcasting the whole owning handle. For a heap-allocated handle the block
-            // pointer lives in the handle slot (the hidden pointer field of the handle).
-            if (targetTypeSymbol is RawPointerTypeSymbol)
-            {
-                if (unary.Operand is IdentifierExpressionSyntax ownerId
-                    && _locals.TryGetValue(ownerId.Name, out var handleSlot)
-                    && _heapAllocatedVars.Contains(ownerId.Name))
-                {
-                    var rawHeapPtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), handleSlot, "handle_ptr");
-                    return rawHeapPtr.TypeOf.Handle == targetType.Handle
-                        ? rawHeapPtr
-                        : SafeBitCast(rawHeapPtr, targetType, "handle_cast");
-                }
+			// Destructive cast (T*)<handle>: recover the raw heap pointer instead of
+			// bitcasting the whole owning handle. For a heap-allocated handle the block
+			// pointer lives in the handle slot (the hidden pointer field of the handle).
+			if (targetTypeSymbol is RawPointerTypeSymbol)
+			{
+				if (unary.Operand is IdentifierExpressionSyntax ownerId
+					&& _locals.TryGetValue(ownerId.Name, out var handleSlot)
+					&& _heapAllocatedVars.Contains(ownerId.Name))
+				{
+					var rawHeapPtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), handleSlot, "handle_ptr");
+					return rawHeapPtr.TypeOf.Handle == targetType.Handle
+						? rawHeapPtr
+						: SafeBitCast(rawHeapPtr, targetType, "handle_cast");
+				}
 
-                // By-value handle (e.g. a heap node returned then passed by value): the
-                // aggregate's first field carries the owning pointer; extract it rather than
-                // casting the struct itself.
-                if (operandType is StructTypeSymbol handleStruct
-                    && handleStruct.Fields.Count > 0
-                    && handleStruct.Fields[0].Type is PointerTypeSymbol or RawPointerTypeSymbol
-                    && operand.TypeOf.Kind == LLVMTypeKind.LLVMStructTypeKind)
-                {
-                    var hiddenPtr = _builder.BuildExtractValue(operand, 0, "handle_hidden_ptr");
-                    return SafeBitCast(hiddenPtr, targetType, "handle_cast");
-                }
-            }
+				// By-value handle (e.g. a heap node returned then passed by value): the
+				// aggregate's first field carries the owning pointer; extract it rather than
+				// casting the struct itself.
+				if (operandType is StructTypeSymbol handleStruct
+					&& handleStruct.Fields.Count > 0
+					&& handleStruct.Fields[0].Type is PointerTypeSymbol or RawPointerTypeSymbol
+					&& operand.TypeOf.Kind == LLVMTypeKind.LLVMStructTypeKind)
+				{
+					var hiddenPtr = _builder.BuildExtractValue(operand, 0, "handle_hidden_ptr");
+					return SafeBitCast(hiddenPtr, targetType, "handle_cast");
+				}
+			}
 
-            // If casting between the identical LLVM type, return early
-            if (targetType.Handle == operandLlvmType.Handle)
-                return operand;
+			// If casting between the identical LLVM type, return early
+			if (targetType.Handle == operandLlvmType.Handle)
+				return operand;
 
-            // Enums are flat scalar integers (§1): reduce to their underlying storage
-            // type so the width-adjustment branches below can operate on them directly.
-            var effectiveTarget = targetTypeSymbol is EnumTypeSymbol targetEnum ? targetEnum.StorageType : targetTypeSymbol;
-            var effectiveOperand = operandType is EnumTypeSymbol operandEnum ? operandEnum.StorageType : operandType;
+			// Enums are flat scalar integers (§1): reduce to their underlying storage
+			// type so the width-adjustment branches below can operate on them directly.
+			var effectiveTarget = targetTypeSymbol is EnumTypeSymbol targetEnum ? targetEnum.StorageType : targetTypeSymbol;
+			var effectiveOperand = operandType is EnumTypeSymbol operandEnum ? operandEnum.StorageType : operandType;
 
-            var targetIsInt = TypeSymbol.IsIntegerType(effectiveTarget);
-            var operandIsInt = TypeSymbol.IsIntegerType(effectiveOperand);
+			var targetIsInt = TypeSymbol.IsIntegerType(effectiveTarget);
+			var operandIsInt = TypeSymbol.IsIntegerType(effectiveOperand);
 
-            // 1. Float <-> Double conversions
-            if (effectiveTarget.Equals(TypeSymbol.Double) && effectiveOperand.Equals(TypeSymbol.Float))
-            {
-                return _builder.BuildFPExt(operand, LLVMTypeRef.Double, "cast_fpext");
-            }
-            if (effectiveTarget.Equals(TypeSymbol.Float) && effectiveOperand.Equals(TypeSymbol.Double))
-            {
-                return _builder.BuildFPTrunc(operand, LLVMTypeRef.Float, "cast_fptrunc");
-            }
+			// 1. Float <-> Double conversions
+			if (effectiveTarget.Equals(TypeSymbol.Double) && effectiveOperand.Equals(TypeSymbol.Float))
+			{
+				return _builder.BuildFPExt(operand, LLVMTypeRef.Double, "cast_fpext");
+			}
+			if (effectiveTarget.Equals(TypeSymbol.Float) && effectiveOperand.Equals(TypeSymbol.Double))
+			{
+				return _builder.BuildFPTrunc(operand, LLVMTypeRef.Float, "cast_fptrunc");
+			}
 
-            // 2. Integer -> Float / Double
-            if (TypeSymbol.IsFloatingPointType(effectiveTarget) && operandIsInt)
-            {
-                return TypeSymbol.IsSignedIntegerType(effectiveOperand)
-                    ? _builder.BuildSIToFP(operand, targetType, "cast_sitofp")
-                    : _builder.BuildUIToFP(operand, targetType, "cast_uitofp");
-            }
+			// 2. Integer -> Float / Double
+			if (TypeSymbol.IsFloatingPointType(effectiveTarget) && operandIsInt)
+			{
+				return TypeSymbol.IsSignedIntegerType(effectiveOperand)
+					? _builder.BuildSIToFP(operand, targetType, "cast_sitofp")
+					: _builder.BuildUIToFP(operand, targetType, "cast_uitofp");
+			}
 
-            // 3. Float / Double -> Integer
-            if (TypeSymbol.IsFloatingPointType(effectiveOperand) && targetIsInt)
-            {
-                return TypeSymbol.IsSignedIntegerType(effectiveTarget)
-                    ? _builder.BuildFPToSI(operand, targetType, "cast_fptosi")
-                    : _builder.BuildFPToUI(operand, targetType, "cast_fptoui");
-            }
+			// 3. Float / Double -> Integer
+			if (TypeSymbol.IsFloatingPointType(effectiveOperand) && targetIsInt)
+			{
+				return TypeSymbol.IsSignedIntegerType(effectiveTarget)
+					? _builder.BuildFPToSI(operand, targetType, "cast_fptosi")
+					: _builder.BuildFPToUI(operand, targetType, "cast_fptoui");
+			}
 
-            // 4. Integer <-> Integer width conversion (byte/char/short/int/long/nint/nuint)
-            if (operandIsInt && targetIsInt)
-            {
-                var operandWidth = TypeSymbol.IntegerBitWidth(effectiveOperand);
-                var targetWidth = TypeSymbol.IntegerBitWidth(effectiveTarget);
+			// 4. Integer <-> Integer width conversion (byte/char/short/int/long/nint/nuint)
+			if (operandIsInt && targetIsInt)
+			{
+				var operandWidth = TypeSymbol.IntegerBitWidth(effectiveOperand);
+				var targetWidth = TypeSymbol.IntegerBitWidth(effectiveTarget);
 
-                if (operandWidth > targetWidth)
-                {
-                    // Narrowing: truncate the source to the target width
-                    return _builder.BuildTrunc(operand, targetType, "cast_trunc");
-                }
+				if (operandWidth > targetWidth)
+				{
+					// Narrowing: truncate the source to the target width
+					return _builder.BuildTrunc(operand, targetType, "cast_trunc");
+				}
 
-                if (operandWidth < targetWidth)
-                {
-                    // Widening: sign-extend signed sources, zero-extend unsigned sources
-                    return TypeSymbol.IsSignedIntegerType(effectiveOperand)
-                        ? _builder.BuildSExt(operand, targetType, "cast_sext")
-                        : _builder.BuildZExt(operand, targetType, "cast_zext");
-                }
-            }
+				if (operandWidth < targetWidth)
+				{
+					// Widening: sign-extend signed sources, zero-extend unsigned sources
+					return TypeSymbol.IsSignedIntegerType(effectiveOperand)
+						? _builder.BuildSExt(operand, targetType, "cast_sext")
+						: _builder.BuildZExt(operand, targetType, "cast_zext");
+				}
+			}
 
-            return SafeBitCast(operand, targetType, "cast_bitcast");
-        }
+			return SafeBitCast(operand, targetType, "cast_bitcast");
+		}
 
-        switch (unary.Operator)
-        {
-            case "-":
-                return _builder.BuildNeg(operand);
-            case "!":
-                return _builder.BuildNot(operand);
-            case "~":
-                {
-                    // (§3.B) On a [Flags] enum, '~' is the masked bitwise complement:
-                    // (~value) & CombinedAtomicMask, truncated/width-locked to storage width.
-                    if (GetExprType(unary.Operand) is EnumTypeSymbol { IsFlags: true } flagsEnum)
-                    {
-                        var storeTy = GetLLVMType(flagsEnum);
-                        var notVal = _builder.BuildNot(operand, "flags_not");
-                        var combinedMask = 0L;
-                        foreach (var flagVar in flagsEnum.Variants)
-                        {
-                            combinedMask |= flagVar.Value;
-                        }
+		switch (unary.Operator)
+		{
+			case "-":
+				return _builder.BuildNeg(operand);
+			case "!":
+				return _builder.BuildNot(operand);
+			case "~":
+				{
+					// (§3.B) On a [Flags] enum, '~' is the masked bitwise complement:
+					// (~value) & CombinedAtomicMask, truncated/width-locked to storage width.
+					if (GetExprType(unary.Operand) is EnumTypeSymbol { IsFlags: true } flagsEnum)
+					{
+						var storeTy = GetLLVMType(flagsEnum);
+						var notVal = _builder.BuildNot(operand, "flags_not");
+						var combinedMask = 0L;
+						foreach (var flagVar in flagsEnum.Variants)
+						{
+							combinedMask |= flagVar.Value;
+						}
 
-                        return _builder.BuildAnd(notVal,
-                            LLVMValueRef.CreateConstInt(storeTy, unchecked((ulong)combinedMask)), "flags_masked");
-                    }
+						return _builder.BuildAnd(notVal,
+							LLVMValueRef.CreateConstInt(storeTy, unchecked((ulong)combinedMask)), "flags_masked");
+					}
 
-                    return _builder.BuildXor(operand, LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, unchecked((ulong)-1)));
-                }
-            case "*":
-                {
-                    var operandType = GetExprType(unary.Operand);
-                    if (operandType is RawPointerTypeSymbol rawPtr)
-                    {
-                        var elemLlvmType = GetLLVMType(rawPtr.ElementType);
-                        return _builder.BuildLoad2(elemLlvmType, operand, "deref_val");
-                    }
+					return _builder.BuildXor(operand, LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, unchecked((ulong)-1)));
+				}
+			case "*":
+				{
+					var operandType = GetExprType(unary.Operand);
+					if (operandType is RawPointerTypeSymbol rawPtr)
+					{
+						var elemLlvmType = GetLLVMType(rawPtr.ElementType);
+						return _builder.BuildLoad2(elemLlvmType, operand, "deref_val");
+					}
 
-                    return _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), operand, "deref_val");
-                }
-            case "&":
-                {
-                    if (unary.Operand is IdentifierExpressionSyntax id && _locals.TryGetValue(id.Name, out var ptr))
-                        return ptr;
-                    if (unary.Operand is MemberAccessExpressionSyntax memberAccess)
-                    {
-                        var (fieldPtr, _) = GetFieldPointer(memberAccess);
-                        return fieldPtr;
-                    }
+					return _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), operand, "deref_val");
+				}
+			case "&":
+				{
+					if (unary.Operand is IdentifierExpressionSyntax id && _locals.TryGetValue(id.Name, out var ptr))
+						return ptr;
+					if (unary.Operand is MemberAccessExpressionSyntax memberAccess)
+					{
+						var (fieldPtr, _) = GetFieldPointer(memberAccess);
+						return fieldPtr;
+					}
 
-                    if (unary.Operand is IndexExpressionSyntax indexExpr)
-                    {
-                        var (elementPtr, _) = GetFieldPointer(indexExpr);
-                        return elementPtr;
-                    }
+					if (unary.Operand is IndexExpressionSyntax indexExpr)
+					{
+						var (elementPtr, _) = GetFieldPointer(indexExpr);
+						return elementPtr;
+					}
 
-                    return operand;
-                }
-            default:
-                throw new InvalidOperationException($"Unknown unary operator '{unary.Operator}'");
-        }
-    }
+					return operand;
+				}
+			default:
+				throw new InvalidOperationException($"Unknown unary operator '{unary.Operator}'");
+		}
+	}
 
-    private void EmitVariableDeclaration(VariableDeclarationSyntax varDecl)
+	private void EmitVariableDeclaration(VariableDeclarationSyntax varDecl)
 	{
 		TypeSymbol? typeSymbol = null;
 		if (varDecl.Type is not null)
@@ -1916,6 +1949,11 @@ case MemberAccessExpressionSyntax m:
 			var (elementPtr, _) = GetFieldPointer(idx);
 			return elementPtr;
 		}
+		// Borrowing a dereferenced pointer ('ref *ptr' or 'refvar *ptr') returns the underlying pointer value
+		else if (expr.Expression is UnaryExpressionSyntax { Operator: "*" } deref)
+		{
+			return EmitExpression(deref.Operand);
+		}
 
 		throw new InvalidOperationException("Can only borrow variables or member fields");
 	}
@@ -2052,6 +2090,11 @@ case MemberAccessExpressionSyntax m:
 
 	private TypeSymbol ResolveCallReturnType(CallExpressionSyntax call)
 	{
+		if (_bindingContext != null && _bindingContext.ResolvedCalls.TryGetValue(call, out var resolved))
+		{
+			return resolved.ReturnType;
+		}
+
 		var mangledName = ResolveFunctionName(call.FunctionName, _currentUnit!);
 		if (call.TypeArguments.Count > 0)
 		{
@@ -2351,8 +2394,8 @@ case MemberAccessExpressionSyntax m:
 			EmitElementDestructor(castPtr, field.Type, $"{name}_u");
 			_builder.BuildBr(after);
 
-		_builder.PositionAtEnd(failBlock);
-	}
+			_builder.PositionAtEnd(failBlock);
+		}
 
 		_builder.PositionAtEnd(after);
 	}
@@ -2538,19 +2581,19 @@ case MemberAccessExpressionSyntax m:
 				}
 			case StructInitializationExpressionSyntax structInit when typeSymbol is StructTypeSymbol initStruct
 				&& _llvmStructTypes.TryGetValue(initStruct.Name, out var namedStruct):
-			{
-				var fieldValues = new List<LLVMValueRef>();
-				foreach (var field in initStruct.Fields)
 				{
-					var memberInit = structInit.Initializers.FirstOrDefault(m => m.MemberName == field.Name);
-					if (memberInit is not null && IsSimpleConstant(memberInit.Expression))
-						fieldValues.Add(BuildGlobalInitializer(field.Type, memberInit.Expression, GetLLVMType(field.Type)));
-					else
-						fieldValues.Add(LLVMValueRef.CreateConstNull(GetLLVMType(field.Type)));
-				}
+					var fieldValues = new List<LLVMValueRef>();
+					foreach (var field in initStruct.Fields)
+					{
+						var memberInit = structInit.Initializers.FirstOrDefault(m => m.MemberName == field.Name);
+						if (memberInit is not null && IsSimpleConstant(memberInit.Expression))
+							fieldValues.Add(BuildGlobalInitializer(field.Type, memberInit.Expression, GetLLVMType(field.Type)));
+						else
+							fieldValues.Add(LLVMValueRef.CreateConstNull(GetLLVMType(field.Type)));
+					}
 
-				return LLVMValueRef.CreateConstNamedStruct(namedStruct, [.. fieldValues]);
-			}
+					return LLVMValueRef.CreateConstNamedStruct(namedStruct, [.. fieldValues]);
+				}
 			default:
 				return LLVMValueRef.CreateConstNull(llvmType);
 		}
@@ -2704,35 +2747,44 @@ case MemberAccessExpressionSyntax m:
 			if (parentType is PointerTypeSymbol refPtrType)
 			{
 				var referred = refPtrType.ReferencedType;
-				if (referred is StructTypeSymbol refStructType)
+				var refStruct = referred as StructTypeSymbol ?? _bindingContext?.ResolveType(referred.Name) as StructTypeSymbol;
+				if (refStruct is not null)
 				{
 					var rawPtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), parentPtr, "reffield_load");
-					var refFieldIndex = GetFieldIndex(refStructType, m.MemberName);
-					var refFieldType = refStructType.Fields[refFieldIndex].Type;
+					var refFieldIndex = GetFieldIndex(refStruct, m.MemberName);
+					var refFieldType = refStruct.Fields[refFieldIndex].Type;
 
-					var refStructLayoutTy = GetLLVMType(referred);
+					var refStructLayoutTy = GetLLVMType(refStruct);
 					var refZero = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0);
 					var refIndex = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)refFieldIndex);
 
 					var refFieldPtr = _builder.BuildGEP2(refStructLayoutTy, rawPtr, new LLVMValueRef[] { refZero, refIndex }, "reffield_member_ptr");
 					return (refFieldPtr, refFieldType);
 				}
+
+				parentType = referred;
 			}
 
 			// Arrow operator: parentPtr is a pointer to a struct pointer; load it first
 			if (m.Operator == "->")
 			{
 				var rawPtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), parentPtr, "arrow_load");
-				var structType = (StructTypeSymbol)parentType;
+				var structType = (parentType as StructTypeSymbol) ?? (StructTypeSymbol)_bindingContext!.ResolveType(parentType.Name)!;
 				var fieldIndex = GetFieldIndex(structType, m.MemberName);
 				var fieldType = structType.Fields[fieldIndex].Type;
 
-				var structLayoutTy = GetLLVMType(parentType);
+				var structLayoutTy = GetLLVMType(structType);
 				var zero = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0);
 				var index = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)fieldIndex);
 
 				var fieldPtr = _builder.BuildGEP2(structLayoutTy, rawPtr, new LLVMValueRef[] { zero, index }, "arrow_field_ptr");
 				return (fieldPtr, fieldType);
+			}
+
+			// Ensure parentType is resolved to concrete StructTypeSymbol or UnionTypeSymbol
+			if (parentType is not (StructTypeSymbol or UnionTypeSymbol) && _bindingContext?.ResolveType(parentType.Name) is TypeSymbol resolvedParent)
+			{
+				parentType = resolvedParent;
 			}
 
 			if (parentType is UnionTypeSymbol unionType)
@@ -2747,19 +2799,26 @@ case MemberAccessExpressionSyntax m:
 
 				var structLayoutTy = GetLLVMType(parentType);
 				var payloadPtr = _builder.BuildGEP2(structLayoutTy, parentPtr, new LLVMValueRef[] {
-					LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
-					LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1)
-				}, "union_payload_ptr");
+				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
+				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1)
+			}, "union_payload_ptr");
 
-				var castPtr = _builder.BuildBitCast(payloadPtr, LLVMTypeRef.CreatePointer(GetLLVMType(fieldType), 0), "payload_cast_ptr");
+				var castPtr = SafeBitCast(payloadPtr, LLVMTypeRef.CreatePointer(GetLLVMType(fieldType), 0), "payload_cast_ptr");
 				return (castPtr, fieldType);
 			}
 
-			var dotStructType = (StructTypeSymbol)parentType;
+			var dotStructType = (parentType as StructTypeSymbol)
+				?? _bindingContext?.ResolveType(parentType.Name) as StructTypeSymbol;
+
+			if (dotStructType is null)
+			{
+				throw new InvalidOperationException($"Type '{parentType.Name}' is not a struct; cannot access member '{m.MemberName}'");
+			}
+
 			var dotFieldIndex = GetFieldIndex(dotStructType, m.MemberName);
 			var dotFieldType = dotStructType.Fields[dotFieldIndex].Type;
 
-			var dotStructLayoutTy = GetLLVMType(parentType);
+			var dotStructLayoutTy = GetLLVMType(dotStructType);
 			var dotZero = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0);
 			var dotIndex = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)dotFieldIndex);
 
@@ -2800,11 +2859,11 @@ case MemberAccessExpressionSyntax m:
 				return (elementPtr, arrayType.ElementType);
 			}
 		}
-else if (expr is BorrowExpressionSyntax b)
+		else if (expr is BorrowExpressionSyntax b)
 		{
 			return GetFieldPointer(b.Expression); // Unpack the inner expression pointer recursively
 		}
-		else if (expr is UnaryExpressionSyntax castExpr && castExpr.Operator.StartsWith("(") && castExpr.Operator.EndsWith(")") && _unsafeDepth == 0)
+		else if (expr is UnaryExpressionSyntax castExpr && castExpr.Operator.StartsWith('(') && castExpr.Operator.EndsWith(')') && _unsafeDepth == 0)
 		{
 			// A safe-zone (Enum)integer cast evaluates to Option<Enum>; as a field-pointer
 			// (used by switch over the cast), materialize the tagged-union temporary.
@@ -2819,6 +2878,49 @@ else if (expr is BorrowExpressionSyntax b)
 					return MaterializeEnumCastOption(castEnum, castOperand, castOperandType, castOption);
 				}
 			}
+		}
+		else if (expr is CallExpressionSyntax call)
+		{
+			var retType = GetExprType(call);
+			var callVal = EmitCallExpression(call);
+
+			// 1. If call returns a reference/pointer (e.g. 'ref Point'), return the pointer directly
+			if (retType is PointerTypeSymbol ptrType)
+			{
+				var inner = ptrType.ReferencedType;
+				if (inner is not (StructTypeSymbol or UnionTypeSymbol) && _bindingContext?.ResolveType(inner.Name) is TypeSymbol resolvedInner)
+					inner = resolvedInner;
+				return (callVal, inner);
+			}
+
+			if (retType is RawPointerTypeSymbol rawPtrType)
+			{
+				var inner = rawPtrType.ElementType;
+				if (inner is not (StructTypeSymbol or UnionTypeSymbol) && _bindingContext?.ResolveType(inner.Name) is TypeSymbol resolvedInner)
+					inner = resolvedInner;
+				return (callVal, inner);
+			}
+
+			// 2. If call returns a struct or union by value, spill to a stack temporary to allow field GEP
+			var structType = retType as StructTypeSymbol ?? _bindingContext?.ResolveType(retType.Name) as StructTypeSymbol;
+			if (structType is not null)
+			{
+				var structLayout = GetLLVMType(structType);
+				var tempAlloc = _builder.BuildAlloca(structLayout, "call_struct_tmp");
+				_builder.BuildStore(callVal, tempAlloc);
+				return (tempAlloc, structType);
+			}
+
+			var unionType = retType as UnionTypeSymbol ?? _bindingContext?.ResolveType(retType.Name) as UnionTypeSymbol;
+			if (unionType is not null)
+			{
+				var unionLayout = GetLLVMType(unionType);
+				var tempAlloc = _builder.BuildAlloca(unionLayout, "call_union_tmp");
+				_builder.BuildStore(callVal, tempAlloc);
+				return (tempAlloc, unionType);
+			}
+
+			return (callVal, retType);
 		}
 
 		throw new InvalidOperationException($"Unsupported {expr.GetType()} field pointer expression");
@@ -3430,45 +3532,45 @@ else if (expr is BorrowExpressionSyntax b)
 		return _builder.BuildLoad2(sliceLayout, sliceAlloc, "slice_val");
 	}
 
-    public int GetByteSize(TypeSymbol type)
-    {
-        if (type is null) return 0;
-        if (type.Equals(TypeSymbol.String) || type is PointerTypeSymbol or RawPointerTypeSymbol) return 8; // 64-bit pointers
-        if (type is SliceTypeSymbol) return 16; // Fat Pointer: { ptr, i32 }
-        if (type.Equals(TypeSymbol.Int) || type.Equals(TypeSymbol.UInt) || type.Equals(TypeSymbol.Float)) return 4;
-        if (type.Equals(TypeSymbol.Long) || type.Equals(TypeSymbol.ULong) || type.Equals(TypeSymbol.NInt) || type.Equals(TypeSymbol.NUInt) || type.Equals(TypeSymbol.Double)) return 8;
-        if (type.Equals(TypeSymbol.Short) || type.Equals(TypeSymbol.UShort)) return 2;
-        if (type.Equals(TypeSymbol.SByte) || type.Equals(TypeSymbol.Byte) || type.Equals(TypeSymbol.Bool) || type.Equals(TypeSymbol.Char)) return 1;
-        if (type is ArrayTypeSymbol arr) return GetByteSize(arr.ElementType) * arr.Size;
-        if (type is StructTypeSymbol structType)
-        {
-            var size = 0;
-            foreach (var field in structType.Fields)
-            {
-                size += GetByteSize(field.Type);
-            }
+	public int GetByteSize(TypeSymbol type)
+	{
+		if (type is null) return 0;
+		if (type.Equals(TypeSymbol.String) || type is PointerTypeSymbol or RawPointerTypeSymbol) return 8; // 64-bit pointers
+		if (type is SliceTypeSymbol) return 16; // Fat Pointer: { ptr, i32 }
+		if (type.Equals(TypeSymbol.Int) || type.Equals(TypeSymbol.UInt) || type.Equals(TypeSymbol.Float)) return 4;
+		if (type.Equals(TypeSymbol.Long) || type.Equals(TypeSymbol.ULong) || type.Equals(TypeSymbol.NInt) || type.Equals(TypeSymbol.NUInt) || type.Equals(TypeSymbol.Double)) return 8;
+		if (type.Equals(TypeSymbol.Short) || type.Equals(TypeSymbol.UShort)) return 2;
+		if (type.Equals(TypeSymbol.SByte) || type.Equals(TypeSymbol.Byte) || type.Equals(TypeSymbol.Bool) || type.Equals(TypeSymbol.Char)) return 1;
+		if (type is ArrayTypeSymbol arr) return GetByteSize(arr.ElementType) * arr.Size;
+		if (type is StructTypeSymbol structType)
+		{
+			var size = 0;
+			foreach (var field in structType.Fields)
+			{
+				size += GetByteSize(field.Type);
+			}
 
-            return size;
-        }
+			return size;
+		}
 
-        if (type is UnionTypeSymbol unionType)
-        {
-            // Null-Pointer Optimization: a flat Option<ref T> / <refvar T> is a single 8-byte pointer.
-            if (unionType.IsNpoEligible)
-                return 8;
+		if (type is UnionTypeSymbol unionType)
+		{
+			// Null-Pointer Optimization: a flat Option<ref T> / <refvar T> is a single 8-byte pointer.
+			if (unionType.IsNpoEligible)
+				return 8;
 
-            // Tagged union: 1-byte tag + (largest non-void variant) payload.
-            var maxPayload = unionType.Fields.Where(f => !f.IsVoidVariant).Select(f => GetByteSize(f.Type)).DefaultIfEmpty(0).Max();
-            return 1 + maxPayload;
-        }
+			// Tagged union: 1-byte tag + (largest non-void variant) payload.
+			var maxPayload = unionType.Fields.Where(f => !f.IsVoidVariant).Select(f => GetByteSize(f.Type)).DefaultIfEmpty(0).Max();
+			return 1 + maxPayload;
+		}
 
-        if (type is EnumTypeSymbol enumType)
-            return GetByteSize(enumType.StorageType);
+		if (type is EnumTypeSymbol enumType)
+			return GetByteSize(enumType.StorageType);
 
-        return 4; // Fallback
-    }
+		return 4; // Fallback
+	}
 
-    private void EmitSwitchStatement(SwitchStatementSyntax sw)
+	private void EmitSwitchStatement(SwitchStatementSyntax sw)
 	{
 		var switchTargetType = GetExprType(sw.Expression);
 		EnumTypeSymbol? enumTarget = null;
@@ -3783,14 +3885,14 @@ else if (expr is BorrowExpressionSyntax b)
 		return func;
 	}
 
-    private LLVMValueRef SafeBitCast(LLVMValueRef value, LLVMTypeRef targetType, string name = "")
-    {
-        if (value.TypeOf.Handle == targetType.Handle)
-            return value;
+	private LLVMValueRef SafeBitCast(LLVMValueRef value, LLVMTypeRef targetType, string name = "")
+	{
+		if (value.TypeOf.Handle == targetType.Handle)
+			return value;
 
-        if (value.TypeOf.Kind == LLVMTypeKind.LLVMPointerTypeKind && targetType.Kind == LLVMTypeKind.LLVMPointerTypeKind)
-            return value;
+		if (value.TypeOf.Kind == LLVMTypeKind.LLVMPointerTypeKind && targetType.Kind == LLVMTypeKind.LLVMPointerTypeKind)
+			return value;
 
-        return _builder.BuildBitCast(value, targetType, name);
-    }
+		return _builder.BuildBitCast(value, targetType, name);
+	}
 }

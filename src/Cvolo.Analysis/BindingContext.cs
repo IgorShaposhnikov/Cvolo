@@ -201,7 +201,7 @@ public sealed class BindingContext
 					return null;
 				if (typeArgs.Count != templateDecl.GenericParameters.Count)
 					return null;
-				CheckInstantiationVisibilityLeak(name, baseType, typeArgs);
+
 				var instantiatedType = InstantiateGenericStruct(templateDecl, baseType.Name, typeArgs);
 				StructTypes[name] = instantiatedType;
 				_typeCache[name] = instantiatedType;
@@ -213,7 +213,7 @@ public sealed class BindingContext
 					return null;
 				if (unionTypeArgs.Count != unionTemplateDecl.GenericParameters.Count)
 					return null;
-				CheckInstantiationVisibilityLeak(name, baseType, unionTypeArgs);
+
 				var instantiatedType = InstantiateGenericUnion(unionTemplateDecl, baseUnion.Name, unionTypeArgs);
 				UnionTypes[name] = instantiatedType;
 				_typeCache[name] = instantiatedType;
@@ -225,7 +225,7 @@ public sealed class BindingContext
 					return null;
 				if (protocolTypeArgs.Count != baseProtocol.GenericParameters.Count)
 					return null;
-				CheckInstantiationVisibilityLeak(name, baseType, protocolTypeArgs);
+
 				var instantiatedProtocol = InstantiateGenericProtocol(protocolDecl, baseProtocol.Name, protocolTypeArgs);
 				_typeCache[name] = instantiatedProtocol;
 				return instantiatedProtocol;
@@ -563,7 +563,19 @@ public sealed class BindingContext
 			fields.Add(new StructFieldSymbol(field.Name, fieldType) { Visibility = field.Visibility });
 		}
 
-		var instantiatedType = new StructTypeSymbol(instName, fields) { Visibility = templateDecl.Visibility };
+		// Compute effective visibility: min(Template.Visibility, TypeArgs.Visibility)
+		var effectiveVisibility = templateDecl.Visibility;
+		foreach (var arg in typeArgs)
+		{
+			var argVis = GetSymbolVisibility(arg);
+			if (argVis < effectiveVisibility)
+				effectiveVisibility = argVis;
+		}
+
+		var instantiatedType = new StructTypeSymbol(instName, fields)
+		{
+			Visibility = effectiveVisibility
+		};
 
 		// Restore active contexts back to previous state
 		CurrentUnit = prevUnit;
@@ -901,7 +913,7 @@ public sealed class BindingContext
 		CurrentNamespace = originalUnit?.NamespaceDeclaration?.Name;
 
 		var substitutionMap = new Dictionary<string, TypeSymbol>();
-		for (int i = 0; i < templateDecl.GenericParameters.Count; i++)
+		for (var i = 0; i < templateDecl.GenericParameters.Count; i++)
 		{
 			substitutionMap[templateDecl.GenericParameters[i]] = typeArgs[i];
 		}
@@ -935,7 +947,18 @@ public sealed class BindingContext
 			fields.Add(new UnionFieldSymbol(field.Name, fieldType, isVoidVariant) { Visibility = field.Visibility });
 		}
 
-		var instantiatedType = new UnionTypeSymbol(instName, fields) { Visibility = templateDecl.Visibility };
+		var effectiveVisibility = templateDecl.Visibility;
+		foreach (var arg in typeArgs)
+		{
+			var argVis = GetSymbolVisibility(arg);
+			if (argVis < effectiveVisibility)
+				effectiveVisibility = argVis;
+		}
+
+		var instantiatedType = new UnionTypeSymbol(instName, fields)
+		{
+			Visibility = effectiveVisibility
+		};
 
 		CurrentUnit = prevUnit;
 		CurrentNamespace = prevNamespace;
@@ -1050,5 +1073,13 @@ public sealed class BindingContext
 		}
 
 		return [.. allUsings];
+	}
+
+	private Visibility GetSymbolVisibility(TypeSymbol type)
+	{
+		if (type is StructTypeSymbol st) return st.Visibility;
+		if (type is UnionTypeSymbol ut) return ut.Visibility;
+		if (type is EnumTypeSymbol et) return et.Visibility;
+		return Visibility.Public; // Primitives are always public
 	}
 }

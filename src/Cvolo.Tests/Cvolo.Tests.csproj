@@ -36,7 +36,5 @@
 	  <None Include="UnionsTests.cs" />
 	</ItemGroup>
 
-	<ItemGroup>
-	  <Folder Include="TestCases\Attributes\MustUse\" />
-	</ItemGroup>
+
 </Project>

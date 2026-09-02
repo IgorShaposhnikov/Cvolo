@@ -178,6 +178,19 @@ public sealed class ValidationPass(BindingContext context)
 
 	private void CheckFunctionBody(FunctionDeclarationSyntax func)
 	{
+		// 0. Check for generic parameter visibility leaks (CVL1038) on public functions
+		if (func.Visibility == Visibility.Public)
+		{
+			var retType = context.ResolveType(func.ReturnType);
+			CheckGenericVisibilityLeak(func.Span, retType, func.Name);
+
+			foreach (var param in func.Parameters)
+			{
+				var paramType = context.ResolveType(param.Type);
+				CheckGenericVisibilityLeak(param.Span, paramType, func.Name);
+			}
+		}
+
 		// 1. Guard for bodyless functions: must have [Intrinsic]
 		if (!func.HasBody)
 		{
@@ -985,13 +998,7 @@ public sealed class ValidationPass(BindingContext context)
 		if (innerType is null)
 			return null;
 
-		var isVariableMutable = false;
-		if (expr.Expression is IdentifierExpressionSyntax id)
-		{
-			var symbol = scope.Lookup(id.Name) as VariableSymbol;
-			if (symbol is not null)
-				isVariableMutable = symbol.IsMutable;
-		}
+		var isVariableMutable = IsExpressionMutable(expr.Expression, scope);
 
 		if (expr.IsMutable && !isVariableMutable)
 		{
@@ -1000,6 +1007,54 @@ public sealed class ValidationPass(BindingContext context)
 		}
 
 		return new PointerTypeSymbol(innerType, expr.IsMutable);
+	}
+
+	private bool IsExpressionMutable(ExpressionSyntax expr, SymbolTable scope)
+	{
+		// 1. In unsafe context / [UnsafeBody], raw pointer dereferences are mutable l-values
+		if (_unsafeDepth > 0 && expr is UnaryExpressionSyntax { Operator: "*" })
+			return true;
+
+		if (expr is UnaryExpressionSyntax { Operator: "*" } deref)
+		{
+			var opType = GetExpressionType(deref.Operand, scope);
+			return opType is RawPointerTypeSymbol || (opType is PointerTypeSymbol ptr && ptr.IsMutable);
+		}
+
+		if (expr is IdentifierExpressionSyntax id)
+		{
+			if (scope.Lookup(id.Name) is VariableSymbol symbol)
+			{
+				return symbol.IsMutable || (symbol.Type is PointerTypeSymbol ptr && ptr.IsMutable);
+			}
+
+			if (scope.Lookup("this") is VariableSymbol thisSymbol)
+			{
+				return thisSymbol.Type is PointerTypeSymbol thisPtr && thisPtr.IsMutable;
+			}
+		}
+
+		if (expr is MemberAccessExpressionSyntax m)
+		{
+			var targetType = GetExpressionType(m.Expression, scope);
+			if (targetType is RawPointerTypeSymbol)
+				return true;
+			if (targetType is PointerTypeSymbol ptr)
+				return ptr.IsMutable;
+
+			return IsExpressionMutable(m.Expression, scope);
+		}
+
+		if (expr is IndexExpressionSyntax idx)
+		{
+			var parentType = GetExpressionType(idx.Left, scope);
+			if (parentType is SliceTypeSymbol or RawPointerTypeSymbol)
+				return true;
+
+			return IsExpressionMutable(idx.Left, scope);
+		}
+
+		return false;
 	}
 
 	private TypeSymbol? CheckTernaryExpression(TernaryExpressionSyntax expr, SymbolTable scope)
@@ -3000,6 +3055,63 @@ public sealed class ValidationPass(BindingContext context)
 
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
 			context.Diagnostics.ReportWarning(currentFileContext, call.Span, msg, DiagnosticIds.MustUseIgnoredWarning);
+		}
+	}
+
+	/// <summary>
+	/// Emits CVL1038 error if a public symbol exposes a generic type instantiation
+	/// whose type argument is private or internal.
+	/// </summary>
+	private void CheckGenericVisibilityLeak(TextSpan span, TypeSymbol? type, string hostName)
+	{
+		if (type is null)
+			return;
+
+		if (type is PointerTypeSymbol ptr)
+			type = ptr.ReferencedType;
+
+		if (!type.Name.Contains('<'))
+			return;
+
+		var openBracket = type.Name.IndexOf('<');
+		var closeBracket = type.Name.LastIndexOf('>');
+		if (openBracket <= 0 || closeBracket <= openBracket)
+			return;
+
+		var argsPart = type.Name.Substring(openBracket + 1, closeBracket - openBracket - 1);
+		foreach (var rawArg in argsPart.Split(','))
+		{
+			var argType = context.ResolveType(rawArg.Trim());
+			if (argType is null)
+				continue;
+
+			if (argType is StructTypeSymbol st && st.Visibility < Visibility.Public)
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(
+					currentFileContext,
+					span,
+					$"The visibility of generic type instantiation '{type.Name}' exceeds the visibility of its type argument '{st.Name}'. Upgrade the argument visibility or restrict the parent declaration.",
+					DiagnosticIds.GenericVisibilityLeak);
+			}
+			else if (argType is UnionTypeSymbol ut && ut.Visibility < Visibility.Public)
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(
+					currentFileContext,
+					span,
+					$"The visibility of generic type instantiation '{type.Name}' exceeds the visibility of its type argument '{ut.Name}'. Upgrade the argument visibility or restrict the parent declaration.",
+					DiagnosticIds.GenericVisibilityLeak);
+			}
+			else if (argType is EnumTypeSymbol et && et.Visibility < Visibility.Public)
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(
+					currentFileContext,
+					span,
+					$"The visibility of generic type instantiation '{type.Name}' exceeds the visibility of its type argument '{et.Name}'. Upgrade the argument visibility or restrict the parent declaration.",
+					DiagnosticIds.GenericVisibilityLeak);
+			}
 		}
 	}
 }

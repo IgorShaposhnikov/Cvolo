@@ -1,3 +1,7 @@
+/// <summary>
+/// Rejection: Exposing a generic type instantiation on a public API boundary whose
+/// type argument has a more restrictive visibility triggers CVL1038.
+/// </summary>
 private struct Secret {
     int X;
 }
@@ -6,7 +10,12 @@ public struct Box<T> {
     T V;
 }
 
+// LEAK: Public function exposes 'Box<Secret>' where 'Secret' is private to this file
+public Box<Secret> ExportBox() {
+    var Box<Secret> b;
+    return b;
+}
+
 int main() {
-    Box<Secret> b;
     return 0;
 }
