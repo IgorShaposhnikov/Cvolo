@@ -1,0 +1,13 @@
+/// <summary>
+/// Feature: Native-sized signed integer (nint) primitive type.
+/// </summary>
+/// <remarks>
+/// Verifies declaration, native target width representation (64-bit signed on x64), and standard console output.
+/// </remarks>
+using System;
+
+int Main() {
+    nint x = (nint)-100;
+    Console.WriteLine(x);
+    return 0;
+}

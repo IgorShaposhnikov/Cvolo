@@ -1,224 +1,239 @@
 namespace System.Console;
 
-// Isolate the low-level C-linkage printf here
+// Low-level C runtime bindings
 extern void printf(string format, ...);
 extern int getchar();
 
 /// <summary>
-/// Writes the specified string value, followed by the current line terminator, to the standard output stream.
+/// Writes the specified string value, followed by the current line terminator, to stdout.
 /// </summary>
-/// <param name="value">The string value to write to the console.</param>
 void WriteLine(string value) {
     printf("%s\n", value);
 }
 
 /// <summary>
-/// Writes the specified 32-bit signed integer, followed by the current line terminator, to the standard output stream.
+/// Writes the specified 32-bit signed integer, followed by the current line terminator, to stdout.
 /// </summary>
-/// <param name="value">The integer value to write to the console.</param>
 void WriteLine(int value) {
     printf("%d\n", value);
 }
 
 /// <summary>
-/// Writes the specified 64-bit floating-point number, followed by the current line terminator, to the standard output stream.
+/// Writes the specified 32-bit float, followed by the current line terminator, to stdout.
 /// </summary>
-/// <param name="value">The double value to write to the console.</param>
+void WriteLine(float value) {
+    printf("%f\n", (double)value);
+}
+
+/// <summary>
+/// Writes the specified 64-bit double, followed by the current line terminator, to stdout.
+/// </summary>
 void WriteLine(double value) {
     printf("%f\n", value); 
 }
 
 /// <summary>
-/// Writes the text representation of the specified boolean value, followed by the current line terminator, to the standard output stream.
+/// Writes the specified native signed integer, followed by the current line terminator, to stdout.
 /// </summary>
-/// <param name="value">The boolean value to write (renders as 1 for True, 0 for False).</param>
+void WriteLine(nint value) {
+    printf("%lld\n", value);
+}
+
+/// <summary>
+/// Writes the specified native unsigned integer, followed by the current line terminator, to stdout.
+/// </summary>
+void WriteLine(nuint value) {
+    printf("%llu\n", value);
+}
+
+/// <summary>
+/// Writes the specified boolean value (1 for true, 0 for false), followed by the current line terminator, to stdout.
+/// </summary>
 void WriteLine(bool value) {
     printf("%d\n", value);
 }
 
 /// <summary>
-/// Writes the specified Unicode character, followed by the current line terminator, to the standard output stream.
+/// Writes the specified character, followed by the current line terminator, to stdout.
 /// </summary>
-/// <param name="value">The character to write to the console.</param>
 void WriteLine(char value) {
     printf("%c\n", value);
 }
 
 /// <summary>
-/// Writes the specified 8-bit unsigned integer, followed by the current line terminator, to the standard output stream.
+/// Writes the specified 8-bit unsigned integer, followed by the current line terminator, to stdout.
 /// </summary>
-/// <param name="value">The byte value to write to the console.</param>
 void WriteLine(byte value) {
     printf("%hhu\n", (int)value);
 }
 
 /// <summary>
-/// Writes the specified 8-bit signed integer, followed by the current line terminator, to the standard output stream.
+/// Writes the specified 8-bit signed integer, followed by the current line terminator, to stdout.
 /// </summary>
-/// <param name="value">The sbyte value to write to the console.</param>
 void WriteLine(sbyte value) {
     printf("%hhd\n", (int)value);
 }
 
 /// <summary>
-/// Writes the specified 16-bit signed integer, followed by the current line terminator, to the standard output stream.
+/// Writes the specified 16-bit signed integer, followed by the current line terminator, to stdout.
 /// </summary>
-/// <param name="value">The short value to write to the console.</param>
 void WriteLine(short value) {
     printf("%hd\n", (int)value);
 }
 
 /// <summary>
-/// Writes the specified 16-bit unsigned integer, followed by the current line terminator, to the standard output stream.
+/// Writes the specified 16-bit unsigned integer, followed by the current line terminator, to stdout.
 /// </summary>
-/// <param name="value">The ushort value to write to the console.</param>
 void WriteLine(ushort value) {
     printf("%hu\n", (int)value);
 }
 
 /// <summary>
-/// Writes the specified 32-bit unsigned integer, followed by the current line terminator, to the standard output stream.
+/// Writes the specified 32-bit unsigned integer, followed by the current line terminator, to stdout.
 /// </summary>
-/// <param name="value">The uint value to write to the console.</param>
 void WriteLine(uint value) {
     printf("%u\n", (int)value);
 }
 
 /// <summary>
-/// Writes the specified 64-bit signed integer, followed by the current line terminator, to the standard output stream.
+/// Writes the specified 64-bit signed integer, followed by the current line terminator, to stdout.
 /// </summary>
-/// <param name="value">The long value to write to the console.</param>
 void WriteLine(long value) {
     printf("%lld\n", value);
 }
 
 /// <summary>
-/// Writes the specified 64-bit unsigned integer, followed by the current line terminator, to the standard output stream.
+/// Writes the specified 64-bit unsigned integer, followed by the current line terminator, to stdout.
 /// </summary>
-/// <param name="value">The ulong value to write to the console.</param>
 void WriteLine(ulong value) {
     printf("%llu\n", value);
 }
 
 /// <summary>
-/// Writes the specified string value to the standard output stream.
+/// Writes the specified string value to stdout without a line terminator.
 /// </summary>
-/// <param name="value">The string value to write to the console.</param>
 void Write(string value) {
     printf("%s", value);
 }
 
 /// <summary>
-/// Writes the specified 32-bit signed integer to the standard output stream.
+/// Writes the specified 32-bit signed integer to stdout without a line terminator.
 /// </summary>
-/// <param name="value">The integer value to write to the console.</param>
 void Write(int value) {
     printf("%d", value);
 }
 
 /// <summary>
-/// Writes the specified 64-bit floating-point number to the standard output stream.
+/// Writes the specified 32-bit float to stdout without a line terminator.
 /// </summary>
-/// <param name="value">The double value to write to the console.</param>
+void Write(float value) {
+    printf("%f", (double)value);
+}
+
+/// <summary>
+/// Writes the specified 64-bit double to stdout without a line terminator.
+/// </summary>
 void Write(double value) {
     printf("%f", value);
 }
 
 /// <summary>
-/// Writes the text representation of the specified boolean value to the standard output stream.
+/// Writes the specified native signed integer to stdout without a line terminator.
 /// </summary>
-/// <param name="value">The boolean value to write (renders as 1 for True, 0 for False).</param>
+void Write(nint value) {
+    printf("%lld", value);
+}
+
+/// <summary>
+/// Writes the specified native unsigned integer to stdout without a line terminator.
+/// </summary>
+void Write(nuint value) {
+    printf("%llu", value);
+}
+
+/// <summary>
+/// Writes the specified boolean value to stdout without a line terminator.
+/// </summary>
 void Write(bool value) {
     printf("%d", value);
 }
 
 /// <summary>
-/// Writes the specified Unicode character to the standard output stream.
+/// Writes the specified character to stdout without a line terminator.
 /// </summary>
-/// <param name="value">The character to write to the console.</param>
 void Write(char value) {
     printf("%c", value);
 }
 
 /// <summary>
-/// Writes the specified 8-bit unsigned integer to the standard output stream.
+/// Writes the specified 8-bit unsigned integer to stdout without a line terminator.
 /// </summary>
-/// <param name="value">The byte value to write to the console.</param>
 void Write(byte value) {
     printf("%hhu", (int)value);
 }
 
 /// <summary>
-/// Writes the specified 8-bit signed integer to the standard output stream.
+/// Writes the specified 8-bit signed integer to stdout without a line terminator.
 /// </summary>
-/// <param name="value">The sbyte value to write to the console.</param>
 void Write(sbyte value) {
     printf("%hhd", (int)value);
 }
 
 /// <summary>
-/// Writes the specified 16-bit signed integer to the standard output stream.
+/// Writes the specified 16-bit signed integer to stdout without a line terminator.
 /// </summary>
-/// <param name="value">The short value to write to the console.</param>
 void Write(short value) {
     printf("%hd", (int)value);
 }
 
 /// <summary>
-/// Writes the specified 16-bit unsigned integer to the standard output stream.
+/// Writes the specified 16-bit unsigned integer to stdout without a line terminator.
 /// </summary>
-/// <param name="value">The ushort value to write to the console.</param>
 void Write(ushort value) {
     printf("%hu", (int)value);
 }
 
 /// <summary>
-/// Writes the specified 32-bit unsigned integer to the standard output stream.
+/// Writes the specified 32-bit unsigned integer to stdout without a line terminator.
 /// </summary>
-/// <param name="value">The uint value to write to the console.</param>
 void Write(uint value) {
     printf("%u", (int)value);
 }
 
 /// <summary>
-/// Writes the specified 64-bit signed integer to the standard output stream.
+/// Writes the specified 64-bit signed integer to stdout without a line terminator.
 /// </summary>
-/// <param name="value">The long value to write to the console.</param>
 void Write(long value) {
     printf("%lld", value);
 }
 
 /// <summary>
-/// Writes the specified 64-bit unsigned integer to the standard output stream.
+/// Writes the specified 64-bit unsigned integer to stdout without a line terminator.
 /// </summary>
-/// <param name="value">The ulong value to write to the console.</param>
 void Write(ulong value) {
     printf("%llu", value);
 }
 
 /// <summary>
-/// Reads the next character from the standard input stream.
+/// Reads the next character code from stdin (returns -1 on EOF).
 /// </summary>
-/// <returns>The character read from the console.</returns>
-char Read() {
-    return (char)getchar();
+int Read() {
+    return getchar();
 }
 
 /// <summary>
-/// Reads the next line of characters from the standard input stream safely into a pre-allocated buffer.
+/// Reads characters from stdin into the provided buffer until newline or EOF.
 /// </summary>
-/// <param name="buffer">The target character array to fill. Length is read at runtime to prevent overflow.</param>
-void ReadLine(char[] buffer) { // <-- Change 'refvar char[]' to 'char[]'
+void ReadLine(char[] buffer) {
     var int i = 0;
-    var int limit = buffer.Length - 1; // Reserve space for the null terminator
+    var int limit = buffer.Length - 1;
     var int ch = getchar();
 
-    // Loop until we hit a newline (10), EOF (-1), or fill up the buffer safely
     while (ch != 10 && ch != -1 && i < limit) {
         buffer[i] = (char)ch;
         i = i + 1;
         ch = getchar();
     }
 
-    buffer[i] = (char)0; // Safe null terminator injection
+    buffer[i] = (char)0;
 }

@@ -1,0 +1,13 @@
+/// <summary>
+/// Feature: 32-bit IEEE-754 single-precision floating-point (float) primitive type.
+/// </summary>
+/// <remarks>
+/// Verifies declaration, 32-bit float value representation, and standard console output.
+/// </remarks>
+using System;
+
+int Main() {
+    float x = (float)12.5;
+    Console.WriteLine(x);
+    return 0;
+}

@@ -1,0 +1,13 @@
+/// <summary>
+/// Feature: 8-bit signed integer (sbyte) primitive type.
+/// </summary>
+/// <remarks>
+/// Verifies declaration, signed value representation (-128 to 127), and standard console output.
+/// </remarks>
+using System;
+
+int Main() {
+    sbyte x = (sbyte)-120;
+    Console.WriteLine(x);
+    return 0;
+}

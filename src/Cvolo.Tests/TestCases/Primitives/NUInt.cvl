@@ -1,0 +1,13 @@
+/// <summary>
+/// Feature: Native-sized unsigned integer (nuint) primitive type.
+/// </summary>
+/// <remarks>
+/// Verifies declaration, native target width representation (64-bit unsigned on x64), and standard console output.
+/// </remarks>
+using System;
+
+int Main() {
+    nuint x = (nuint)200;
+    Console.WriteLine(x);
+    return 0;
+}

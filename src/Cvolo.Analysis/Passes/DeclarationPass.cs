@@ -36,7 +36,7 @@ public sealed class DeclarationPass(BindingContext context)
 	// scalar integers. 'char' is allowed as a 1-byte storage type.
 	private static readonly HashSet<string> AllowedEnumStorageTypes =
 	[
-		"int", "uint", "short", "ushort", "long", "ulong", "char", "byte", "sbyte"
+		"int", "uint", "short", "ushort", "long", "ulong", "char", "byte", "sbyte", "nint", "nuint"
 	];
 
 	// Memory & Safety spec §2: the destructor nesting depth is capped. Dropping a value of a

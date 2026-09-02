@@ -139,6 +139,9 @@ primitiveType
 	| USHORT
 	| BYTE
 	| SBYTE
+	| NINT
+	| NUINT
+	| FLOAT
 	| DOUBLE
 	| BOOL
 	| STRING

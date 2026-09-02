@@ -1,0 +1,13 @@
+/// <summary>
+/// Feature: 32-bit unsigned integer (uint) primitive type.
+/// </summary>
+/// <remarks>
+/// Verifies declaration, unsigned 32-bit value representation (up to 4,294,967,295), and standard console output.
+/// </remarks>
+using System;
+
+int Main() {
+    uint x = (uint)4000000000;
+    Console.WriteLine(x);
+    return 0;
+}

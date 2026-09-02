@@ -1090,27 +1090,34 @@ case MemberAccessExpressionSyntax m:
 		var rTy = GetExprType(bin.Right);
 
 		var isDouble = lTy.Equals(TypeSymbol.Double) || rTy.Equals(TypeSymbol.Double);
+		var isFloat = lTy.Equals(TypeSymbol.Float) || rTy.Equals(TypeSymbol.Float);
 
-		if (isDouble)
+		if (isDouble || isFloat)
 		{
-			if (lTy.Equals(TypeSymbol.Int))
+			var targetFpType = isDouble ? LLVMTypeRef.Double : LLVMTypeRef.Float;
+
+			// Promote Left operand
+			if (TypeSymbol.IsIntegerType(lTy))
 			{
-				left = _builder.BuildSIToFP(left, LLVMTypeRef.Double, "sitofp_left");
+				left = TypeSymbol.IsSignedIntegerType(lTy)
+					? _builder.BuildSIToFP(left, targetFpType, "sitofp_left")
+					: _builder.BuildUIToFP(left, targetFpType, "uitofp_left");
+			}
+			else if (isDouble && lTy.Equals(TypeSymbol.Float))
+			{
+				left = _builder.BuildFPExt(left, LLVMTypeRef.Double, "fpext_left");
 			}
 
-			if (rTy.Equals(TypeSymbol.Int))
+			// Promote Right operand
+			if (TypeSymbol.IsIntegerType(rTy))
 			{
-				right = _builder.BuildSIToFP(right, LLVMTypeRef.Double, "sitofp_right");
+				right = TypeSymbol.IsSignedIntegerType(rTy)
+					? _builder.BuildSIToFP(right, targetFpType, "sitofp_right")
+					: _builder.BuildUIToFP(right, targetFpType, "uitofp_right");
 			}
-
-			if (TypeSymbol.IsIntegerType(lTy) && !lTy.Equals(TypeSymbol.Int))
+			else if (isDouble && rTy.Equals(TypeSymbol.Float))
 			{
-				left = _builder.BuildSIToFP(left, LLVMTypeRef.Double, "sitofp_left");
-			}
-
-			if (TypeSymbol.IsIntegerType(rTy) && !rTy.Equals(TypeSymbol.Int))
-			{
-				right = _builder.BuildSIToFP(right, LLVMTypeRef.Double, "sitofp_right");
+				right = _builder.BuildFPExt(right, LLVMTypeRef.Double, "fpext_right");
 			}
 
 			return bin.Operator switch
@@ -1126,7 +1133,7 @@ case MemberAccessExpressionSyntax m:
 				">" => _builder.BuildFCmp(LLVMRealPredicate.LLVMRealOGT, left, right),
 				"<=" => _builder.BuildFCmp(LLVMRealPredicate.LLVMRealOLE, left, right),
 				">=" => _builder.BuildFCmp(LLVMRealPredicate.LLVMRealOGE, left, right),
-				_ => throw new InvalidOperationException($"Unknown double operator '{bin.Operator}'"),
+				_ => throw new InvalidOperationException($"Unknown floating-point operator '{bin.Operator}'"),
 			};
 		}
 
@@ -1391,169 +1398,188 @@ case MemberAccessExpressionSyntax m:
 		throw new InvalidOperationException("Invalid target assignment");
 	}
 
-	private LLVMValueRef EmitUnaryExpression(UnaryExpressionSyntax unary)
-	{
-		if (unary.Operator.EndsWith("_postfix") || unary.Operator.EndsWith("_prefix"))
-		{
-			return EmitIncrementDecrement(unary, unary.Operator.EndsWith("_prefix"), unary.Operator.StartsWith("++"));
-		}
+    private LLVMValueRef EmitUnaryExpression(UnaryExpressionSyntax unary)
+    {
+        if (unary.Operator.EndsWith("_postfix") || unary.Operator.EndsWith("_prefix"))
+        {
+            return EmitIncrementDecrement(unary, unary.Operator.EndsWith("_prefix"), unary.Operator.StartsWith("++"));
+        }
 
-		var operand = EmitExpression(unary.Operand);
+        var operand = EmitExpression(unary.Operand);
 
-		if (unary.Operator.StartsWith("(") && unary.Operator.EndsWith(")"))
-		{
-			var targetTypeName = unary.Operator.Substring(1, unary.Operator.Length - 2);
-			var targetTypeSymbol = _bindingContext!.ResolveType(targetTypeName)!;
-			var targetType = GetLLVMType(targetTypeSymbol);
+        if (unary.Operator.StartsWith('(') && unary.Operator.EndsWith(')'))
+        {
+            var targetTypeName = unary.Operator.Substring(1, unary.Operator.Length - 2);
+            var targetTypeSymbol = _bindingContext!.ResolveType(targetTypeName)!;
+            var targetType = GetLLVMType(targetTypeSymbol);
 
-			var operandType = GetExprType(unary.Operand);
-			var operandLlvmType = GetLLVMType(operandType);
+            var operandType = GetExprType(unary.Operand);
+            var operandLlvmType = GetLLVMType(operandType);
 
-			// Safe/unbound zone: (Enum)integer yields Option<Enum> — a checked conversion
-			// comparing against every declared variant value (None when no match). The raw
-			// enum scalar is only produced by this cast inside unsafe code.
-			if (targetTypeSymbol is EnumTypeSymbol safeCastEnum && _unsafeDepth == 0 &&
-				operandType is not EnumTypeSymbol && TypeSymbol.IsIntegerType(operandType))
-			{
-				if (_bindingContext.ResolveType($"Option<{safeCastEnum.Name}>") is UnionTypeSymbol optionUnion)
-				{
-					var (optionPtr, optionTy) = MaterializeEnumCastOption(safeCastEnum, operand, operandType, optionUnion);
-					return _builder.BuildLoad2(GetLLVMType(optionTy), optionPtr, "enum_cast_option");
-				}
-			}
+            // Safe/unbound zone: (Enum)integer yields Option<Enum> — a checked conversion
+            // comparing against every declared variant value (None when no match). The raw
+            // enum scalar is only produced by this cast inside unsafe code.
+            if (targetTypeSymbol is EnumTypeSymbol safeCastEnum && _unsafeDepth == 0 &&
+                operandType is not EnumTypeSymbol && TypeSymbol.IsIntegerType(operandType))
+            {
+                if (_bindingContext.ResolveType($"Option<{safeCastEnum.Name}>") is UnionTypeSymbol optionUnion)
+                {
+                    var (optionPtr, optionTy) = MaterializeEnumCastOption(safeCastEnum, operand, operandType, optionUnion);
+                    return _builder.BuildLoad2(GetLLVMType(optionTy), optionPtr, "enum_cast_option");
+                }
+            }
 
-			// Destructive cast (T*)<handle>: recover the raw heap pointer instead of
-			// bitcasting the whole owning handle. For a heap-allocated handle the block
-			// pointer lives in the handle slot (the hidden pointer field of the handle).
-			if (targetTypeSymbol is RawPointerTypeSymbol)
-			{
-				if (unary.Operand is IdentifierExpressionSyntax ownerId
-					&& _locals.TryGetValue(ownerId.Name, out var handleSlot)
-					&& _heapAllocatedVars.Contains(ownerId.Name))
-				{
-					var rawHeapPtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), handleSlot, "handle_ptr");
-					return rawHeapPtr.TypeOf.Handle == targetType.Handle
-						? rawHeapPtr
-						: _builder.BuildBitCast(rawHeapPtr, targetType, "handle_cast");
-				}
+            // Destructive cast (T*)<handle>: recover the raw heap pointer instead of
+            // bitcasting the whole owning handle. For a heap-allocated handle the block
+            // pointer lives in the handle slot (the hidden pointer field of the handle).
+            if (targetTypeSymbol is RawPointerTypeSymbol)
+            {
+                if (unary.Operand is IdentifierExpressionSyntax ownerId
+                    && _locals.TryGetValue(ownerId.Name, out var handleSlot)
+                    && _heapAllocatedVars.Contains(ownerId.Name))
+                {
+                    var rawHeapPtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), handleSlot, "handle_ptr");
+                    return rawHeapPtr.TypeOf.Handle == targetType.Handle
+                        ? rawHeapPtr
+                        : SafeBitCast(rawHeapPtr, targetType, "handle_cast");
+                }
 
-				// By-value handle (e.g. a heap node returned then passed by value): the
-				// aggregate's first field carries the owning pointer; extract it rather than
-				// casting the struct itself.
-				if (operandType is StructTypeSymbol handleStruct
-					&& handleStruct.Fields.Count > 0
-					&& handleStruct.Fields[0].Type is PointerTypeSymbol or RawPointerTypeSymbol
-					&& operand.TypeOf.Kind == LLVMTypeKind.LLVMStructTypeKind)
-				{
-					var hiddenPtr = _builder.BuildExtractValue(operand, 0, "handle_hidden_ptr");
-					return _builder.BuildBitCast(hiddenPtr, targetType, "handle_cast");
-				}
-			}
+                // By-value handle (e.g. a heap node returned then passed by value): the
+                // aggregate's first field carries the owning pointer; extract it rather than
+                // casting the struct itself.
+                if (operandType is StructTypeSymbol handleStruct
+                    && handleStruct.Fields.Count > 0
+                    && handleStruct.Fields[0].Type is PointerTypeSymbol or RawPointerTypeSymbol
+                    && operand.TypeOf.Kind == LLVMTypeKind.LLVMStructTypeKind)
+                {
+                    var hiddenPtr = _builder.BuildExtractValue(operand, 0, "handle_hidden_ptr");
+                    return SafeBitCast(hiddenPtr, targetType, "handle_cast");
+                }
+            }
 
-			// If casting between the identical LLVM type, return early
-			if (targetType.Handle == operandLlvmType.Handle)
-				return operand;
+            // If casting between the identical LLVM type, return early
+            if (targetType.Handle == operandLlvmType.Handle)
+                return operand;
 
-			// Enums are flat scalar integers (§1): reduce to their underlying storage
-			// type so the width-adjustment branches below can operate on them directly.
-			var effectiveTarget = targetTypeSymbol is EnumTypeSymbol targetEnum ? targetEnum.StorageType : targetTypeSymbol;
-			var effectiveOperand = operandType is EnumTypeSymbol operandEnum ? operandEnum.StorageType : operandType;
+            // Enums are flat scalar integers (§1): reduce to their underlying storage
+            // type so the width-adjustment branches below can operate on them directly.
+            var effectiveTarget = targetTypeSymbol is EnumTypeSymbol targetEnum ? targetEnum.StorageType : targetTypeSymbol;
+            var effectiveOperand = operandType is EnumTypeSymbol operandEnum ? operandEnum.StorageType : operandType;
 
-			var targetIsInt = TypeSymbol.IsIntegerType(effectiveTarget);
-			var operandIsInt = TypeSymbol.IsIntegerType(effectiveOperand);
+            var targetIsInt = TypeSymbol.IsIntegerType(effectiveTarget);
+            var operandIsInt = TypeSymbol.IsIntegerType(effectiveOperand);
 
-			// Integer to Float (any signed int -> double)
-			if (effectiveTarget.Equals(TypeSymbol.Double) && operandIsInt)
-			{
-				return _builder.BuildSIToFP(operand, targetType, "cast_sitofp");
-			}
+            // 1. Float <-> Double conversions
+            if (effectiveTarget.Equals(TypeSymbol.Double) && effectiveOperand.Equals(TypeSymbol.Float))
+            {
+                return _builder.BuildFPExt(operand, LLVMTypeRef.Double, "cast_fpext");
+            }
+            if (effectiveTarget.Equals(TypeSymbol.Float) && effectiveOperand.Equals(TypeSymbol.Double))
+            {
+                return _builder.BuildFPTrunc(operand, LLVMTypeRef.Float, "cast_fptrunc");
+            }
 
-			// Float to Integer (double -> any int)
-			if (effectiveOperand.Equals(TypeSymbol.Double) && targetIsInt)
-			{
-				return _builder.BuildFPToSI(operand, targetType, "cast_fptosi");
-			}
+            // 2. Integer -> Float / Double
+            if (TypeSymbol.IsFloatingPointType(effectiveTarget) && operandIsInt)
+            {
+                return TypeSymbol.IsSignedIntegerType(effectiveOperand)
+                    ? _builder.BuildSIToFP(operand, targetType, "cast_sitofp")
+                    : _builder.BuildUIToFP(operand, targetType, "cast_uitofp");
+            }
 
-			// Integer <-> Integer width conversion (byte/char/short/int/long and unsigned variants)
-			if (operandIsInt && targetIsInt)
-			{
-				var operandWidth = TypeSymbol.IntegerBitWidth(effectiveOperand);
-				var targetWidth = TypeSymbol.IntegerBitWidth(effectiveTarget);
+            // 3. Float / Double -> Integer
+            if (TypeSymbol.IsFloatingPointType(effectiveOperand) && targetIsInt)
+            {
+                return TypeSymbol.IsSignedIntegerType(effectiveTarget)
+                    ? _builder.BuildFPToSI(operand, targetType, "cast_fptosi")
+                    : _builder.BuildFPToUI(operand, targetType, "cast_fptoui");
+            }
 
-				if (operandWidth > targetWidth)
-				{
-					// Narrowing: truncate the source to the target width
-					return _builder.BuildTrunc(operand, targetType, "cast_trunc");
-				}
+            // 4. Integer <-> Integer width conversion (byte/char/short/int/long/nint/nuint)
+            if (operandIsInt && targetIsInt)
+            {
+                var operandWidth = TypeSymbol.IntegerBitWidth(effectiveOperand);
+                var targetWidth = TypeSymbol.IntegerBitWidth(effectiveTarget);
 
-				if (operandWidth < targetWidth)
-				{
-					// Widening: sign-extend signed sources, zero-extend unsigned sources
-					return TypeSymbol.IsSignedIntegerType(effectiveOperand)
-						? _builder.BuildSExt(operand, targetType, "cast_sext")
-						: _builder.BuildZExt(operand, targetType, "cast_zext");
-				}
-			}
+                if (operandWidth > targetWidth)
+                {
+                    // Narrowing: truncate the source to the target width
+                    return _builder.BuildTrunc(operand, targetType, "cast_trunc");
+                }
 
-			return _builder.BuildBitCast(operand, targetType, "cast_bitcast");
-		}
+                if (operandWidth < targetWidth)
+                {
+                    // Widening: sign-extend signed sources, zero-extend unsigned sources
+                    return TypeSymbol.IsSignedIntegerType(effectiveOperand)
+                        ? _builder.BuildSExt(operand, targetType, "cast_sext")
+                        : _builder.BuildZExt(operand, targetType, "cast_zext");
+                }
+            }
 
-		switch (unary.Operator)
-		{
-			case "-":
-				return _builder.BuildNeg(operand);
-			case "!":
-				return _builder.BuildNot(operand);
-			case "~":
-			{
-				// (§3.B) On a [Flags] enum, '~' is the masked bitwise complement:
-				// (~value) & CombinedAtomicMask, truncated/width-locked to storage width.
-				if (GetExprType(unary.Operand) is EnumTypeSymbol { IsFlags: true } flagsEnum)
-				{
-					var storeTy = GetLLVMType(flagsEnum);
-					var notVal = _builder.BuildNot(operand, "flags_not");
-					var combinedMask = 0L;
-					foreach (var flagVar in flagsEnum.Variants)
-					{
-						combinedMask |= flagVar.Value;
-					}
-					return _builder.BuildAnd(notVal,
-						LLVMValueRef.CreateConstInt(storeTy, unchecked((ulong)combinedMask)), "flags_masked");
-				}
-				return _builder.BuildXor(operand, LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, unchecked((ulong)-1)));
-			}
-			case "*":
-			{
-				var operandType = GetExprType(unary.Operand);
-				if (operandType is RawPointerTypeSymbol rawPtr)
-				{
-					var elemLlvmType = GetLLVMType(rawPtr.ElementType);
-					return _builder.BuildLoad2(elemLlvmType, operand, "deref_val");
-				}
-				return _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), operand, "deref_val");
-			}
-			case "&":
-			{
-				if (unary.Operand is IdentifierExpressionSyntax id && _locals.TryGetValue(id.Name, out var ptr))
-					return ptr;
-				if (unary.Operand is MemberAccessExpressionSyntax memberAccess)
-				{
-					var (fieldPtr, _) = GetFieldPointer(memberAccess);
-					return fieldPtr;
-				}
-				if (unary.Operand is IndexExpressionSyntax indexExpr)
-				{
-					var (elementPtr, _) = GetFieldPointer(indexExpr);
-					return elementPtr;
-				}
-				return operand;
-			}
-			default:
-				throw new InvalidOperationException($"Unknown unary operator '{unary.Operator}'");
-		}
-	}
+            return SafeBitCast(operand, targetType, "cast_bitcast");
+        }
 
-	private void EmitVariableDeclaration(VariableDeclarationSyntax varDecl)
+        switch (unary.Operator)
+        {
+            case "-":
+                return _builder.BuildNeg(operand);
+            case "!":
+                return _builder.BuildNot(operand);
+            case "~":
+                {
+                    // (§3.B) On a [Flags] enum, '~' is the masked bitwise complement:
+                    // (~value) & CombinedAtomicMask, truncated/width-locked to storage width.
+                    if (GetExprType(unary.Operand) is EnumTypeSymbol { IsFlags: true } flagsEnum)
+                    {
+                        var storeTy = GetLLVMType(flagsEnum);
+                        var notVal = _builder.BuildNot(operand, "flags_not");
+                        var combinedMask = 0L;
+                        foreach (var flagVar in flagsEnum.Variants)
+                        {
+                            combinedMask |= flagVar.Value;
+                        }
+
+                        return _builder.BuildAnd(notVal,
+                            LLVMValueRef.CreateConstInt(storeTy, unchecked((ulong)combinedMask)), "flags_masked");
+                    }
+
+                    return _builder.BuildXor(operand, LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, unchecked((ulong)-1)));
+                }
+            case "*":
+                {
+                    var operandType = GetExprType(unary.Operand);
+                    if (operandType is RawPointerTypeSymbol rawPtr)
+                    {
+                        var elemLlvmType = GetLLVMType(rawPtr.ElementType);
+                        return _builder.BuildLoad2(elemLlvmType, operand, "deref_val");
+                    }
+
+                    return _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), operand, "deref_val");
+                }
+            case "&":
+                {
+                    if (unary.Operand is IdentifierExpressionSyntax id && _locals.TryGetValue(id.Name, out var ptr))
+                        return ptr;
+                    if (unary.Operand is MemberAccessExpressionSyntax memberAccess)
+                    {
+                        var (fieldPtr, _) = GetFieldPointer(memberAccess);
+                        return fieldPtr;
+                    }
+
+                    if (unary.Operand is IndexExpressionSyntax indexExpr)
+                    {
+                        var (elementPtr, _) = GetFieldPointer(indexExpr);
+                        return elementPtr;
+                    }
+
+                    return operand;
+                }
+            default:
+                throw new InvalidOperationException($"Unknown unary operator '{unary.Operator}'");
+        }
+    }
+
+    private void EmitVariableDeclaration(VariableDeclarationSyntax varDecl)
 	{
 		TypeSymbol? typeSymbol = null;
 		if (varDecl.Type is not null)
@@ -2570,18 +2596,14 @@ case MemberAccessExpressionSyntax m:
 		return t.Name switch
 		{
 			"void" => LLVMTypeRef.Void,
-			"int" => LLVMTypeRef.Int32,
-			"uint" => LLVMTypeRef.Int32,
-			"long" => LLVMTypeRef.Int64,
-			"ulong" => LLVMTypeRef.Int64,
-			"short" => LLVMTypeRef.Int16,
-			"ushort" => LLVMTypeRef.Int16,
-			"byte" => LLVMTypeRef.Int8,
-			"sbyte" => LLVMTypeRef.Int8,
+			"int" or "uint" => LLVMTypeRef.Int32,
+			"long" or "ulong" or "nint" or "nuint" => LLVMTypeRef.Int64,
+			"short" or "ushort" => LLVMTypeRef.Int16,
+			"byte" or "sbyte" or "char" => LLVMTypeRef.Int8,
+			"float" => LLVMTypeRef.Float,
 			"double" => LLVMTypeRef.Double,
 			"bool" => LLVMTypeRef.Int1,
 			"string" or "ptr" => LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0),
-			"char" => LLVMTypeRef.Int8,
 			_ => _llvmStructTypes.TryGetValue(t.Name, out var foundType) ? foundType : LLVMTypeRef.Int32
 		};
 	}
@@ -3408,45 +3430,45 @@ else if (expr is BorrowExpressionSyntax b)
 		return _builder.BuildLoad2(sliceLayout, sliceAlloc, "slice_val");
 	}
 
-	public int GetByteSize(TypeSymbol type)
-	{
-		if (type is null) return 0;
-		if (type.Equals(TypeSymbol.String) || type is PointerTypeSymbol) return 8; // 64-bit pointers
-		if (type is SliceTypeSymbol) return 16; // Fat Pointer: { ptr, i32 }
-		if (type.Equals(TypeSymbol.Int) || type.Equals(TypeSymbol.UInt)) return 4;
-		if (type.Equals(TypeSymbol.Long) || type.Equals(TypeSymbol.ULong) || type.Equals(TypeSymbol.Double)) return 8;
-		if (type.Equals(TypeSymbol.Short) || type.Equals(TypeSymbol.UShort)) return 2;
-		if (type.Equals(TypeSymbol.SByte) || type.Equals(TypeSymbol.Byte) || type.Equals(TypeSymbol.Bool) || type.Equals(TypeSymbol.Char)) return 1;
-		if (type is ArrayTypeSymbol arr) return GetByteSize(arr.ElementType) * arr.Size;
-		if (type is StructTypeSymbol structType)
-		{
-			var size = 0;
-			foreach (var field in structType.Fields)
-			{
-				size += GetByteSize(field.Type);
-			}
+    public int GetByteSize(TypeSymbol type)
+    {
+        if (type is null) return 0;
+        if (type.Equals(TypeSymbol.String) || type is PointerTypeSymbol or RawPointerTypeSymbol) return 8; // 64-bit pointers
+        if (type is SliceTypeSymbol) return 16; // Fat Pointer: { ptr, i32 }
+        if (type.Equals(TypeSymbol.Int) || type.Equals(TypeSymbol.UInt) || type.Equals(TypeSymbol.Float)) return 4;
+        if (type.Equals(TypeSymbol.Long) || type.Equals(TypeSymbol.ULong) || type.Equals(TypeSymbol.NInt) || type.Equals(TypeSymbol.NUInt) || type.Equals(TypeSymbol.Double)) return 8;
+        if (type.Equals(TypeSymbol.Short) || type.Equals(TypeSymbol.UShort)) return 2;
+        if (type.Equals(TypeSymbol.SByte) || type.Equals(TypeSymbol.Byte) || type.Equals(TypeSymbol.Bool) || type.Equals(TypeSymbol.Char)) return 1;
+        if (type is ArrayTypeSymbol arr) return GetByteSize(arr.ElementType) * arr.Size;
+        if (type is StructTypeSymbol structType)
+        {
+            var size = 0;
+            foreach (var field in structType.Fields)
+            {
+                size += GetByteSize(field.Type);
+            }
 
-			return size;
-		}
+            return size;
+        }
 
-		if (type is UnionTypeSymbol unionType)
-		{
-			// Null-Pointer Optimization: a flat Option<ref T> / <refvar T> is a single 8-byte pointer.
-			if (unionType.IsNpoEligible)
-				return 8;
+        if (type is UnionTypeSymbol unionType)
+        {
+            // Null-Pointer Optimization: a flat Option<ref T> / <refvar T> is a single 8-byte pointer.
+            if (unionType.IsNpoEligible)
+                return 8;
 
-			// Tagged union: 1-byte tag + (largest non-void variant) payload.
-			var maxPayload = unionType.Fields.Where(f => !f.IsVoidVariant).Select(f => GetByteSize(f.Type)).DefaultIfEmpty(0).Max();
-			return 1 + maxPayload;
-		}
+            // Tagged union: 1-byte tag + (largest non-void variant) payload.
+            var maxPayload = unionType.Fields.Where(f => !f.IsVoidVariant).Select(f => GetByteSize(f.Type)).DefaultIfEmpty(0).Max();
+            return 1 + maxPayload;
+        }
 
-		if (type is EnumTypeSymbol enumType)
-			return GetByteSize(enumType.StorageType);
+        if (type is EnumTypeSymbol enumType)
+            return GetByteSize(enumType.StorageType);
 
-		return 4; // Fallback
-	}
+        return 4; // Fallback
+    }
 
-	private void EmitSwitchStatement(SwitchStatementSyntax sw)
+    private void EmitSwitchStatement(SwitchStatementSyntax sw)
 	{
 		var switchTargetType = GetExprType(sw.Expression);
 		EnumTypeSymbol? enumTarget = null;
@@ -3760,4 +3782,15 @@ else if (expr is BorrowExpressionSyntax b)
 		_functionTypes[fullIntrinsicName] = funcType;
 		return func;
 	}
+
+    private LLVMValueRef SafeBitCast(LLVMValueRef value, LLVMTypeRef targetType, string name = "")
+    {
+        if (value.TypeOf.Handle == targetType.Handle)
+            return value;
+
+        if (value.TypeOf.Kind == LLVMTypeKind.LLVMPointerTypeKind && targetType.Kind == LLVMTypeKind.LLVMPointerTypeKind)
+            return value;
+
+        return _builder.BuildBitCast(value, targetType, name);
+    }
 }

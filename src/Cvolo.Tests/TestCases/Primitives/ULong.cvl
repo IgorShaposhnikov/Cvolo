@@ -1,0 +1,13 @@
+/// <summary>
+/// Feature: 64-bit unsigned integer (ulong) primitive type.
+/// </summary>
+/// <remarks>
+/// Verifies declaration, large 64-bit unsigned integer representation (up to 18,446,744,073,709,551,615), and standard console output.
+/// </remarks>
+using System;
+
+int Main() {
+    ulong x = (ulong)18000000000;
+    Console.WriteLine(x);
+    return 0;
+}

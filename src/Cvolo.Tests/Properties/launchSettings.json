@@ -1,7 +1,8 @@
 {
   "profiles": {
     "Cvolo.Tests": {
-      "commandName": "Project"
+      "commandName": "Project",
+      "commandLineArgs": "run --verbose D:\\opencode-container\\projects\\Cvolo\\src\\Cvolo.Tests\\TestCases\\NPO\\NpoFlatLayout.cvl"
     }
   }
 }

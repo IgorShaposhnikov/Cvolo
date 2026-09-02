@@ -1,0 +1,13 @@
+/// <summary>
+/// Feature: 64-bit signed integer (long) primitive type.
+/// </summary>
+/// <remarks>
+/// Verifies declaration, large 64-bit signed integer representation, and standard console output.
+/// </remarks>
+using System;
+
+int Main() {
+    long x = 9000000000;
+    Console.WriteLine(x);
+    return 0;
+}

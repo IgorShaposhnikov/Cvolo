@@ -1,0 +1,13 @@
+/// <summary>
+/// Feature: 16-bit unsigned integer (ushort) primitive type.
+/// </summary>
+/// <remarks>
+/// Verifies declaration, unsigned 16-bit value representation (0 to 65,535), and standard console output.
+/// </remarks>
+using System;
+
+int Main() {
+    ushort x = (ushort)65000;
+    Console.WriteLine(x);
+    return 0;
+}

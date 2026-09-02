@@ -1,0 +1,13 @@
+/// <summary>
+/// Feature: 8-bit unsigned integer (byte) primitive type.
+/// </summary>
+/// <remarks>
+/// Verifies declaration, unsigned value representation (0 to 255), and standard console output.
+/// </remarks>
+using System;
+
+int Main() {
+    byte x = (byte)250;
+    Console.WriteLine(x);
+    return 0;
+}
