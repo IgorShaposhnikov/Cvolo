@@ -45,6 +45,7 @@ PROTOCOL: 'protocol';
 EMBED: 'embed';
 NAMESPACE: 'namespace';
 USING: 'using';
+EXPOSE: 'expose';
 GLOBAL: 'global';
 SWITCH: 'switch';
 CASE: 'case';

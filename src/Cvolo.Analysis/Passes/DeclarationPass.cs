@@ -4,6 +4,7 @@ using Cvolo.Analysis.Symbols.Collections;
 using Cvolo.Analysis.Symbols.Structs;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
+using Cvolo.Core.AST.Directives;
 using Cvolo.Core.AST.Expressions;
 using Cvolo.Core.Diagnostics;
 
@@ -56,6 +57,8 @@ public sealed class DeclarationPass(BindingContext context)
 
 	public void Process(IEnumerable<CompilationUnitSyntax> units)
 	{
+		ProcessExposeUsings(units);
+
 		// Pass 0a: Register all Struct/Union/Interface/Protocol raw symbols across all files
 		foreach (var unit in units)
 		{
@@ -489,10 +492,10 @@ public sealed class DeclarationPass(BindingContext context)
 						continue; // outer already declares this signature — own method wins
 
 					var newSymbol = new FunctionSymbol(overloadedName, returnType, parameters)
-				{
-					Visibility = method.Visibility,
-					DeclaringUnit = sourceUnit
-				};
+					{
+						Visibility = method.Visibility,
+						DeclaringUnit = sourceUnit
+					};
 					context.Globals.Declare(newSymbol);
 
 					if (!context.OverloadedFunctions.TryGetValue(baseKey, out var candidates))
@@ -544,7 +547,7 @@ public sealed class DeclarationPass(BindingContext context)
 
 			var placeholderFields = new List<StructFieldSymbol>();
 
-var templateSymbol = new StructTypeSymbol(mangledName, placeholderFields)
+			var templateSymbol = new StructTypeSymbol(mangledName, placeholderFields)
 			{
 				IsStrictMutability = appliedAttrs.Contains("StrictMutability"),
 				Visibility = structDecl.Visibility
@@ -559,7 +562,7 @@ var templateSymbol = new StructTypeSymbol(mangledName, placeholderFields)
 		// 1. Register a placeholder symbol BEFORE resolving fields so that
 		// self-referential field types (e.g. `Option<ref Node>`) can resolve
 		// the enclosing struct's own name during generic instantiation.
-var placeholder = new StructTypeSymbol(mangledName, [])
+		var placeholder = new StructTypeSymbol(mangledName, [])
 		{
 			Visibility = structDecl.Visibility
 		};
@@ -801,10 +804,10 @@ var placeholder = new StructTypeSymbol(mangledName, [])
 				}
 
 				var instSymbol = new FunctionSymbol(instName, returnType!, specParameters)
-			{
-				Visibility = func.Visibility,
-				DeclaringUnit = context.CurrentUnit
-			};
+				{
+					Visibility = func.Visibility,
+					DeclaringUnit = context.CurrentUnit
+				};
 				context.MonomorphizedFunctions[instName] = instSymbol;
 
 				var instDecl = new FunctionDeclarationSyntax(func.Span, func.ReturnType, instName, [], func.Parameters, func.Body, modifier: func.Modifier, visibility: func.Visibility);
@@ -1029,7 +1032,7 @@ var placeholder = new StructTypeSymbol(mangledName, [])
 		suppressedWarnings?.Add(warningId);
 	}
 
-private static void ApplyFunctionAttributes(List<string> appliedKeys, FunctionSymbol symbol, List<string> suppressedWarnings, IReadOnlyList<AttributeSyntax>? attributes = null)
+	private static void ApplyFunctionAttributes(List<string> appliedKeys, FunctionSymbol symbol, List<string> suppressedWarnings, IReadOnlyList<AttributeSyntax>? attributes = null)
 	{
 		if (appliedKeys.Contains("UnsafeBody"))
 			symbol.IsUnsafeBody = true;
@@ -1266,7 +1269,7 @@ private static void ApplyFunctionAttributes(List<string> appliedKeys, FunctionSy
 				return;
 			}
 
-// 2. Register the overloaded, parameter-mangled global signature
+			// 2. Register the overloaded, parameter-mangled global signature
 			var overloadedName = context.GetOverloadedMangledName(baseMangledName, parameters.Select(p => p.Type).ToList());
 
 			var memberVisibility = method.SyntacticVisibility ?? blockVisibility;
@@ -1998,5 +2001,81 @@ private static void ApplyFunctionAttributes(List<string> appliedKeys, FunctionSy
 				return true;
 		}
 		return false;
+	}
+
+	/// <summary>
+	/// Pass 0: Registers all declared namespaces, collects 'expose using' re-exports,
+	/// and validates that:
+	/// 1. 'expose using' is only declared inside a namespace (CVL1060).
+	/// 2. Target namespaces of 'expose using' actually exist across the compilation units (CVL1061).
+	/// </summary>
+	private void ProcessExposeUsings(IEnumerable<CompilationUnitSyntax> units)
+	{
+		context.DeclaredNamespaces.Clear();
+		context.NamespaceReExports.Clear();
+
+		// 1. Gather all declared namespaces across all units
+		foreach (var unit in units)
+		{
+			if (unit.NamespaceDeclaration is not null)
+			{
+				context.DeclaredNamespaces.Add(unit.NamespaceDeclaration.Name);
+			}
+		}
+
+		// 2. Validate and register 'expose using' directives
+		var exposeDirectives = new List<(CompilationContext FileCtx, UsingDirectiveSyntax Directive, string? EnclosingNs)>();
+
+		foreach (var unit in units)
+		{
+			context.CurrentUnit = unit;
+			var fileContext = context.FileContexts[unit];
+
+			// File-level usings (outside any namespace)
+			foreach (var u in unit.Usings)
+			{
+				if (u.IsExposed)
+				{
+					context.Diagnostics.Report(
+						fileContext,
+						u.Span,
+						"'expose using' can only be used inside a namespace.",
+						DiagnosticIds.ExposeUsingOutsideNamespace);
+				}
+			}
+
+			// Namespace-level usings
+			if (unit.NamespaceDeclaration is not null)
+			{
+				var currentNs = unit.NamespaceDeclaration.Name;
+				foreach (var u in unit.NamespaceDeclaration.Usings)
+				{
+					if (u.IsExposed)
+					{
+						if (!context.NamespaceReExports.TryGetValue(currentNs, out var set))
+						{
+							set = new HashSet<string>(StringComparer.Ordinal);
+							context.NamespaceReExports[currentNs] = set;
+						}
+
+						set.Add(u.NamespaceName);
+						exposeDirectives.Add((fileContext, u, currentNs));
+					}
+				}
+			}
+		}
+
+		// 3. Verify that re-export target namespaces exist (CVL1061)
+		foreach (var (fileCtx, directive, _) in exposeDirectives)
+		{
+			if (!context.DeclaredNamespaces.Contains(directive.NamespaceName))
+			{
+				context.Diagnostics.Report(
+					fileCtx,
+					directive.Span,
+					$"Target namespace '{directive.NamespaceName}' of 'expose using' does not exist.",
+					DiagnosticIds.ExposeUsingNamespaceNotFound);
+			}
+		}
 	}
 }

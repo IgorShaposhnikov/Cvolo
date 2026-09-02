@@ -2159,9 +2159,8 @@ case MemberAccessExpressionSyntax m:
 		if (_globals.ContainsKey(localMangled) || _bindingContext!.GenericFunctionTemplates.ContainsKey(localMangled))
 			return localMangled;
 
-		var activeUsings = new List<string>(activeUnit.Usings.Select(u => u.NamespaceName));
-		if (activeUnit.NamespaceDeclaration is not null)
-			activeUsings.AddRange(activeUnit.NamespaceDeclaration.Usings.Select(u => u.NamespaceName));
+		// Use expanded usings from BindingContext
+		var activeUsings = _bindingContext!.GetActiveUsings(activeUnit);
 
 		foreach (var importNs in activeUsings)
 		{

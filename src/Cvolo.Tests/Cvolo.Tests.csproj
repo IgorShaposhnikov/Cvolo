@@ -33,12 +33,6 @@
 	</ItemGroup>
 
 	<ItemGroup>
-	  <Folder Include="TestCases\StandardLibrary\Console\" />
-	  <Folder Include="TestCases\Strings\" />
-	  <Folder Include="TestCases\Overloading\" />
-	</ItemGroup>
-
-	<ItemGroup>
 	  <None Include="UnionsTests.cs" />
 	</ItemGroup>
 </Project>

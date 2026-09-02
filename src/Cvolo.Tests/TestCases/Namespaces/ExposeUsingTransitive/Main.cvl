@@ -1,0 +1,7 @@
+using System;
+using App.Root;
+
+int Main() {
+    Console.WriteLine($"Answer: {GetDeepAnswer()}");
+    return 0;
+}

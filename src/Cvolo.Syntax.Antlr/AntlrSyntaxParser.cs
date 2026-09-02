@@ -718,7 +718,8 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 
 	private UsingDirectiveSyntax BuildUsingDirective(CvoloParser.UsingDirectiveContext context)
 	{
-		return new UsingDirectiveSyntax(SpanOf(context), context.qualifiedName().GetText());
+		var isExposed = context.EXPOSE() != null;
+		return new UsingDirectiveSyntax(SpanOf(context), context.qualifiedName().GetText(), isExposed);
 	}
 
 	private NamespaceDeclarationSyntax BuildNamespaceDeclaration(CvoloParser.NamespaceDeclarationContext context)

@@ -1,0 +1,10 @@
+/// <summary>
+/// Rejection: 'expose using' outside a namespace declaration triggers CVL1060.
+/// </summary>
+using System;
+
+expose using MathLib;
+
+int main() {
+    return 0;
+}

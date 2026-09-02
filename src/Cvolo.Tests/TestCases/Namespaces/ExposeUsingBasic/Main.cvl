@@ -1,0 +1,13 @@
+/// <summary>
+/// Consumes MathLib via a single using directive and accesses symbols from sub-namespaces.
+/// </summary>
+using System;
+using MathLib;
+
+int Main() {
+    Console.WriteLine($"PI: {MATH_PI}");
+    Console.WriteLine($"Sqrt: {Sqrt(3.0)}");
+    var Vec2 v = Vec2 { X: 1.0, Y: 2.0 };
+    Console.WriteLine($"Vec: {v.X}, {v.Y}");
+    return 0;
+}

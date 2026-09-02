@@ -1,0 +1,10 @@
+/// <summary>
+/// Rejection: 'expose using' targeting a non-existent namespace triggers CVL1061.
+/// </summary>
+namespace App;
+
+expose using NonExistent.SubModule;
+
+int main() {
+    return 0;
+}

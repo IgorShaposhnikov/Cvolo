@@ -1,0 +1,5 @@
+namespace App.Leaf;
+
+int GetDeepAnswer() {
+    return 42;
+}

@@ -1,0 +1,7 @@
+namespace App.Alpha;
+
+expose using App.Beta;
+
+int GetA() {
+    return 10;
+}

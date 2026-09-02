@@ -1,0 +1,8 @@
+/// <summary>
+/// Sub-namespace providing math functions.
+/// </summary>
+namespace MathLib.Double;
+
+double Sqrt(double x) {
+    return x * x;
+}

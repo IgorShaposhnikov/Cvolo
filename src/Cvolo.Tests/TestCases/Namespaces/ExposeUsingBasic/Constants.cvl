@@ -1,0 +1,11 @@
+/// <summary>
+/// Sub-namespace providing math constants and types.
+/// </summary>
+namespace MathLib.Constants;
+
+public struct Vec2 {
+    public double X;
+    public double Y;
+}
+
+public global double MATH_PI = 3.14159;

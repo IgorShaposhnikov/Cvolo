@@ -1,0 +1,8 @@
+/// <summary>
+/// Feature: Expose Using Re-export.
+/// Declares the parent namespace MathLib and re-exports sub-namespaces.
+/// </summary>
+namespace MathLib;
+
+expose using MathLib.Double;
+expose using MathLib.Constants;

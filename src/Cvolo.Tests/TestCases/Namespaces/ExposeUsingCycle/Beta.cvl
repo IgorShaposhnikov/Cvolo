@@ -1,0 +1,7 @@
+namespace App.Beta;
+
+expose using App.Alpha;
+
+int GetB() {
+    return 20;
+}

@@ -759,6 +759,7 @@ public sealed class ValidationPass(BindingContext context)
 			if (context.SymbolUnits.TryGetValue(name, out var unit))
 				return unit;
 		}
+
 		return null;
 	}
 
@@ -801,7 +802,8 @@ public sealed class ValidationPass(BindingContext context)
 	/// </summary>
 	private static bool TypesAssignable(TypeSymbol target, TypeSymbol source)
 	{
-		if (target.Equals(source)) return true;
+		if (target.Equals(source))
+			return true;
 
 		if (source is PointerTypeSymbol srcPtr && target is PointerTypeSymbol tgtPtr &&
 			!tgtPtr.IsMutable && srcPtr.IsMutable &&
@@ -1127,9 +1129,7 @@ public sealed class ValidationPass(BindingContext context)
 
 		if (context.CurrentUnit is not null)
 		{
-			var activeUsings = new List<string>(context.CurrentUnit.Usings.Select(u => u.NamespaceName));
-			if (context.CurrentUnit.NamespaceDeclaration is not null)
-				activeUsings.AddRange(context.CurrentUnit.NamespaceDeclaration.Usings.Select(u => u.NamespaceName));
+			var activeUsings = context.GetActiveUsings(context.CurrentUnit);
 
 			foreach (var ns in activeUsings)
 			{
@@ -1233,9 +1233,7 @@ public sealed class ValidationPass(BindingContext context)
 
 		if (context.CurrentUnit is not null)
 		{
-			var activeUsings = new List<string>(context.CurrentUnit.Usings.Select(u => u.NamespaceName));
-			if (context.CurrentUnit.NamespaceDeclaration is not null)
-				activeUsings.AddRange(context.CurrentUnit.NamespaceDeclaration.Usings.Select(u => u.NamespaceName));
+			var activeUsings = context.GetActiveUsings(context.CurrentUnit);
 
 			foreach (var ns in activeUsings)
 			{
@@ -1445,9 +1443,7 @@ public sealed class ValidationPass(BindingContext context)
 
 		if (context.CurrentUnit is not null)
 		{
-			var activeUsings = new List<string>(context.CurrentUnit.Usings.Select(u => u.NamespaceName));
-			if (context.CurrentUnit.NamespaceDeclaration is not null)
-				activeUsings.AddRange(context.CurrentUnit.NamespaceDeclaration.Usings.Select(u => u.NamespaceName));
+			var activeUsings = context.GetActiveUsings(context.CurrentUnit);
 
 			foreach (var ns in activeUsings)
 			{
@@ -1598,9 +1594,7 @@ public sealed class ValidationPass(BindingContext context)
 
 		if (context.CurrentUnit is not null)
 		{
-			var activeUsings = new List<string>(context.CurrentUnit.Usings.Select(u => u.NamespaceName));
-			if (context.CurrentUnit.NamespaceDeclaration is not null)
-				activeUsings.AddRange(context.CurrentUnit.NamespaceDeclaration.Usings.Select(u => u.NamespaceName));
+			var activeUsings = context.GetActiveUsings(context.CurrentUnit);
 
 			foreach (var ns in activeUsings)
 			{
@@ -2291,12 +2285,10 @@ public sealed class ValidationPass(BindingContext context)
 		if (context.OverloadedFunctions.TryGetValue(localMangled, out var localMatches))
 			targetList.AddRange(localMatches);
 
-		// Search through imported namespaces
+		// Search through imported namespaces (expanded with 'expose using')
 		if (context.CurrentUnit is not null)
 		{
-			var activeUsings = new List<string>(context.CurrentUnit.Usings.Select(u => u.NamespaceName));
-			if (context.CurrentUnit.NamespaceDeclaration is not null)
-				activeUsings.AddRange(context.CurrentUnit.NamespaceDeclaration.Usings.Select(u => u.NamespaceName));
+			var activeUsings = context.GetActiveUsings(context.CurrentUnit);
 
 			foreach (var ns in activeUsings)
 			{

@@ -104,6 +104,17 @@ public sealed class BindingContext
 	public HashSet<string> ReportedVisibilityLeaks { get; } = [];
 
 	/// <summary>
+	/// Maps a namespace to the set of namespaces directly re-exported via 'expose using'.
+	/// e.g. "System.Math" -> ["System.Math.Constants", "System.Math.Double"]
+	/// </summary>
+	public Dictionary<string, HashSet<string>> NamespaceReExports { get; } = [];
+
+	/// <summary>
+	/// All known/declared namespace names across compilation units.
+	/// </summary>
+	public HashSet<string> DeclaredNamespaces { get; } = [];
+
+	/// <summary>
 	/// Resolves a string type name to its canonical, immutable TypeSymbol object.
 	/// </summary>
 	/// <summary>
@@ -111,7 +122,8 @@ public sealed class BindingContext
 	/// </summary>
 	public TypeSymbol? ResolveType(string name)
 	{
-		if (string.IsNullOrEmpty(name)) return null;
+		if (string.IsNullOrEmpty(name))
+			return null;
 
 		// 1. Check Canonical Type Cache first (Flyweight Pattern)
 		if (_typeCache.TryGetValue(name, out var cached))
@@ -134,9 +146,10 @@ public sealed class BindingContext
 		if (name.StartsWith("refvar ") || name.StartsWith("ref "))
 		{
 			var isMutable = name.StartsWith("refvar ");
-			var innerName = isMutable ? name.Substring(7) : name.Substring(4);
+			var innerName = isMutable ? name[7..] : name[4..];
 			var innerType = ResolveType(innerName);
-			if (innerType is null) return null;
+			if (innerType is null)
+				return null;
 
 			var ptrType = new PointerTypeSymbol(innerType, isMutable);
 			_typeCache[name] = ptrType;
@@ -148,7 +161,7 @@ public sealed class BindingContext
 		{
 			var openBracket = name.LastIndexOf('[');
 			var sizePart = name.Substring(openBracket + 1, name.Length - openBracket - 2);
-			var innerName = name.Substring(0, openBracket);
+			var innerName = name[..openBracket];
 			var innerType = ResolveType(innerName);
 			if (innerType is not null && TryEvaluateEnumSizeConstant(sizePart) is { } computedSize && computedSize <= int.MaxValue)
 			{
@@ -174,33 +187,34 @@ public sealed class BindingContext
 		// 5b. Resolve Generic Instantiations (e.g., Point<int>, Option<int>)
 		if (name.Contains('<'))
 		{
-			if (_typeCache.TryGetValue(name, out var cachedType)) return cachedType;
+			if (_typeCache.TryGetValue(name, out var cachedType))
+				return cachedType;
 
 			var openBracket = name.IndexOf('<');
-			var baseName = name.Substring(0, openBracket);
+			var baseName = name[..openBracket];
 			var argsPart = name.Substring(openBracket + 1, name.Length - openBracket - 2);
 
 			var baseType = ResolveType(baseName);
 			if (baseType is StructTypeSymbol baseStruct && GenericStructTemplates.TryGetValue(baseStruct.Name, out var templateDecl))
 			{
-if (!TryResolveTypeArguments(argsPart, out var typeArgs))
-				return null;
-			if (typeArgs.Count != templateDecl.GenericParameters.Count)
-				return null;
-			CheckInstantiationVisibilityLeak(name, baseType, typeArgs);
-			var instantiatedType = InstantiateGenericStruct(templateDecl, baseType.Name, typeArgs);
+				if (!TryResolveTypeArguments(argsPart, out var typeArgs))
+					return null;
+				if (typeArgs.Count != templateDecl.GenericParameters.Count)
+					return null;
+				CheckInstantiationVisibilityLeak(name, baseType, typeArgs);
+				var instantiatedType = InstantiateGenericStruct(templateDecl, baseType.Name, typeArgs);
 				StructTypes[name] = instantiatedType;
 				_typeCache[name] = instantiatedType;
 				return instantiatedType;
 			}
 			else if (baseType is UnionTypeSymbol baseUnion && GenericUnionTemplates.TryGetValue(baseUnion.Name, out var unionTemplateDecl))
 			{
-if (!TryResolveTypeArguments(argsPart, out var unionTypeArgs))
-				return null;
-			if (unionTypeArgs.Count != unionTemplateDecl.GenericParameters.Count)
-				return null;
-			CheckInstantiationVisibilityLeak(name, baseType, unionTypeArgs);
-			var instantiatedType = InstantiateGenericUnion(unionTemplateDecl, baseUnion.Name, unionTypeArgs);
+				if (!TryResolveTypeArguments(argsPart, out var unionTypeArgs))
+					return null;
+				if (unionTypeArgs.Count != unionTemplateDecl.GenericParameters.Count)
+					return null;
+				CheckInstantiationVisibilityLeak(name, baseType, unionTypeArgs);
+				var instantiatedType = InstantiateGenericUnion(unionTemplateDecl, baseUnion.Name, unionTypeArgs);
 				UnionTypes[name] = instantiatedType;
 				_typeCache[name] = instantiatedType;
 				return instantiatedType;
@@ -268,16 +282,14 @@ if (!TryResolveTypeArguments(argsPart, out var unionTypeArgs))
 		}
 		else if (candidates.Count > 1)
 		{
-			// Ambiguous local declaration match
+			// Ambiguous match between global/local definitions
 			return null;
 		}
 
-		// Priority 3: Imported usings (Consulted only if no local or global match was found)
-		if (CurrentUnit is not null)
+		// Priority 3: Imported usings (Consulted ONLY IF no local or global match was found)
+		if (candidates.Count == 0 && CurrentUnit is not null)
 		{
-			var activeUsings = new List<string>(CurrentUnit.Usings.Select(u => u.NamespaceName));
-			if (CurrentUnit.NamespaceDeclaration is not null)
-				activeUsings.AddRange(CurrentUnit.NamespaceDeclaration.Usings.Select(u => u.NamespaceName));
+			var activeUsings = GetActiveUsings(CurrentUnit);
 
 			foreach (var ns in activeUsings)
 			{
@@ -326,6 +338,7 @@ if (!TryResolveTypeArguments(argsPart, out var unionTypeArgs))
 					parts.Add(current.ToString());
 					current.Clear();
 				}
+
 				ops.Add(ch);
 			}
 			else
@@ -333,13 +346,14 @@ if (!TryResolveTypeArguments(argsPart, out var unionTypeArgs))
 				current.Append(ch);
 			}
 		}
+
 		if (current.Length > 0)
 			parts.Add(current.ToString());
 
 		if (parts.Count == 0)
 			return null;
 
-		long? result = ResolveEnumSizeTerm(parts[0]);
+		var result = ResolveEnumSizeTerm(parts[0]);
 		for (var i = 0; i < ops.Count && result is not null; i++)
 		{
 			var rhs = ResolveEnumSizeTerm(parts[i + 1]);
@@ -354,6 +368,7 @@ if (!TryResolveTypeArguments(argsPart, out var unionTypeArgs))
 				_ => null,
 			};
 		}
+
 		return result;
 	}
 
@@ -371,7 +386,7 @@ if (!TryResolveTypeArguments(argsPart, out var unionTypeArgs))
 		if (ResolveType(enumName) is not EnumTypeSymbol targetEnum)
 			return null;
 
-		bool hasNegative = targetEnum.Variants.Any(v => v.Value < 0);
+		var hasNegative = targetEnum.Variants.Any(v => v.Value < 0);
 		if (member == "Min")
 			return hasNegative ? null : targetEnum.Variants.Min(v => v.Value);
 		if (member == "Max")
@@ -399,14 +414,17 @@ if (!TryResolveTypeArguments(argsPart, out var unionTypeArgs))
 				Diagnostics.Report(currentFileContext, new TextSpan(0, 0), $"Unknown type argument '{rawArg.Trim()}'");
 				return false;
 			}
+
 			typeArgs.Add(argType);
 		}
+
 		return true;
 	}
 
 	public string GetMangledName(string name, string? namespaceName)
 	{
-		if (string.IsNullOrEmpty(namespaceName)) return name;
+		if (string.IsNullOrEmpty(namespaceName))
+			return name;
 		return $"{namespaceName}.{name}";
 	}
 
@@ -449,6 +467,7 @@ if (!TryResolveTypeArguments(argsPart, out var unionTypeArgs))
 						$"The visibility of generic type instantiation '{host.Name}<{string.Join(",", args)}>' exceeds the visibility of its type argument '{arg.Name}'. Upgrade the argument visibility or restrict the parent declaration.",
 						DiagnosticIds.GenericVisibilityLeak);
 				}
+
 				break;
 			}
 		}
@@ -483,8 +502,9 @@ if (!TryResolveTypeArguments(argsPart, out var unionTypeArgs))
 	{
 		var names = new List<string> { name, GetMangledName(name, null) };
 		foreach (var key in names)
-			if (_typeCache.ContainsKey(key))
-				_typeCache.Remove(key);
+		{
+			_typeCache.Remove(key);
+		}
 	}
 
 	/// <summary>
@@ -626,7 +646,7 @@ if (!TryResolveTypeArguments(argsPart, out var unionTypeArgs))
 			if (substitutedTypeName.StartsWith("refvar ") || substitutedTypeName.StartsWith("ref "))
 			{
 				var isMutable = substitutedTypeName.StartsWith("refvar ");
-				var innerName = isMutable ? substitutedTypeName.Substring(7) : substitutedTypeName.Substring(4);
+				var innerName = isMutable ? substitutedTypeName[7..] : substitutedTypeName[4..];
 				var innerType = ResolveSubstitutedType(innerName);
 				return new PointerTypeSymbol(innerType, isMutable);
 			}
@@ -655,6 +675,7 @@ if (!TryResolveTypeArguments(argsPart, out var unionTypeArgs))
 							newType = System.Text.RegularExpressions.Regex.Replace(newType, $@"\b{kv.Key}\b", kv.Value.Name);
 						}
 					}
+
 					return new VariableDeclarationSyntax(v.Span, v.IsMutable, newType, v.Name, v.Initializer != null ? SubstituteExpressionGenerics(v.Initializer) : null);
 
 				case BlockStatementSyntax b:
@@ -689,13 +710,14 @@ if (!TryResolveTypeArguments(argsPart, out var unionTypeArgs))
 
 				case UnaryExpressionSyntax unary:
 					var newOp = unary.Operator;
-					if (newOp.StartsWith("(") && newOp.EndsWith(")"))
+					if (newOp.StartsWith('(') && newOp.EndsWith(')'))
 					{
 						foreach (var kv in substitutionMap)
 						{
 							newOp = System.Text.RegularExpressions.Regex.Replace(newOp, $@"\b{kv.Key}\b", kv.Value.Name);
 						}
 					}
+
 					return new UnaryExpressionSyntax(unary.Span, newOp, SubstituteExpressionGenerics(unary.Operand));
 
 				case CallExpressionSyntax call:
@@ -706,6 +728,7 @@ if (!TryResolveTypeArguments(argsPart, out var unionTypeArgs))
 						{
 							substituted = System.Text.RegularExpressions.Regex.Replace(substituted, $@"\b{kv.Key}\b", kv.Value.Name);
 						}
+
 						return substituted;
 					}).ToList();
 					var newArgs = call.Arguments.Select(a => SubstituteExpressionGenerics(a)).ToList();
@@ -717,6 +740,7 @@ if (!TryResolveTypeArguments(argsPart, out var unionTypeArgs))
 					{
 						newTypeName = System.Text.RegularExpressions.Regex.Replace(newTypeName, $@"\b{kv.Key}\b", kv.Value.Name);
 					}
+
 					var newInits = structInit.Initializers.Select(i => new MemberInitializerSyntax(i.Span, i.MemberName, SubstituteExpressionGenerics(i.Expression))).ToList();
 					return new StructInitializationExpressionSyntax(structInit.Span, newTypeName, newInits);
 
@@ -757,7 +781,8 @@ if (!TryResolveTypeArguments(argsPart, out var unionTypeArgs))
 				}
 
 				var returnType = ResolveSubstitutedType(substitutedReturnTypeName);
-				if (returnType is null) continue;
+				if (returnType is null)
+					continue;
 
 				var baseMangledName = $"{instantiatedType.Name}.{method.Name}";
 
@@ -788,6 +813,7 @@ if (!TryResolveTypeArguments(argsPart, out var unionTypeArgs))
 					candidates = [];
 					OverloadedFunctions[baseMangledName] = candidates;
 				}
+
 				candidates.Add(newSymbol);
 
 				if (originalUnit is not null)
@@ -837,6 +863,7 @@ if (!TryResolveTypeArguments(argsPart, out var unionTypeArgs))
 					ctorCandidates = [];
 					OverloadedFunctions[baseMangledName] = ctorCandidates;
 				}
+
 				ctorCandidates.Add(ctorSymbol);
 
 				if (originalUnit is not null)
@@ -849,6 +876,7 @@ if (!TryResolveTypeArguments(argsPart, out var unionTypeArgs))
 					registeredCtors = [];
 					Constructors[instantiatedType.Name] = registeredCtors;
 				}
+
 				registeredCtors.Add(ctorSymbol);
 
 				var instBody = SubstituteBlockGenerics(ctorDecl.Body);
@@ -916,7 +944,7 @@ if (!TryResolveTypeArguments(argsPart, out var unionTypeArgs))
 		UnionTypes[instName] = instantiatedType;
 		_typeCache[instName] = instantiatedType;
 
-MonomorphizeExtensionsForType(instantiatedType, typeArgs, templateMangledName);
+		MonomorphizeExtensionsForType(instantiatedType, typeArgs, templateMangledName);
 
 		return instantiatedType;
 	}
@@ -957,9 +985,70 @@ MonomorphizeExtensionsForType(instantiatedType, typeArgs, templateMangledName);
 					: fallbackDecl.GenericParameters;
 				canonical.Add(ProtocolCanonicalizer.BuildMemberToken(member, ownerGenerics, this, selfReplacement: null, concreteTypeArguments));
 			}
+
 			return (effective.Select(e => e.Member).ToList(), canonical);
 		}
 
 		return (fallbackDecl.Members, ProtocolCanonicalizer.BuildCanonicalMembers(fallbackDecl, this, concreteTypeArguments));
+	}
+
+	/// <summary>
+	/// Returns all transitively re-exported namespaces for a given root namespace (cycle-safe).
+	/// </summary>
+	public HashSet<string> GetTransitiveReExports(string rootNamespace)
+	{
+		var result = new HashSet<string>(StringComparer.Ordinal);
+		var visited = new HashSet<string>(StringComparer.Ordinal);
+
+		void Walk(string ns)
+		{
+			if (!visited.Add(ns))
+				return;
+
+			if (NamespaceReExports.TryGetValue(ns, out var reExports))
+			{
+				foreach (var target in reExports)
+				{
+					result.Add(target);
+					Walk(target);
+				}
+			}
+		}
+
+		Walk(rootNamespace);
+		return result;
+	}
+
+	/// <summary>
+	/// Returns all active namespaces imported by the given file, expanding any 'expose using' re-exports.
+	/// </summary>
+	public List<string> GetActiveUsings(CompilationUnitSyntax? unit)
+	{
+		if (unit is null)
+			return [];
+
+		var directUsings = new HashSet<string>(StringComparer.Ordinal);
+
+		// 1. Collect standard 'using' directives (exclude 'expose using' which only re-exports)
+		foreach (var u in unit.Usings.Where(x => !x.IsExposed))
+			directUsings.Add(u.NamespaceName);
+
+		if (unit.NamespaceDeclaration is not null)
+		{
+			foreach (var u in unit.NamespaceDeclaration.Usings.Where(x => !x.IsExposed))
+				directUsings.Add(u.NamespaceName);
+		}
+
+		// 2. Expand with all transitively re-exported namespaces
+		var allUsings = new HashSet<string>(directUsings, StringComparer.Ordinal);
+		foreach (var ns in directUsings)
+		{
+			foreach (var reExported in GetTransitiveReExports(ns))
+			{
+				allUsings.Add(reExported);
+			}
+		}
+
+		return [.. allUsings];
 	}
 }

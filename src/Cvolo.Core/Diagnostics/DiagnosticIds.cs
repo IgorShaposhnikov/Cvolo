@@ -78,4 +78,9 @@ public static class DiagnosticIds
 
 	/// <summary>A private or anonymous symbol is forced into a public export path.</summary>
 	public const string PrivateSymbolExport = "CVL1039";
+	/// <summary>'expose using' directive used outside a namespace declaration.</summary>
+	public const string ExposeUsingOutsideNamespace = "CVL1060";
+
+	/// <summary>'expose using' targets a namespace that cannot be resolved.</summary>
+	public const string ExposeUsingNamespaceNotFound = "CVL1061";
 }

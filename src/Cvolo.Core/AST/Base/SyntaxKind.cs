@@ -42,6 +42,7 @@ public enum SyntaxKind
 	InterpolatedStringExpression,
 	TernaryExpression,
 	UsingDirective,
+	ExposeUsingDirective,
 	NamespaceDeclaration,
 	UnsafeBlockStatement,
 UnionDeclaration,

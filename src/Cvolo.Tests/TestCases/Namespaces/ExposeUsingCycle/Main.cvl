@@ -1,0 +1,7 @@
+using System;
+using App.Alpha;
+
+int Main() {
+    Console.WriteLine($"Sum: {GetA() + GetB()}");
+    return 0;
+}
