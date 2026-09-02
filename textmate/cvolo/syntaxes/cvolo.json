@@ -83,13 +83,13 @@
     },
     "storage_modifiers": {
       "name": "storage.modifier.cvolo",
-      "match": "\\b(private|internal|public|ref|refvar|unsafe|unbound|global|extern|embed|val|var)\\b"
+      "match": "\\b(private|internal|public|ref|refvar|unsafe|unbound|global|extern|embed|val|var|expose)\\b"
     },
     "types": {
       "patterns": [
         {
           "name": "storage.type.primitive.cvolo",
-          "match": "\\b(void|int|uint|long|ulong|short|ushort|byte|sbyte|double|bool|string|char)\\b"
+          "match": "\\b(void|int|uint|long|ulong|short|ushort|byte|sbyte|nint|nuint|float|double|bool|string|char)\\b"
         },
         {
           "name": "storage.type.cvolo",
@@ -116,10 +116,11 @@
     },
     {
       "comment": "Using directive",
-      "match": "\\b(using)\\s+([a-zA-Z0-9_.]+)",
+      "match": "\\b(?:(expose)\\s+)?(using)\\s+([a-zA-Z0-9_.]+)",
       "captures": {
-        "1": { "name": "keyword.control.cvolo" },
-        "2": { "name": "entity.name.namespace.cvolo" }
+        "1": { "name": "storage.modifier.cvolo" },
+        "2": { "name": "keyword.control.cvolo" },
+        "3": { "name": "entity.name.namespace.cvolo" }
       }
     },
     {
@@ -142,37 +143,18 @@
     },
     {
       "comment": "Extern function declaration",
-      "name": "meta.function.extern.cvolo",
-      "begin": "\\b(?:(private|internal|public)\\s+)?(extern)\\s+(void|int|uint|long|ulong|short|ushort|byte|sbyte|double|bool|string|char|[A-Z][a-zA-Z0-9_]*)\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\s*(?=\\()",
-      "beginCaptures": {
+      "match": "\\b(?:(private|internal|public)\\s+)?(extern)\\s+(void|int|uint|long|ulong|short|ushort|byte|sbyte|nint|nuint|float|double|bool|string|char|[A-Z][a-zA-Z0-9_]*)\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\b",
+      "captures": {
         "1": { "name": "storage.modifier.visibility.cvolo" },
         "2": { "name": "storage.modifier.cvolo" },
         "3": { "name": "storage.type.cvolo" },
         "4": { "name": "entity.name.function.cvolo" }
-      },
-      "end": "(?<=\\))",
-      "patterns": [
-        {
-          "begin": "\\(",
-          "end": "\\)",
-          "patterns": [
-            { "include": "#types" },
-            {
-              "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\b",
-              "name": "variable.parameter.cvolo"
-            },
-            {
-              "match": "\\.\\.\\.",
-              "name": "keyword.operator.cvolo"
-            }
-          ]
-        }
-      ]
+      }
     },
     {
       "comment": "Function definition",
-      "name": "meta.function.cvolo",
-      "begin": "\\b(?:(private|internal|public)\\s+)?(?:(unsafe|unbound)\\s+)?(?:(ref|refvar)\\s+)?(void|int|uint|long|ulong|short|ushort|byte|sbyte|double|bool|string|char|[A-Z][a-zA-Z0-9_]*)\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\s*(?:<[^>]+>)?\\s*(?=\\()",
+      "begin": "\\b(?:(private|internal|public)\\s+)?(?:(unsafe|unbound)\\s+)?(?:(ref|refvar)\\s+)?(void|int|uint|long|ulong|short|ushort|byte|sbyte|nint|nuint|float|double|bool|string|char|[A-Z][a-zA-Z0-9_]*)\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\s*(?:<[^>]+>\\s*)?(?=\\()",
+      "end": "(?<=\\))",
       "beginCaptures": {
         "1": { "name": "storage.modifier.visibility.cvolo" },
         "2": { "name": "storage.modifier.cvolo" },
@@ -180,7 +162,6 @@
         "4": { "name": "storage.type.cvolo" },
         "5": { "name": "entity.name.function.cvolo" }
       },
-      "end": "(?<=\\))",
       "patterns": [
         {
           "begin": "\\(",
@@ -192,7 +173,7 @@
               "name": "storage.modifier.ref.cvolo"
             },
             {
-              "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\b",
+              "match": "\\w+",
               "name": "variable.parameter.cvolo"
             }
           ]
@@ -201,7 +182,7 @@
     },
     {
       "comment": "Variable declaration with explicitly defined type",
-      "match": "\\b(?:(private|internal|public)\\s+)?(?:(global)\\s+)?(?:(val|var|refvar|ref)\\s+)?(void|int|uint|long|ulong|short|ushort|byte|sbyte|double|bool|string|char|[A-Z][a-zA-Z0-9_]*)\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\b\\s*(?=\\s*(?:=|;|,|\\)|\\}))",
+      "match": "\\b(?:(private|internal|public)\\s+)?(?:(global)\\s+)?(?:(val|var|refvar|ref)\\s+)?(void|int|uint|long|ulong|short|ushort|byte|sbyte|nint|nuint|float|double|bool|string|char|[A-Z][a-zA-Z0-9_]*)\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\b\\s*(?=\\s*(?:=|;|,|\\)|\\}))",
       "captures": {
         "1": { "name": "storage.modifier.visibility.cvolo" },
         "2": { "name": "storage.modifier.cvolo" },
@@ -223,14 +204,9 @@
     { "include": "#string_literals" },
     { "include": "#numbers" },
     {
-      "comment": "Struct instantiation",
-      "match": "\\b([A-Z][a-zA-Z0-9_]*)\\s*(?:<[^>]+>)?\\s*(?=\\{)",
-      "captures": { "1": { "name": "entity.name.type.class.cvolo" } }
-    },
-    {
-      "comment": "Function calls",
-      "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*(?:<[^>]+>)?\\s*(?=\\()",
-      "captures": { "1": { "name": "entity.name.function.cvolo" } }
+      "comment": "Function calls and struct instantiation",
+      "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*(?:<[^>]+>)?\\s*(?=\\(|\\{)",
+      "captures": { "1": { "name": "entity.name.function.call.cvolo" } }
     },
     { "include": "#keywords" },
     { "include": "#storage_modifiers" },
