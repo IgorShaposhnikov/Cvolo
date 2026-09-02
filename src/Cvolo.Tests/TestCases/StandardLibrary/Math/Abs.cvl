@@ -1,0 +1,16 @@
+using System;
+
+int Main() {
+    val double x = 25.0;
+
+    // Call as free function:
+    Console.WriteLine(Sqrt(x)); // 5.000000
+
+	int negativeThirtyThree = -33;
+	int positiveThirtyThree = Abs(negativeThirtyThree);
+	Console.WriteLine($"{positiveThirtyThree}");
+
+	Console.WriteLine($"{Min(33,11)}");
+
+	return 0;
+}

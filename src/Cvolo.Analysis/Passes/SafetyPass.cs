@@ -8,6 +8,7 @@ using Cvolo.Core.AST.Declarations;
 using Cvolo.Core.AST.Expressions;
 using Cvolo.Core.AST.Statements;
 using Cvolo.Core.Diagnostics;
+using Cvolo.Analysis.VisibilityChecks;
 
 namespace Cvolo.Analysis.Passes;
 
@@ -308,6 +309,7 @@ public sealed class SafetyPass(BindingContext context)
 
 			case MemberAccessExpressionSyntax m:
 				CheckExpressionSafety(m.Expression, scope);
+				ReportUnboundRefFieldVisibilityLeak(m.Expression, m.MemberName, m.Span, scope);
 				break;
 
 			case IndexExpressionSyntax idx:
@@ -417,6 +419,15 @@ public sealed class SafetyPass(BindingContext context)
 						var baseName = GetBaseIdentifierName(fieldWrite.Expression) ?? "?";
 						context.Diagnostics.Report(context.CurrentUnit!.Context, bin.Span,
 							$"Cannot assign to reference field '{mutRefField}' of variable '{baseName}' in safe code. Use an 'unbound' block or function to modify structural reference fields.");
+					}
+
+					// CVL1035: The unbound sandbox suspends the borrow checker but NOT visibility.
+					// A ref/refvar field that is private/internal and declared in another compilation
+					// unit cannot be structurally mutated (or traversed, handled above) from here.
+					if (bin.Operator == "=" && _currentTierStack.Contains(SafetyTier.Unbound) &&
+						bin.Left is MemberAccessExpressionSyntax unboundWrite)
+					{
+						ReportUnboundRefFieldVisibilityLeak(unboundWrite.Expression, unboundWrite.MemberName, bin.Span, scope);
 					}
 
 					// CVL1008: Escape prevention for reference-field stores. A local reference declared
@@ -934,8 +945,14 @@ public sealed class SafetyPass(BindingContext context)
 	/// </summary>
 	private string? GetRefFieldName(ExpressionSyntax baseExpr, string fieldName, SymbolTable scope)
 	{
+		var (_, field) = ResolveStructField(baseExpr, fieldName, scope);
+		return field is { Type: PointerTypeSymbol } ? field.Name : null;
+	}
+
+	private (StructTypeSymbol? Container, StructFieldSymbol? Field) ResolveStructField(ExpressionSyntax baseExpr, string fieldName, SymbolTable scope)
+	{
 		var name = GetBaseIdentifierName(baseExpr);
-		if (name == null || scope.Lookup(name) is not VariableSymbol sym) return null;
+		if (name == null || scope.Lookup(name) is not VariableSymbol sym) return (null, null);
 
 		var structType = sym.Type switch
 		{
@@ -943,10 +960,34 @@ public sealed class SafetyPass(BindingContext context)
 			PointerTypeSymbol p when p.ReferencedType is StructTypeSymbol s => s,
 			_ => null
 		};
-		if (structType?.FindField(fieldName) is not { } field)
-			return null;
+		return (structType, structType?.FindField(fieldName));
+	}
 
-		return field.Type is PointerTypeSymbol ? field.Name : null;
+	/// <summary>
+	/// CVL1035: the unbound sandbox suspends access checks? No — it suspends the borrow checker only.
+	/// A private ref/refvar field declared in another compilation unit cannot be structurally mutated
+	/// or traversed from an unbound scope. Internal fields are always reachable within a single module.
+	/// </summary>
+	private void ReportUnboundRefFieldVisibilityLeak(ExpressionSyntax baseExpr, string fieldName, TextSpan span, SymbolTable scope)
+	{
+		if (context.LegacyVisibility || !_currentTierStack.Contains(SafetyTier.Unbound))
+			return;
+
+		var (container, field) = ResolveStructField(baseExpr, fieldName, scope);
+		if (container is null || field is null || field.Type is not PointerTypeSymbol)
+			return;
+		if (field.Visibility == Visibility.Public)
+			return;
+
+		CompilationUnitSyntax? declaringUnit = null;
+		if (context.SymbolUnits.TryGetValue(container.Name, out var unit))
+			declaringUnit = unit;
+		if (declaringUnit is null || VisibilityChecker.IsAccessible(field.Visibility, context.CurrentUnit, declaringUnit))
+			return;
+
+		context.Diagnostics.Report(context.CurrentUnit!.Context, span,
+			$"The 'unbound' sandbox cannot suspend access restrictions. Structural mutation of refvar field '{field.Name}' is blocked because it is not visible to this compilation scope.",
+			DiagnosticIds.UnboundVisibilityLeak);
 	}
 
 	private void CheckSwitchStatementSafety(SwitchStatementSyntax sw, SymbolTable scope, FunctionDeclarationSyntax func)

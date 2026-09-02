@@ -1,0 +1,10 @@
+struct Node {
+    private refvar Node Next;
+    public int Value;
+}
+
+Node MakeNode(int v) {
+    Node n;
+    n.Value = v;
+    return n;
+}

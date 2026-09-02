@@ -19,7 +19,7 @@ internal sealed class CompilerDriver : ICompilerDriver
 {
 	private static readonly string[] _linkerCandidates = ["clang", "gcc", "g++"];
 
-	public int Compile(string path, bool llvmOnly, bool isShared, bool emitIr, string optLevel, bool checkOnly = false, bool runAfterCompile = false, bool verbose = false, bool emitLowered = false, string? noWarn = null, bool suppressWarnings = false)
+	public int Compile(string path, bool llvmOnly, bool isShared, bool emitIr, string optLevel, bool checkOnly = false, bool runAfterCompile = false, bool verbose = false, bool emitLowered = false, string? noWarn = null, bool suppressWarnings = false, bool legacyVisibility = false)
 	{
 		// Diagnostics whose ids appear here are dropped from the warning stream entirely.
 		var noWarnIds = noWarn?
@@ -124,13 +124,15 @@ internal sealed class CompilerDriver : ICompilerDriver
 		}
 
 		// 4. Semantic analysis passes (Name resolution, types, moves, borrows, and lifetimes validation)
+		binder.Context.LegacyVisibility = legacyVisibility;
 		binder.Bind(asts);
 
 		if (binder.Diagnostics.HasErrors)
 		{
 			foreach (var diag in binder.Diagnostics.Diagnostics)
 			{
-				var lines = diag.Context.FormatDiagnostic("Analysis Error", diag.Message, diag.Span);
+				var label = diag.Id is null ? "Analysis Error" : $"Compile Error {diag.Id}";
+				var lines = diag.Context.FormatDiagnostic(label, diag.Message, diag.Span);
 				foreach (var line in lines)
 				{
 					Console.Error.WriteLine(line);

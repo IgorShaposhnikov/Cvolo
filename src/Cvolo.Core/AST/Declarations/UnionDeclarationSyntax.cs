@@ -8,7 +8,8 @@ public sealed class UnionDeclarationSyntax(
 	string name,
 	IReadOnlyList<string> genericParameters,
 	IReadOnlyList<UnionFieldSyntax> fields,
-	IReadOnlyList<AttributeSyntax>? attributes = null) : SyntaxNode(span)
+	IReadOnlyList<AttributeSyntax>? attributes = null,
+	Visibility? visibility = null) : SyntaxNode(span)
 {
 	public override SyntaxKind Kind => SyntaxKind.UnionDeclaration;
 
@@ -16,11 +17,12 @@ public sealed class UnionDeclarationSyntax(
 	public IReadOnlyList<string> GenericParameters { get; } = genericParameters;
 	public IReadOnlyList<UnionFieldSyntax> Fields { get; } = fields;
 	public IReadOnlyList<AttributeSyntax> Attributes { get; } = attributes ?? [];
+	public Visibility Visibility { get; } = visibility ?? Visibility.Internal;
 
 	public override IEnumerable<SyntaxNode> GetChildren() => Fields;
 }
 
-public sealed class UnionFieldSyntax(TextSpan span, string type, string name) : SyntaxNode(span)
+public sealed class UnionFieldSyntax(TextSpan span, string type, string name, Visibility? visibility = null) : SyntaxNode(span)
 {
 	public override SyntaxKind Kind => SyntaxKind.UnionField;
 
@@ -28,6 +30,8 @@ public sealed class UnionFieldSyntax(TextSpan span, string type, string name) : 
 	public string Name { get; } = name;
 
 	public bool IsVoidVariant => Type == "void";
+
+	public Visibility Visibility { get; } = visibility ?? Visibility.Internal;
 
 	public override IEnumerable<SyntaxNode> GetChildren() => [];
 }

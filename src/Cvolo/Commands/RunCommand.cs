@@ -17,6 +17,7 @@ internal sealed class RunCommand : Command
 		var nowarnOption = new Option<string>("--nowarn") { Description = "Comma-separated diagnostic ids whose warnings are suppressed (e.g. CVL1003)" };
 		var warnOption = new Option<bool>("--warn") { Description = "Show warnings during compilation (hidden by default in run)" };
 		var verboseOption = new Option<bool>("--verbose", "-v") { Description = "Show verbose compiler debug information (implies --warn)" };
+		var legacyVisibilityOption = new Option<bool>("--legacy-visibility") { Description = "Disable the visibility system and treat all declarations as public (v0.2.0-alpha behavior)" };
 
 		Add(pathArg);
 		Add(optOption);
@@ -24,6 +25,7 @@ internal sealed class RunCommand : Command
 		Add(nowarnOption);
 		Add(warnOption);
 		Add(verboseOption);
+		Add(legacyVisibilityOption);
 
 		SetAction(parseResult =>
 		{
@@ -33,9 +35,10 @@ internal sealed class RunCommand : Command
 			var noWarnVal = parseResult.GetValue(nowarnOption);
 			var warnVal = parseResult.GetValue(warnOption);
 			var verboseVal = parseResult.GetValue(verboseOption);
+			var legacyVisibilityVal = parseResult.GetValue(legacyVisibilityOption);
 			if (verboseVal) warnVal = true;
 
-			var exitCode = _compilerDriver.Compile(path, llvmOnly: false, isShared: false, emitIr: false, optLevel, checkOnly: false, runAfterCompile: true, verbose: verboseVal, emitLowered: emitLoweredVal, noWarn: noWarnVal, suppressWarnings: !warnVal);
+			var exitCode = _compilerDriver.Compile(path, llvmOnly: false, isShared: false, emitIr: false, optLevel, checkOnly: false, runAfterCompile: true, verbose: verboseVal, emitLowered: emitLoweredVal, noWarn: noWarnVal, suppressWarnings: !warnVal, legacyVisibility: legacyVisibilityVal);
 			Environment.Exit(exitCode);
 		});
 	}

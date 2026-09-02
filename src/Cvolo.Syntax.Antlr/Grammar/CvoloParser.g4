@@ -31,7 +31,13 @@ declaration
 	;
 
 globalVariableDeclaration
-	: GLOBAL (VAL | VAR)? type Identifier (ASSIGN expression)? SEMI
+	: visibilityModifier? GLOBAL (VAL | VAR)? type Identifier (ASSIGN expression)? SEMI
+	;
+
+visibilityModifier
+	: PRIVATE
+	| INTERNAL
+	| PUBLIC
 	;
 
 attributeList
@@ -48,27 +54,27 @@ functionModifier
 	;
 
 functionDeclaration
-	: attributeList* functionModifier? returnType Identifier (LT typeList GT)? LPAREN parameterList? RPAREN (blockStatement | SEMI)
+	: attributeList* visibilityModifier? functionModifier? returnType Identifier (LT typeList GT)? LPAREN parameterList? RPAREN (blockStatement | SEMI)
 	;
 
 externDeclaration
-	: EXTERN returnType Identifier LPAREN externParameterList? RPAREN SEMI
+	: visibilityModifier? EXTERN returnType Identifier LPAREN externParameterList? RPAREN SEMI
 	;
 
 structDeclaration
-	: attributeList* STRUCT Identifier (LT genericParameterList GT)? (EMBED qualifiedName)? LBRACE structField* RBRACE SEMI?
+	: attributeList* visibilityModifier? STRUCT Identifier (LT genericParameterList GT)? (EMBED qualifiedName)? LBRACE structField* RBRACE SEMI?
 	;
 
 unionDeclaration
-	: attributeList* UNION Identifier (LT genericParameterList GT)? LBRACE unionField* RBRACE SEMI?
+	: attributeList* visibilityModifier? UNION Identifier (LT genericParameterList GT)? LBRACE unionField* RBRACE SEMI?
 	;
 
 unionField
-	: type Identifier SEMI
+	: visibilityModifier? type Identifier SEMI
 	;
 
 enumDeclaration
-	: attributeList* ENUM Identifier (COLON type)? LBRACE enumVariant (COMMA enumVariant)* RBRACE SEMI?
+	: attributeList* visibilityModifier? ENUM Identifier (COLON type)? LBRACE enumVariant (COMMA enumVariant)* RBRACE SEMI?
 	;
 
 enumVariant
@@ -76,11 +82,11 @@ enumVariant
 	;
 
 extensionDeclaration
-	: EXTENSION Identifier (LT genericParameterList GT)? (COLON qualifiedName)? LBRACE (functionDeclaration | destructorDeclaration | constructorDeclaration)* RBRACE SEMI?
+	: visibilityModifier? EXTENSION Identifier (LT genericParameterList GT)? (COLON qualifiedName)? LBRACE (functionDeclaration | destructorDeclaration | constructorDeclaration)* RBRACE SEMI?
 	;
 
 interfaceDeclaration
-	: attributeList* INTERFACE Identifier (LT genericParameterList GT)? (COLON qualifiedName (COMMA qualifiedName)*)? (FOR type)? LBRACE interfaceMember* RBRACE SEMI?
+	: attributeList* visibilityModifier? INTERFACE Identifier (LT genericParameterList GT)? (COLON qualifiedName (COMMA qualifiedName)*)? (FOR type)? LBRACE interfaceMember* RBRACE SEMI?
 	;
 
 interfaceMember
@@ -88,7 +94,7 @@ interfaceMember
 	;
 
 protocolDeclaration
-	: attributeList* PROTOCOL Identifier (LT genericParameterList GT)? (COLON qualifiedName (COMMA qualifiedName)*)? (FOR type)? LBRACE protocolMember* RBRACE SEMI?
+	: attributeList* visibilityModifier? PROTOCOL Identifier (LT genericParameterList GT)? (COLON qualifiedName (COMMA qualifiedName)*)? (FOR type)? LBRACE protocolMember* RBRACE SEMI?
 	;
 
 protocolMember
@@ -96,15 +102,15 @@ protocolMember
 	;
 
 destructorDeclaration
-	: attributeList* TILDE Identifier LPAREN RPAREN blockStatement SEMI?
+	: attributeList* visibilityModifier? TILDE Identifier LPAREN RPAREN blockStatement SEMI?
 	;
 
 constructorDeclaration
-	: attributeList* Identifier LPAREN parameterList? RPAREN blockStatement SEMI?
+	: attributeList* visibilityModifier? Identifier LPAREN parameterList? RPAREN blockStatement SEMI?
 	;
 
 structField
-	: type Identifier SEMI
+	: visibilityModifier? type Identifier SEMI
 	;
 
 returnType

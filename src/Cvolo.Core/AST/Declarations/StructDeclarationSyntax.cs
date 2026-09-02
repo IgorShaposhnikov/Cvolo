@@ -3,7 +3,7 @@ using Cvolo.Core.Diagnostics;
 
 namespace Cvolo.Core.AST.Declarations;
 
-public sealed class StructDeclarationSyntax(TextSpan span, string name, IReadOnlyList<string> genericParameters, IReadOnlyList<StructFieldSyntax> fields, string? embeddedType = null, IReadOnlyList<AttributeSyntax>? attributes = null) : SyntaxNode(span)
+public sealed class StructDeclarationSyntax(TextSpan span, string name, IReadOnlyList<string> genericParameters, IReadOnlyList<StructFieldSyntax> fields, string? embeddedType = null, IReadOnlyList<AttributeSyntax>? attributes = null, Visibility? visibility = null) : SyntaxNode(span)
 {
 	public override SyntaxKind Kind => SyntaxKind.StructDeclaration;
 
@@ -18,15 +18,19 @@ public sealed class StructDeclarationSyntax(TextSpan span, string name, IReadOnl
 
 	public IReadOnlyList<AttributeSyntax> Attributes { get; } = attributes ?? [];
 
+	public Visibility Visibility { get; } = visibility ?? Visibility.Internal;
+
 	public override IEnumerable<SyntaxNode> GetChildren() => Fields;
 }
 
-public sealed class StructFieldSyntax(TextSpan span, string type, string name) : SyntaxNode(span)
+public sealed class StructFieldSyntax(TextSpan span, string type, string name, Visibility? visibility = null) : SyntaxNode(span)
 {
 	public override SyntaxKind Kind => SyntaxKind.Parameter;
 
 	public string Type { get; } = type;
 	public string Name { get; } = name;
+
+	public Visibility Visibility { get; } = visibility ?? Visibility.Private;
 
 	public override IEnumerable<SyntaxNode> GetChildren() => [];
 }

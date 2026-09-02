@@ -8,7 +8,8 @@ public sealed class EnumDeclarationSyntax(
 	string name,
 	string? storageType,
 	IReadOnlyList<EnumVariantDeclarationSyntax> variants,
-	IReadOnlyList<AttributeSyntax>? attributes = null) : SyntaxNode(span)
+	IReadOnlyList<AttributeSyntax>? attributes = null,
+	Visibility? visibility = null) : SyntaxNode(span)
 {
 	public override SyntaxKind Kind => SyntaxKind.EnumDeclaration;
 
@@ -16,6 +17,7 @@ public sealed class EnumDeclarationSyntax(
 	public string? StorageType { get; } = storageType;
 	public IReadOnlyList<EnumVariantDeclarationSyntax> Variants { get; } = variants;
 	public IReadOnlyList<AttributeSyntax> Attributes { get; } = attributes ?? [];
+	public Visibility Visibility { get; } = visibility ?? Visibility.Internal;
 
 	public override IEnumerable<SyntaxNode> GetChildren() => Variants;
 }

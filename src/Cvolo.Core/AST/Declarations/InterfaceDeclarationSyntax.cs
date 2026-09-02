@@ -16,7 +16,8 @@ public sealed class InterfaceDeclarationSyntax(
 	IReadOnlyList<InterfaceMethodDeclarationSyntax> members,
 	IReadOnlyList<string>? bases = null,
 	string? constraint = null,
-	IReadOnlyList<AttributeSyntax>? attributes = null) : SyntaxNode(span)
+	IReadOnlyList<AttributeSyntax>? attributes = null,
+	Visibility? visibility = null) : SyntaxNode(span)
 {
 	public override SyntaxKind Kind => SyntaxKind.InterfaceDeclaration;
 
@@ -36,6 +37,7 @@ public sealed class InterfaceDeclarationSyntax(
 	/// </summary>
 	public string? Constraint { get; } = constraint;
 	public IReadOnlyList<AttributeSyntax> Attributes { get; } = attributes ?? [];
+	public Visibility Visibility { get; } = visibility ?? Visibility.Internal;
 
 	public override IEnumerable<SyntaxNode> GetChildren() => Members;
 }

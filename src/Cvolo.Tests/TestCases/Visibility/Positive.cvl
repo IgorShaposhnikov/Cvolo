@@ -1,0 +1,26 @@
+namespace Demo;
+
+struct Same {
+    private int Hidden;
+    public int Open;
+}
+
+internal struct Box<T> {
+    T V;
+}
+
+public extension Same {
+    private int GetHidden() { return Hidden; }
+    public int GetOpen() { return Open; }
+}
+
+public global int Counter = 42;
+public global double Ratio = 6.28;
+
+int main() {
+    Same s = Same { Hidden: 1, Open: 2 };
+    int h = s.GetHidden();
+    int o = s.GetOpen();
+    Box<int> b;
+    return 0;
+}

@@ -1,0 +1,12 @@
+private struct Secret {
+    int X;
+}
+
+public struct Box<T> {
+    T V;
+}
+
+int main() {
+    Box<Secret> b;
+    return 0;
+}

@@ -18,7 +18,8 @@ public sealed class ProtocolDeclarationSyntax(
 	IReadOnlyList<ProtocolMethodDeclarationSyntax> members,
 	IReadOnlyList<string>? bases = null,
 	string? constraint = null,
-	IReadOnlyList<AttributeSyntax>? attributes = null) : SyntaxNode(span)
+	IReadOnlyList<AttributeSyntax>? attributes = null,
+	Visibility? visibility = null) : SyntaxNode(span)
 {
 	public override SyntaxKind Kind => SyntaxKind.ProtocolDeclaration;
 
@@ -38,6 +39,7 @@ public sealed class ProtocolDeclarationSyntax(
 	/// </summary>
 	public string? Constraint { get; } = constraint;
 	public IReadOnlyList<AttributeSyntax> Attributes { get; } = attributes ?? [];
+	public Visibility Visibility { get; } = visibility ?? Visibility.Internal;
 
 	public override IEnumerable<SyntaxNode> GetChildren() => Members;
 }

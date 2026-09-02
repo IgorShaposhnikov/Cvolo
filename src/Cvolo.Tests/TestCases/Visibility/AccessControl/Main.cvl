@@ -1,0 +1,4 @@
+int main() {
+    Secret s = Secret { Visible: 3, Hidden: 4 };
+    return s.Visible + s.Hidden;
+}

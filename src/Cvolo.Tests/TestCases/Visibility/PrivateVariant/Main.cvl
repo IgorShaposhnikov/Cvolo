@@ -1,0 +1,10 @@
+int main() {
+    UResult r = MakeResult(42);
+    switch (r) {
+        case HiddenCode x:
+            return x;
+        case None:
+            return -1;
+    }
+    return 0;
+}

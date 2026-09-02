@@ -4,13 +4,15 @@ using Cvolo.Core.Diagnostics;
 
 namespace Cvolo.Core.AST.Declarations;
 
-public sealed class DestructorDeclarationSyntax(TextSpan span, string structName, BlockStatementSyntax body, IReadOnlyList<AttributeSyntax>? attributes = null) : SyntaxNode(span)
+public sealed class DestructorDeclarationSyntax(TextSpan span, string structName, BlockStatementSyntax body, IReadOnlyList<AttributeSyntax>? attributes = null, Visibility? visibility = null) : SyntaxNode(span)
 {
 	public override SyntaxKind Kind => SyntaxKind.DestructorDeclaration;
 
 	public string StructName { get; } = structName;
 	public BlockStatementSyntax Body { get; } = body;
 	public IReadOnlyList<AttributeSyntax> Attributes { get; } = attributes ?? [];
+	public Visibility Visibility { get; } = visibility ?? Visibility.Internal;
+	public Visibility? SyntacticVisibility { get; } = visibility;
 
 	public override IEnumerable<SyntaxNode> GetChildren()
 	{
@@ -23,5 +25,5 @@ public sealed class DestructorDeclarationSyntax(TextSpan span, string structName
 	/// The body reference is shared, keeping diagnostics spans accurate.
 	/// </summary>
 	public FunctionDeclarationSyntax ToFunctionDeclaration()
-		=> new(Span, "void", $"~{StructName}", [], [], Body, Attributes);
+		=> new(Span, "void", $"~{StructName}", [], [], Body, Attributes, visibility: SyntacticVisibility);
 }

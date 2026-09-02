@@ -1,8 +1,8 @@
 namespace App.Geometry;
 
 struct Vector2 {
-    int X;
-    int Y;
+    public int X;
+    public int Y;
 }
 
 // Function inside a namespace

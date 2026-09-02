@@ -1,0 +1,11 @@
+struct Secret {
+    private int Hidden;
+    public int Visible;
+}
+
+extension Secret {
+    private int ReadSameFile() {
+        Secret s = Secret { Hidden: 1, Visible: 2 };
+        return s.Hidden + s.Visible;
+    }
+}

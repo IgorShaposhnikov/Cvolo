@@ -1,0 +1,9 @@
+unbound void Poke(refvar Node n) {
+    n.Next = null;
+}
+
+int main() {
+    Node n = MakeNode(7);
+    Poke(ref n);
+    return 0;
+}

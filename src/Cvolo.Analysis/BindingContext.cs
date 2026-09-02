@@ -94,6 +94,16 @@ public sealed class BindingContext
 	public SafetyTier CurrentSafetyTier { get; set; }
 
 	/// <summary>
+	/// When true (driven by the --legacy-visibility CLI flag), the Binder treats every
+	/// declaration as 'public': all visibility diagnostics are suppressed. This restores the
+	/// pre-modifier behavior of the v0.2.0-alpha compiler after any upgrade work.
+	/// </summary>
+	public bool LegacyVisibility { get; set; }
+
+	/// <summary>Dedup set for per-instantiation visibility-leak diagnostics (CVL1038).</summary>
+	public HashSet<string> ReportedVisibilityLeaks { get; } = [];
+
+	/// <summary>
 	/// Resolves a string type name to its canonical, immutable TypeSymbol object.
 	/// </summary>
 	/// <summary>
@@ -173,18 +183,24 @@ public sealed class BindingContext
 			var baseType = ResolveType(baseName);
 			if (baseType is StructTypeSymbol baseStruct && GenericStructTemplates.TryGetValue(baseStruct.Name, out var templateDecl))
 			{
-				if (!TryResolveTypeArguments(argsPart, out var typeArgs))
-					return null;
-				var instantiatedType = InstantiateGenericStruct(templateDecl, baseType.Name, typeArgs);
+if (!TryResolveTypeArguments(argsPart, out var typeArgs))
+				return null;
+			if (typeArgs.Count != templateDecl.GenericParameters.Count)
+				return null;
+			CheckInstantiationVisibilityLeak(name, baseType, typeArgs);
+			var instantiatedType = InstantiateGenericStruct(templateDecl, baseType.Name, typeArgs);
 				StructTypes[name] = instantiatedType;
 				_typeCache[name] = instantiatedType;
 				return instantiatedType;
 			}
 			else if (baseType is UnionTypeSymbol baseUnion && GenericUnionTemplates.TryGetValue(baseUnion.Name, out var unionTemplateDecl))
 			{
-				if (!TryResolveTypeArguments(argsPart, out var unionTypeArgs))
-					return null;
-				var instantiatedType = InstantiateGenericUnion(unionTemplateDecl, baseUnion.Name, unionTypeArgs);
+if (!TryResolveTypeArguments(argsPart, out var unionTypeArgs))
+				return null;
+			if (unionTypeArgs.Count != unionTemplateDecl.GenericParameters.Count)
+				return null;
+			CheckInstantiationVisibilityLeak(name, baseType, unionTypeArgs);
+			var instantiatedType = InstantiateGenericUnion(unionTemplateDecl, baseUnion.Name, unionTypeArgs);
 				UnionTypes[name] = instantiatedType;
 				_typeCache[name] = instantiatedType;
 				return instantiatedType;
@@ -195,6 +211,7 @@ public sealed class BindingContext
 					return null;
 				if (protocolTypeArgs.Count != baseProtocol.GenericParameters.Count)
 					return null;
+				CheckInstantiationVisibilityLeak(name, baseType, protocolTypeArgs);
 				var instantiatedProtocol = InstantiateGenericProtocol(protocolDecl, baseProtocol.Name, protocolTypeArgs);
 				_typeCache[name] = instantiatedProtocol;
 				return instantiatedProtocol;
@@ -246,7 +263,7 @@ public sealed class BindingContext
 
 		if (candidates.Count == 1)
 		{
-			_typeCache[name] = candidates[0];
+			CacheCandidate(name, candidates[0]);
 			return candidates[0];
 		}
 		else if (candidates.Count > 1)
@@ -280,7 +297,7 @@ public sealed class BindingContext
 
 		if (candidates.Count == 1)
 		{
-			_typeCache[name] = candidates[0];
+			CacheCandidate(name, candidates[0]);
 			return candidates[0];
 		}
 
@@ -393,6 +410,57 @@ public sealed class BindingContext
 		return $"{namespaceName}.{name}";
 	}
 
+	// CVL1038: a generic instantiation must not be visibly 'wider' than any of its type
+	// arguments — exporting (or ABI-exposing) a container whose argument is more private
+	// lets a less-visible type leak through the public surface. A private argument that is
+	// confined to the referencing file is treated as internal: it cannot leak further.
+	private void CheckInstantiationVisibilityLeak(string instantiationName, TypeSymbol host, IReadOnlyList<TypeSymbol> args)
+	{
+		if (LegacyVisibility || args.Count == 0)
+			return;
+
+		var hostRank = VisibilityRank(host.Visibility);
+		var referencingUnit = CurrentUnit;
+		for (var i = 0; i < args.Count; i++)
+		{
+			var arg = args[i];
+			var argVisibility = arg.Visibility;
+			if (SymbolUnits.TryGetValue(arg.Name, out var declaringUnit))
+			{
+				// A private argument that is confined to the referencing file counts as
+				// internal: it cannot leak further through this instantiation.
+				if (argVisibility == Visibility.Private && ReferenceEquals(declaringUnit, referencingUnit))
+					argVisibility = Visibility.Internal;
+			}
+			else
+			{
+				// Primitives, slices and other built-in types have no declaring unit and
+				// are inherently public at the ABI boundary.
+				argVisibility = Visibility.Public;
+			}
+
+			if (hostRank > VisibilityRank(argVisibility))
+			{
+				if (ReportedVisibilityLeaks.Add(instantiationName))
+				{
+					Diagnostics.Report(
+						FileContexts[referencingUnit!],
+						default,
+						$"The visibility of generic type instantiation '{host.Name}<{string.Join(",", args)}>' exceeds the visibility of its type argument '{arg.Name}'. Upgrade the argument visibility or restrict the parent declaration.",
+						DiagnosticIds.GenericVisibilityLeak);
+				}
+				break;
+			}
+		}
+	}
+
+	private static int VisibilityRank(Visibility visibility) => visibility switch
+	{
+		Visibility.Public => 2,
+		Visibility.Internal => 1,
+		_ => 0
+	};
+
 	/// <summary>
 	/// Updates the canonical type cache for a name. Used when a placeholder
 	/// symbol registered for forward/self reference is replaced by its fully
@@ -402,6 +470,36 @@ public sealed class BindingContext
 	{
 		_typeCache[name] = symbol;
 	}
+
+	/// <summary>
+	/// Drops the flyweight cache entries for a bare type name and its namespaced (mangled)
+	/// forms. Called when a declaration registers under a name that may collide with a
+	/// previously cached — possibly imported — resolution (e.g. a user's global
+	/// `union Result&lt;T&gt;` shadowing the stdlib `System.Result&lt;T,E&gt;` that was cached
+	/// via a `using` lookup). Without invalidation, the stale cache serves the shadowed
+	/// symbol and the local declaration can never be resolved.
+	/// </summary>
+	public void InvalidateTypeCache(string name)
+	{
+		var names = new List<string> { name, GetMangledName(name, null) };
+		foreach (var key in names)
+			if (_typeCache.ContainsKey(key))
+				_typeCache.Remove(key);
+	}
+
+	/// <summary>
+	/// Stores a resolved candidate in the flyweight type cache. Only bare-name (unqualified)
+	/// resolutions are cached under their own key; a namespaced symbol (whose mangled name
+	/// differs from the lookup name) is context-dependent and must not poison the shared
+	/// unqualified key — otherwise a `using`-imported `System.Result` cached under `Result`
+	/// would shadow a user's global `Result` declared in another namespace context.
+	/// </summary>
+	private void CacheCandidate(string name, TypeSymbol candidate)
+	{
+		if (candidate.Name == name)
+			_typeCache[name] = candidate;
+	}
+
 
 	private StructTypeSymbol InstantiateGenericStruct(StructDeclarationSyntax templateDecl, string templateMangledName, List<TypeSymbol> typeArgs)
 	{
@@ -442,10 +540,10 @@ public sealed class BindingContext
 				continue;
 			}
 
-			fields.Add(new StructFieldSymbol(field.Name, fieldType));
+			fields.Add(new StructFieldSymbol(field.Name, fieldType) { Visibility = field.Visibility });
 		}
 
-		var instantiatedType = new StructTypeSymbol(instName, fields);
+		var instantiatedType = new StructTypeSymbol(instName, fields) { Visibility = templateDecl.Visibility };
 
 		// Restore active contexts back to previous state
 		CurrentUnit = prevUnit;
@@ -678,7 +776,11 @@ public sealed class BindingContext
 
 				var overloadedName = GetOverloadedMangledName(baseMangledName, parameters.Select(p => p.Type).ToList());
 
-				var newSymbol = new FunctionSymbol(overloadedName, returnType, parameters);
+				var newSymbol = new FunctionSymbol(overloadedName, returnType, parameters)
+				{
+					Visibility = method.Visibility,
+					DeclaringUnit = originalUnit
+				};
 				Globals.Declare(newSymbol);
 
 				if (!OverloadedFunctions.TryGetValue(baseMangledName, out var candidates))
@@ -699,7 +801,7 @@ public sealed class BindingContext
 				}
 
 				var instBody = SubstituteBlockGenerics(method.Body);
-				var instDecl = new FunctionDeclarationSyntax(method.Span, returnType.Name, overloadedName, [], instParams, instBody, method.Attributes, method.Modifier);
+				var instDecl = new FunctionDeclarationSyntax(method.Span, returnType.Name, overloadedName, [], instParams, instBody, method.Attributes, method.Modifier, visibility: method.Visibility);
 
 				MonomorphizedExtensionDecls.Add(instDecl);
 				MonomorphizedExtensionExtendedTypes[overloadedName] = instantiatedType.Name;
@@ -723,7 +825,11 @@ public sealed class BindingContext
 				}
 
 				var ctorOverloadedName = GetOverloadedMangledName(baseMangledName, ctorParameters.Select(p => p.Type).ToList());
-				var ctorSymbol = new FunctionSymbol(ctorOverloadedName, instantiatedType, ctorParameters);
+				var ctorSymbol = new FunctionSymbol(ctorOverloadedName, instantiatedType, ctorParameters)
+				{
+					Visibility = ctorDecl.Visibility,
+					DeclaringUnit = originalUnit
+				};
 				Globals.Declare(ctorSymbol);
 
 				if (!OverloadedFunctions.TryGetValue(baseMangledName, out var ctorCandidates))
@@ -746,7 +852,7 @@ public sealed class BindingContext
 				registeredCtors.Add(ctorSymbol);
 
 				var instBody = SubstituteBlockGenerics(ctorDecl.Body);
-				var instDecl = new ConstructorDeclarationSyntax(ctorDecl.Span, instantiatedType.Name, instParams, instBody, ctorDecl.Attributes);
+				var instDecl = new ConstructorDeclarationSyntax(ctorDecl.Span, instantiatedType.Name, instParams, instBody, ctorDecl.Attributes, ctorDecl.SyntacticVisibility);
 
 				MonomorphizedExtensionDecls.Add(instDecl);
 				MonomorphizedExtensionExtendedTypes[ctorOverloadedName] = instantiatedType.Name;
@@ -798,10 +904,10 @@ public sealed class BindingContext
 				}
 			}
 
-			fields.Add(new UnionFieldSymbol(field.Name, fieldType, isVoidVariant));
+			fields.Add(new UnionFieldSymbol(field.Name, fieldType, isVoidVariant) { Visibility = field.Visibility });
 		}
 
-		var instantiatedType = new UnionTypeSymbol(instName, fields);
+		var instantiatedType = new UnionTypeSymbol(instName, fields) { Visibility = templateDecl.Visibility };
 
 		CurrentUnit = prevUnit;
 		CurrentNamespace = prevNamespace;

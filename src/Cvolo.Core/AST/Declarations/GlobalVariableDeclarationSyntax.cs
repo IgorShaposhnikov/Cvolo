@@ -4,7 +4,7 @@ using Cvolo.Core.Diagnostics;
 
 namespace Cvolo.Core.AST.Declarations;
 
-public sealed class GlobalVariableDeclarationSyntax(TextSpan span, string type, string name, ExpressionSyntax? initializer, bool isMutable = false) : SyntaxNode(span)
+public sealed class GlobalVariableDeclarationSyntax(TextSpan span, string type, string name, ExpressionSyntax? initializer, bool isMutable = false, Visibility? visibility = null) : SyntaxNode(span)
 {
 	public override SyntaxKind Kind => SyntaxKind.GlobalVariableDeclaration;
 
@@ -12,6 +12,7 @@ public sealed class GlobalVariableDeclarationSyntax(TextSpan span, string type, 
 	public string Name { get; } = name;
 	public ExpressionSyntax? Initializer { get; } = initializer;
 	public bool IsMutable { get; } = isMutable;
+	public Visibility Visibility { get; } = visibility ?? Visibility.Internal;
 
 	public override IEnumerable<SyntaxNode> GetChildren()
 	{

@@ -9,7 +9,8 @@ public sealed class ConstructorDeclarationSyntax(
 	string structName,
 	IReadOnlyList<ParameterSyntax> parameters,
 	BlockStatementSyntax body,
-	IReadOnlyList<AttributeSyntax>? attributes = null) : SyntaxNode(span)
+	IReadOnlyList<AttributeSyntax>? attributes = null,
+	Visibility? visibility = null) : SyntaxNode(span)
 {
 	public override SyntaxKind Kind => SyntaxKind.ConstructorDeclaration;
 
@@ -17,6 +18,8 @@ public sealed class ConstructorDeclarationSyntax(
 	public IReadOnlyList<ParameterSyntax> Parameters { get; } = parameters;
 	public BlockStatementSyntax Body { get; } = body;
 	public IReadOnlyList<AttributeSyntax> Attributes { get; } = attributes ?? [];
+	public Visibility Visibility { get; } = visibility ?? Visibility.Internal;
+	public Visibility? SyntacticVisibility { get; } = visibility;
 
 	public override IEnumerable<SyntaxNode> GetChildren()
 	{
@@ -31,5 +34,5 @@ public sealed class ConstructorDeclarationSyntax(
 	/// keeping diagnostics spans accurate.
 	/// </summary>
 	public FunctionDeclarationSyntax ToFunctionDeclaration() =>
-		new(Span, "void", StructName, [], Parameters, Body, Attributes);
+		new(Span, "void", StructName, [], Parameters, Body, Attributes, visibility: SyntacticVisibility);
 }

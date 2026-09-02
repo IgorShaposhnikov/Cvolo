@@ -31,13 +31,13 @@ public abstract class AstRewriterBase
 			var rewrittenMethods = extDecl.Methods.Select(Rewrite).Cast<FunctionDeclarationSyntax>().ToList();
 			var rewrittenDestructors = extDecl.Destructors.Select(Rewrite).Cast<DestructorDeclarationSyntax>().ToList();
 			var rewrittenConstructors = extDecl.Constructors.Select(Rewrite).Cast<ConstructorDeclarationSyntax>().ToList();
-			return new ExtensionDeclarationSyntax(extDecl.Span, extDecl.ExtendedTypeName, rewrittenMethods, rewrittenDestructors, rewrittenConstructors, extDecl.GenericParameters, extDecl.ConformsTo);
+			return new ExtensionDeclarationSyntax(extDecl.Span, extDecl.ExtendedTypeName, rewrittenMethods, rewrittenDestructors, rewrittenConstructors, extDecl.GenericParameters, extDecl.ConformsTo, extDecl.Visibility);
 		}
 
 		if (node is InterfaceDeclarationSyntax interfaceDecl)
 		{
 			var rewrittenMembers = interfaceDecl.Members.Select(Rewrite).Cast<InterfaceMethodDeclarationSyntax>().ToList();
-			return new InterfaceDeclarationSyntax(interfaceDecl.Span, interfaceDecl.Name, interfaceDecl.GenericParameters, rewrittenMembers, interfaceDecl.Bases, interfaceDecl.Constraint, interfaceDecl.Attributes);
+			return new InterfaceDeclarationSyntax(interfaceDecl.Span, interfaceDecl.Name, interfaceDecl.GenericParameters, rewrittenMembers, interfaceDecl.Bases, interfaceDecl.Constraint, interfaceDecl.Attributes, interfaceDecl.Visibility);
 		}
 
 		if (node is InterfaceMethodDeclarationSyntax interfaceMember)
@@ -49,7 +49,7 @@ public abstract class AstRewriterBase
 		if (node is ProtocolDeclarationSyntax protocolDecl)
 		{
 			var rewrittenMembers = protocolDecl.Members.Select(Rewrite).Cast<ProtocolMethodDeclarationSyntax>().ToList();
-			return new ProtocolDeclarationSyntax(protocolDecl.Span, protocolDecl.Name, protocolDecl.GenericParameters, rewrittenMembers, protocolDecl.Bases, protocolDecl.Constraint, protocolDecl.Attributes);
+			return new ProtocolDeclarationSyntax(protocolDecl.Span, protocolDecl.Name, protocolDecl.GenericParameters, rewrittenMembers, protocolDecl.Bases, protocolDecl.Constraint, protocolDecl.Attributes, protocolDecl.Visibility);
 		}
 
 		if (node is ProtocolMethodDeclarationSyntax protocolMember)
@@ -61,26 +61,26 @@ public abstract class AstRewriterBase
 		if (node is FunctionDeclarationSyntax func)
 		{
 			var rewrittenBody = func.Body != null ? (BlockStatementSyntax)Rewrite(func.Body) : null;
-			return new FunctionDeclarationSyntax(func.Span, func.ReturnType, func.Name, func.GenericParameters, func.Parameters, rewrittenBody, func.Attributes, func.Modifier, func.Receiver);
+			return new FunctionDeclarationSyntax(func.Span, func.ReturnType, func.Name, func.GenericParameters, func.Parameters, rewrittenBody, func.Attributes, func.Modifier, func.Receiver, func.Visibility);
 		}
 
 		if (node is DestructorDeclarationSyntax dtor)
 		{
 			var rewrittenDtorBody = (BlockStatementSyntax)Rewrite(dtor.Body);
-			return new DestructorDeclarationSyntax(dtor.Span, dtor.StructName, rewrittenDtorBody, dtor.Attributes);
+			return new DestructorDeclarationSyntax(dtor.Span, dtor.StructName, rewrittenDtorBody, dtor.Attributes, dtor.Visibility);
 		}
 
 		if (node is GlobalVariableDeclarationSyntax globalDecl)
 		{
 			var rewrittenInit = globalDecl.Initializer != null ? (ExpressionSyntax)Rewrite(globalDecl.Initializer) : null;
-			return new GlobalVariableDeclarationSyntax(globalDecl.Span, globalDecl.Type, globalDecl.Name, rewrittenInit, globalDecl.IsMutable);
+			return new GlobalVariableDeclarationSyntax(globalDecl.Span, globalDecl.Type, globalDecl.Name, rewrittenInit, globalDecl.IsMutable, globalDecl.Visibility);
 		}
 
 		if (node is ConstructorDeclarationSyntax ctor)
 		{
 			var rewrittenCtorParams = ctor.Parameters.Select(p => new ParameterSyntax(p.Span, p.Type, p.Name, p.Attributes)).ToList();
 			var rewrittenCtorBody = (BlockStatementSyntax)Rewrite(ctor.Body);
-			return new ConstructorDeclarationSyntax(ctor.Span, ctor.StructName, rewrittenCtorParams, rewrittenCtorBody, ctor.Attributes);
+			return new ConstructorDeclarationSyntax(ctor.Span, ctor.StructName, rewrittenCtorParams, rewrittenCtorBody, ctor.Attributes, ctor.Visibility);
 		}
 
 		if (node is BlockStatementSyntax block)
@@ -167,18 +167,18 @@ public abstract class AstRewriterBase
 		if (node is UnionDeclarationSyntax unionDecl)
 		{
 			var rewrittenFields = unionDecl.Fields.Select(Rewrite).Cast<UnionFieldSyntax>().ToList();
-			return new UnionDeclarationSyntax(unionDecl.Span, unionDecl.Name, unionDecl.GenericParameters, rewrittenFields, unionDecl.Attributes);
+			return new UnionDeclarationSyntax(unionDecl.Span, unionDecl.Name, unionDecl.GenericParameters, rewrittenFields, unionDecl.Attributes, unionDecl.Visibility);
 		}
 
 		if (node is UnionFieldSyntax unionField)
 		{
-			return new UnionFieldSyntax(unionField.Span, unionField.Type, unionField.Name);
+			return new UnionFieldSyntax(unionField.Span, unionField.Type, unionField.Name, unionField.Visibility);
 		}
 
 		if (node is EnumDeclarationSyntax enumDecl)
 		{
 			var rewrittenVariants = enumDecl.Variants.Select(Rewrite).Cast<EnumVariantDeclarationSyntax>().ToList();
-			return new EnumDeclarationSyntax(enumDecl.Span, enumDecl.Name, enumDecl.StorageType, rewrittenVariants, enumDecl.Attributes);
+			return new EnumDeclarationSyntax(enumDecl.Span, enumDecl.Name, enumDecl.StorageType, rewrittenVariants, enumDecl.Attributes, enumDecl.Visibility);
 		}
 
 		if (node is EnumVariantDeclarationSyntax enumVariant)

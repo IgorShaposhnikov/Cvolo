@@ -1,8 +1,13 @@
+using Cvolo.Core.AST.Base;
+
 namespace Cvolo.Analysis.Symbols.Base;
 
 public class TypeSymbol(string name) : IEquatable<TypeSymbol>
 {
 	public virtual string Name { get; } = name;
+
+	/// <summary>Effective visibility of this type declaration (struct/union/enum/interface/protocol).</summary>
+	public Visibility Visibility { get; set; } = Visibility.Internal;
 
 public static readonly TypeSymbol Void = new("void");
 	public static readonly TypeSymbol Int = new("int");

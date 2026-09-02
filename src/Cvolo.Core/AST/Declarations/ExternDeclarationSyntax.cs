@@ -8,7 +8,8 @@ public sealed class ExternDeclarationSyntax(
 	string returnType,
 	string name,
 	IReadOnlyList<ParameterSyntax> parameters,
-	bool isVariadic) : SyntaxNode(span)
+	bool isVariadic,
+	Visibility? visibility = null) : SyntaxNode(span)
 {
 	public override SyntaxKind Kind => SyntaxKind.ExternDeclaration;
 
@@ -16,6 +17,7 @@ public sealed class ExternDeclarationSyntax(
 	public string Name { get; } = name;
 	public IReadOnlyList<ParameterSyntax> Parameters { get; } = parameters;
 	public bool IsVariadic { get; } = isVariadic;
+	public Visibility Visibility { get; } = visibility ?? Visibility.Internal;
 
 	public override IEnumerable<SyntaxNode> GetChildren() => Parameters;
 }

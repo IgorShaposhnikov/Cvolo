@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "Cvolo": {
+      "commandName": "Project",
+      "commandLineArgs": "run --optimize O0 --verbose D:\\opencode-container\\projects\\Cvolo\\src\\Cvolo.Tests\\TestCases\\StandardLibrary\\Math\\Abs.cvl"
+    }
+  }
+}

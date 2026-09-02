@@ -7,6 +7,7 @@ using Cvolo.Core.AST.Declarations;
 using Cvolo.Core.AST.Expressions;
 using Cvolo.Core.AST.Statements;
 using Cvolo.Core.Diagnostics;
+using Cvolo.Analysis.VisibilityChecks;
 
 namespace Cvolo.Analysis.Passes;
 
@@ -713,6 +714,15 @@ public sealed class ValidationPass(BindingContext context)
 				return null;
 			}
 
+			if (!context.LegacyVisibility && !VisibilityChecker.IsAccessible(variantField.Visibility, context.CurrentUnit, GetDeclaringUnit(unionType)) &&
+				!(_inUnbound && variantField.Type is PointerTypeSymbol))
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, expr.Span,
+					$"Member '{expr.MemberName}' on type '{unionType.Name}' is inaccessible due to its visibility level.", DiagnosticIds.InaccessibleMember);
+				return variantField.Type;
+			}
+
 			return variantField.Type;
 		}
 
@@ -731,7 +741,34 @@ public sealed class ValidationPass(BindingContext context)
 			return null;
 		}
 
+		if (!context.LegacyVisibility && !VisibilityChecker.IsAccessible(field.Visibility, context.CurrentUnit, GetDeclaringUnit(structType)) &&
+			!(_inUnbound && field.Type is PointerTypeSymbol))
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, expr.Span,
+				$"Member '{expr.MemberName}' on type '{structType.Name}' is inaccessible due to its visibility level.", DiagnosticIds.InaccessibleMember);
+		}
+
 		return field.Type;
+	}
+
+	private CompilationUnitSyntax? GetDeclaringUnit(TypeSymbol type)
+	{
+		foreach (var name in ExpandTemplateNames(type))
+		{
+			if (context.SymbolUnits.TryGetValue(name, out var unit))
+				return unit;
+		}
+		return null;
+	}
+
+	private static IEnumerable<string> ExpandTemplateNames(TypeSymbol type)
+	{
+		yield return type.Name;
+		var name = type.Name;
+		var lt = name.IndexOf('<');
+		if (lt > 0)
+			yield return name[..lt];
 	}
 
 	/// <summary>
@@ -802,6 +839,13 @@ public sealed class ValidationPass(BindingContext context)
 				return unionType;
 			}
 
+			if (!context.LegacyVisibility && field.Visibility == Visibility.Private && !VisibilityChecker.IsAccessible(field.Visibility, context.CurrentUnit, GetDeclaringUnit(unionType)))
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, init.Span,
+					$"Cannot initialize private field '{init.MemberName}' using an external struct literal. Use an authorized constructor within the type's defining package module boundary.", DiagnosticIds.PrivateFieldLiteralInit);
+			}
+
 			if (init.Expression is ParenthesizedStructInitializerExpressionSyntax nested)
 			{
 				nested.ResolvedStructTypeName = field.Type.Name;
@@ -859,6 +903,13 @@ public sealed class ValidationPass(BindingContext context)
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
 				context.Diagnostics.Report(currentFileContext, init.Span, $"Struct '{structType.Name}' does not contain field '{init.MemberName}'");
 				continue;
+			}
+
+			if (!context.LegacyVisibility && field.Visibility == Visibility.Private && !VisibilityChecker.IsAccessible(field.Visibility, context.CurrentUnit, GetDeclaringUnit(structType)))
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, init.Span,
+					$"Cannot initialize private field '{init.MemberName}' using an external struct literal. Use an authorized constructor within the type's defining package module boundary.", DiagnosticIds.PrivateFieldLiteralInit);
 			}
 
 			if (init.Expression is ParenthesizedStructInitializerExpressionSyntax nested)
@@ -1141,11 +1192,11 @@ public sealed class ValidationPass(BindingContext context)
 			instParameters.Add(new ParameterSyntax(param.Span, paramType.Name, param.Name));
 		}
 
-		var instSymbol = new FunctionSymbol(instName, returnType, parameters);
+		var instSymbol = new FunctionSymbol(instName, returnType, parameters) { Visibility = templateDecl.Visibility };
 		context.MonomorphizedFunctions[instName] = instSymbol;
 
 		var instBody = SubstituteBlockGenerics(templateDecl.Body, substitutionMap);
-		var instDecl = new FunctionDeclarationSyntax(templateDecl.Span, returnType.Name, instName, [], instParameters, instBody, modifier: templateDecl.Modifier);
+		var instDecl = new FunctionDeclarationSyntax(templateDecl.Span, returnType.Name, instName, [], instParameters, instBody, modifier: templateDecl.Modifier, visibility: templateDecl.Visibility);
 
 		context.MonomorphizedFunctionDecls.Add(instDecl);
 
@@ -1354,11 +1405,11 @@ public sealed class ValidationPass(BindingContext context)
 			instParameters.Add(new ParameterSyntax(param.Span, paramType.Name, param.Name));
 		}
 
-		var instSymbol = new FunctionSymbol(instName, returnType, parameters);
+		var instSymbol = new FunctionSymbol(instName, returnType, parameters) { Visibility = templateDecl.Visibility };
 		context.MonomorphizedFunctions[instName] = instSymbol;
 
 		var instBody = SubstituteBlockGenerics(templateDecl.Body, substitutionMap);
-		var instDecl = new FunctionDeclarationSyntax(templateDecl.Span, returnType.Name, instName, [], instParameters, instBody, modifier: templateDecl.Modifier);
+		var instDecl = new FunctionDeclarationSyntax(templateDecl.Span, returnType.Name, instName, [], instParameters, instBody, modifier: templateDecl.Modifier, visibility: templateDecl.Visibility);
 
 		context.MonomorphizedFunctionDecls.Add(instDecl);
 
@@ -1928,7 +1979,7 @@ public sealed class ValidationPass(BindingContext context)
 			if (context.Globals.Lookup(overloadedName) is not null)
 				continue;
 
-			var newSymbol = new FunctionSymbol(overloadedName, returnType, parameters);
+			var newSymbol = new FunctionSymbol(overloadedName, returnType, parameters) { Visibility = decl.Visibility, DeclaringUnit = context.CurrentUnit };
 			context.Globals.Declare(newSymbol);
 
 			if (!context.OverloadedFunctions.TryGetValue(baseMangledName, out var candidates))
@@ -1941,7 +1992,7 @@ public sealed class ValidationPass(BindingContext context)
 
 			context.SymbolUnits[overloadedName] = context.CurrentUnit!;
 
-			var instDecl = new FunctionDeclarationSyntax(decl.Span, decl.ReturnType, overloadedName, [], decl.Parameters, decl.Body);
+			var instDecl = new FunctionDeclarationSyntax(decl.Span, decl.ReturnType, overloadedName, [], decl.Parameters, decl.Body, decl.Attributes, decl.Modifier, visibility: decl.Visibility);
 			context.MonomorphizedFunctionDecls.Add(instDecl);
 		}
 	}
@@ -2362,6 +2413,13 @@ public sealed class ValidationPass(BindingContext context)
 			if (field is null)
 				continue;
 
+			if (!context.LegacyVisibility && field.Visibility == Visibility.Private && !VisibilityChecker.IsAccessible(field.Visibility, context.CurrentUnit, GetDeclaringUnit(structType)))
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, init.Span,
+					$"Cannot initialize private field '{init.MemberName}' using an external struct literal. Use an authorized constructor within the type's defining package module boundary.", DiagnosticIds.PrivateFieldLiteralInit);
+			}
+
 			if (init.Expression is ParenthesizedStructInitializerExpressionSyntax nestedSub)
 			{
 				nestedSub.ResolvedStructTypeName = field.Type.Name;
@@ -2594,6 +2652,13 @@ public sealed class ValidationPass(BindingContext context)
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
 				context.Diagnostics.Report(currentFileContext, c.Span, $"Union '{unionType.Name}' does not contain variant '{c.VariantName}'");
 				continue;
+			}
+
+			if (!context.LegacyVisibility && c.VariableName is not null && !VisibilityChecker.IsAccessible(variant.Visibility, context.CurrentUnit, GetDeclaringUnit(unionType)))
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, c.Span,
+					$"Pattern matching binding failed for type '{unionType.Name}'. Payload variant field '{variant.Name}' is obscured by visibility constraints.", DiagnosticIds.HiddenPayloadMatch);
 			}
 
 			var caseScope = new SymbolTable(scope);

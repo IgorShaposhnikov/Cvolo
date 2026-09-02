@@ -91,8 +91,17 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		ExpressionSyntax? initializer = null;
 		if (context.expression() is { } exprCtx)
 			initializer = BuildExpression(exprCtx);
-		return new GlobalVariableDeclarationSyntax(SpanOf(context), type, name, initializer, isMutable);
+		return new GlobalVariableDeclarationSyntax(SpanOf(context), type, name, initializer, isMutable, GetVisibilityModifier(context.visibilityModifier()));
 	}
+
+	private static Visibility? GetVisibilityModifier(CvoloParser.VisibilityModifierContext? context) =>
+		context?.GetText() switch
+		{
+			"private" => Visibility.Private,
+			"internal" => Visibility.Internal,
+			"public" => Visibility.Public,
+			_ => null
+		};
 
 	private ExternDeclarationSyntax BuildExternDeclaration(CvoloParser.ExternDeclarationContext context)
 	{
@@ -111,7 +120,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			}
 		}
 
-		return new ExternDeclarationSyntax(SpanOf(context), returnType, name, parameters, isVariadic);
+		return new ExternDeclarationSyntax(SpanOf(context), returnType, name, parameters, isVariadic, GetVisibilityModifier(context.visibilityModifier()));
 	}
 
 	private FunctionDeclarationSyntax BuildFunctionDeclaration(CvoloParser.FunctionDeclarationContext context)
@@ -163,7 +172,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		if (context.functionModifier() is { } modCtx)
 			modifier = modCtx.GetText() == "unsafe" ? SafetyTier.Unsafe : SafetyTier.Unbound;
 
-		return new FunctionDeclarationSyntax(SpanOf(context), returnType, name, generics, parameters, body, attributes, modifier, receiver);
+		return new FunctionDeclarationSyntax(SpanOf(context), returnType, name, generics, parameters, body, attributes, modifier, receiver, GetVisibilityModifier(context.visibilityModifier()));
 	}
 
 	private bool TryGetReceiverContract(CvoloParser.ParameterContext context, out ReceiverContract contract, out string receiverName)
@@ -228,10 +237,10 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 
 		var fields = new List<StructFieldSyntax>();
 		foreach (var field in context.structField())
-			fields.Add(new StructFieldSyntax(SpanOf(field), GetTypeName(field.type()), field.Identifier().GetText()));
+			fields.Add(new StructFieldSyntax(SpanOf(field), GetTypeName(field.type()), field.Identifier().GetText(), GetVisibilityModifier(field.visibilityModifier())));
 		var embeddedType = context.EMBED() is not null && context.qualifiedName() is { } embedCtx ? embedCtx.GetText() : null;
 		var structAttributes = BuildAttributeList(context.attributeList());
-		return new StructDeclarationSyntax(SpanOf(context), name, generics, fields, embeddedType, structAttributes);
+		return new StructDeclarationSyntax(SpanOf(context), name, generics, fields, embeddedType, structAttributes, GetVisibilityModifier(context.visibilityModifier()));
 	}
 
 	private ParameterSyntax BuildParameter(CvoloParser.ParameterContext context)
@@ -743,7 +752,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		foreach (var dtorCtx in context.destructorDeclaration())
 		{
 			var dtorAttributes = BuildAttributeList(dtorCtx.attributeList());
-			destructors.Add(new DestructorDeclarationSyntax(SpanOf(dtorCtx), dtorCtx.Identifier().GetText(), BuildBlockStatement(dtorCtx.blockStatement()), dtorAttributes));
+			destructors.Add(new DestructorDeclarationSyntax(SpanOf(dtorCtx), dtorCtx.Identifier().GetText(), BuildBlockStatement(dtorCtx.blockStatement()), dtorAttributes, GetVisibilityModifier(dtorCtx.visibilityModifier())));
 		}
 
 		var constructors = new List<ConstructorDeclarationSyntax>();
@@ -765,7 +774,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			}
 
 			var ctorAttributes = BuildAttributeList(ctorCtx.attributeList());
-			constructors.Add(new ConstructorDeclarationSyntax(SpanOf(ctorCtx), ctorCtx.Identifier().GetText(), ctorParams, BuildBlockStatement(ctorCtx.blockStatement()), ctorAttributes));
+			constructors.Add(new ConstructorDeclarationSyntax(SpanOf(ctorCtx), ctorCtx.Identifier().GetText(), ctorParams, BuildBlockStatement(ctorCtx.blockStatement()), ctorAttributes, GetVisibilityModifier(ctorCtx.visibilityModifier())));
 		}
 
 		var generics = new List<string>();
@@ -779,7 +788,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		if (context.qualifiedName() is { } conformsCtx)
 			conformsTo = conformsCtx.GetText();
 
-		return new ExtensionDeclarationSyntax(SpanOf(context), extendedTypeName, methods, destructors, constructors, generics, conformsTo);
+		return new ExtensionDeclarationSyntax(SpanOf(context), extendedTypeName, methods, destructors, constructors, generics, conformsTo, GetVisibilityModifier(context.visibilityModifier()));
 	}
 
 	private InterfaceDeclarationSyntax BuildInterfaceDeclaration(CvoloParser.InterfaceDeclarationContext context)
@@ -820,7 +829,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		var attributes = BuildAttributeList(context.attributeList());
 		var bases = context.qualifiedName().Select(q => q.GetText()).ToList();
 		var constraint = context.FOR() is not null && context.type() is { } typeCtx ? GetTypeName(typeCtx) : null;
-		return new InterfaceDeclarationSyntax(SpanOf(context), name, generics, members, bases, constraint, attributes);
+		return new InterfaceDeclarationSyntax(SpanOf(context), name, generics, members, bases, constraint, attributes, GetVisibilityModifier(context.visibilityModifier()));
 	}
 
 	private ProtocolDeclarationSyntax BuildProtocolDeclaration(CvoloParser.ProtocolDeclarationContext context)
@@ -861,7 +870,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		var attributes = BuildAttributeList(context.attributeList());
 		var bases = context.qualifiedName().Select(q => q.GetText()).ToList();
 		var constraint = context.FOR() is not null && context.type() is { } typeCtx ? GetTypeName(typeCtx) : null;
-		return new ProtocolDeclarationSyntax(SpanOf(context), name, generics, members, bases, constraint, attributes);
+		return new ProtocolDeclarationSyntax(SpanOf(context), name, generics, members, bases, constraint, attributes, GetVisibilityModifier(context.visibilityModifier()));
 	}
 
 	private UnionDeclarationSyntax BuildUnionDeclaration(CvoloParser.UnionDeclarationContext context)
@@ -877,10 +886,10 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 
 		var fields = new List<UnionFieldSyntax>();
 		foreach (var field in context.unionField())
-			fields.Add(new UnionFieldSyntax(SpanOf(field), GetTypeName(field.type()), field.Identifier().GetText()));
+			fields.Add(new UnionFieldSyntax(SpanOf(field), GetTypeName(field.type()), field.Identifier().GetText(), GetVisibilityModifier(field.visibilityModifier())));
 
 		var unionAttributes = BuildAttributeList(context.attributeList());
-		return new UnionDeclarationSyntax(SpanOf(context), name, generics, fields, unionAttributes);
+		return new UnionDeclarationSyntax(SpanOf(context), name, generics, fields, unionAttributes, GetVisibilityModifier(context.visibilityModifier()));
 	}
 
 	private EnumDeclarationSyntax BuildEnumDeclaration(CvoloParser.EnumDeclarationContext context)
@@ -900,7 +909,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		}
 
 		var enumAttributes = BuildAttributeList(context.attributeList());
-		return new EnumDeclarationSyntax(SpanOf(context), name, storageType, variants, enumAttributes);
+		return new EnumDeclarationSyntax(SpanOf(context), name, storageType, variants, enumAttributes, GetVisibilityModifier(context.visibilityModifier()));
 	}
 
 	private SyntaxNode BuildSwitchStatement(CvoloParser.SwitchStatementContext context)

@@ -1,0 +1,8 @@
+private union UResult {
+    int HiddenCode;
+    void None;
+}
+
+UResult MakeResult(int code) {
+    return UResult { HiddenCode: code };
+}

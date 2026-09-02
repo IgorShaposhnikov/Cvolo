@@ -46,6 +46,14 @@ public sealed class DeclarationPass(BindingContext context)
 	private const string CyclicDestructorDepthError =
 		"Cyclic destructor nesting depth exceeded. Please use an arena allocator or manual cleanup.";
 
+	// Visibility tier ordering: Private < Internal < Public.
+	private static int VisibilityRank(Visibility visibility) => visibility switch
+	{
+		Visibility.Public => 2,
+		Visibility.Internal => 1,
+		_ => 0
+	};
+
 	public void Process(IEnumerable<CompilationUnitSyntax> units)
 	{
 		// Pass 0a: Register all Struct/Union/Interface/Protocol raw symbols across all files
@@ -347,7 +355,10 @@ public sealed class DeclarationPass(BindingContext context)
 		combined.AddRange(ownFields);
 
 		var rebuiltEmbed = baseType; // the (already flattened) embedded composition
-		var rebuilt = new StructTypeSymbol(mangledName, combined, rebuiltEmbed);
+		var rebuilt = new StructTypeSymbol(mangledName, combined, rebuiltEmbed)
+		{
+			Visibility = decl.Visibility
+		};
 		context.StructTypes[mangledName] = rebuilt;
 		context.ReplaceTypeInCache(mangledName, rebuilt);
 		flattened[mangledName] = combined;
@@ -477,7 +488,11 @@ public sealed class DeclarationPass(BindingContext context)
 					if (context.Globals.Lookup(overloadedName) is not null)
 						continue; // outer already declares this signature — own method wins
 
-					var newSymbol = new FunctionSymbol(overloadedName, returnType, parameters);
+					var newSymbol = new FunctionSymbol(overloadedName, returnType, parameters)
+				{
+					Visibility = method.Visibility,
+					DeclaringUnit = sourceUnit
+				};
 					context.Globals.Declare(newSymbol);
 
 					if (!context.OverloadedFunctions.TryGetValue(baseKey, out var candidates))
@@ -490,7 +505,7 @@ public sealed class DeclarationPass(BindingContext context)
 
 					context.SymbolUnits[overloadedName] = outerUnit;
 
-					var copiedDecl = new FunctionDeclarationSyntax(method.Span, method.ReturnType, overloadedName, [], method.Parameters, method.Body, method.Attributes, method.Modifier);
+					var copiedDecl = new FunctionDeclarationSyntax(method.Span, method.ReturnType, overloadedName, [], method.Parameters, method.Body, method.Attributes, method.Modifier, visibility: method.Visibility);
 					context.MonomorphizedExtensionDecls.Add(copiedDecl);
 					context.MonomorphizedExtensionNames[copiedDecl] = overloadedName;
 					context.MonomorphizedExtensionExtendedTypes[overloadedName] = outerStruct.Name;
@@ -529,9 +544,10 @@ public sealed class DeclarationPass(BindingContext context)
 
 			var placeholderFields = new List<StructFieldSymbol>();
 
-			var templateSymbol = new StructTypeSymbol(mangledName, placeholderFields)
+var templateSymbol = new StructTypeSymbol(mangledName, placeholderFields)
 			{
-				IsStrictMutability = appliedAttrs.Contains("StrictMutability")
+				IsStrictMutability = appliedAttrs.Contains("StrictMutability"),
+				Visibility = structDecl.Visibility
 			};
 
 			context.StructTypes[mangledName] = templateSymbol;
@@ -543,7 +559,10 @@ public sealed class DeclarationPass(BindingContext context)
 		// 1. Register a placeholder symbol BEFORE resolving fields so that
 		// self-referential field types (e.g. `Option<ref Node>`) can resolve
 		// the enclosing struct's own name during generic instantiation.
-		var placeholder = new StructTypeSymbol(mangledName, []);
+var placeholder = new StructTypeSymbol(mangledName, [])
+		{
+			Visibility = structDecl.Visibility
+		};
 		context.StructTypes[mangledName] = placeholder;
 
 		var fields = new List<StructFieldSymbol>();
@@ -566,7 +585,10 @@ public sealed class DeclarationPass(BindingContext context)
 				continue;
 			}
 
-			fields.Add(new StructFieldSymbol(field.Name, fieldType));
+			fields.Add(new StructFieldSymbol(field.Name, fieldType)
+			{
+				Visibility = field.Visibility
+			});
 		}
 
 		// 2. Populate the placeholder IN PLACE rather than creating a new object.
@@ -591,7 +613,10 @@ public sealed class DeclarationPass(BindingContext context)
 
 		context.SymbolUnits[mangledName] = context.CurrentUnit!;
 		context.InterfaceTemplates[mangledName] = interfaceDecl;
-		context.InterfaceTypes[mangledName] = new InterfaceTypeSymbol(mangledName);
+		context.InterfaceTypes[mangledName] = new InterfaceTypeSymbol(mangledName)
+		{
+			Visibility = interfaceDecl.Visibility
+		};
 	}
 
 	private void DeclareProtocol(ProtocolDeclarationSyntax protocolDecl)
@@ -612,7 +637,10 @@ public sealed class DeclarationPass(BindingContext context)
 		// resolved in this protocol's namespace, so conformance checks are O(1)
 		// set membership (topological, naming-independent) rather than symbolic.
 		var canonicalMembers = ProtocolCanonicalizer.BuildCanonicalMembers(protocolDecl, context);
-		context.ProtocolTypes[mangledName] = new ProtocolTypeSymbol(mangledName, protocolDecl.Members, protocolDecl.GenericParameters, protocolDecl.Constraint, canonicalMembers);
+		context.ProtocolTypes[mangledName] = new ProtocolTypeSymbol(mangledName, protocolDecl.Members, protocolDecl.GenericParameters, protocolDecl.Constraint, canonicalMembers)
+		{
+			Visibility = protocolDecl.Visibility
+		};
 	}
 
 	/// <summary>
@@ -664,7 +692,10 @@ public sealed class DeclarationPass(BindingContext context)
 		}
 
 		context.ProtocolTypes[mangledName] = new ProtocolTypeSymbol(
-			mangledName, effective.Select(e => e.Member).ToList(), protocolDecl.GenericParameters, protocolDecl.Constraint, canonical);
+			mangledName, effective.Select(e => e.Member).ToList(), protocolDecl.GenericParameters, protocolDecl.Constraint, canonical)
+		{
+			Visibility = protocolDecl.Visibility
+		};
 	}
 
 	private void CollectProtocolBaseMembers(
@@ -769,10 +800,14 @@ public sealed class DeclarationPass(BindingContext context)
 					specParameters.Add(new ParameterSymbol(param.Name, paramType));
 				}
 
-				var instSymbol = new FunctionSymbol(instName, returnType!, specParameters);
+				var instSymbol = new FunctionSymbol(instName, returnType!, specParameters)
+			{
+				Visibility = func.Visibility,
+				DeclaringUnit = context.CurrentUnit
+			};
 				context.MonomorphizedFunctions[instName] = instSymbol;
 
-				var instDecl = new FunctionDeclarationSyntax(func.Span, func.ReturnType, instName, [], func.Parameters, func.Body, modifier: func.Modifier);
+				var instDecl = new FunctionDeclarationSyntax(func.Span, func.ReturnType, instName, [], func.Parameters, func.Body, modifier: func.Modifier, visibility: func.Visibility);
 				context.MonomorphizedFunctionDecls.Add(instDecl);
 				return;
 			}
@@ -840,7 +875,12 @@ public sealed class DeclarationPass(BindingContext context)
 		// Determine safety tier from function modifier
 		var safetyTier = func.Modifier ?? SafetyTier.Safe;
 
-		var newSymbol = new FunctionSymbol(overloadedMangledName, type, parameters) { SafetyTier = safetyTier };
+		var newSymbol = new FunctionSymbol(overloadedMangledName, type, parameters)
+		{
+			SafetyTier = safetyTier,
+			Visibility = func.Visibility,
+			DeclaringUnit = context.CurrentUnit
+		};
 		var suppressedWarnings = new List<string>();
 
 		ApplyFunctionAttributes(
@@ -1099,8 +1139,23 @@ private static void ApplyFunctionAttributes(List<string> appliedKeys, FunctionSy
 			return;
 		}
 
+		// Global externs are FFI bindings to foreign symbols: their visibility is fixed at
+		// 'internal' (module-scoped). A 'public' extern would export a foreign symbol as part of
+		// the package ABI without any Cvolo-level type safety — require a standard Cvolo wrapper.
+		if (!context.LegacyVisibility && ext.Visibility == Visibility.Public)
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, ext.Span,
+				"Global 'extern' declarations cannot be marked public. Wrap foreign symbols in a safe, standard public Cvolo routine to expose them across package boundaries.",
+				DiagnosticIds.PublicExtern);
+		}
+
 		// Declare the extern symbol with its unmangled base name
-		var newSymbol = new FunctionSymbol(ext.Name, returnType, parameters, isExtern: true, isVariadic: ext.IsVariadic);
+		var newSymbol = new FunctionSymbol(ext.Name, returnType, parameters, isExtern: true, isVariadic: ext.IsVariadic)
+		{
+			Visibility = ext.Visibility,
+			DeclaringUnit = context.CurrentUnit
+		};
 		context.Globals.Declare(newSymbol);
 
 		// Keep candidates registered for lookup under the unmangled name
@@ -1115,6 +1170,10 @@ private static void ApplyFunctionAttributes(List<string> appliedKeys, FunctionSy
 
 	private void DeclareExtension(ExtensionDeclarationSyntax extDecl)
 	{
+		// Visibility: the extension block itself carries a modifier affecting all members
+		// (default 'internal'). A member may only NARROW the block's visibility; any wider
+		// member modifier is a CVL1031 error and the member takes the block level instead.
+		var blockVisibility = extDecl.Visibility;
 		var extendedType = context.ResolveType(extDecl.ExtendedTypeName);
 		if (extendedType is null)
 		{
@@ -1207,10 +1266,23 @@ private static void ApplyFunctionAttributes(List<string> appliedKeys, FunctionSy
 				return;
 			}
 
-			// 2. Register the overloaded, parameter-mangled global signature
+// 2. Register the overloaded, parameter-mangled global signature
 			var overloadedName = context.GetOverloadedMangledName(baseMangledName, parameters.Select(p => p.Type).ToList());
 
-			var newSymbol = new FunctionSymbol(overloadedName, returnType, parameters);
+			var memberVisibility = method.SyntacticVisibility ?? blockVisibility;
+			if (!context.LegacyVisibility && method.SyntacticVisibility is { } memberVis && VisibilityRank(memberVis) > VisibilityRank(blockVisibility))
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, method.Span,
+					$"Element '{method.Name}' cannot declare a wider visibility modifier than its enclosing extension block visibility level ({blockVisibility}).",
+					DiagnosticIds.VisibilityExpansionInExtension);
+			}
+
+			var newSymbol = new FunctionSymbol(overloadedName, returnType, parameters)
+			{
+				Visibility = memberVisibility,
+				DeclaringUnit = context.CurrentUnit
+			};
 			var methodSuppressedWarnings = new List<string>();
 			ApplyFunctionAttributes(
 				VerifyAttributes(method.Attributes, method.Name.StartsWith('~') ? "Destructor" : "Method", methodSuppressedWarnings),
@@ -1290,7 +1362,20 @@ private static void ApplyFunctionAttributes(List<string> appliedKeys, FunctionSy
 
 			// 2. Register under the struct's name so 'T(...)' call sites resolve via existing overload machinery
 			var ctorOverloadedName = context.GetOverloadedMangledName(ctorBaseMangledName, ctorParameters.Select(p => p.Type).ToList());
-			var ctorSymbol = new FunctionSymbol(ctorOverloadedName, ctorStructType, ctorParameters);
+			var ctorVisibility = ctorDecl.SyntacticVisibility ?? blockVisibility;
+			if (!context.LegacyVisibility && ctorDecl.SyntacticVisibility is { } ctorVis && VisibilityRank(ctorVis) > VisibilityRank(blockVisibility))
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, ctorDecl.Span,
+					$"Element '{ctorDecl.StructName}' cannot declare a wider visibility modifier than its enclosing extension block visibility level ({blockVisibility}).",
+					DiagnosticIds.VisibilityExpansionInExtension);
+			}
+
+			var ctorSymbol = new FunctionSymbol(ctorOverloadedName, ctorStructType, ctorParameters)
+			{
+				Visibility = ctorVisibility,
+				DeclaringUnit = context.CurrentUnit
+			};
 			var ctorSuppressedWarnings = new List<string>();
 			ApplyFunctionAttributes(VerifyAttributes(ctorDecl.Attributes, "Constructor", ctorSuppressedWarnings), ctorSymbol, ctorSuppressedWarnings);
 			WarnIfUnsafeBodyUnused(ctorDecl.Span, ctorDecl.Body, ctorSymbol, ctorSuppressedWarnings);
@@ -1555,16 +1640,78 @@ private static void ApplyFunctionAttributes(List<string> appliedKeys, FunctionSy
 			return;
 		}
 
+		// CVL1036 (§TBAA): a multi-word container exposed with module-wide (ABI) visibility
+		// invites unsynchronized 16-byte register tearing. Single-word public scalars and small
+		// (<9 byte) aggregates are fine; anything wider must live behind a Lock/Mutex wrapper.
+		if (!context.LegacyVisibility && globalDecl.Visibility == Visibility.Public && IsMultiWordContainer(type))
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, globalDecl.Span,
+				$"Shared multi-word container '{globalDecl.Name}' cannot be exposed publicly without synchronization. Potential 16-byte register tearing and Type Confusion detected. Wrap the global in a 'Lock' or 'Mutex'.",
+				DiagnosticIds.MultiWordPublicGlobal);
+		}
+
 		// ref/refvar globals are inherently re-assignable (mutable references)
 		var isRefType = globalDecl.Type is not null && globalDecl.Type.StartsWith("ref");
 		var symbol = new VariableSymbol(globalDecl.Name, type, isMutable: globalDecl.IsMutable || isRefType)
 		{
 			IsInitialized = true,
 			IsGlobal = true,
-			Origin = OriginKind.Global
+			Origin = OriginKind.Global,
+			Visibility = globalDecl.Visibility,
+			DeclaringUnit = context.CurrentUnit
 		};
 		context.Globals.Declare(symbol);
 		context.GlobalVariables.Add((globalDecl, symbol));
+	}
+
+	// Multi-word containers are exactly those whose value spills past 8 bytes: slices/fat
+	// pointers, interface references, and aggregates wider than a single machine word.
+	private bool IsMultiWordContainer(TypeSymbol type)
+	{
+		switch (type)
+		{
+			case SliceTypeSymbol or InterfaceTypeSymbol:
+				return true;
+			case StructTypeSymbol or UnionTypeSymbol or EnumTypeSymbol:
+				return ComputeByteSize(type, new HashSet<string>()) > 8;
+			default:
+				return false;
+		}
+	}
+
+	// Best-effort recursive byte size for aggregates. Unknown/placeholder types are conservatively
+	// treated as 8 bytes (single word) so the CVL1036 gate never fires spuriously.
+	private int ComputeByteSize(TypeSymbol type, HashSet<string> seen)
+	{
+		if (type is PointerTypeSymbol or SliceTypeSymbol)
+			return type is SliceTypeSymbol ? 16 : 8;
+
+		if (type is ArrayTypeSymbol array)
+			return array.Size == int.MaxValue ? 8 : array.Size * ComputeByteSize(array.ElementType, seen);
+
+		if (type is EnumTypeSymbol enumType)
+			return TypeSymbol.PrimitiveByteSize(enumType.StorageType);
+		if (type is UnionTypeSymbol unionType)
+		{
+			if (!seen.Add(unionType.Name))
+				return 8;
+			var max = 0;
+			foreach (var field in unionType.Fields)
+				max = Math.Max(max, field.IsVoidVariant ? 0 : ComputeByteSize(field.Type, seen));
+			return max;
+		}
+		if (type is StructTypeSymbol structType)
+		{
+			if (!seen.Add(structType.Name))
+				return 8;
+			var total = 0;
+			foreach (var field in structType.Fields)
+				total += ComputeByteSize(field.Type, seen);
+			return total;
+		}
+
+		return TypeSymbol.PrimitiveByteSize(type);
 	}
 
 	private static bool IsCompileTimeConstant(ExpressionSyntax? expr)
@@ -1584,6 +1731,10 @@ private static void ApplyFunctionAttributes(List<string> appliedKeys, FunctionSy
 	private void DeclareUnion(UnionDeclarationSyntax unionDecl)
 	{
 		var mangledName = context.GetMangledName(unionDecl.Name, context.CurrentNamespace);
+		// A local/global declaration shadows any imported resolution of the same bare name
+		// that may have been cached via a 'using' lookup (e.g. user `Result<T>` vs stdlib
+		// `System.Result<T,E>`); drop the stale entry so the new declaration can win.
+		context.InvalidateTypeCache(unionDecl.Name);
 
 		if (context.UnionTypes.ContainsKey(mangledName) || context.StructTypes.ContainsKey(mangledName) || TypeSymbol.FromName(unionDecl.Name) is not null)
 		{
@@ -1598,7 +1749,10 @@ private static void ApplyFunctionAttributes(List<string> appliedKeys, FunctionSy
 			context.GenericUnionTemplates[mangledName] = unionDecl;
 
 			var placeholderFields = new List<UnionFieldSymbol>();
-			var templateSymbol = new UnionTypeSymbol(mangledName, placeholderFields);
+			var templateSymbol = new UnionTypeSymbol(mangledName, placeholderFields)
+			{
+				Visibility = unionDecl.Visibility
+			};
 			context.UnionTypes[mangledName] = templateSymbol;
 			return;
 		}
@@ -1633,10 +1787,16 @@ private static void ApplyFunctionAttributes(List<string> appliedKeys, FunctionSy
 				}
 			}
 
-			fields.Add(new UnionFieldSymbol(field.Name, fieldType, isVoidVariant));
+			fields.Add(new UnionFieldSymbol(field.Name, fieldType, isVoidVariant)
+			{
+				Visibility = unionDecl.Visibility
+			});
 		}
 
-		var unionSymbol = new UnionTypeSymbol(mangledName, fields);
+		var unionSymbol = new UnionTypeSymbol(mangledName, fields)
+		{
+			Visibility = unionDecl.Visibility
+		};
 		context.UnionTypes[mangledName] = unionSymbol;
 	}
 
@@ -1775,7 +1935,12 @@ private static void ApplyFunctionAttributes(List<string> appliedKeys, FunctionSy
 			nextAuto = value + 1;
 		}
 
-		var enumSymbol = new EnumTypeSymbol(mangledName, variants, storageType) { IsFlags = isFlags, IsNonExhaustive = isNonExhaustive };
+		var enumSymbol = new EnumTypeSymbol(mangledName, variants, storageType)
+		{
+			IsFlags = isFlags,
+			IsNonExhaustive = isNonExhaustive,
+			Visibility = enumDecl.Visibility
+		};
 		context.EnumTypes[mangledName] = enumSymbol;
 		context.ReplaceTypeInCache(mangledName, enumSymbol);
 	}

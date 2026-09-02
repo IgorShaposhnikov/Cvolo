@@ -3,22 +3,22 @@ namespace BankSystem.Core;
 // ============ GENERIC STRUCTURES ============
 
 struct Transaction<T> {
-    T Amount;
-    string Currency;
-    string Description;
-    int Timestamp;
-    bool IsCompleted;
+    public T Amount;
+    public string Currency;
+    public string Description;
+    public int Timestamp;
+    public bool IsCompleted;
 }
 
 struct Account<T> {
-    T Balance;
-    string Currency;
-    string Owner;
-    Transaction<T>[100] History;
-    int TransactionCount;
+    public T Balance;
+    public string Currency;
+    public string Owner;
+    public Transaction<T>[100] History;
+    public int TransactionCount;
 }
 
 struct Pair<T, U> {
-    T First;
-    U Second;
+    public T First;
+    public U Second;
 }
