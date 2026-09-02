@@ -48,6 +48,8 @@ public static class DiagnosticIds
 
 	/// <summary>Writing to a ref/refvar structural reference field outside an 'unbound' context.</summary>
 	public const string RefFieldMutationInSafe = "CVL1012";
+	/// <summary>Return value of a function or type marked '[MustUse]' is ignored.</summary>
+	public const string MustUseIgnoredWarning = "CVL1013";
 
 	/// <summary>A member is accessed outside its allowed visibility scope (file/module/package).</summary>
 	public const string InaccessibleMember = "CVL1030";

@@ -25,11 +25,12 @@ public sealed class DeclarationPass(BindingContext context)
 		["NonExhaustive"] = (["Struct"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
 		["StrictMutability"] = (["Struct"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
 		["Intrinsic"] = (["Function", "Method"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
+		["MustUse"] = (["Function", "Method", "Constructor", "Struct", "Union", "Enum"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
 	};
 
 	private static readonly HashSet<string> KnownWarningIds =
 	[
-		DiagnosticIds.UnsafeBodyNoEffect, DiagnosticIds.UnknownAttribute, DiagnosticIds.UnboundNoRefParams, DiagnosticIds.AutoInferMutationWarning
+		DiagnosticIds.UnsafeBodyNoEffect, DiagnosticIds.UnknownAttribute, DiagnosticIds.UnboundNoRefParams, DiagnosticIds.AutoInferMutationWarning, DiagnosticIds.MustUseIgnoredWarning
 	];
 
 	// E1 enum underlying storage types (§1.A). Enums are strictly flat, unmanaged
@@ -537,7 +538,8 @@ public sealed class DeclarationPass(BindingContext context)
 			return;
 		}
 
-		var appliedAttrs = VerifyAttributes(structDecl.Attributes, "Struct", new List<string>());
+		var appliedAttrs = VerifyAttributes(structDecl.Attributes, "Struct", []);
+		var (isMustUse, mustUseMsg) = ExtractMustUseAttribute(structDecl.Attributes);
 
 		// If this is a generic struct template (e.g. struct Point<T>)
 		if (structDecl.GenericParameters.Count > 0)
@@ -550,7 +552,9 @@ public sealed class DeclarationPass(BindingContext context)
 			var templateSymbol = new StructTypeSymbol(mangledName, placeholderFields)
 			{
 				IsStrictMutability = appliedAttrs.Contains("StrictMutability"),
-				Visibility = structDecl.Visibility
+				Visibility = structDecl.Visibility,
+				IsMustUse = isMustUse,
+				MustUseMessage = mustUseMsg
 			};
 
 			context.StructTypes[mangledName] = templateSymbol;
@@ -564,7 +568,9 @@ public sealed class DeclarationPass(BindingContext context)
 		// the enclosing struct's own name during generic instantiation.
 		var placeholder = new StructTypeSymbol(mangledName, [])
 		{
-			Visibility = structDecl.Visibility
+			Visibility = structDecl.Visibility,
+			IsMustUse = isMustUse,
+			MustUseMessage = mustUseMsg
 		};
 		context.StructTypes[mangledName] = placeholder;
 
@@ -1032,13 +1038,20 @@ public sealed class DeclarationPass(BindingContext context)
 		suppressedWarnings?.Add(warningId);
 	}
 
-	private static void ApplyFunctionAttributes(List<string> appliedKeys, FunctionSymbol symbol, List<string> suppressedWarnings, IReadOnlyList<AttributeSyntax>? attributes = null)
+	private void ApplyFunctionAttributes(List<string> appliedKeys, FunctionSymbol symbol, List<string> suppressedWarnings, IReadOnlyList<AttributeSyntax>? attributes = null)
 	{
 		if (appliedKeys.Contains("UnsafeBody"))
 			symbol.IsUnsafeBody = true;
 
 		if (appliedKeys.Contains("NoAlias"))
 			symbol.IsNoAlias = true;
+
+		if (appliedKeys.Contains("MustUse") && attributes != null)
+		{
+			var (isMustUse, mustUseMsg) = ExtractMustUseAttribute(attributes);
+			symbol.IsMustUse = isMustUse;
+			symbol.MustUseMessage = mustUseMsg;
+		}
 
 		if (appliedKeys.Contains("Intrinsic") && attributes is not null)
 		{
@@ -1746,6 +1759,8 @@ public sealed class DeclarationPass(BindingContext context)
 			return;
 		}
 
+		var (isMustUse, mustUseMsg) = ExtractMustUseAttribute(unionDecl.Attributes);
+
 		if (unionDecl.GenericParameters.Count > 0)
 		{
 			context.SymbolUnits[mangledName] = context.CurrentUnit!;
@@ -1754,7 +1769,9 @@ public sealed class DeclarationPass(BindingContext context)
 			var placeholderFields = new List<UnionFieldSymbol>();
 			var templateSymbol = new UnionTypeSymbol(mangledName, placeholderFields)
 			{
-				Visibility = unionDecl.Visibility
+				Visibility = unionDecl.Visibility,
+				IsMustUse = isMustUse,
+				MustUseMessage = mustUseMsg
 			};
 			context.UnionTypes[mangledName] = templateSymbol;
 			return;
@@ -1798,7 +1815,9 @@ public sealed class DeclarationPass(BindingContext context)
 
 		var unionSymbol = new UnionTypeSymbol(mangledName, fields)
 		{
-			Visibility = unionDecl.Visibility
+			Visibility = unionDecl.Visibility,
+			IsMustUse = isMustUse,
+			MustUseMessage = mustUseMsg
 		};
 		context.UnionTypes[mangledName] = unionSymbol;
 	}
@@ -1938,12 +1957,17 @@ public sealed class DeclarationPass(BindingContext context)
 			nextAuto = value + 1;
 		}
 
+		var (isMustUse, mustUseMsg) = ExtractMustUseAttribute(enumDecl.Attributes);
+
 		var enumSymbol = new EnumTypeSymbol(mangledName, variants, storageType)
 		{
 			IsFlags = isFlags,
 			IsNonExhaustive = isNonExhaustive,
-			Visibility = enumDecl.Visibility
+			Visibility = enumDecl.Visibility,
+			IsMustUse = isMustUse,
+			MustUseMessage = mustUseMsg
 		};
+
 		context.EnumTypes[mangledName] = enumSymbol;
 		context.ReplaceTypeInCache(mangledName, enumSymbol);
 	}
@@ -2000,6 +2024,7 @@ public sealed class DeclarationPass(BindingContext context)
 			if (HasUnboundConstructs(child))
 				return true;
 		}
+
 		return false;
 	}
 
@@ -2077,5 +2102,26 @@ public sealed class DeclarationPass(BindingContext context)
 					DiagnosticIds.ExposeUsingNamespaceNotFound);
 			}
 		}
+	}
+
+	private (bool IsMustUse, string? Message) ExtractMustUseAttribute(IReadOnlyList<AttributeSyntax> attributes)
+	{
+		foreach (var attr in attributes)
+		{
+			if (NormalizeAttributeName(attr.Name) == "MustUse")
+			{
+				if (attr.Arguments.Count == 0)
+					return (true, null);
+
+				if (attr.Arguments.Count == 1 && attr.Arguments[0] is StringLiteralExpressionSyntax strLit)
+					return (true, strLit.Value);
+
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, attr.Span, "Attribute '[MustUse]' expects at most one string literal argument.");
+				return (true, null);
+			}
+		}
+
+		return (false, null);
 	}
 }

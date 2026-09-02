@@ -1,0 +1,11 @@
+/// <summary>
+/// Rejection: [MustUse] expects at most one string literal argument.
+/// </summary>
+[MustUse(42)]
+int Compute() {
+    return 1;
+}
+
+int main() {
+    return 0;
+}

@@ -1,0 +1,21 @@
+/// <summary>
+/// Feature: [MustUse] type-level warning with custom message.
+/// </summary>
+/// <remarks>
+/// Functions returning a [MustUse] type inherit the warning with the custom reason.
+/// </remarks>
+using System;
+
+[MustUse("Results must be checked")]
+struct Result {
+    int Code;
+}
+
+Result CreateResult(int code) {
+    return Result { Code: code };
+}
+
+int Main() {
+    CreateResult(0); // Emits CVL1013 with custom reason
+    return 0;
+}

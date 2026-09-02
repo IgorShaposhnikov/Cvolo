@@ -1,0 +1,15 @@
+/// <summary>
+/// Feature: Discard assignment '_ = ...' suppresses [MustUse] warnings.
+/// </summary>
+using System;
+
+[MustUse]
+int Compute(int a) {
+    return a + 5;
+}
+
+int Main() {
+    _ = Compute(10); // OK: Explicit discard suppresses CVL1012
+    Console.WriteLine("Discard OK");
+    return 0;
+}

@@ -1,0 +1,17 @@
+/// <summary>
+/// Feature: [MustUse] on function signatures.
+/// </summary>
+/// <remarks>
+/// Calling a [MustUse] function as a standalone expression statement emits CVL1012.
+/// </remarks>
+using System;
+
+[MustUse]
+int Calculate(int x) {
+    return x * 2;
+}
+
+int Main() {
+    Calculate(10); // Emits CVL1012
+    return 0;
+}

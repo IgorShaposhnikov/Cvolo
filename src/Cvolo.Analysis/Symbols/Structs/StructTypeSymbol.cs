@@ -18,6 +18,9 @@ public sealed class StructTypeSymbol(string name, IReadOnlyList<StructFieldSymbo
 	/// </summary>
 	public bool IsStrictMutability { get; set; } = false;
 
+	public bool IsMustUse { get; set; } = false;
+	public string? MustUseMessage { get; set; }
+
 	/// <summary>
 	/// Populates fields into a placeholder symbol during two-phase struct declaration.
 	/// Keeps existing PointerTypeSymbol references to this instance intact.

@@ -252,6 +252,7 @@ public sealed class ValidationPass(BindingContext context)
 				break;
 			case ExpressionStatementSyntax exprStmt:
 				CheckExpression(exprStmt.Expression, scope);
+				CheckMustUseDiscard(exprStmt.Expression, scope);
 				break;
 			case VariableDeclarationSyntax varDecl:
 				CheckVariableDeclaration(varDecl, scope, currentFunc);
@@ -607,6 +608,13 @@ public sealed class ValidationPass(BindingContext context)
 				{
 					if (bin.Operator == "=")
 					{
+						// Handle discard assignment: _ = Func();
+						if (bin.Left is IdentifierExpressionSyntax discardId && discardId.Name == "_")
+						{
+							CheckExpression(bin.Right, scope);
+							break;
+						}
+
 						// 1. Evaluate the right-hand side first (reads and moves happen here)
 						CheckExpression(bin.Right, scope);
 
@@ -2942,5 +2950,56 @@ public sealed class ValidationPass(BindingContext context)
 		}
 
 		return GetExpressionType(unary.Operand, scope);
+	}
+
+	/// <summary>
+	/// Emits CVL1012 warning if a function or type marked '[MustUse]' is called as an unused standalone statement.
+	/// </summary>
+	private void CheckMustUseDiscard(ExpressionSyntax expr, SymbolTable scope)
+	{
+		if (expr is not CallExpressionSyntax call)
+			return;
+
+		if (!context.ResolvedCalls.TryGetValue(call, out var func))
+			return;
+
+		// 1. Check if the function itself is [MustUse]
+		var isFuncMustUse = func.IsMustUse;
+		var funcMessage = func.MustUseMessage;
+
+		// 2. Check if the returned type is [MustUse]
+		var retType = func.ReturnType;
+		if (retType is PointerTypeSymbol ptr)
+			retType = ptr.ReferencedType;
+
+		var isTypeMustUse = false;
+		string? typeMessage = null;
+
+		if (retType is StructTypeSymbol st && st.IsMustUse)
+		{
+			isTypeMustUse = true;
+			typeMessage = st.MustUseMessage;
+		}
+		else if (retType is UnionTypeSymbol ut && ut.IsMustUse)
+		{
+			isTypeMustUse = true;
+			typeMessage = ut.MustUseMessage;
+		}
+		else if (retType is EnumTypeSymbol et && et.IsMustUse)
+		{
+			isTypeMustUse = true;
+			typeMessage = et.MustUseMessage;
+		}
+
+		if (isFuncMustUse || isTypeMustUse)
+		{
+			var reason = funcMessage ?? typeMessage;
+			var msg = reason is not null
+				? $"Return value of '{call.FunctionName}' is marked '[MustUse]' and must not be ignored: {reason}"
+				: $"Return value of '{call.FunctionName}' is marked '[MustUse]' and must not be ignored.";
+
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.ReportWarning(currentFileContext, call.Span, msg, DiagnosticIds.MustUseIgnoredWarning);
+		}
 	}
 }

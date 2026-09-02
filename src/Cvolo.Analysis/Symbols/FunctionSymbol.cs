@@ -15,18 +15,33 @@ public sealed class FunctionSymbol(
 	public bool IsExtern { get; } = isExtern;
 	public bool IsVariadic { get; } = isVariadic;
 
-	/// <summary>Intrinsic [UnsafeBody] marker - SafetyPass treats the body as unsafe (consumed by the unmanaged milestone).</summary>
+	/// <summary>
+	/// Intrinsic [UnsafeBody] marker - SafetyPass treats the body as unsafe (consumed by the unmanaged milestone).
+	/// </summary>
 	public bool IsUnsafeBody { get; set; }
 
-	/// <summary>Intrinsic [NoAlias] marker - emitter attaches LLVM noalias to reference params (unbound/unsafe tiers).</summary>
+	/// <summary>
+	/// Intrinsic [NoAlias] marker - emitter attaches LLVM noalias to reference params (unbound/unsafe tiers).
+	/// </summary>
 	public bool IsNoAlias { get; set; }
 
-	/// <summary>Target LLVM intrinsic name when decorated with [Intrinsic("llvm.name")].</summary>
+	/// <summary>
+	/// Target LLVM intrinsic name when decorated with [Intrinsic("llvm.name")].
+	/// </summary>
 	public string? IntrinsicName { get; set; }
 
-	/// <summary>Warning ids suppressed via [SuppressWarning("id")] on this declaration.</summary>
+	/// <summary>
+	/// Warning ids suppressed via [SuppressWarning("id")] on this declaration.
+	/// </summary>
 	public List<string> SuppressedWarnings { get; } = [];
 
-	/// <summary>Safety tier: Safe (default), Unbound, or Unsafe. Set from function modifier or [UnsafeBody] attribute.</summary>
+	/// <summary>
+	/// Safety tier: Safe (default), Unbound, or Unsafe. Set from function modifier or [UnsafeBody] attribute.
+	/// </summary>
 	public SafetyTier SafetyTier { get; set; }
+	/// <summary>
+	/// Intrinsic [MustUse] marker — callers must not discard the returned value.
+	/// </summary>
+	public bool IsMustUse { get; set; }
+	public string? MustUseMessage { get; set; }
 }

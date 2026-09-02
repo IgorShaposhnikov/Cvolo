@@ -14,6 +14,8 @@ public sealed class EnumTypeSymbol(
 
 	public bool IsFlags { get; set; }
 	public bool IsNonExhaustive { get; set; }
+	public bool IsMustUse { get; set; } = false;
+	public string? MustUseMessage { get; set; }
 
 	public EnumVariantSymbol? FindVariant(string variantName)
 		=> Variants.FirstOrDefault(v => v.Name == variantName);
