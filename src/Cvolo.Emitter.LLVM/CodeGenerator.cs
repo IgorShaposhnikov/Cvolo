@@ -608,82 +608,87 @@ public sealed class CodeGenerator : IEmitter, IDisposable
         }
     }
 
-    private void EmitReturnStatement(ReturnStatementSyntax ret)
-    {
-        if (ret.Expression is not null)
-        {
-            // 1. Handle Null Returns on Options (Lowers null to Option.None)
-            var expectedType = _functionReturnTypes.TryGetValue(_builder.InsertBlock.Parent.Name, out var et) ? et : TypeSymbol.Int;
+	private void EmitReturnStatement(ReturnStatementSyntax ret)
+	{
+		if (ret.Expression is not null)
+		{
+			// 1. Handle Null Returns on Options (Lowers null to Option.None)
+			var expectedType = _functionReturnTypes.TryGetValue(_builder.InsertBlock.Parent.Name, out var et) ? et : TypeSymbol.Int;
 
-            if (ret.Expression is NullLiteralExpressionSyntax && expectedType is UnionTypeSymbol optionUnion && optionUnion.IsOption)
-            {
-                var unionLayout = GetLLVMType(optionUnion);
-                var tempAlloc = _builder.BuildAlloca(unionLayout, "ret_null_tmp");
+			if (ret.Expression is NullLiteralExpressionSyntax && expectedType is UnionTypeSymbol optionUnion && optionUnion.IsOption)
+			{
+				var unionLayout = GetLLVMType(optionUnion);
+				var tempAlloc = _builder.BuildAlloca(unionLayout, "ret_null_tmp");
 
-                // Null-Pointer Optimization: store flat nullptr (None == zero) instead of a tag.
-                if (optionUnion.IsNpoEligible)
-                {
-                    _builder.BuildStore(LLVMValueRef.CreateConstPointerNull(unionLayout), tempAlloc);
-                }
-                else
-                {
-                    var fieldIndex = GetFieldIndex(optionUnion, "None");
+				// Null-Pointer Optimization: store flat nullptr (None == zero) instead of a tag.
+				if (optionUnion.IsNpoEligible)
+				{
+					_builder.BuildStore(LLVMValueRef.CreateConstPointerNull(unionLayout), tempAlloc);
+				}
+				else
+				{
+					var fieldIndex = GetFieldIndex(optionUnion, "None");
 
-                    var tagPtr = _builder.BuildGEP2(unionLayout, tempAlloc, new LLVMValueRef[] {
-                        LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
-                        LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0)
-                    }, "union_tag_ptr");
-                    _builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, (ulong)fieldIndex), tagPtr);
-                }
+					var tagPtr = _builder.BuildGEP2(unionLayout, tempAlloc, new LLVMValueRef[] {
+						LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
+						LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0)
+					}, "union_tag_ptr");
+					_builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, (ulong)fieldIndex), tagPtr);
+				}
 
-                var loadedNone = _builder.BuildLoad2(unionLayout, tempAlloc, "loaded_none");
+				var loadedNone = _builder.BuildLoad2(unionLayout, tempAlloc, "loaded_none");
 
-                EmitCleanup([.. _locals.Keys]);
-                _builder.BuildRet(loadedNone);
-                return;
-            }
+				EmitCleanup([.. _locals.Keys]);
+				_builder.BuildRet(loadedNone);
+				return;
+			}
 
-            // 2. Handle Standard Returns
-            var value = EmitExpression(ret.Expression);
-            var type = GetExprType(ret.Expression);
+			// 2. Handle Standard Returns
+			var value = EmitExpression(ret.Expression);
+			var type = GetExprType(ret.Expression);
 
-            // Materialize memory-resident return values (structs/unions living in allocas/heap
-            // slots) BEFORE scope cleanup frees them - the loaded register is what survives.
-            LLVMValueRef? materialized = null;
-            if ((type is StructTypeSymbol || type is UnionTypeSymbol) && value.TypeOf.Kind == LLVMTypeKind.LLVMPointerTypeKind)
-            {
-                var layout = GetLLVMType(type);
-                materialized = _builder.BuildLoad2(layout, value, "struct_ret_val");
-            }
+			// Implicit Dereference: if expected return type is value but actual is a reference
+			if (type is PointerTypeSymbol retPtr && expectedType is not PointerTypeSymbol)
+			{
+				value = _builder.BuildLoad2(GetLLVMType(retPtr.ReferencedType), value, "deref_ret");
+				type = retPtr.ReferencedType;
+			}
 
-            var skipHeapFree = ComputeOwnershipTransfer(type);
+			// Materialize memory-resident return values (structs/unions living in allocas/heap
+			// slots) BEFORE scope cleanup frees them - the loaded register is what survives.
+			LLVMValueRef? materialized = null;
+			if ((type is StructTypeSymbol || type is UnionTypeSymbol) && value.TypeOf.Kind == LLVMTypeKind.LLVMPointerTypeKind)
+			{
+				var layout = GetLLVMType(type);
+				materialized = _builder.BuildLoad2(layout, value, "struct_ret_val");
+			}
 
-            EmitCleanup([.. _locals.Keys], skipHeapFree: skipHeapFree);
+			EmitCleanup([.. _locals.Keys]);
 
-            if (materialized is not null)
-            {
-                _builder.BuildRet(materialized.Value);
-            }
-            else
-            {
-                _builder.BuildRet(value);
-            }
-        }
-        else
-        {
-            EmitCleanup([.. _locals.Keys]);
-            _builder.BuildRetVoid();
-        }
-    }
+			if (materialized is not null)
+			{
+				_builder.BuildRet(materialized.Value);
+			}
+			else
+			{
+				_builder.BuildRet(value);
+			}
+		}
+		else
+		{
+			EmitCleanup([.. _locals.Keys]);
+			_builder.BuildRetVoid();
+		}
+	}
 
-    /// <summary>
-    /// True when the current function is an <c>unbound</c> factory whose return type is a
-    /// heap-escaping graph handle (a type transitively carrying <c>ref</c>/<c>refvar</c>
-    /// reference fields). In that case the local heap allocations that form the self-referential
-    /// graph must NOT be freed on the return path, because ownership transfers to the caller
-    /// ('heap-relative provenance'): the references it returns point back into those blocks.
-    /// </summary>
-    private bool ComputeOwnershipTransfer(TypeSymbol returnType)
+	/// <summary>
+	/// True when the current function is an <c>unbound</c> factory whose return type is a
+	/// heap-escaping graph handle (a type transitively carrying <c>ref</c>/<c>refvar</c>
+	/// reference fields). In that case the local heap allocations that form the self-referential
+	/// graph must NOT be freed on the return path, because ownership transfers to the caller
+	/// ('heap-relative provenance'): the references it returns point back into those blocks.
+	/// </summary>
+	private bool ComputeOwnershipTransfer(TypeSymbol returnType)
     {
         if (!TypeEscapesHeap(returnType))
             return false;
@@ -886,6 +891,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
             var enumType = receiverType is PointerTypeSymbol namePtr
                 ? namePtr.ReferencedType as EnumTypeSymbol
                 : receiverType as EnumTypeSymbol;
+
             if (enumType is null)
             {
                 throw new InvalidOperationException($"Name() requires an enum receiver but found '{receiverName}'.");
@@ -1056,15 +1062,15 @@ public sealed class CodeGenerator : IEmitter, IDisposable
                 val = EmitExpression(argExpr);
             }
 
-            if (paramTy is StructTypeSymbol && val.TypeOf.Kind == LLVMTypeKind.LLVMPointerTypeKind)
-            {
-                val = _builder.BuildLoad2(GetLLVMType(paramTy), val, "loaded_struct_arg");
-            }
+			if (valTy is PointerTypeSymbol ptrTy && !paramTy.Equals(valTy) && paramTy is not PointerTypeSymbol)
+			{
+				val = _builder.BuildLoad2(GetLLVMType(ptrTy.ReferencedType), val, "deref_arg");
+			}
 
-            // Ownership transfer: passing a ResourceMove-style union by value transfers the
-            // resource to the callee. Exclude the source from caller cleanup so the callee's
-            // tag-checked destructor (and not a second drop here) releases it — no double free.
-            if (argExpr is IdentifierExpressionSyntax moveArg
+			// Ownership transfer: passing a ResourceMove-style union by value transfers the
+			// resource to the callee. Exclude the source from caller cleanup so the callee's
+			// tag-checked destructor (and not a second drop here) releases it — no double free.
+			if (argExpr is IdentifierExpressionSyntax moveArg
                 && !_disposedVars.Contains(moveArg.Name)
                 && _variableTypes.TryGetValue(moveArg.Name, out var srcTy)
                 && srcTy is UnionTypeSymbol srcUnion
@@ -1145,6 +1151,19 @@ public sealed class CodeGenerator : IEmitter, IDisposable
         var lTy = GetExprType(bin.Left);
         var rTy = GetExprType(bin.Right);
 
+        if (lTy is PointerTypeSymbol lPtr)
+        {
+            left = _builder.BuildLoad2(GetLLVMType(lPtr.ReferencedType), left, "deref_left");
+            lTy = lPtr.ReferencedType;
+        }
+
+        // Implicit Dereference for right operand
+        if (rTy is PointerTypeSymbol rPtr)
+        {
+            right = _builder.BuildLoad2(GetLLVMType(rPtr.ReferencedType), right, "deref_right");
+            rTy = rPtr.ReferencedType;
+        }
+
         // 1. Unmanaged Pointer Arithmetic
         if (lTy is RawPointerTypeSymbol rawPtrL && TypeSymbol.IsIntegerType(rTy))
         {
@@ -1152,6 +1171,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
             {
                 return _builder.BuildGEP2(GetLLVMType(rawPtrL.ElementType), left, new[] { right }, "ptr_add");
             }
+
             if (bin.Operator == "-")
             {
                 var negRight = _builder.BuildNeg(right, "ptr_sub_neg");
