@@ -36,8 +36,50 @@ public sealed class SafetyPass(BindingContext context)
 			var members = context.CurrentNamespace != null ? unit.NamespaceDeclaration!.Members : unit.Members;
 
 			foreach (var member in members)
-				if (member is FunctionDeclarationSyntax func && func.GenericParameters.Count == 0)
+			{
+				if (member is FunctionDeclarationSyntax func && func.GenericParameters.Count == 0 && !func.Name.Contains('<'))
+				{
 					CheckFunctionSafety(func);
+				}
+				else if (member is ExtensionDeclarationSyntax extDecl)
+				{
+					// Skip generic templates; their monomorphized concrete instances are checked below
+					if (context.GenericStructTemplates.ContainsKey(extDecl.ExtendedTypeName) ||
+						context.GenericUnionTemplates.ContainsKey(extDecl.ExtendedTypeName))
+					{
+						continue;
+					}
+
+					foreach (var method in extDecl.Methods
+						.Concat(extDecl.Destructors.Select(static d => d.ToFunctionDeclaration())))
+					{
+						CheckFunctionSafety(method);
+					}
+
+					foreach (var ctor in extDecl.Constructors)
+					{
+						CheckFunctionSafety(ctor.ToFunctionDeclaration());
+					}
+				}
+			}
+		}
+
+		// Enforce safety pass on all monomorphized generic functions and extension methods!
+		foreach (var instDecl in context.MonomorphizedFunctionDecls)
+		{
+			CheckFunctionSafety(instDecl);
+		}
+
+		foreach (var decl in context.MonomorphizedExtensionDecls)
+		{
+			if (decl is FunctionDeclarationSyntax func)
+			{
+				CheckFunctionSafety(func);
+			}
+			else if (decl is ConstructorDeclarationSyntax ctor)
+			{
+				CheckFunctionSafety(ctor.ToFunctionDeclaration());
+			}
 		}
 	}
 
@@ -59,7 +101,14 @@ public sealed class SafetyPass(BindingContext context)
 		var paramTypes = func.Parameters.Select(p => context.ResolveType(p.Type) ?? TypeSymbol.Int).ToList();
 		var overloadedName = context.GetOverloadedMangledName(baseName, paramTypes);
 		var funcSymbol = context.Globals.Lookup(overloadedName) as FunctionSymbol;
-		var tier = funcSymbol?.SafetyTier ?? SafetyTier.Safe;
+		// Determine tier from attributes ([UnsafeBody]), modifier, or global symbol table
+		var isUnsafeBody = func.Attributes.Any(a => string.Equals(a.Name, "UnsafeBody", StringComparison.OrdinalIgnoreCase) ||
+													string.Equals(a.Name, "System.UnsafeBody", StringComparison.OrdinalIgnoreCase) ||
+													string.Equals(a.Name, "UnsafeBodyAttribute", StringComparison.OrdinalIgnoreCase));
+
+		var tier = isUnsafeBody || func.Modifier == SafetyTier.Unsafe
+			? SafetyTier.Unsafe
+			: (func.Modifier == SafetyTier.Unbound ? SafetyTier.Unbound : SafetyTier.Safe);
 
 		_currentTierStack.Clear();
 		_currentTierStack.Push(tier);
