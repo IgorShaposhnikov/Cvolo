@@ -396,8 +396,8 @@ public sealed class ValidationPass(BindingContext context)
 		};
 
 		scope.Declare(varSymbol);
-        context.VariableSymbols[varDecl] = varSymbol;
-    }
+		context.VariableSymbols[varDecl] = varSymbol;
+	}
 
 	private static int StackByteSize(TypeSymbol type) => type switch
 	{
@@ -526,15 +526,8 @@ public sealed class ValidationPass(BindingContext context)
 					{
 						// Use overload resolution logic for standard non-generic functions / constructors
 						func = TryResolveEnumName(call, argTypes, scope);
-						if (func is null)
-						{
-							func = TryResolveFlagsHasFlag(call, argTypes, scope);
-						}
-
-						if (func is null)
-						{
-							func = ResolveOverloadedFunction(call.FunctionName, argTypes, scope);
-						}
+						func ??= TryResolveFlagsHasFlag(call, argTypes, scope);
+						func ??= ResolveOverloadedFunction(call.FunctionName, argTypes, scope);
 
 						// No concrete overload matched: fall back to interface-parameterized dispatch
 						// (implicit generic templates monomorphized with the concrete conforming arg types).
@@ -562,26 +555,31 @@ public sealed class ValidationPass(BindingContext context)
 						}
 					}
 
-				if (func is null)
-				{
-					var currentFileContext = context.FileContexts[context.CurrentUnit!];
-					var sigString = string.Join(", ", argTypes.Select(t => t.Name));
-					context.Diagnostics.Report(currentFileContext, call.Span, $"No overload of function '{call.FunctionName}' matches argument types ({sigString})");
-					return;
-				}
+					if (func is null)
+					{
+						var currentFileContext = context.FileContexts[context.CurrentUnit!];
+						var sigString = string.Join(", ", argTypes.Select(t => t.Name));
+						context.Diagnostics.Report(currentFileContext, call.Span, $"No overload of function '{call.FunctionName}' matches argument types ({sigString})");
+						return;
+					}
 
-				// Caller-side unsafe invocation check (Memory & Safety spec §6.A): a raw 'unsafe fn'
-				// (form A) must be invoked from an unsafe context. '[UnsafeBody]' functions expose a safe
-				// API (form B) and are exempt, as are calls already inside an unsafe context.
-				if (func.SafetyTier == SafetyTier.Unsafe && !func.IsUnsafeBody && _unsafeDepth == 0)
-				{
-					var currentFileContext = context.FileContexts[context.CurrentUnit!];
-					context.Diagnostics.Report(currentFileContext, call.Span,
-						$"Cannot call unsafe function '{call.FunctionName}' from safe code. Wrap the call in an 'unsafe {{ }}' block or mark this function 'unsafe'.");
-				}
+					// Record the resolved overload for CodeGenerator consumption
+					context.ResolvedCalls[call] = func;
 
-				// Record the resolved overload for CodeGenerator consumption
-				context.ResolvedCalls[call] = func;
+                    // Caller-side unsafe invocation check (Memory & Safety spec §6.A): a raw 'unsafe fn'
+                    // (form A) must be invoked from an unsafe context. '[UnsafeBody]' functions expose a safe
+                    // API (form B) and are exempt, as are calls already inside an unsafe context.
+                    // Enforce CVL1009: Calling a raw 'unsafe function' from code that is not in an unsafe context
+                    // Note: [UnsafeBody] functions are encapsulated and exempt from this call-site restriction.
+                    if (func.SafetyTier == SafetyTier.Unsafe && !func.IsUnsafeBody && _unsafeDepth == 0)
+					{
+						var currentFileContext = context.FileContexts[context.CurrentUnit!];
+						context.Diagnostics.Report(
+							currentFileContext,
+							call.Span,
+							$"Calling a raw 'unsafe function' '{call.FunctionName}' from code that is not in an unsafe context.",
+							DiagnosticIds.CallUnsafeFromSafe);
+					}
 
 					var argCount = call.Arguments.Count;
 					var paramCount = func.Parameters.Count;
@@ -3129,5 +3127,12 @@ public sealed class ValidationPass(BindingContext context)
 					DiagnosticIds.GenericVisibilityLeak);
 			}
 		}
+	}
+
+	private static bool IsFunctionUnsafeBodyOnly(FunctionSymbol func)
+	{
+		// [UnsafeBody] encapsulates unsafe code safely, so callers in safe code CAN call it.
+		// Pure 'unsafe fn' signatures force callers to be in an unsafe context.
+		return func.IsUnsafeBody;
 	}
 }

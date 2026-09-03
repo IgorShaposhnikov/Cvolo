@@ -818,9 +818,23 @@ public sealed class BindingContext
 
 				var newSymbol = new FunctionSymbol(overloadedName, returnType, parameters)
 				{
+					SafetyTier = method.Modifier ?? SafetyTier.Safe,
 					Visibility = method.Visibility,
 					DeclaringUnit = originalUnit
 				};
+
+				// Copy UnsafeBody and MustUse attributes to the monomorphized instance
+				if (method.Attributes.Any(a => a.Name.Contains("UnsafeBody")))
+				{
+					newSymbol.IsUnsafeBody = true;
+					newSymbol.SafetyTier = SafetyTier.Unsafe; // UnsafeBody promotes tier to Unsafe
+				}
+
+				if (method.Attributes.Any(a => a.Name.Contains("MustUse")))
+				{
+					newSymbol.IsMustUse = true;
+				}
+
 				Globals.Declare(newSymbol);
 
 				if (!OverloadedFunctions.TryGetValue(baseMangledName, out var candidates))
@@ -878,9 +892,22 @@ public sealed class BindingContext
 				var ctorOverloadedName = GetOverloadedMangledName(baseMangledName, ctorParameters.Select(p => p.Type).ToList());
 				var ctorSymbol = new FunctionSymbol(ctorOverloadedName, instantiatedType, ctorParameters)
 				{
+					SafetyTier = SafetyTier.Safe,
 					Visibility = ctorDecl.Visibility,
 					DeclaringUnit = originalUnit
 				};
+
+				if (ctorDecl.Attributes.Any(a => a.Name.Contains("UnsafeBody")))
+				{
+					ctorSymbol.IsUnsafeBody = true;
+					ctorSymbol.SafetyTier = SafetyTier.Unsafe;
+				}
+
+				if (ctorDecl.Attributes.Any(a => a.Name.Contains("MustUse")))
+				{
+					ctorSymbol.IsMustUse = true;
+				}
+
 				Globals.Declare(ctorSymbol);
 
 				if (!OverloadedFunctions.TryGetValue(baseMangledName, out var ctorCandidates))
