@@ -2534,19 +2534,66 @@ public sealed class ValidationPass(BindingContext context)
 
 		var structType = extendedType as StructTypeSymbol;
 		bool isMutating;
-		var isCtorOrDtor = method.Name.StartsWith('~') || method.Name == extendedTypeName;
+		var isCtorOrDtor = method.Name.Contains('~') || method.Name == extendedTypeName || method.Name.EndsWith($".{extendedTypeName}");
 
-		// 1. StrictMutability Enforcement
-		if (structType?.IsStrictMutability == true && method.Receiver == ReceiverContract.None && !isCtorOrDtor)
+		// 1. StrictMutability Enforcement:
+		// When [StrictMutability] is present, auto-inference is disabled.
+		// Every method (excluding constructors and destructors) must explicitly declare 'ref this' or 'refvar this'.
+		if (structType?.IsStrictMutability == true && !isCtorOrDtor)
 		{
-			context.Diagnostics.Report(context.FileContexts[context.CurrentUnit!], method.Span,
-				$"Method '{method.Name}' must declare 'ref this' or 'refvar this' receiver in [StrictMutability] struct.");
+			if (method.Receiver == ReceiverContract.None)
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, method.Span,
+					$"Method '{method.Name}' must declare 'ref this' or 'refvar this' receiver in [StrictMutability] struct '{extendedTypeName}'.");
+			}
 		}
 
-		// 2. Locate the registered function symbol using the unmutated base registration.
-		//    Resolved early so declaration-level [SuppressWarning("CVL1011")] can be honored.
+		// 2. Mutability Determination & Verification
+		if (method.Receiver == ReceiverContract.Refvar)
+		{
+			isMutating = true;
+		}
+		else if (method.Receiver == ReceiverContract.Ref)
+		{
+			isMutating = false;
+			// Guard: 'ref this' methods are strictly forbidden from mutating fields
+			if (structType != null && DetectFieldMutation(method.Body, structType))
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, method.Span,
+					$"Extension method '{method.Name}' declares read-only 'ref this' receiver but mutates field(s) of '{extendedTypeName}'.");
+			}
+		}
+		else
+		{
+			// Fallback: Auto-inference runs only when [StrictMutability] is NOT active
+			isMutating = forceMutableThis || (structType != null && DetectFieldMutation(method.Body, structType));
+
+			// CVL1011 Warning: Notify developer when auto-inference infers mutability
+			if (isMutating && !forceMutableThis && !isCtorOrDtor && structType?.IsStrictMutability != true)
+			{
+				// Check if this method symbol suppresses CVL1011
+				var baseMangledNameForLookup = context.GetMangledName($"{extendedTypeName}.{method.Name}", context.CurrentNamespace);
+				var lookupThisTypeForWarn = new PointerTypeSymbol(extendedType!, isMutable: false);
+				var lookupParamsForWarn = new List<TypeSymbol> { lookupThisTypeForWarn };
+				foreach (var p in method.Parameters)
+					lookupParamsForWarn.Add(context.ResolveType(p.Type)!);
+				var overloadedNameForWarn = context.GetOverloadedMangledName(baseMangledNameForLookup, lookupParamsForWarn);
+				var targetFuncSymbol = context.Globals.Lookup(overloadedNameForWarn) as FunctionSymbol;
+
+				if (targetFuncSymbol == null || !targetFuncSymbol.SuppressedWarnings.Contains(DiagnosticIds.AutoInferMutationWarning))
+				{
+					context.Diagnostics.ReportWarning(context.FileContexts[context.CurrentUnit!], method.Span,
+						$"Auto-inference chose mutability for method '{method.Name}'. Explicitly mark 'refvar this' to silence this warning.",
+						DiagnosticIds.AutoInferMutationWarning);
+				}
+			}
+		}
+
+		// 3. Locate the registered function symbol using the base registration
 		var baseMangledName = context.GetMangledName($"{extendedTypeName}.{method.Name}", context.CurrentNamespace);
-		var lookupThisType = new PointerTypeSymbol(extendedType!, isMutable: false); // Must use 'false' to match DeclarationPass
+		var lookupThisType = new PointerTypeSymbol(extendedType!, isMutable: false);
 		var lookupParams = new List<TypeSymbol> { lookupThisType };
 		foreach (var p in method.Parameters)
 		{
@@ -2556,40 +2603,9 @@ public sealed class ValidationPass(BindingContext context)
 		var lookupOverloadedName = context.GetOverloadedMangledName(baseMangledName, lookupParams);
 		var funcSymbol = context.Globals.Lookup(lookupOverloadedName) as FunctionSymbol;
 
-		// 3. Mutability Determination & Verification
-		if (method.Receiver == ReceiverContract.Refvar)
-		{
-			isMutating = true;
-		}
-		else if (method.Receiver == ReceiverContract.Ref)
-		{
-			isMutating = false;
-			if (structType != null && DetectFieldMutation(method.Body, structType))
-			{
-				context.Diagnostics.Report(context.FileContexts[context.CurrentUnit!], method.Span,
-					$"Extension method '{method.Name}' declares read-only 'ref this' receiver but mutates field(s) of '{extendedTypeName}'.");
-			}
-		}
-		else
-		{
-			// Fallback to auto-inference
-			isMutating = forceMutableThis || (structType != null && DetectFieldMutation(method.Body, structType));
-
-			// CVL1011 Warning if auto-inference chose mutation on a normal method
-			// (suppressed by '--nowarn CVL1011' at the driver level, or by
-			// declaration-level [SuppressWarning("CVL1011")]).
-			if (isMutating && !forceMutableThis && !isCtorOrDtor
-				&& funcSymbol?.SuppressedWarnings.Contains(DiagnosticIds.AutoInferMutationWarning) != true)
-			{
-				context.Diagnostics.ReportWarning(context.FileContexts[context.CurrentUnit!], method.Span,
-					$"Auto-inference chose mutability for method '{method.Name}'. Explicitly mark 'refvar this' to silence this warning.",
-					DiagnosticIds.AutoInferMutationWarning);
-			}
-		}
-
 		if (funcSymbol is not null)
 		{
-			// Upgrade the registered symbol's "this" parameter mutability based on our scan/markers!
+			// Upgrade the registered symbol's "this" parameter mutability
 			if (funcSymbol.Parameters[0].Type is PointerTypeSymbol thisParamType)
 			{
 				thisParamType.IsMutable = isMutating;

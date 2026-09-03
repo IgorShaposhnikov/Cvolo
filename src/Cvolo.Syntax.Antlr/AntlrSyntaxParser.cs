@@ -6,7 +6,6 @@ using Cvolo.Core.AST.Directives;
 using Cvolo.Core.AST.Expressions;
 using Cvolo.Core.AST.Statements;
 using Cvolo.Core.Diagnostics;
-using Cvolo.Syntax;
 
 namespace Cvolo.Syntax.Antlr;
 
@@ -927,6 +926,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 					var stmtNode = BuildStatement(stmt);
 					if (stmtNode is not null) body.Add(stmtNode);
 				}
+
 				cases.Add(new SwitchCaseSyntax(SpanOf(caseCtx), "", null, isDefault: true, body));
 			}
 			else

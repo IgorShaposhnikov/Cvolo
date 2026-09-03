@@ -572,9 +572,12 @@ public sealed class BindingContext
 				effectiveVisibility = argVis;
 		}
 
+		var isStrictMut = templateDecl.Attributes.Any(a => NormalizeAttributeName(a.Name) == "StrictMutability");
+
 		var instantiatedType = new StructTypeSymbol(instName, fields)
 		{
-			Visibility = effectiveVisibility
+			Visibility = effectiveVisibility,
+			IsStrictMutability = isStrictMut
 		};
 
 		// Restore active contexts back to previous state
@@ -839,7 +842,17 @@ public sealed class BindingContext
 				}
 
 				var instBody = SubstituteBlockGenerics(method.Body);
-				var instDecl = new FunctionDeclarationSyntax(method.Span, returnType.Name, overloadedName, [], instParams, instBody, method.Attributes, method.Modifier, visibility: method.Visibility);
+				var instDecl = new FunctionDeclarationSyntax(
+					method.Span,
+					returnType.Name,
+					overloadedName,
+					[],
+					instParams,
+					instBody,
+					method.Attributes,
+					method.Modifier,
+					method.Receiver,
+					method.Visibility);
 
 				MonomorphizedExtensionDecls.Add(instDecl);
 				MonomorphizedExtensionExtendedTypes[overloadedName] = instantiatedType.Name;
@@ -1081,5 +1094,13 @@ public sealed class BindingContext
 		if (type is UnionTypeSymbol ut) return ut.Visibility;
 		if (type is EnumTypeSymbol et) return et.Visibility;
 		return Visibility.Public; // Primitives are always public
+	}
+
+	private static string NormalizeAttributeName(string attributeName)
+	{
+		var simple = attributeName.Contains('.') ? attributeName[(attributeName.LastIndexOf('.') + 1)..] : attributeName;
+		if (simple.EndsWith("Attribute", StringComparison.Ordinal))
+			simple = simple[..^"Attribute".Length];
+		return simple;
 	}
 }
