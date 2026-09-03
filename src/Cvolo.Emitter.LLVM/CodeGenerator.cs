@@ -19,6 +19,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
     private readonly LLVMBuilderRef _builder;
     private readonly LLVMContextRef _context; // Holds the native LLVM Context
     private readonly ILLVMOptimizer? _optimizer;
+	private readonly IRVerifier? _irVerifier;
 
     // Metadata Cache Dictionaries
     private readonly Dictionary<string, LLVMValueRef> _globals = [];
@@ -42,12 +43,14 @@ public sealed class CodeGenerator : IEmitter, IDisposable
     private int _unsafeDepth;
     private (LLVMTypeRef Type, LLVMValueRef Func)? _llvmTrap;
     private readonly Dictionary<string, LLVMValueRef> _enumValuesGlobals = [];
-    public CodeGenerator(string moduleName, ILLVMOptimizer? optimizer = null)
+
+    public CodeGenerator(string moduleName, ILLVMOptimizer? optimizer = null, IRVerifier? irVerifier = null)
     {
         _context = LLVMContextRef.Global;
         _module = _context.CreateModuleWithName(moduleName);
         _builder = _context.CreateBuilder();
         _optimizer = optimizer;
+		_irVerifier = irVerifier;
     }
 
     public LLVMModuleRef Module => _module;
@@ -356,7 +359,17 @@ public sealed class CodeGenerator : IEmitter, IDisposable
             }
         }
 
+		// 1. Create a deep clone of the unoptimized module state for diagnostic fallback
+		var noOptimizedModule = _module.Clone();
+
+		// 2. Run the optimization pipeline
         _optimizer?.Optimize(_module);
+
+		// 3. Verify the resulting module, providing the unoptimized fallback
+		_irVerifier?.VerifyModule(_module, noOptimizedModule);
+
+		// 4. Dispose of the unoptimized clone if verification passes to prevent native leaks
+		noOptimizedModule.Dispose();
 
         return _module.PrintToString();
     }
@@ -2301,8 +2314,10 @@ public sealed class CodeGenerator : IEmitter, IDisposable
                 if (operandType is not EnumTypeSymbol && TypeSymbol.IsIntegerType(operandType))
                     return _bindingContext.ResolveType($"Option<{castEnum.Name}>") ?? result;
             }
+
             return result;
         }
+
         return GetExprType(u.Operand);
     }
 

@@ -177,6 +177,7 @@ internal sealed class CompilerDriver : ICompilerDriver
 		var outputDirectory = project.ProjectDirectory;
 		var objDirectory = Path.Combine(outputDirectory, "obj", "Debug");
 		var binDirectory = Path.Combine(outputDirectory, "bin", "Debug");
+		var compilationFailuresDirectory = Path.Combine(outputDirectory, "CompilationFailures", "Debug");
 
 		Directory.CreateDirectory(objDirectory);
 		Directory.CreateDirectory(binDirectory);
@@ -191,7 +192,8 @@ internal sealed class CompilerDriver : ICompilerDriver
 
 		// 6. Programmatic LLVM Code Generation pass (Triggers optimization passes internally)
 		var optimizer = new IrOptimizer(parsedLevel);
-		IEmitter emitter = new CodeGenerator("cvolo_module", optimizer);
+		var irVerifier = new IRVerifier(compilationFailuresDirectory);
+		IEmitter emitter = new CodeGenerator("cvolo_module", optimizer, irVerifier);
 		var ir = emitter.Emit(asts, firstContext!, binder.Context);
 
 		File.WriteAllText(llPath, ir);
