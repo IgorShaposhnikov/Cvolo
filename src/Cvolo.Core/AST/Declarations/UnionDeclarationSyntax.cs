@@ -9,7 +9,8 @@ public sealed class UnionDeclarationSyntax(
 	IReadOnlyList<string> genericParameters,
 	IReadOnlyList<UnionFieldSyntax> fields,
 	IReadOnlyList<AttributeSyntax>? attributes = null,
-	Visibility? visibility = null) : SyntaxNode(span)
+	Visibility? visibility = null,
+	IReadOnlyDictionary<string, string>? genericParameterDefaults = null) : SyntaxNode(span)
 {
 	public override SyntaxKind Kind => SyntaxKind.UnionDeclaration;
 
@@ -18,6 +19,8 @@ public sealed class UnionDeclarationSyntax(
 	public IReadOnlyList<UnionFieldSyntax> Fields { get; } = fields;
 	public IReadOnlyList<AttributeSyntax> Attributes { get; } = attributes ?? [];
 	public Visibility Visibility { get; } = visibility ?? Visibility.Internal;
+
+	public IReadOnlyDictionary<string, string> GenericParameterDefaults { get; } = genericParameterDefaults ?? new Dictionary<string, string>();
 
 	public override IEnumerable<SyntaxNode> GetChildren() => Fields;
 }

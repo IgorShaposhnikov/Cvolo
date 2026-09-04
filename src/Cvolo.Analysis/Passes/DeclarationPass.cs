@@ -12,6 +12,8 @@ namespace Cvolo.Analysis.Passes;
 
 public sealed class DeclarationPass(BindingContext context)
 {
+	private ClassificationAnalyzer? _classification;
+	private ClassificationAnalyzer Classification => _classification ??= new ClassificationAnalyzer(context);
 	// M1 attribute model: only System.* intrinsics exist. Their [AttributeUsage]-style rules
 	// (syntactic target x safety context, per spec section 4) are modeled compiler-side until
 	// the language has enums/inheritance to declare them in source. Attributes are erased
@@ -546,6 +548,17 @@ public sealed class DeclarationPass(BindingContext context)
 		{
 			context.SymbolUnits[mangledName] = context.CurrentUnit!;
 			context.GenericStructTemplates[mangledName] = structDecl;
+
+			// Validate default generic parameter types are TrivialCopy (CVL1040)
+			foreach (var (paramName, defaultTypeName) in structDecl.GenericParameterDefaults)
+			{
+				var defaultType = context.ResolveType(defaultTypeName);
+				if (defaultType is not null && Classification.Classify(defaultType) != CopyKind.TrivialCopy)
+				{
+					var currentFileContext = context.FileContexts[context.CurrentUnit!];
+					context.Diagnostics.Report(currentFileContext, structDecl.Span, $"Default value for generic parameter '{paramName}' must be a Trivial Copy Type", DiagnosticIds.DefaultMustBeTrivialCopy);
+				}
+			}
 
 			var placeholderFields = new List<StructFieldSymbol>();
 
@@ -1207,6 +1220,17 @@ public sealed class DeclarationPass(BindingContext context)
 				context.GenericExtensionTemplates[extendedType.Name] = templates;
 			}
 
+			// Validate default generic parameter types are TrivialCopy (CVL1040)
+			foreach (var (paramName, defaultTypeName) in extDecl.GenericParameterDefaults)
+			{
+				var defaultType = context.ResolveType(defaultTypeName);
+				if (defaultType is not null && Classification.Classify(defaultType) != CopyKind.TrivialCopy)
+				{
+					var currentFileContext = context.FileContexts[context.CurrentUnit!];
+					context.Diagnostics.Report(currentFileContext, extDecl.Span, $"Default value for generic parameter '{paramName}' must be a Trivial Copy Type", DiagnosticIds.DefaultMustBeTrivialCopy);
+				}
+			}
+
 			templates.Add(extDecl);
 			return;
 		}
@@ -1765,6 +1789,17 @@ public sealed class DeclarationPass(BindingContext context)
 		{
 			context.SymbolUnits[mangledName] = context.CurrentUnit!;
 			context.GenericUnionTemplates[mangledName] = unionDecl;
+
+			// Validate default generic parameter types are TrivialCopy (CVL1040)
+			foreach (var (paramName, defaultTypeName) in unionDecl.GenericParameterDefaults)
+			{
+				var defaultType = context.ResolveType(defaultTypeName);
+				if (defaultType is not null && Classification.Classify(defaultType) != CopyKind.TrivialCopy)
+				{
+					var currentFileContext = context.FileContexts[context.CurrentUnit!];
+					context.Diagnostics.Report(currentFileContext, unionDecl.Span, $"Default value for generic parameter '{paramName}' must be a Trivial Copy Type", DiagnosticIds.DefaultMustBeTrivialCopy);
+				}
+			}
 
 			var placeholderFields = new List<UnionFieldSymbol>();
 			var templateSymbol = new UnionTypeSymbol(mangledName, placeholderFields)

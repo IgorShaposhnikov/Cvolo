@@ -53,6 +53,7 @@ GLOBAL: 'global';
 SWITCH: 'switch';
 CASE: 'case';
 DEFAULT: 'default';
+WHERE: 'where';
 
 // Punctuation
 LPAREN: '(';

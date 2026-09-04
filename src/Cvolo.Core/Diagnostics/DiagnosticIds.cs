@@ -80,6 +80,16 @@ public static class DiagnosticIds
 
 	/// <summary>A private or anonymous symbol is forced into a public export path.</summary>
 	public const string PrivateSymbolExport = "CVL1039";
+
+	/// <summary>Default value for generic parameter must be a Trivial Copy Type.</summary>
+	public const string DefaultMustBeTrivialCopy = "CVL1040";
+
+	/// <summary>Generic parameter does not have a default value and must be specified.</summary>
+	public const string GenericParameterNoDefault = "CVL1041";
+
+	/// <summary>Default type does not satisfy constraints of generic parameter.</summary>
+	public const string DefaultTypeConstraintMismatch = "CVL1042";
+
 	/// <summary>'expose using' directive used outside a namespace declaration.</summary>
 	public const string ExposeUsingOutsideNamespace = "CVL1060";
 

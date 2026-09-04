@@ -11,7 +11,8 @@ public sealed class ExtensionDeclarationSyntax(
 	IReadOnlyList<ConstructorDeclarationSyntax>? constructors = null,
 	IReadOnlyList<string>? genericParameters = null,
 	string? conformsTo = null,
-	Visibility? visibility = null) : SyntaxNode(span)
+	Visibility? visibility = null,
+	IReadOnlyDictionary<string, string>? genericParameterDefaults = null) : SyntaxNode(span)
 {
 	public override SyntaxKind Kind => SyntaxKind.ExtensionDeclaration;
 
@@ -26,6 +27,8 @@ public sealed class ExtensionDeclarationSyntax(
 
 	/// <summary>Baseline visibility inherited by all members of this block; null means unspecified (defaults to internal).</summary>
 	public Visibility Visibility { get; } = visibility ?? Visibility.Internal;
+
+	public IReadOnlyDictionary<string, string> GenericParameterDefaults { get; } = genericParameterDefaults ?? new Dictionary<string, string>();
 
 	public override IEnumerable<SyntaxNode> GetChildren() => [.. Methods, .. Destructors, .. Constructors];
 }

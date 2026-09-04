@@ -102,6 +102,9 @@ public sealed class CvoloSourcePrinter
 			case VoidLiteralExpressionSyntax:
 				return "void";
 
+			case DefaultExpressionSyntax def:
+				return $"default({def.TypeName})";
+
 			case UnionDeclarationSyntax u:
 				var uGenerics = u.GenericParameters.Count > 0 ? $"<{string.Join(", ", u.GenericParameters)}>" : "";
 				var uFields = string.Join("\n", u.Fields.Select(f => $"{ind}    {f.Type} {f.Name};"));

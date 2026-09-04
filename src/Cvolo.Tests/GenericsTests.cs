@@ -1,3 +1,5 @@
+using Cvolo.Analysis;
+using Cvolo.Analysis.Symbols.Structs;
 using Cvolo.Core.Diagnostics;
 using Cvolo.Projects;
 using Cvolo.Syntax.Antlr;
@@ -15,6 +17,8 @@ public sealed class GenericsTests : CompilerTestBase
 	[InlineData("GenericConstructor.cvl")]
 	[InlineData("GenericExtensionComplex.cvl")]
 	[InlineData("GenericConstructorComplex.cvl")]
+	[InlineData("DefaultGenericParams.cvl")]
+	[InlineData("DefaultOperator.cvl")]
 	public void Parser_Generics_Should_Parse(string caseName)
 	{
 		var assemblyDir = Path.GetDirectoryName(typeof(GenericsTests).Assembly.Location)!;
@@ -55,6 +59,8 @@ public sealed class GenericsTests : CompilerTestBase
 
 	[Theory]
 	[InlineData("GenericConstructorDefensiveFail", "does not initialize field 'Weight'")]
+	[InlineData("DefaultGenericParamsBadDefault", "Default value for generic parameter 'A' must be a Trivial Copy Type")]
+	[InlineData("DefaultGenericParamsMissingDefault", "Generic parameter 'A' does not have a default value and must be specified")]
 	public void Generics_Rejections(string caseName, string expectedError)
 	{
 		var fileName = $"Generics/{caseName}.cvl";
@@ -62,5 +68,40 @@ public sealed class GenericsTests : CompilerTestBase
 
 		Assert.Equal(1, exitCode);
 		Assert.Contains(expectedError, stderr);
+	}
+
+	[Fact]
+	public void AnalyzeProject_DefaultGenericParams_FillsInDefaultType()
+	{
+		var (asts, context) = AnalyzeProject("Generics/DefaultGenericParams.cvl");
+
+		var listType = context.ResolveType("List<int>");
+		Assert.NotNull(listType);
+
+		var listStruct = Assert.IsType<StructTypeSymbol>(listType);
+		Assert.Contains("MallocAllocator", listStruct.Name);
+
+		var allocatorField = listStruct.Fields.FirstOrDefault(f => f.Name == "Allocator");
+		Assert.NotNull(allocatorField);
+		Assert.Equal("MallocAllocator", allocatorField!.Type.Name);
+	}
+
+	[Fact]
+	public void AnalyzeProject_DefaultOperator_ResolvesTrivialCopyType()
+	{
+		var (asts, context) = AnalyzeProject("Generics/DefaultOperator.cvl");
+
+		var diagnostics = context.Diagnostics.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error).ToList();
+		var defaultErrors = diagnostics.Where(d => d.Message.Contains("must be a Trivial Copy Type") && d.Message.Contains("default")).ToList();
+		Assert.Empty(defaultErrors);
+	}
+
+	[Fact]
+	public void AnalyzeProject_DefaultGenericParams_BadDefault_ReportsCVL1040()
+	{
+		var (asts, context) = AnalyzeProject("Generics/DefaultGenericParamsBadDefault.cvl");
+
+		var diagnostics = context.Diagnostics.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error).ToList();
+		Assert.Contains(diagnostics, d => d.Id == DiagnosticIds.DefaultMustBeTrivialCopy);
 	}
 }

@@ -1,0 +1,17 @@
+using System;
+
+struct Required<T, A>
+{
+    T Value;
+    A Allocator;
+}
+
+int main()
+{
+    Required<int> r = Required<int> {
+        Value: 10,
+        Allocator: 0
+    };
+    Console.WriteLine($"{r.Value}");
+    return 0;
+}

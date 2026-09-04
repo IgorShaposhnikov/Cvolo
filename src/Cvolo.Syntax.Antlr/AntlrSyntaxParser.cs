@@ -222,6 +222,22 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		return attributes;
 	}
 
+	private Dictionary<string, string> BuildWhereClause(CvoloParser.WhereClauseContext? whereCtx)
+	{
+		var defaults = new Dictionary<string, string>();
+		if (whereCtx is null)
+			return defaults;
+
+		foreach (var constraint in whereCtx.whereConstraint())
+		{
+			var paramName = constraint.Identifier().GetText();
+			var typeName = GetTypeName(constraint.type());
+			defaults[paramName] = typeName;
+		}
+
+		return defaults;
+	}
+
 	private StructDeclarationSyntax BuildStructDeclaration(CvoloParser.StructDeclarationContext context)
 	{
 		var name = context.Identifier().GetText();
@@ -234,12 +250,14 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				generics.Add(id.GetText());
 		}
 
+		var defaults = BuildWhereClause(context.whereClause());
+
 		var fields = new List<StructFieldSyntax>();
 		foreach (var field in context.structField())
 			fields.Add(new StructFieldSyntax(SpanOf(field), GetTypeName(field.type()), field.Identifier().GetText(), GetVisibilityModifier(field.visibilityModifier())));
 		var embeddedType = context.EMBED() is not null && context.qualifiedName() is { } embedCtx ? embedCtx.GetText() : null;
 		var structAttributes = BuildAttributeList(context.attributeList());
-		return new StructDeclarationSyntax(SpanOf(context), name, generics, fields, embeddedType, structAttributes, GetVisibilityModifier(context.visibilityModifier()));
+		return new StructDeclarationSyntax(SpanOf(context), name, generics, fields, embeddedType, structAttributes, GetVisibilityModifier(context.visibilityModifier()), defaults);
 	}
 
 	private ParameterSyntax BuildParameter(CvoloParser.ParameterContext context)
@@ -523,9 +541,11 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 					var elseExpr = BuildExpression(ternaryCtx.expression(2));
 					return new TernaryExpressionSyntax(SpanOf(ternaryCtx), cond, thenExpr, elseExpr);
 				}
-			case CvoloParser.VoidLiteralExpressionContext voidCtx:
-				return new VoidLiteralExpressionSyntax(SpanOf(voidCtx));
-			default:
+		case CvoloParser.VoidLiteralExpressionContext voidCtx:
+			return new VoidLiteralExpressionSyntax(SpanOf(voidCtx));
+		case CvoloParser.DefaultExpressionContext defaultCtx:
+			return new DefaultExpressionSyntax(SpanOf(defaultCtx), GetTypeName(defaultCtx.type()));
+		default:
 				return new IdentifierExpressionSyntax(SpanOf(context), context.GetText());
 		}
 
@@ -784,11 +804,13 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				generics.Add(id.GetText());
 		}
 
+		var defaults = BuildWhereClause(context.whereClause());
+
 		string? conformsTo = null;
 		if (context.qualifiedName() is { } conformsCtx)
 			conformsTo = conformsCtx.GetText();
 
-		return new ExtensionDeclarationSyntax(SpanOf(context), extendedTypeName, methods, destructors, constructors, generics, conformsTo, GetVisibilityModifier(context.visibilityModifier()));
+		return new ExtensionDeclarationSyntax(SpanOf(context), extendedTypeName, methods, destructors, constructors, generics, conformsTo, GetVisibilityModifier(context.visibilityModifier()), defaults);
 	}
 
 	private InterfaceDeclarationSyntax BuildInterfaceDeclaration(CvoloParser.InterfaceDeclarationContext context)
@@ -884,12 +906,14 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				generics.Add(id.GetText());
 		}
 
+		var defaults = BuildWhereClause(context.whereClause());
+
 		var fields = new List<UnionFieldSyntax>();
 		foreach (var field in context.unionField())
 			fields.Add(new UnionFieldSyntax(SpanOf(field), GetTypeName(field.type()), field.Identifier().GetText(), GetVisibilityModifier(field.visibilityModifier())));
 
 		var unionAttributes = BuildAttributeList(context.attributeList());
-		return new UnionDeclarationSyntax(SpanOf(context), name, generics, fields, unionAttributes, GetVisibilityModifier(context.visibilityModifier()));
+		return new UnionDeclarationSyntax(SpanOf(context), name, generics, fields, unionAttributes, GetVisibilityModifier(context.visibilityModifier()), defaults);
 	}
 
 	private EnumDeclarationSyntax BuildEnumDeclaration(CvoloParser.EnumDeclarationContext context)

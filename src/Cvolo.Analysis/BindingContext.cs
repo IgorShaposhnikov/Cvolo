@@ -1,3 +1,4 @@
+using Cvolo.Analysis.Passes;
 using Cvolo.Analysis.Symbols;
 using Cvolo.Analysis.Symbols.Base;
 using Cvolo.Analysis.Symbols.Collections;
@@ -13,6 +14,8 @@ namespace Cvolo.Analysis;
 public sealed class BindingContext
 {
 	public DiagnosticBag Diagnostics { get; } = new();
+	private ClassificationAnalyzer? _classification;
+	public ClassificationAnalyzer Classification => _classification ??= new ClassificationAnalyzer(this);
 	public SymbolTable Globals { get; } = new();
 	public Dictionary<string, StructTypeSymbol> StructTypes { get; } = [];
 	public Dictionary<VariableDeclarationSyntax, VariableSymbol> VariableSymbols { get; } = [];
@@ -199,8 +202,37 @@ public sealed class BindingContext
 			{
 				if (!TryResolveTypeArguments(argsPart, out var typeArgs))
 					return null;
-				if (typeArgs.Count != templateDecl.GenericParameters.Count)
+				if (typeArgs.Count > templateDecl.GenericParameters.Count)
 					return null;
+
+				// Fill in default generic arguments for missing trailing args
+				if (typeArgs.Count < templateDecl.GenericParameters.Count)
+				{
+					for (var i = typeArgs.Count; i < templateDecl.GenericParameters.Count; i++)
+					{
+						var paramName = templateDecl.GenericParameters[i];
+						if (templateDecl.GenericParameterDefaults.TryGetValue(paramName, out var defaultTypeName))
+						{
+							var defaultType = ResolveType(defaultTypeName);
+							if (defaultType is null)
+								return null;
+							if (defaultType is StructTypeSymbol or UnionTypeSymbol
+								&& Classification.Classify(defaultType) != CopyKind.TrivialCopy)
+							{
+								var currentFileContext = FileContexts[CurrentUnit!];
+								Diagnostics.Report(currentFileContext, new TextSpan(0, 0), $"Default value for generic parameter '{paramName}' must be a Trivial Copy Type", DiagnosticIds.DefaultMustBeTrivialCopy);
+								return null;
+							}
+							typeArgs.Add(defaultType);
+						}
+						else
+						{
+							var currentFileContext = FileContexts[CurrentUnit!];
+							Diagnostics.Report(currentFileContext, new TextSpan(0, 0), $"Generic parameter '{paramName}' does not have a default value and must be specified");
+							return null;
+						}
+					}
+				}
 
 				var instantiatedType = InstantiateGenericStruct(templateDecl, baseType.Name, typeArgs);
 				StructTypes[name] = instantiatedType;
@@ -211,8 +243,36 @@ public sealed class BindingContext
 			{
 				if (!TryResolveTypeArguments(argsPart, out var unionTypeArgs))
 					return null;
-				if (unionTypeArgs.Count != unionTemplateDecl.GenericParameters.Count)
+				if (unionTypeArgs.Count > unionTemplateDecl.GenericParameters.Count)
 					return null;
+
+				if (unionTypeArgs.Count < unionTemplateDecl.GenericParameters.Count)
+				{
+					for (var i = unionTypeArgs.Count; i < unionTemplateDecl.GenericParameters.Count; i++)
+					{
+						var paramName = unionTemplateDecl.GenericParameters[i];
+						if (unionTemplateDecl.GenericParameterDefaults.TryGetValue(paramName, out var defaultTypeName))
+						{
+							var defaultType = ResolveType(defaultTypeName);
+							if (defaultType is null)
+								return null;
+							if (defaultType is StructTypeSymbol or UnionTypeSymbol
+								&& Classification.Classify(defaultType) != CopyKind.TrivialCopy)
+							{
+								var currentFileContext = FileContexts[CurrentUnit!];
+								Diagnostics.Report(currentFileContext, new TextSpan(0, 0), $"Default value for generic parameter '{paramName}' must be a Trivial Copy Type", DiagnosticIds.DefaultMustBeTrivialCopy);
+								return null;
+							}
+							unionTypeArgs.Add(defaultType);
+						}
+						else
+						{
+							var currentFileContext = FileContexts[CurrentUnit!];
+							Diagnostics.Report(currentFileContext, new TextSpan(0, 0), $"Generic parameter '{paramName}' does not have a default value and must be specified");
+							return null;
+						}
+					}
+				}
 
 				var instantiatedType = InstantiateGenericUnion(unionTemplateDecl, baseUnion.Name, unionTypeArgs);
 				UnionTypes[name] = instantiatedType;

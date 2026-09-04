@@ -1,0 +1,22 @@
+using System;
+
+struct MallocAllocator {}
+
+struct List<T, A>
+    where default A : MallocAllocator
+{
+    T First;
+    A Allocator;
+}
+
+int main()
+{
+    // Omit the allocator: use default MallocAllocator
+    List<int> l = List<int> {
+        First: 42,
+        Allocator: MallocAllocator { }
+    };
+
+    Console.WriteLine($"Value: {l.First}");
+    return 0;
+}

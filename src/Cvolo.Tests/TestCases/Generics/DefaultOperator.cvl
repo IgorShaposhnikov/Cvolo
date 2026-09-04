@@ -1,0 +1,20 @@
+using System;
+
+struct Point {
+    int X;
+    int Y;
+}
+
+int main()
+{
+    var int a = default(int);
+    var double b = default(double);
+    var bool c = default(bool);
+    var Point p = default(Point);
+
+    Console.WriteLine($"a: {a}");
+    Console.WriteLine($"b: {b}");
+    Console.WriteLine($"c: {c}");
+    Console.WriteLine($"p.X: {p.X}, p.Y: {p.Y}");
+    return 0;
+}

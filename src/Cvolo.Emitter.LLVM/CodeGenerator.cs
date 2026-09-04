@@ -757,6 +757,11 @@ public sealed class CodeGenerator : IEmitter, IDisposable
             case NullLiteralExpressionSyntax:
                 // Defensive: the binder rejects 'null' in safe code before emission.
                 return LLVMValueRef.CreateConstPointerNull(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0));
+            case DefaultExpressionSyntax d:
+                {
+                    var targetType = _bindingContext!.ResolveType(d.TypeName)!;
+                    return LLVMValueRef.CreateConstNull(GetLLVMType(targetType));
+                }
             case IdentifierExpressionSyntax id:
                 return Load(id.Name);
             case MemberAccessExpressionSyntax m:

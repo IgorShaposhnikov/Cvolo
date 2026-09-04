@@ -1,0 +1,27 @@
+using System;
+
+struct Movable {
+    int Data;
+}
+
+extension Movable {
+    ~Movable() {
+    }
+}
+
+struct Container<T, A>
+    where default A : Movable
+{
+    T Value;
+    A Allocator;
+}
+
+int main()
+{
+    Container<int> c = Container<int> {
+        Value: 10,
+        Allocator: Movable { Data: 0 }
+    };
+    Console.WriteLine($"{c.Value}");
+    return 0;
+}

@@ -62,11 +62,11 @@ externDeclaration
 	;
 
 structDeclaration
-	: attributeList* visibilityModifier? STRUCT Identifier (LT genericParameterList GT)? (EMBED qualifiedName)? LBRACE structField* RBRACE SEMI?
+	: attributeList* visibilityModifier? STRUCT Identifier (LT genericParameterList GT)? (EMBED qualifiedName)? whereClause? LBRACE structField* RBRACE SEMI?
 	;
 
 unionDeclaration
-	: attributeList* visibilityModifier? UNION Identifier (LT genericParameterList GT)? LBRACE unionField* RBRACE SEMI?
+	: attributeList* visibilityModifier? UNION Identifier (LT genericParameterList GT)? whereClause? LBRACE unionField* RBRACE SEMI?
 	;
 
 unionField
@@ -82,7 +82,7 @@ enumVariant
 	;
 
 extensionDeclaration
-	: visibilityModifier? EXTENSION Identifier (LT genericParameterList GT)? (COLON qualifiedName)? LBRACE (functionDeclaration | destructorDeclaration | constructorDeclaration)* RBRACE SEMI?
+	: visibilityModifier? EXTENSION Identifier (LT genericParameterList GT)? (COLON qualifiedName)? whereClause? LBRACE (functionDeclaration | destructorDeclaration | constructorDeclaration)* RBRACE SEMI?
 	;
 
 interfaceDeclaration
@@ -271,6 +271,7 @@ expression
 	| FALSE																				# booleanLiteralExpression
 	| NULL																				# nullLiteralExpression
 	| VOID																				# voidLiteralExpression
+	| DEFAULT LPAREN type RPAREN															# defaultExpression
 	| LPAREN expression RPAREN															# parenthesizedExpression
 	;
 
@@ -288,6 +289,14 @@ structMemberInitializer
 
 genericParameterList
 	: Identifier (COMMA Identifier)*
+	;
+
+whereClause
+	: WHERE whereConstraint (COMMA whereConstraint)*
+	;
+
+whereConstraint
+	: DEFAULT Identifier COLON type
 	;
 
 typeList

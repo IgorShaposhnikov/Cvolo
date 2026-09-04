@@ -671,6 +671,24 @@ public sealed class ValidationPass(BindingContext context)
 				break;
 			case VoidLiteralExpressionSyntax:
 				break;
+			case DefaultExpressionSyntax defaultExpr:
+				var defaultTy = context.ResolveType(defaultExpr.TypeName);
+				if (defaultTy is null)
+				{
+					var currentFileContext = context.FileContexts[context.CurrentUnit!];
+					context.Diagnostics.Report(currentFileContext, defaultExpr.Span, $"Unknown type '{defaultExpr.TypeName}' in default expression");
+				}
+				else if (defaultTy is StructTypeSymbol or UnionTypeSymbol)
+				{
+					var defaultKind = Classification.Classify(defaultTy);
+					if (defaultKind != CopyKind.TrivialCopy)
+					{
+						var currentFileContext = context.FileContexts[context.CurrentUnit!];
+						context.Diagnostics.Report(currentFileContext, defaultExpr.Span, $"Type '{defaultExpr.TypeName}' cannot be used with default because it is not a Trivial Copy Type");
+					}
+				}
+
+				break;
 		}
 	}
 
@@ -1154,6 +1172,7 @@ public sealed class ValidationPass(BindingContext context)
 			ParenthesizedStructInitializerExpressionSyntax p => p.ResolvedStructTypeName is not null ? context.ResolveType(p.ResolvedStructTypeName) : null,
 			TernaryExpressionSyntax t => CheckTernaryExpression(t, scope),
 			VoidLiteralExpressionSyntax => TypeSymbol.Void,
+			DefaultExpressionSyntax d => context.ResolveType(d.TypeName),
 			UnaryExpressionSyntax unary => GetUnaryExpressionType(unary, scope),
 			BinaryExpressionSyntax bin when bin.Operator is "|" or "&" or "^" => GetFlagsBinaryType(bin, scope),
 			_ => null

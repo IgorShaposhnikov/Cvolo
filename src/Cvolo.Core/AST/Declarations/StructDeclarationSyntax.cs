@@ -3,7 +3,7 @@ using Cvolo.Core.Diagnostics;
 
 namespace Cvolo.Core.AST.Declarations;
 
-public sealed class StructDeclarationSyntax(TextSpan span, string name, IReadOnlyList<string> genericParameters, IReadOnlyList<StructFieldSyntax> fields, string? embeddedType = null, IReadOnlyList<AttributeSyntax>? attributes = null, Visibility? visibility = null) : SyntaxNode(span)
+public sealed class StructDeclarationSyntax(TextSpan span, string name, IReadOnlyList<string> genericParameters, IReadOnlyList<StructFieldSyntax> fields, string? embeddedType = null, IReadOnlyList<AttributeSyntax>? attributes = null, Visibility? visibility = null, IReadOnlyDictionary<string, string>? genericParameterDefaults = null) : SyntaxNode(span)
 {
 	public override SyntaxKind Kind => SyntaxKind.StructDeclaration;
 
@@ -19,6 +19,8 @@ public sealed class StructDeclarationSyntax(TextSpan span, string name, IReadOnl
 	public IReadOnlyList<AttributeSyntax> Attributes { get; } = attributes ?? [];
 
 	public Visibility Visibility { get; } = visibility ?? Visibility.Internal;
+
+	public IReadOnlyDictionary<string, string> GenericParameterDefaults { get; } = genericParameterDefaults ?? new Dictionary<string, string>();
 
 	public override IEnumerable<SyntaxNode> GetChildren() => Fields;
 }

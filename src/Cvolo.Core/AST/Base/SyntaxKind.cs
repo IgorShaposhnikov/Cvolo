@@ -56,4 +56,5 @@ UnionDeclaration,
 	InterfaceMember,
 	ProtocolDeclaration,
 	ProtocolMember,
+	DefaultExpression,
 }
