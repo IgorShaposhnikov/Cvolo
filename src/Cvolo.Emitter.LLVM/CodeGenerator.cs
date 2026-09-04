@@ -554,18 +554,18 @@ public sealed class CodeGenerator : IEmitter, IDisposable
             }
         }
 
-        EmitBlock(func.Body);
+		EmitBlock(func.Body);
 
-        if (func.ReturnType == "void" && !EndsWithReturn(func.Body))
-        {
-            EmitCleanup([.. _locals.Keys]);
-            _builder.BuildRetVoid();
-        }
+		if (func.ReturnType == "void" && !EndsWithReturn(func.Body))
+		{
+			EmitCleanup([.. _locals.Keys], skipHeapFree: _ownershipTransferFunction);
+			_builder.BuildRetVoid();
+		}
 
-        _unsafeDepth = 0;
-    }
+		_unsafeDepth = 0;
+	}
 
-    private void EmitBlock(BlockStatementSyntax block)
+	private void EmitBlock(BlockStatementSyntax block)
     {
         var blockVars = new List<string>();
 
@@ -643,15 +643,15 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 					var fieldIndex = GetFieldIndex(optionUnion, "None");
 
 					var tagPtr = _builder.BuildGEP2(unionLayout, tempAlloc, new LLVMValueRef[] {
-						LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
-						LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0)
-					}, "union_tag_ptr");
+					LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
+					LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0)
+				}, "union_tag_ptr");
 					_builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, (ulong)fieldIndex), tagPtr);
 				}
 
 				var loadedNone = _builder.BuildLoad2(unionLayout, tempAlloc, "loaded_none");
 
-				EmitCleanup([.. _locals.Keys]);
+				EmitCleanup([.. _locals.Keys], skipHeapFree: _ownershipTransferFunction);
 				_builder.BuildRet(loadedNone);
 				return;
 			}
@@ -661,7 +661,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			var type = GetExprType(ret.Expression);
 
 			// Implicit Dereference: if expected return type is value but actual is a reference
-			if (type is PointerTypeSymbol retPtr && expectedType is not PointerTypeSymbol)
+			if (type is PointerTypeSymbol retPtr && value.TypeOf.Kind == LLVMTypeKind.LLVMPointerTypeKind && expectedType is not PointerTypeSymbol)
 			{
 				value = _builder.BuildLoad2(GetLLVMType(retPtr.ReferencedType), value, "deref_ret");
 				type = retPtr.ReferencedType;
@@ -676,7 +676,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				materialized = _builder.BuildLoad2(layout, value, "struct_ret_val");
 			}
 
-			EmitCleanup([.. _locals.Keys]);
+			EmitCleanup([.. _locals.Keys], skipHeapFree: _ownershipTransferFunction);
 
 			if (materialized is not null)
 			{
@@ -689,7 +689,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		}
 		else
 		{
-			EmitCleanup([.. _locals.Keys]);
+			EmitCleanup([.. _locals.Keys], skipHeapFree: _ownershipTransferFunction);
 			_builder.BuildRetVoid();
 		}
 	}
@@ -1080,7 +1080,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
                 val = EmitExpression(argExpr);
             }
 
-			if (valTy is PointerTypeSymbol ptrTy && !paramTy.Equals(valTy) && paramTy is not PointerTypeSymbol)
+			if (valTy is PointerTypeSymbol ptrTy && val.TypeOf.Kind == LLVMTypeKind.LLVMPointerTypeKind && !paramTy.Equals(valTy) && paramTy is not PointerTypeSymbol)
 			{
 				val = _builder.BuildLoad2(GetLLVMType(ptrTy.ReferencedType), val, "deref_arg");
 			}
@@ -1169,14 +1169,14 @@ public sealed class CodeGenerator : IEmitter, IDisposable
         var lTy = GetExprType(bin.Left);
         var rTy = GetExprType(bin.Right);
 
-        if (lTy is PointerTypeSymbol lPtr)
+        if (lTy is PointerTypeSymbol lPtr && left.TypeOf.Kind == LLVMTypeKind.LLVMPointerTypeKind)
         {
             left = _builder.BuildLoad2(GetLLVMType(lPtr.ReferencedType), left, "deref_left");
             lTy = lPtr.ReferencedType;
         }
 
         // Implicit Dereference for right operand
-        if (rTy is PointerTypeSymbol rPtr)
+        if (rTy is PointerTypeSymbol rPtr && right.TypeOf.Kind == LLVMTypeKind.LLVMPointerTypeKind)
         {
             right = _builder.BuildLoad2(GetLLVMType(rPtr.ReferencedType), right, "deref_right");
             rTy = rPtr.ReferencedType;
@@ -2481,10 +2481,16 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
     private void EmitCleanup(IEnumerable<string> variableNames, bool skipHeapFree = false)
     {
+
         foreach (var name in variableNames)
         {
-            if (_movedVars.Contains(name) || _disposedVars.Contains(name))
+
+			if (_movedVars.Contains(name) || _disposedVars.Contains(name))
                 continue;
+
+			var isHeap = _heapAllocatedVars.Contains(name);
+			if (isHeap && skipHeapFree)
+				continue;
 
             _disposedVars.Add(name);
 
@@ -3003,24 +3009,33 @@ public sealed class CodeGenerator : IEmitter, IDisposable
                 parentType = referred;
             }
 
-            // Arrow operator: parentPtr is a pointer to a struct pointer; load it first
-            if (m.Operator == "->")
-            {
-                var rawPtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), parentPtr, "arrow_load");
-                var structType = (parentType as StructTypeSymbol) ?? (StructTypeSymbol)_bindingContext!.ResolveType(parentType.Name)!;
-                var fieldIndex = GetFieldIndex(structType, m.MemberName);
-                var fieldType = structType.Fields[fieldIndex].Type;
+			// Arrow operator: parentPtr is a pointer to a struct pointer; load it first
+			if (m.Operator == "->")
+			{
+				var rawPtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), parentPtr, "arrow_load");
+				var structType = (parentType as StructTypeSymbol)
+					?? (parentType is RawPointerTypeSymbol rpt ? rpt.ElementType as StructTypeSymbol : null)
+					?? (parentType is PointerTypeSymbol pt ? pt.ReferencedType as StructTypeSymbol : null)
+					?? _bindingContext?.ResolveType(parentType.Name) as StructTypeSymbol;
 
-                var structLayoutTy = GetLLVMType(structType);
-                var zero = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0);
-                var index = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)fieldIndex);
+				if (structType is null)
+				{
+					throw new InvalidOperationException($"Cannot resolve struct type for arrow operator on '{parentType.Name}'");
+				}
 
-                var fieldPtr = _builder.BuildGEP2(structLayoutTy, rawPtr, new LLVMValueRef[] { zero, index }, "arrow_field_ptr");
-                return (fieldPtr, fieldType);
-            }
+				var fieldIndex = GetFieldIndex(structType, m.MemberName);
+				var fieldType = structType.Fields[fieldIndex].Type;
 
-            // Ensure parentType is resolved to concrete StructTypeSymbol or UnionTypeSymbol
-            if (parentType is not (StructTypeSymbol or UnionTypeSymbol) && _bindingContext?.ResolveType(parentType.Name) is TypeSymbol resolvedParent)
+				var structLayoutTy = GetLLVMType(structType);
+				var zero = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0);
+				var index = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)fieldIndex);
+
+				var fieldPtr = _builder.BuildGEP2(structLayoutTy, rawPtr, new LLVMValueRef[] { zero, index }, "arrow_field_ptr");
+				return (fieldPtr, fieldType);
+			}
+
+			// Ensure parentType is resolved to concrete StructTypeSymbol or UnionTypeSymbol
+			if (parentType is not (StructTypeSymbol or UnionTypeSymbol) && _bindingContext?.ResolveType(parentType.Name) is TypeSymbol resolvedParent)
             {
                 parentType = resolvedParent;
             }
@@ -3298,16 +3313,16 @@ public sealed class CodeGenerator : IEmitter, IDisposable
         return (tmp, optionUnion);
     }
 
-    private LLVMValueRef EmitStructInitialization(StructInitializationExpressionSyntax expr)
-    {
-        var typeSymbol = _bindingContext!.ResolveType(expr.StructTypeName) as StructTypeSymbol;
-        var structLayout = GetLLVMType(typeSymbol!);
-        var tempAlloc = _builder.BuildAlloca(structLayout, "struct_tmp");
-        EmitStructInitializationInPlace(expr, tempAlloc);
-        return tempAlloc;
-    }
+	private LLVMValueRef EmitStructInitialization(StructInitializationExpressionSyntax expr)
+	{
+		var typeSymbol = _bindingContext!.ResolveType(expr.StructTypeName);
+		var structLayout = GetLLVMType(typeSymbol!);
+		var tempAlloc = _builder.BuildAlloca(structLayout, "struct_tmp");
+		EmitStructInitializationInPlace(expr, tempAlloc);
+		return tempAlloc;
+	}
 
-    private void EmitStructInitializationInPlace(StructInitializationExpressionSyntax expr, LLVMValueRef destPtr)
+	private void EmitStructInitializationInPlace(StructInitializationExpressionSyntax expr, LLVMValueRef destPtr)
     {
         var typeSymbol = _bindingContext!.ResolveType(expr.StructTypeName);
 
@@ -3694,45 +3709,47 @@ public sealed class CodeGenerator : IEmitter, IDisposable
         _builder.PositionAtEnd(endBlock);
     }
 
-    private LLVMValueRef EmitParenthesizedStructInitialization(ParenthesizedStructInitializerExpressionSyntax expr)
-    {
-        var typeSymbol = _bindingContext!.ResolveType(expr.ResolvedStructTypeName!) as StructTypeSymbol;
-        var structLayout = GetLLVMType(typeSymbol!);
-        var tempAlloc = _builder.BuildAlloca(structLayout, "struct_tmp");
-        EmitParenthesizedStructInitializationInPlace(expr, tempAlloc);
-        return tempAlloc;
-    }
+	private LLVMValueRef EmitParenthesizedStructInitialization(ParenthesizedStructInitializerExpressionSyntax expr)
+	{
+		var typeSymbol = _bindingContext!.ResolveType(expr.ResolvedStructTypeName!);
+		var structLayout = GetLLVMType(typeSymbol!);
+		var tempAlloc = _builder.BuildAlloca(structLayout, "struct_tmp");
+		EmitParenthesizedStructInitializationInPlace(expr, tempAlloc);
+		return tempAlloc;
+	}
 
-    private void EmitParenthesizedStructInitializationInPlace(ParenthesizedStructInitializerExpressionSyntax expr, LLVMValueRef destPtr)
-    {
-        var typeSymbol = _bindingContext!.ResolveType(expr.ResolvedStructTypeName!) as StructTypeSymbol;
-        var structLayout = GetLLVMType(typeSymbol!);
+	private void EmitParenthesizedStructInitializationInPlace(ParenthesizedStructInitializerExpressionSyntax expr, LLVMValueRef destPtr)
+	{
+		var typeSymbol = _bindingContext!.ResolveType(expr.ResolvedStructTypeName!);
+		if (typeSymbol is not StructTypeSymbol structType)
+			return;
+		var structLayout = GetLLVMType(structType);
 
-        foreach (var init in expr.Initializers)
-        {
-            var fieldIndex = GetFieldIndex(typeSymbol!, init.MemberName);
-            var targetFieldPtr = _builder.BuildGEP2(structLayout, destPtr, new LLVMValueRef[]
-            {
-            LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0), LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)fieldIndex)
-            }, "init_field_ptr");
+		foreach (var init in expr.Initializers)
+		{
+			var fieldIndex = GetFieldIndex(structType, init.MemberName);
+			var targetFieldPtr = _builder.BuildGEP2(structLayout, destPtr, new LLVMValueRef[]
+			{
+			LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0), LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)fieldIndex)
+			}, "init_field_ptr");
 
-            if (init.Expression is ParenthesizedStructInitializerExpressionSyntax nestedInit)
-            {
-                EmitParenthesizedStructInitializationInPlace(nestedInit, targetFieldPtr);
-            }
-            else if (init.Expression is StructInitializationExpressionSyntax structInit)
-            {
-                EmitStructInitializationInPlace(structInit, targetFieldPtr);
-            }
-            else
-            {
-                var value = EmitExpression(init.Expression);
-                _builder.BuildStore(value, targetFieldPtr);
-            }
-        }
-    }
+			if (init.Expression is ParenthesizedStructInitializerExpressionSyntax nestedInit)
+			{
+				EmitParenthesizedStructInitializationInPlace(nestedInit, targetFieldPtr);
+			}
+			else if (init.Expression is StructInitializationExpressionSyntax structInit)
+			{
+				EmitStructInitializationInPlace(structInit, targetFieldPtr);
+			}
+			else
+			{
+				var value = EmitExpression(init.Expression);
+				_builder.BuildStore(value, targetFieldPtr);
+			}
+		}
+	}
 
-    private LLVMValueRef EmitHeapArrayAllocation(HeapArrayAllocationExpressionSyntax expr)
+	private LLVMValueRef EmitHeapArrayAllocation(HeapArrayAllocationExpressionSyntax expr)
     {
         var elementType = _bindingContext!.ResolveType(expr.ElementTypeName);
         var elementLlvmType = GetLLVMType(elementType!);
