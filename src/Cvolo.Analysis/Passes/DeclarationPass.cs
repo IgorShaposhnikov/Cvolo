@@ -136,6 +136,61 @@ public sealed class DeclarationPass(BindingContext context)
 		// struct symbol (embeds included) is fully materialized so the transitive ownership graph
 		// is complete.
 		CheckDestructorDepth(units);
+
+		// Pass 2.5: Validate that default generic parameter types satisfy their `where X : T`
+		// constraints (CVL1042). This must run AFTER Pass 1 registers extension methods —
+		// structural protocol conformance is proven by the presence of the extended methods
+		// on the concrete type — so it cannot live inside Pass 0a's DeclareStruct.
+		ValidateDefaultTypeConstraints(units);
+	}
+
+	/// <summary>
+	/// Pass 2.5. After all symbols and extension methods are registered, re-check every generic
+	/// struct's `where default A : Type` so the default satisfies the type's `where A : T`
+	/// constraints. Structural protocol conformance needs the extension method table populated,
+	/// which is why this runs late (a Pass 0a check would see an empty table and spuriously fail).
+	/// </summary>
+	private void ValidateDefaultTypeConstraints(IEnumerable<CompilationUnitSyntax> units)
+	{
+		foreach (var unit in units)
+		{
+			context.CurrentUnit = unit;
+			context.CurrentNamespace = unit.NamespaceDeclaration?.Name;
+
+			var members = context.CurrentNamespace != null ? unit.NamespaceDeclaration!.Members : unit.Members;
+			foreach (var member in members)
+			{
+				if (member is not StructDeclarationSyntax structDecl)
+					continue;
+
+				if (structDecl.GenericParameterDefaults.Count == 0)
+					continue;
+
+				foreach (var (paramName, defaultTypeName) in structDecl.GenericParameterDefaults)
+				{
+					if (!structDecl.GenericParameterConstraints.TryGetValue(paramName, out var constraints))
+						continue;
+
+					var defaultType = context.ResolveType(defaultTypeName);
+					if (defaultType is null)
+						continue;
+
+					foreach (var constraintName in constraints)
+					{
+						var constraintType = context.ResolveType(constraintName);
+						if (constraintType is not null && !context.TypeSatisfiesContract(defaultType, constraintType))
+						{
+							var currentFileContext = context.FileContexts[context.CurrentUnit!];
+							context.Diagnostics.Report(
+								currentFileContext,
+								structDecl.Span,
+								$"Default type '{defaultTypeName}' does not satisfy constraint '{constraintName}' of generic parameter '{paramName}'.",
+								DiagnosticIds.DefaultTypeConstraintMismatch);
+						}
+					}
+				}
+			}
+		}
 	}
 
 	/// <summary>
@@ -529,7 +584,7 @@ public sealed class DeclarationPass(BindingContext context)
 	/// and applies intrinsic attributes like [StrictMutability].
 	/// </summary>
 	/// <param name="structDecl">The syntax node for the struct declaration.</param>
-	private void DeclareStruct(StructDeclarationSyntax structDecl)
+private void DeclareStruct(StructDeclarationSyntax structDecl)
 	{
 		var mangledName = context.GetMangledName(structDecl.Name, context.CurrentNamespace);
 

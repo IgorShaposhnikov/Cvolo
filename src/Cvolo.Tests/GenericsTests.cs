@@ -19,6 +19,7 @@ public sealed class GenericsTests : CompilerTestBase
 	[InlineData("GenericConstructorComplex.cvl")]
 	[InlineData("DefaultGenericParams.cvl")]
 	[InlineData("DefaultOperator.cvl")]
+	[InlineData("DefaultGenericParamsExtension.cvl")]
 	public void Parser_Generics_Should_Parse(string caseName)
 	{
 		var assemblyDir = Path.GetDirectoryName(typeof(GenericsTests).Assembly.Location)!;
@@ -46,6 +47,7 @@ public sealed class GenericsTests : CompilerTestBase
 	[InlineData("GenericConstructor", "X: 30, Y: 40")]
 	[InlineData("GenericExtensionComplex", "[Pair] First is active, Second is active\np1: 42, 3.140000\n[Pair] First is active, Second is active\np2: C, 1")]
 	[InlineData("GenericConstructorComplex", "Id: 101\nValue: 99.9")]
+	[InlineData("DefaultGenericParamsExtension", "b0: 10\nb1: 20\nb2: 30\nb3: 40")]
 	public void Generics_Execution(string caseName, string expected)
 	{
 		var fileName = $"Generics/{caseName}.cvl";

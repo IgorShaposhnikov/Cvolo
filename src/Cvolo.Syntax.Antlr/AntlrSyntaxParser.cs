@@ -222,20 +222,45 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		return attributes;
 	}
 
-	private Dictionary<string, string> BuildWhereClause(CvoloParser.WhereClauseContext? whereCtx)
+	private (Dictionary<string, string> Defaults, Dictionary<string, List<string>> Constraints) BuildWhereClause(CvoloParser.WhereClauseContext? whereCtx)
+	{
+		return BuildWhereClauses(whereCtx != null ? [whereCtx] : []);
+	}
+
+	private (Dictionary<string, string> Defaults, Dictionary<string, List<string>> Constraints) BuildWhereClauses(IEnumerable<CvoloParser.WhereClauseContext?> whereClauses)
 	{
 		var defaults = new Dictionary<string, string>();
-		if (whereCtx is null)
-			return defaults;
+		var constraints = new Dictionary<string, List<string>>();
 
-		foreach (var constraint in whereCtx.whereConstraint())
+		if (whereClauses is null)
+			return (defaults, constraints);
+
+		foreach (var whereCtx in whereClauses)
 		{
-			var paramName = constraint.Identifier().GetText();
-			var typeName = GetTypeName(constraint.type());
-			defaults[paramName] = typeName;
+			if (whereCtx is null) continue;
+			foreach (var constraint in whereCtx.whereConstraint())
+			{
+				if (constraint is CvoloParser.DefaultWhereConstraintContext defCtx)
+				{
+					var paramName = defCtx.Identifier().GetText();
+					var typeName = GetTypeName(defCtx.type());
+					defaults[paramName] = typeName;
+				}
+				else if (constraint is CvoloParser.InterfaceWhereConstraintContext typeCtx)
+				{
+					var paramName = typeCtx.Identifier().GetText();
+					var typeName = typeCtx.qualifiedName().GetText();
+					if (!constraints.TryGetValue(paramName, out var list))
+					{
+						list = [];
+						constraints[paramName] = list;
+					}
+					list.Add(typeName);
+				}
+			}
 		}
 
-		return defaults;
+		return (defaults, constraints);
 	}
 
 	private StructDeclarationSyntax BuildStructDeclaration(CvoloParser.StructDeclarationContext context)
@@ -250,14 +275,23 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				generics.Add(id.GetText());
 		}
 
-		var defaults = BuildWhereClause(context.whereClause());
+		var (defaults, constraints) = BuildWhereClauses(context.whereClause());
 
 		var fields = new List<StructFieldSyntax>();
 		foreach (var field in context.structField())
 			fields.Add(new StructFieldSyntax(SpanOf(field), GetTypeName(field.type()), field.Identifier().GetText(), GetVisibilityModifier(field.visibilityModifier())));
 		var embeddedType = context.EMBED() is not null && context.qualifiedName() is { } embedCtx ? embedCtx.GetText() : null;
 		var structAttributes = BuildAttributeList(context.attributeList());
-		return new StructDeclarationSyntax(SpanOf(context), name, generics, fields, embeddedType, structAttributes, GetVisibilityModifier(context.visibilityModifier()), defaults);
+		return new StructDeclarationSyntax(
+			SpanOf(context),
+			name,
+			generics,
+			fields,
+			embeddedType,
+			structAttributes,
+			GetVisibilityModifier(context.visibilityModifier()),
+			defaults,
+			constraints);
 	}
 
 	private ParameterSyntax BuildParameter(CvoloParser.ParameterContext context)
@@ -277,7 +311,6 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			if (node is not null)
 				statements.Add(node);
 		}
-
 
 		return new BlockStatementSyntax(SpanOf(context), statements);
 	}
@@ -330,10 +363,8 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				{
 					var raw = strCtx.StringLiteral().GetText();
 
-					// Safely strip quotes only if they are present
 					if (raw.StartsWith("\\\"") && raw.EndsWith("\\\""))
 					{
-						// Slice off the first 2 characters and the last 2 characters
 						raw = raw[2..^2];
 					}
 
@@ -345,7 +376,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			case CvoloParser.CharLiteralExpressionContext charCtx:
 				{
 					var text = charCtx.CharLiteral().GetText();
-					var val = text[1..^1]; // Strip single quotes
+					var val = text[1..^1];
 					if (val.StartsWith("\\"))
 					{
 						val = val switch
@@ -394,7 +425,6 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				{
 					var funcName = callCtx.qualifiedName().GetText();
 
-					// (The rest of this block remains exactly the same!)
 					var typeArgs = new List<string>();
 					if (callCtx.typeList() is { } typeListCtx)
 					{
@@ -438,16 +468,10 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			case CvoloParser.CompoundAssignmentExpressionContext compoundCtx:
 				{
 					var left = BuildExpression(compoundCtx.expression(0));
-					var opAssign = compoundCtx.GetChild(1).GetText(); // e.g. "+="
+					var opAssign = compoundCtx.GetChild(1).GetText();
 					var right = BuildExpression(compoundCtx.expression(1));
-
-					// Desugar: extract the math operator (remove the '=')
-					var op = opAssign[..^1]; // e.g., "+=" -> "+"
-
-					// Create the math sub-expression: left + right
+					var op = opAssign[..^1];
 					var mathExpr = new BinaryExpressionSyntax(SpanOf(compoundCtx), left, op, right);
-
-					// Return the assignment: left = (left + right)
 					return new BinaryExpressionSyntax(SpanOf(compoundCtx), left, "=", mathExpr);
 				}
 			case CvoloParser.PostfixIncrementExpressionContext incCtx:
@@ -494,7 +518,6 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				{
 					var structName = structInitCtx.Identifier().GetText();
 
-					// Reconstruct the full generic type name (e.g. Point<int>) if type arguments are present
 					if (structInitCtx.typeList() is { } typeListCtx)
 					{
 						var args = typeListCtx.type().Select(GetTypeName);
@@ -541,11 +564,11 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 					var elseExpr = BuildExpression(ternaryCtx.expression(2));
 					return new TernaryExpressionSyntax(SpanOf(ternaryCtx), cond, thenExpr, elseExpr);
 				}
-		case CvoloParser.VoidLiteralExpressionContext voidCtx:
-			return new VoidLiteralExpressionSyntax(SpanOf(voidCtx));
-		case CvoloParser.DefaultExpressionContext defaultCtx:
-			return new DefaultExpressionSyntax(SpanOf(defaultCtx), GetTypeName(defaultCtx.type()));
-		default:
+			case CvoloParser.VoidLiteralExpressionContext voidCtx:
+				return new VoidLiteralExpressionSyntax(SpanOf(voidCtx));
+			case CvoloParser.DefaultExpressionContext defaultCtx:
+				return new DefaultExpressionSyntax(SpanOf(defaultCtx), GetTypeName(defaultCtx.type()));
+			default:
 				return new IdentifierExpressionSyntax(SpanOf(context), context.GetText());
 		}
 
@@ -570,7 +593,6 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			var baseTypeName = GetTypeName(typeCtx);
 			var name = context.Identifier().GetText();
 
-			// Resolve the value expression (either structural constructor or primitive expression)
 			ExpressionSyntax valueExpr;
 			if (context.structInitializerList() is { } listCtx)
 			{
@@ -582,7 +604,6 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 					initializers.Add(new MemberInitializerSyntax(SpanOf(memberInit), memberName, fieldExpr));
 				}
 
-				// Determine correct element type name for target-typing
 				var elementTypeName = typeCtx is CvoloParser.ArrayTypeContext arrCtx ? GetTypeName(arrCtx.type()) : baseTypeName;
 				valueExpr = new StructInitializationExpressionSyntax(SpanOf(context), elementTypeName, initializers);
 			}
@@ -591,7 +612,6 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				valueExpr = BuildExpression(context.expression());
 			}
 
-			// Check if it is a REPLICATED ARRAY or a SCALAR STRUCT initializer
 			if (typeCtx is CvoloParser.ArrayTypeContext arrayCtx)
 			{
 				var sizeText = arrayCtx.expression().GetText();
@@ -599,19 +619,17 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				{
 					throw new InvalidOperationException($"Array replication size must be a literal integer: '{sizeText}'.");
 				}
+
 				var countExpr = new IntegerLiteralExpressionSyntax(SpanOf(arrayCtx), countVal);
 				var implicitInitializer = new ArrayReplicationExpressionSyntax(SpanOf(context), valueExpr, countExpr);
 				return new VariableDeclarationSyntax(SpanOf(context), isMutable, baseTypeName, name, implicitInitializer);
 			}
 			else
 			{
-				// Scalar Struct Initialization: var Point p(X: 10, Y: 20);
 				return new VariableDeclarationSyntax(SpanOf(context), isMutable, baseTypeName, name, valueExpr);
 			}
 		}
 
-
-		// Standard variable declaration
 		if (context.REFVAR() is not null)
 		{
 			var refVarName = context.Identifier().GetText();
@@ -804,7 +822,8 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				generics.Add(id.GetText());
 		}
 
-		var defaults = BuildWhereClause(context.whereClause());
+		// Deconstruct tuple into defaults and constraints
+		var (defaults, _) = BuildWhereClauses(context.whereClause());
 
 		string? conformsTo = null;
 		if (context.qualifiedName() is { } conformsCtx)
@@ -906,7 +925,8 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				generics.Add(id.GetText());
 		}
 
-		var defaults = BuildWhereClause(context.whereClause());
+		// Deconstruct tuple into defaults and constraints
+		var (defaults, _) = BuildWhereClause(context.whereClause());
 
 		var fields = new List<UnionFieldSyntax>();
 		foreach (var field in context.unionField())
@@ -956,7 +976,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			else
 			{
 				var patternCtx = caseCtx.pattern();
-				string variantName = "";
+				var variantName = "";
 				string? variableName = null;
 
 				if (patternCtx is CvoloParser.VariantPatternContext varPat)

@@ -89,6 +89,10 @@ public sealed class BindingContext
 	// templates, generic protocol instantiation, and default-implementation lookup.
 	public Dictionary<string, List<(string OwnerProtocol, ProtocolMethodDeclarationSyntax Member)>> ProtocolEffectiveMembers { get; } = [];
 
+	/// <summary>
+	/// Stack or set of active generic type parameters currently in scope during binding/resolution.
+	/// </summary>
+	public Stack<HashSet<string>> ActiveGenericParametersStack { get; } = [];
 
 	public CompilationUnitSyntax? CurrentUnit { get; set; }
 	public string? CurrentNamespace { get; set; }
@@ -223,6 +227,7 @@ public sealed class BindingContext
 								Diagnostics.Report(currentFileContext, new TextSpan(0, 0), $"Default value for generic parameter '{paramName}' must be a Trivial Copy Type", DiagnosticIds.DefaultMustBeTrivialCopy);
 								return null;
 							}
+
 							typeArgs.Add(defaultType);
 						}
 						else
@@ -263,6 +268,7 @@ public sealed class BindingContext
 								Diagnostics.Report(currentFileContext, new TextSpan(0, 0), $"Default value for generic parameter '{paramName}' must be a Trivial Copy Type", DiagnosticIds.DefaultMustBeTrivialCopy);
 								return null;
 							}
+
 							unionTypeArgs.Add(defaultType);
 						}
 						else
@@ -300,7 +306,17 @@ public sealed class BindingContext
 			return primitive;
 		}
 
-		// 6. Resolve Namespaced/Imported Structures/Unions nominal match
+		// 5d. Check Active Generic Type Parameters (e.g., T, A)
+		foreach (var scopeSet in ActiveGenericParametersStack)
+		{
+			if (scopeSet.Contains(name))
+			{
+				var paramSym = new TypeParameterSymbol(name);
+				_typeCache[name] = paramSym;
+				return paramSym;
+			}
+		}
+
 		// 6. Resolve Namespaced/Imported Structures/Unions nominal match (Hierarchical Scoping)
 		var candidates = new List<TypeSymbol>();
 
@@ -583,6 +599,33 @@ public sealed class BindingContext
 
 	private StructTypeSymbol InstantiateGenericStruct(StructDeclarationSyntax templateDecl, string templateMangledName, List<TypeSymbol> typeArgs)
 	{
+		for (var i = 0; i < templateDecl.GenericParameters.Count && i < typeArgs.Count; i++)
+		{
+			var paramName = templateDecl.GenericParameters[i];
+			var concreteType = typeArgs[i];
+
+			if (templateDecl.GenericParameterConstraints.TryGetValue(paramName, out var requiredContracts))
+			{
+				foreach (var contractText in requiredContracts)
+				{
+					var contractType = ResolveType(contractText);
+					if (contractType is null)
+					{
+						var currentFileContext = FileContexts[CurrentUnit!];
+						Diagnostics.Report(currentFileContext, templateDecl.Span, $"Unknown contract '{contractText}' in constraint for parameter '{paramName}'.");
+						continue;
+					}
+
+					if (!TypeSatisfiesContract(concreteType, contractType))
+					{
+						var currentFileContext = FileContexts[CurrentUnit!];
+						Diagnostics.Report(currentFileContext, templateDecl.Span,
+							$"Type '{concreteType.Name}' does not satisfy constraint '{contractText}' of generic parameter '{paramName}'.");
+					}
+				}
+			}
+		}
+
 		var instName = $"{templateMangledName}<{string.Join(", ", typeArgs.Select(t => t.Name))}>";
 
 		// Save current active contexts
@@ -837,6 +880,15 @@ public sealed class BindingContext
 				case TernaryExpressionSyntax t:
 					return new TernaryExpressionSyntax(t.Span, SubstituteExpressionGenerics(t.Condition), SubstituteExpressionGenerics(t.ThenExpression), SubstituteExpressionGenerics(t.ElseExpression));
 
+				case DefaultExpressionSyntax def:
+					var newDefaultType = def.TypeName;
+					foreach (var kv in substitutionMap)
+					{
+						newDefaultType = System.Text.RegularExpressions.Regex.Replace(newDefaultType, $@"\b{kv.Key}\b", kv.Value.Name);
+					}
+
+					return new DefaultExpressionSyntax(def.Span, newDefaultType);
+
 				default:
 					return expr;
 			}
@@ -939,7 +991,7 @@ public sealed class BindingContext
 				var baseMangledName = instantiatedType.Name;
 
 				var ctorThisParamType = new PointerTypeSymbol(instantiatedType, isMutable: true);
-				var ctorParameters = new List<ParameterSymbol> { new ParameterSymbol("this", ctorThisParamType) };
+				var ctorParameters = new List<ParameterSymbol> { new("this", ctorThisParamType) };
 				var instParams = new List<ParameterSyntax>();
 
 				foreach (var param in ctorDecl.Parameters)
@@ -1189,5 +1241,62 @@ public sealed class BindingContext
 		if (simple.EndsWith("Attribute", StringComparison.Ordinal))
 			simple = simple[..^"Attribute".Length];
 		return simple;
+	}
+
+public bool TypeSatisfiesContract(TypeSymbol type, TypeSymbol contract)
+	{
+		var baseType = type is PointerTypeSymbol ptr ? ptr.ReferencedType : type;
+
+		// Nominal satisfaction: the concrete type IS the constrained type, or embeds it
+		// transitively (`embed` flattens the base's fields, so it also satisfies the name).
+		if (string.Equals(baseType.Name, contract.Name, StringComparison.Ordinal))
+			return true;
+		if (contract is StructTypeSymbol contractStruct)
+		{
+			for (var current = baseType; current is StructTypeSymbol currentStruct && currentStruct.EmbeddedType is not null; current = currentStruct.EmbeddedType)
+			{
+				if (string.Equals(currentStruct.EmbeddedType.Name, contractStruct.Name, StringComparison.Ordinal))
+					return true;
+			}
+		}
+
+		// 1. Nominal Interface Check
+		if (contract is InterfaceTypeSymbol iface)
+		{
+			return Conformance.TryGetValue(baseType.Name, out var ifaces) && ifaces.Contains(iface.Name);
+		}
+
+		// 2. Structural Protocol Check
+		if (contract is ProtocolTypeSymbol proto)
+		{
+			foreach (var member in proto.Members)
+			{
+				var qualifiedKey = $"{baseType.Name}.{member.Name}";
+				var shortName = baseType.Name.Contains('.')
+					? baseType.Name[(baseType.Name.LastIndexOf('.') + 1)..]
+					: baseType.Name;
+				var leafKey = $"{shortName}.{member.Name}";
+
+				var found = OverloadedFunctions.ContainsKey(qualifiedKey) || OverloadedFunctions.ContainsKey(leafKey);
+				if (!found && CurrentUnit is not null)
+				{
+					foreach (var ns in GetActiveUsings(CurrentUnit))
+					{
+						if (OverloadedFunctions.ContainsKey(GetMangledName(leafKey, ns)))
+						{
+							found = true;
+							break;
+						}
+					}
+				}
+
+				if (!found)
+					return false;
+			}
+
+			return true;
+		}
+
+		return false;
 	}
 }

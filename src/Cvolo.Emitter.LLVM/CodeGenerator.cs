@@ -2351,13 +2351,24 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			return type;
 		}
 
-		// Unqualified enum variant access inside an enum extension body.
+// Unqualified enum variant access inside an enum extension body.
 		if (_variableTypes.TryGetValue("this", out var thisTy)
 			&& thisTy is PointerTypeSymbol thisPtr
 			&& thisPtr.ReferencedType is EnumTypeSymbol enumSelf
 			&& enumSelf.FindVariant(id.Name) is not null)
 		{
 			return enumSelf;
+		}
+
+		// Unqualified struct field access inside a receiver/extension body
+		// (e.g. `ptr` meaning `this.ptr`). Mirror the Load() field lookup so
+		// type inference (pointer arithmetic etc.) sees the real field type.
+		if (_variableTypes.TryGetValue("this", out var thisFieldTy)
+			&& thisFieldTy is PointerTypeSymbol thisFieldPtr
+			&& thisFieldPtr.ReferencedType is StructTypeSymbol thisFieldStruct
+			&& thisFieldStruct.FindField(id.Name) is { } field)
+		{
+			return field.Type;
 		}
 
 		return TypeSymbol.Int;

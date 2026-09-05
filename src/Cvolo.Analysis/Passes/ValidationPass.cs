@@ -678,6 +678,11 @@ public sealed class ValidationPass(BindingContext context)
 					var currentFileContext = context.FileContexts[context.CurrentUnit!];
 					context.Diagnostics.Report(currentFileContext, defaultExpr.Span, $"Unknown type '{defaultExpr.TypeName}' in default expression");
 				}
+				else if (defaultTy is TypeParameterSymbol)
+				{
+					// Generic type parameters (e.g., default(A) where A is a generic parameter) are always allowed.
+					break;
+				}
 				else if (defaultTy is StructTypeSymbol or UnionTypeSymbol)
 				{
 					var defaultKind = Classification.Classify(defaultTy);
@@ -2178,6 +2183,15 @@ public sealed class ValidationPass(BindingContext context)
 
 			case TernaryExpressionSyntax t:
 				return new TernaryExpressionSyntax(t.Span, SubstituteExpressionGenerics(t.Condition, substitutionMap), SubstituteExpressionGenerics(t.ThenExpression, substitutionMap), SubstituteExpressionGenerics(t.ElseExpression, substitutionMap));
+
+			case DefaultExpressionSyntax def:
+				var newDefaultType = def.TypeName;
+				foreach (var kv in substitutionMap)
+				{
+					newDefaultType = SubstituteTypeToken(newDefaultType, kv.Key, kv.Value.Name);
+				}
+
+				return new DefaultExpressionSyntax(def.Span, newDefaultType);
 
 			default:
 				return expr;

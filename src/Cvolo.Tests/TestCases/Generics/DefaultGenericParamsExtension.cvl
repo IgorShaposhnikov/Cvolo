@@ -1,0 +1,60 @@
+using System;
+
+extern void* malloc(int size);
+extern void free(void* ptr);
+
+struct MallocAllocator { }
+
+extension MallocAllocator {
+    void* Alloc(int size) { return malloc(size); }
+    void Free(void* ptr) { free(ptr); }
+}
+
+struct Buffer<T, A>
+    where A : MallocAllocator
+    where default A : MallocAllocator
+{
+    T* ptr;
+    int Length;
+}
+
+extension Buffer<T, A>
+{
+    Buffer(int size) {
+        var allocator = default(A);
+        ptr = (T*)allocator.Alloc(sizeof<T>() * size);
+        Length = size;
+    }
+
+    ~Buffer() {
+        if (ptr != null) {
+            var allocator = default(A);
+            allocator.Free((void*)ptr);
+        }
+    }
+
+    [UnsafeBody]
+    ref T Get(ref this, int index) {
+        return ref *(ptr + index);
+    }
+
+    [UnsafeBody]
+    refvar T Mutate(refvar this, int index) {
+        return refvar *(ptr + index);
+    }
+}
+
+int main()
+{
+    Buffer<int> b = Buffer<int>(4);
+    b.Mutate(0) = 10;
+    b.Mutate(1) = 20;
+    b.Mutate(2) = 30;
+    b.Mutate(3) = 40;
+
+    Console.WriteLine($"b0: {b.Get(0)}");
+    Console.WriteLine($"b1: {b.Get(1)}");
+    Console.WriteLine($"b2: {b.Get(2)}");
+    Console.WriteLine($"b3: {b.Get(3)}");
+    return 0;
+}

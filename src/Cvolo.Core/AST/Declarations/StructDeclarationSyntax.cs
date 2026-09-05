@@ -1,9 +1,19 @@
+using System.Reflection.Metadata;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.Diagnostics;
 
 namespace Cvolo.Core.AST.Declarations;
 
-public sealed class StructDeclarationSyntax(TextSpan span, string name, IReadOnlyList<string> genericParameters, IReadOnlyList<StructFieldSyntax> fields, string? embeddedType = null, IReadOnlyList<AttributeSyntax>? attributes = null, Visibility? visibility = null, IReadOnlyDictionary<string, string>? genericParameterDefaults = null) : SyntaxNode(span)
+public sealed class StructDeclarationSyntax(
+	TextSpan span,
+	string name,
+	IReadOnlyList<string> genericParameters,
+	IReadOnlyList<StructFieldSyntax> fields,
+	string? embeddedType = null,
+	IReadOnlyList<AttributeSyntax>? attributes = null,
+	Visibility? visibility = null,
+	IReadOnlyDictionary<string, string>? genericParameterDefaults = null,
+	IReadOnlyDictionary<string, List<string>>? genericParameterConstraints = null) : SyntaxNode(span)
 {
 	public override SyntaxKind Kind => SyntaxKind.StructDeclaration;
 
@@ -20,6 +30,8 @@ public sealed class StructDeclarationSyntax(TextSpan span, string name, IReadOnl
 
 	public Visibility Visibility { get; } = visibility ?? Visibility.Internal;
 
+	// for interface/protocol bounds(e.g., "A" -> "IAllocator")
+	public IReadOnlyDictionary<string, List<string>> GenericParameterConstraints { get; } = genericParameterConstraints ?? new Dictionary<string, List<string>>();
 	public IReadOnlyDictionary<string, string> GenericParameterDefaults { get; } = genericParameterDefaults ?? new Dictionary<string, string>();
 
 	public override IEnumerable<SyntaxNode> GetChildren() => Fields;

@@ -62,7 +62,7 @@ externDeclaration
 	;
 
 structDeclaration
-	: attributeList* visibilityModifier? STRUCT Identifier (LT genericParameterList GT)? (EMBED qualifiedName)? whereClause? LBRACE structField* RBRACE SEMI?
+	: attributeList* visibilityModifier? STRUCT Identifier (LT genericParameterList GT)? (EMBED qualifiedName)? whereClause* LBRACE structField* RBRACE SEMI?
 	;
 
 unionDeclaration
@@ -82,7 +82,7 @@ enumVariant
 	;
 
 extensionDeclaration
-	: visibilityModifier? EXTENSION Identifier (LT genericParameterList GT)? (COLON qualifiedName)? whereClause? LBRACE (functionDeclaration | destructorDeclaration | constructorDeclaration)* RBRACE SEMI?
+	: visibilityModifier? EXTENSION Identifier (LT genericParameterList GT)? (COLON qualifiedName)? whereClause* LBRACE (functionDeclaration | destructorDeclaration | constructorDeclaration)* RBRACE SEMI?
 	;
 
 interfaceDeclaration
@@ -292,12 +292,13 @@ genericParameterList
 	;
 
 whereClause
-	: WHERE whereConstraint (COMMA whereConstraint)*
-	;
+    : WHERE whereConstraint ((COMMA | WHERE)? whereConstraint)*
+    ;
 
 whereConstraint
-	: DEFAULT Identifier COLON type
-	;
+    : DEFAULT Identifier COLON type                # defaultWhereConstraint
+    | Identifier COLON qualifiedName               # interfaceWhereConstraint
+    ;
 
 typeList
 	: type (COMMA type)*
