@@ -1,0 +1,40 @@
+using System;
+using System.Memory;
+using System.Collections.Generic;
+
+int Main()
+{
+	
+	var list = LinkedList<int>();
+    list.Add(10);
+    list.Add(20);
+    list.Add(30);
+    Console.WriteLine($"Count: {list.Count()}"); // 3
+
+    // Обход с головы
+    refvar Option<refvar LinkedListNode<int>> curr = list.Head();
+    while (curr is Some node) {
+        Console.WriteLine($"Value: {node.Value}");
+        curr = node.Next;
+    }
+
+    // Обход с хвоста (обратный)
+    refvar Option<refvar LinkedListNode<int>> currTail = list.Tail();
+    while (currTail is Some node) {
+        Console.WriteLine($"Backwards: {node.Value}");
+        currTail = node.Prev;
+    }
+
+	
+	var list = List<int>(10000000000);
+
+	for (var i = 0; i < 1000000; i++) {
+		list.Add(i);
+	}
+
+	for (var i = 0; i < list.Count(); i++) {
+		Console.WriteLine(list.Get(i));
+	}
+
+	return 0;
+}

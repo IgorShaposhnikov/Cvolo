@@ -12,6 +12,7 @@ public sealed class NpoTests : CompilerTestBase
 	[InlineData("OptionMoveToParam", "in consume, some=7\nDropping: 7\nDone")]
 	[InlineData("ArrayOptionZeroInit", "zero: 0")]
 	[InlineData("SelfRefOption", "head: 1\nnext: 2")]
+	[InlineData("NpoGenericRefArg", "42")]
 	public void Execution_Success(string caseName, string expected)
 	{
 		var fileName = $"NPO/{caseName}.cvl";
@@ -28,6 +29,7 @@ public sealed class NpoTests : CompilerTestBase
 	[InlineData("NpoCastToPointerFail", "Cannot cast nullable reference option")]
 	[InlineData("LargeUnionValuePassFail", "Passing by value is forbidden for unions larger than 16 bytes")]
 	[InlineData("LargeUnionValueReturnFail", "Returning by value is forbidden for unions larger than 16 bytes")]
+	[InlineData("NpoRefArgNonOptionFail", "only Option-shaped unions (e.g. Option<ref T>) support reference type arguments")]
 	public void Semantic_Rejections(string caseName, string expectedError)
 	{
 		var fileName = $"NPO/{caseName}.cvl";

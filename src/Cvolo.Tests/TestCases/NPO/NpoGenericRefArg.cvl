@@ -1,0 +1,25 @@
+using System;
+
+union Option<T> {
+    T Some;
+    void None;
+}
+
+struct Node<T> {
+    T Value;
+}
+
+struct Holder {
+    Option<refvar Node<int> > Root;
+    Option<ref Node<int> > Next;
+}
+
+int main() {
+    var Node<int> a = Node<int> { Value: 42 };
+    var Holder h = Holder {
+        Root: Option<refvar Node<int> > { Some: refvar a },
+        Next: Option<ref Node<int> > { None: void }
+    };
+    Console.WriteLine(h.Root.Some.Value);
+    return 0;
+}

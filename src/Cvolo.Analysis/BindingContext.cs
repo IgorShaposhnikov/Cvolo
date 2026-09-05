@@ -113,6 +113,9 @@ public sealed class BindingContext
 	/// <summary>Dedup set for per-instantiation visibility-leak diagnostics (CVL1038).</summary>
 	public HashSet<string> ReportedVisibilityLeaks { get; } = [];
 
+	/// <summary>Dedup set for per-instantiation bad 'ref'/'refvar' type-argument diagnostics (CVL1045).</summary>
+	public HashSet<string> ReportedRefTypeArgumentInstantiations { get; } = [];
+
 	/// <summary>
 	/// Maps a namespace to the set of namespaces directly re-exported via 'expose using'.
 	/// e.g. "System.Math" -> ["System.Math.Constants", "System.Math.Double"]
@@ -211,6 +214,11 @@ public sealed class BindingContext
 					return null;
 				if (typeArgs.Count > templateDecl.GenericParameters.Count)
 					return null;
+				if (HasRefTypeArgument(typeArgs))
+				{
+					ReportUnallowedRefTypeArgument(baseStruct.Name, typeArgs);
+					return null;
+				}
 
 				// Fill in default generic arguments for missing trailing args
 				if (typeArgs.Count < templateDecl.GenericParameters.Count)
@@ -253,6 +261,11 @@ public sealed class BindingContext
 					return null;
 				if (unionTypeArgs.Count > unionTemplateDecl.GenericParameters.Count)
 					return null;
+				if (HasRefTypeArgument(unionTypeArgs) && !IsOptionShapedTemplate(unionTemplateDecl))
+				{
+					ReportUnallowedRefTypeArgument(baseUnion.Name, unionTypeArgs);
+					return null;
+				}
 
 				if (unionTypeArgs.Count < unionTemplateDecl.GenericParameters.Count)
 				{
@@ -294,6 +307,11 @@ public sealed class BindingContext
 					return null;
 				if (protocolTypeArgs.Count != baseProtocol.GenericParameters.Count)
 					return null;
+				if (HasRefTypeArgument(protocolTypeArgs))
+				{
+					ReportUnallowedRefTypeArgument(baseProtocol.Name, protocolTypeArgs);
+					return null;
+				}
 
 				var instantiatedProtocol = InstantiateGenericProtocol(protocolDecl, baseProtocol.Name, protocolTypeArgs);
 				_typeCache[name] = instantiatedProtocol;
@@ -498,6 +516,50 @@ public sealed class BindingContext
 		}
 
 		return true;
+	}
+
+	/// <summary>
+	/// True when any resolved type argument is a <c>ref</c>/<c>refvar</c> reference type.
+	/// </summary>
+	private static bool HasRefTypeArgument(IReadOnlyList<TypeSymbol> typeArgs)
+	{
+		foreach (var arg in typeArgs)
+		{
+			if (arg is PointerTypeSymbol)
+				return true;
+		}
+		return false;
+	}
+
+	/// <summary>
+	/// Structural Option shape at template level: exactly one void variant and exactly
+	/// one non-void payload variant (mirrors <see cref="UnionTypeSymbol.IsOption"/>).
+	/// </summary>
+	private static bool IsOptionShapedTemplate(UnionDeclarationSyntax templateDecl)
+	{
+		var voidCount = 0;
+		var payloadCount = 0;
+		foreach (var field in templateDecl.Fields)
+		{
+			if (field.IsVoidVariant)
+				voidCount++;
+			else
+				payloadCount++;
+		}
+		return voidCount == 1 && payloadCount == 1;
+	}
+
+	private void ReportUnallowedRefTypeArgument(string hostName, IReadOnlyList<TypeSymbol> typeArgs)
+	{
+		if (CurrentUnit is null || !ReportedRefTypeArgumentInstantiations.Add(
+			$"{hostName}<{string.Join(",", typeArgs.Select(a => a.Name))}>"))
+			return;
+
+		Diagnostics.Report(
+			FileContexts[CurrentUnit],
+			new TextSpan(0, 0),
+			$"Generic type '{hostName}' cannot use 'ref'/'refvar' as a type argument; only Option-shaped unions (e.g. Option<ref T>) support reference type arguments.",
+			DiagnosticIds.RefTypeArgumentNotAllowed);
 	}
 
 	public string GetMangledName(string name, string? namespaceName)

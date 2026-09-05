@@ -96,6 +96,9 @@ public static class DiagnosticIds
 	/// <summary>A delegating constructor's body is not empty after `this(...)`.</summary>
 	public const string NonEmptyDelegatingConstructorBody = "CVL1044";
 
+	/// <summary>A `ref`/`refvar` type argument is used for a generic type other than an Option-shaped union.</summary>
+	public const string RefTypeArgumentNotAllowed = "CVL1045";
+
 	/// <summary>'expose using' directive used outside a namespace declaration.</summary>
 	public const string ExposeUsingOutsideNamespace = "CVL1060";
 

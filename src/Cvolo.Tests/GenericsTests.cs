@@ -1,4 +1,3 @@
-using Cvolo.Analysis;
 using Cvolo.Analysis.Symbols.Structs;
 using Cvolo.Core.Diagnostics;
 using Cvolo.Projects;

@@ -1,0 +1,8 @@
+struct Box<T> {
+    T v;
+}
+
+int main() {
+    var Box<refvar int> b = Box<refvar int>();
+    return 0;
+}
