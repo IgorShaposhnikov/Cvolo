@@ -106,7 +106,7 @@ destructorDeclaration
 	;
 
 constructorDeclaration
-	: attributeList* visibilityModifier? Identifier LPAREN parameterList? RPAREN blockStatement SEMI?
+	: attributeList* visibilityModifier? Identifier LPAREN parameterList? RPAREN (COLON Identifier LPAREN argumentList? RPAREN)? blockStatement SEMI?
 	;
 
 structField

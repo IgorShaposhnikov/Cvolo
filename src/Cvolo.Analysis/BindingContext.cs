@@ -34,6 +34,9 @@ public sealed class BindingContext
 	public Dictionary<string, CompilationUnitSyntax> SymbolUnits { get; } = [];
 	public Dictionary<string, List<FunctionSymbol>> OverloadedFunctions { get; } = [];
 	public Dictionary<CallExpressionSyntax, FunctionSymbol> ResolvedCalls { get; } = [];
+	// Delegating-constructor targets (this(...) initializer), keyed by the delegating
+	// constructor's overloaded name; used by the code generator to emit the chained call.
+	public Dictionary<string, FunctionSymbol> ConstructorDelegationTargets { get; } = [];
 	// Destructors registered via '~T()' extension members, keyed by the extended type name
 	public Dictionary<string, FunctionSymbol> Destructors { get; } = [];
 	// Data-segment globals in declaration order
@@ -1044,7 +1047,18 @@ public sealed class BindingContext
 				registeredCtors.Add(ctorSymbol);
 
 				var instBody = SubstituteBlockGenerics(ctorDecl.Body);
-				var instDecl = new ConstructorDeclarationSyntax(ctorDecl.Span, instantiatedType.Name, instParams, instBody, ctorDecl.Attributes, ctorDecl.SyntacticVisibility);
+
+				// Propagate a delegating ': this(...)' initializer, substituting generic args in its arguments.
+				IReadOnlyList<ExpressionSyntax>? instCtorArgs = null;
+				TextSpan? instCtorInitSpan = ctorDecl.ConstructorInitializerSpan;
+				if (ctorDecl.HasConstructorInitializer)
+				{
+					instCtorArgs = ctorDecl.ConstructorArguments!
+						.Select(a => SubstituteExpressionGenerics(a))
+						.ToList();
+				}
+
+				var instDecl = new ConstructorDeclarationSyntax(ctorDecl.Span, instantiatedType.Name, instParams, instBody, instCtorArgs, instCtorInitSpan, ctorDecl.Attributes, ctorDecl.SyntacticVisibility);
 
 				MonomorphizedExtensionDecls.Add(instDecl);
 				MonomorphizedExtensionExtendedTypes[ctorOverloadedName] = instantiatedType.Name;

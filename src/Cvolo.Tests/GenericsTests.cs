@@ -20,6 +20,8 @@ public sealed class GenericsTests : CompilerTestBase
 	[InlineData("DefaultGenericParams.cvl")]
 	[InlineData("DefaultOperator.cvl")]
 	[InlineData("DefaultGenericParamsExtension.cvl")]
+	[InlineData("ConstructorChaining.cvl")]
+	[InlineData("ConstructorChainingGeneric.cvl")]
 	public void Parser_Generics_Should_Parse(string caseName)
 	{
 		var assemblyDir = Path.GetDirectoryName(typeof(GenericsTests).Assembly.Location)!;
@@ -48,6 +50,8 @@ public sealed class GenericsTests : CompilerTestBase
 	[InlineData("GenericExtensionComplex", "[Pair] First is active, Second is active\np1: 42, 3.140000\n[Pair] First is active, Second is active\np2: C, 1")]
 	[InlineData("GenericConstructorComplex", "Id: 101\nValue: 99.9")]
 	[InlineData("DefaultGenericParamsExtension", "b0: 10\nb1: 20\nb2: 30\nb3: 40")]
+	[InlineData("ConstructorChaining", "First=5, Second=0")]
+	[InlineData("ConstructorChainingGeneric", "b0: 10\nb1: 20\nb2: 30\nb3: 40")]
 	public void Generics_Execution(string caseName, string expected)
 	{
 		var fileName = $"Generics/{caseName}.cvl";
@@ -63,6 +67,7 @@ public sealed class GenericsTests : CompilerTestBase
 	[InlineData("GenericConstructorDefensiveFail", "does not initialize field 'Weight'")]
 	[InlineData("DefaultGenericParamsBadDefault", "Default value for generic parameter 'A' must be a Trivial Copy Type")]
 	[InlineData("DefaultGenericParamsMissingDefault", "Generic parameter 'A' does not have a default value and must be specified")]
+	[InlineData("ConstructorChainingCycleFail", "cannot call itself (cyclic delegation)")]
 	public void Generics_Rejections(string caseName, string expectedError)
 	{
 		var fileName = $"Generics/{caseName}.cvl";
@@ -70,6 +75,27 @@ public sealed class GenericsTests : CompilerTestBase
 
 		Assert.Equal(1, exitCode);
 		Assert.Contains(expectedError, stderr);
+	}
+
+	[Fact]
+	public void ConstructorChaining_NonEmptyBody_Emits_Warning_CVL1044()
+	{
+		var fileName = "Generics/ConstructorChainingNonEmptyBody.cvl";
+		var (exitCode, stdout, stderr) = RunCompiler(fileName);
+
+		Assert.Equal(0, exitCode);
+		Assert.Contains("Analysis Warning CVL1044", stderr);
+		Assert.Contains("Constructor body is not empty after `this(...)`; consider moving logic to the target constructor.", stderr);
+	}
+
+	[Fact]
+	public void ConstructorChaining_InaccessibleTarget_Emits_Error_CVL1043()
+	{
+		var fileName = "Generics/ConstructorChainingAccess";
+		var (exitCode, stdout, stderr) = RunCompiler(fileName);
+
+		Assert.Equal(1, exitCode);
+		Assert.Contains("Constructor 'Pair' is not accessible from the current constructor.", stderr);
 	}
 
 	[Fact]

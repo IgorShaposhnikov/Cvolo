@@ -1,0 +1,19 @@
+struct Pair {
+    int A;
+    int B;
+}
+
+extension Pair {
+    Pair(int a, int b) {
+        A = a;
+        B = b;
+    }
+
+    Pair(int a) : this(a, 0) {
+        A = a;
+    }
+}
+
+int main() {
+    return 0;
+}

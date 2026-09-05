@@ -1,0 +1,27 @@
+using System;
+
+struct Wrapper {
+    int First;
+    int Second;
+}
+
+extension Wrapper {
+    Wrapper(int first, int second) {
+        First = first;
+        Second = second;
+    }
+
+    Wrapper(int first) : this(first, 0) {
+        // empty delegating body
+    }
+
+    void Print() {
+        Console.WriteLine($"First={First}, Second={Second}");
+    }
+}
+
+int main() {
+    var Wrapper w = Wrapper(5);
+    w.Print();
+    return 0;
+}

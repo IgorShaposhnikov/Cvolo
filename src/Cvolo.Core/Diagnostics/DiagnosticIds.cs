@@ -90,6 +90,12 @@ public static class DiagnosticIds
 	/// <summary>Default type does not satisfy constraints of generic parameter.</summary>
 	public const string DefaultTypeConstraintMismatch = "CVL1042";
 
+	/// <summary>A constructor's delegating initializer `this(...)` forms a delegation cycle.</summary>
+	public const string CyclicConstructorDelegation = "CVL1043";
+
+	/// <summary>A delegating constructor's body is not empty after `this(...)`.</summary>
+	public const string NonEmptyDelegatingConstructorBody = "CVL1044";
+
 	/// <summary>'expose using' directive used outside a namespace declaration.</summary>
 	public const string ExposeUsingOutsideNamespace = "CVL1060";
 

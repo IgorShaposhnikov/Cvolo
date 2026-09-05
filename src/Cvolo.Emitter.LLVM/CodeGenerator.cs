@@ -42,7 +42,8 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	private readonly HashSet<string> _disposedVars = [];
 	private int _unsafeDepth;
 	private (LLVMTypeRef Type, LLVMValueRef Func)? _llvmTrap;
-	private readonly Dictionary<string, LLVMValueRef> _enumValuesGlobals = [];
+private readonly Dictionary<string, LLVMValueRef> _enumValuesGlobals = [];
+	private readonly Dictionary<string, ConstructorDeclarationSyntax> _constructorInitializers = [];
 
 	public CodeGenerator(string moduleName, ILLVMOptimizer? optimizer = null, IRVerifier? irVerifier = null)
 	{
@@ -205,14 +206,18 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 							}
 						}
 
-						foreach (var ctorDecl in extDecl.Constructors)
+foreach (var ctorDecl in extDecl.Constructors)
 						{
 							var ctorBaseMangledName = bindingContext.GetMangledName(extDecl.ExtendedTypeName, ns);
 							if (bindingContext.OverloadedFunctions.TryGetValue(ctorBaseMangledName, out var ctorCandidates))
 							{
 								foreach (var candidate in ctorCandidates)
 								{
-									DeclareFunction(ctorDecl.ToFunctionDeclaration(), candidate.Name);
+									var matchingDecl = FindCtorDeclaration(extDecl.Constructors, candidate) ?? ctorDecl;
+									DeclareFunction(matchingDecl.ToFunctionDeclaration(), candidate.Name);
+
+									if (matchingDecl.HasConstructorInitializer)
+										_constructorInitializers[candidate.Name] = matchingDecl;
 								}
 							}
 						}
@@ -241,9 +246,12 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			{
 				DeclareFunction(func, emitName);
 			}
-			else if (decl is ConstructorDeclarationSyntax ctor)
+else if (decl is ConstructorDeclarationSyntax ctor)
 			{
 				DeclareFunction(ctor.ToFunctionDeclaration(), emitName);
+
+				if (ctor.HasConstructorInitializer)
+					_constructorInitializers[emitName] = ctor;
 			}
 		}
 
@@ -311,17 +319,16 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 						}
 					}
 
-					foreach (var ctorDecl in extDecl.Constructors)
+var ctorBaseMangledName = bindingContext.GetMangledName(extDecl.ExtendedTypeName, ns);
+					if (bindingContext.OverloadedFunctions.TryGetValue(ctorBaseMangledName, out var ctorCandidates))
 					{
-						var ctorBaseMangledName = bindingContext.GetMangledName(extDecl.ExtendedTypeName, ns);
-						if (bindingContext.OverloadedFunctions.TryGetValue(ctorBaseMangledName, out var ctorCandidates))
+						foreach (var candidate in ctorCandidates)
 						{
-							foreach (var candidate in ctorCandidates)
+							if (emittedFunctionNames.Add(candidate.Name))
 							{
-								if (emittedFunctionNames.Add(candidate.Name))
-								{
+								var ctorDecl = FindCtorDeclaration(extDecl.Constructors, candidate);
+								if (ctorDecl is not null)
 									EmitFunctionBody(ctorDecl.ToFunctionDeclaration(), candidate.Name);
-								}
 							}
 						}
 					}
@@ -499,6 +506,38 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		_functionTypes[emitName] = funcType;
 	}
 
+/// <summary>Maps a registered constructor candidate back to its corresponding source
+	/// declaration (matching by parameter count/types, ignoring the implicit 'this').</summary>
+	private ConstructorDeclarationSyntax? FindCtorDeclaration(
+		IReadOnlyList<ConstructorDeclarationSyntax> ctors, FunctionSymbol candidate)
+	{
+		var candParams = candidate.Parameters[0].Type is PointerTypeSymbol
+			? candidate.Parameters.Skip(1).Select(p => p.Type.Name).ToList()
+			: candidate.Parameters.Select(p => p.Type.Name).ToList();
+		foreach (var ctorDecl in ctors)
+		{
+			if (ctorDecl.Parameters.Count != candParams.Count)
+				continue;
+
+			var match = true;
+			for (var i = 0; i < candParams.Count; i++)
+			{
+				// Compare the source parameter's resolved type name against the candidate.
+				var resolved = _bindingContext?.ResolveType(ctorDecl.Parameters[i].Type)?.Name;
+				if ((resolved ?? ctorDecl.Parameters[i].Type) != candParams[i])
+				{
+					match = false;
+					break;
+				}
+			}
+
+			if (match)
+				return ctorDecl;
+		}
+
+		return null;
+	}
+
 	private void EmitFunctionBody(FunctionDeclarationSyntax func, string mangledName)
 	{
 		// Bodyless intrinsic functions don't generate function bodies (calls are lowered directly to LLVM instructions)
@@ -577,6 +616,28 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				_locals[paramName] = alloca;
 				_variableTypes[paramName] = typeSymbol;
 			}
+		}
+
+		// Constructor chaining: a delegating constructor (`T(args) : this(...)`) invokes
+		// the target constructor on the same destination storage before its own body runs.
+		if (_constructorInitializers.TryGetValue(mangledName, out var chainedCtor)
+			&& _locals.TryGetValue("this", out var thisStorage)
+			&& _bindingContext!.ConstructorDelegationTargets.TryGetValue(mangledName, out var chainTarget))
+		{
+			// 'this' holds the alloca of the destination-storage pointer; load the pointer value.
+			var thisPtr = _builder.BuildLoad2(
+				LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0),
+				thisStorage,
+				"chained_this");
+
+			var chainCall = new CallExpressionSyntax(
+				chainedCtor.ConstructorInitializerSpan ?? chainedCtor.Span,
+				chainedCtor.StructName,
+				[],
+				chainedCtor.ConstructorArguments!);
+
+			_bindingContext.ResolvedCalls[chainCall] = chainTarget;
+			EmitCallExpression(chainCall, thisPtr);
 		}
 
 		EmitBlock(func.Body);

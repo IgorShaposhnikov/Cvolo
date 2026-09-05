@@ -1,0 +1,15 @@
+struct Pair {
+    public int A;
+    public int B;
+}
+
+extension Pair {
+    private Pair(int a, int b) {
+        A = a;
+        B = b;
+    }
+
+    Pair Inner() {
+        return Pair(1);
+    }
+}

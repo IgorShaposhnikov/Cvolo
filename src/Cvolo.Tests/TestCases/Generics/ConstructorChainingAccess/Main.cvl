@@ -1,0 +1,12 @@
+using System;
+
+extension Pair {
+    Pair(int a) : this(a, 0) {
+    }
+}
+
+int main() {
+    var Pair p = Pair(1);
+    Console.WriteLine($"A={p.A}, B={p.B}");
+    return 0;
+}

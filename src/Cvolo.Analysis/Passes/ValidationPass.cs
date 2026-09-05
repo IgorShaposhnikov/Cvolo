@@ -17,10 +17,12 @@ public sealed class ValidationPass(BindingContext context)
 	private ClassificationAnalyzer Classification => _classification ??= new ClassificationAnalyzer(context);
 	private int _unsafeDepth;
 	private bool _inUnbound;
+	private IReadOnlyList<CompilationUnitSyntax> _units = [];
 
 	public void Process(IEnumerable<CompilationUnitSyntax> units)
 	{
-		foreach (var unit in units)
+		_units = units as IReadOnlyList<CompilationUnitSyntax> ?? units.ToList();
+		foreach (var unit in _units)
 		{
 			context.CurrentUnit = unit;
 			context.CurrentNamespace = unit.NamespaceDeclaration?.Name;
@@ -134,6 +136,15 @@ public sealed class ValidationPass(BindingContext context)
 		// a constructor's purpose is to populate fields.
 		CheckExtensionMethodBody(extendedTypeName, wrapper, forceMutableThis: true);
 
+		// Constructor chaining via ': this(...)': the delegating constructor forwards
+		// to a sibling constructor of the same type, which is responsible for
+		// initialising all fields. The delegating body should therefore be empty.
+		if (ctor.HasConstructorInitializer)
+		{
+			CheckConstructorInitializer(extendedType, ctor);
+			return;
+		}
+
 		// Defensive Initialization: every field of 'this' must be populated before
 		// the constructor exits, preventing uninitialized-memory bugs.
 		var assignedFields = new HashSet<string>();
@@ -151,6 +162,224 @@ public sealed class ValidationPass(BindingContext context)
 				);
 			}
 		}
+	}
+
+	private void CheckConstructorInitializer(StructTypeSymbol extendedType, ConstructorDeclarationSyntax ctor)
+	{
+		// 1. Build a scope mirroring the delegating constructor's own parameters plus
+		//    the mutable 'this' destination storage, then type-check the initializer args.
+		var scope = new SymbolTable(context.Globals);
+		scope.Declare(new VariableSymbol("this", new PointerTypeSymbol(extendedType, isMutable: true), isMutable: true)
+		{
+			IsInitialized = true,
+			Origin = OriginKind.Parameter
+		});
+
+		var ctorParamTypes = new List<TypeSymbol>();
+		foreach (var p in ctor.Parameters)
+		{
+			var pt = context.ResolveType(p.Type);
+			if (pt is null)
+				continue;
+
+			ctorParamTypes.Add(pt);
+			scope.Declare(new VariableSymbol(p.Name, pt, isMutable: false)
+			{
+				IsInitialized = true,
+				Origin = OriginKind.Parameter
+			});
+		}
+
+		var argTypes = new List<TypeSymbol>();
+		foreach (var arg in ctor.ConstructorArguments!)
+		{
+			CheckExpression(arg, scope);
+			argTypes.Add(GetExpressionType(arg, scope) ?? TypeSymbol.Int);
+		}
+
+		// 2. Overload resolution: pick the sibling constructor (same type, by
+		//    construction) whose signature best matches the initializer arguments.
+		var target = ResolveInitializerTarget(extendedType, argTypes);
+
+		// 3. The delegating constructor's own registerable name (for the code generator).
+		var callerParams = new List<TypeSymbol> { new PointerTypeSymbol(extendedType, isMutable: true) };
+		callerParams.AddRange(ctorParamTypes);
+		var callerName = context.GetOverloadedMangledName(extendedType.Name, callerParams);
+
+		if (target is not null)
+		{
+			context.ConstructorDelegationTargets[callerName] = target;
+
+			// No matching constructor for the initializer arguments.
+			// 4. Accessibility: the target must be visible from the delegating constructor.
+			if (target.Visibility == Visibility.Private
+				&& target.DeclaringUnit is not null
+				&& target.DeclaringUnit != context.CurrentUnit)
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(
+					currentFileContext,
+					ctor.ConstructorInitializerSpan ?? ctor.Span,
+					$"Constructor '{ctor.StructName}' is not accessible from the current constructor.");
+			}
+
+			// 5. Cycle detection: follow the delegation chain; if it loops back onto
+			//    this constructor's chain, report cyclic delegation.
+			if (CheckConstructorCycle(extendedType, ctor, target, callerName))
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(
+					currentFileContext,
+					ctor.ConstructorInitializerSpan ?? ctor.Span,
+					"Constructor initializer `this(...)` cannot call itself (cyclic delegation).",
+					DiagnosticIds.CyclicConstructorDelegation);
+				return;
+			}
+		}
+		else
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			var sigString = string.Join(", ", argTypes.Select(t => t.Name));
+			context.Diagnostics.Report(
+				currentFileContext,
+				ctor.ConstructorInitializerSpan ?? ctor.Span,
+				$"No constructor of '{extendedType.Name}' matches initializer argument types ({sigString}).");
+			return;
+		}
+
+		// 6. Empty-body warning: a delegating constructor's body should defer all logic.
+		if (ctor.Body.Statements.Count > 0)
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.ReportWarning(
+				currentFileContext,
+				ctor.Body.Span,
+				"Constructor body is not empty after `this(...)`; consider moving logic to the target constructor.",
+				DiagnosticIds.NonEmptyDelegatingConstructorBody);
+		}
+	}
+
+	/// <summary>Follows the delegation chain from <paramref name="target"/> and reports
+	/// true when it loops back onto the caller's chain (direct or indirect recursion).</summary>
+	private bool CheckConstructorCycle(StructTypeSymbol extendedType, ConstructorDeclarationSyntax caller, FunctionSymbol target, string callerChainKey)
+	{
+		var visiting = new HashSet<string> { callerChainKey };
+		var current = target;
+		var steps = 0;
+
+		while (current is not null && steps < 1024)
+		{
+			if (!visiting.Add(current.Name))
+				return true;
+
+			var targetDecl = FindConstructorDeclaration(current);
+			if (targetDecl is null || !targetDecl.HasConstructorInitializer)
+				return false;
+
+			var nextArgs = new List<TypeSymbol>();
+			foreach (var arg in targetDecl.ConstructorArguments!)
+				nextArgs.Add(GetExpressionType(arg, new SymbolTable(context.Globals)) ?? TypeSymbol.Int);
+
+			current = ResolveInitializerTarget(extendedType, nextArgs);
+			steps++;
+		}
+
+		return false;
+	}
+
+	private ConstructorDeclarationSyntax? FindConstructorDeclaration(FunctionSymbol symbol)
+	{
+		// Map a registered constructor symbol back to its declaration by scanning the
+		// declared/monomorphized extension blocks for a matching signature.
+		var paramSig = symbol.Parameters.Skip(1).Select(p => p.Type.Name).ToList();
+		var extendedTypeName = symbol.Parameters[0].Type.Name;
+
+		foreach (var unit in _units)
+		{
+			var members = unit.NamespaceDeclaration != null ? unit.NamespaceDeclaration.Members : unit.Members;
+			foreach (var decl in members)
+			{
+				if (decl is not ExtensionDeclarationSyntax ext || ext.ExtendedTypeName != extendedTypeName)
+					continue;
+
+				foreach (var ctor in ext.Constructors)
+				{
+					if (SignaturesMatch(ctor, paramSig))
+						return ctor;
+				}
+			}
+		}
+
+		foreach (var mono in context.MonomorphizedExtensionDecls)
+		{
+			if (mono is not ConstructorDeclarationSyntax monoCtor || monoCtor.StructName != extendedTypeName)
+				continue;
+
+			if (monoCtor.Parameters.Count == paramSig.Count)
+				return monoCtor;
+		}
+
+		return null;
+	}
+
+	private bool SignaturesMatch(ConstructorDeclarationSyntax ctor, List<string> paramSig)
+	{
+		if (ctor.Parameters.Count != paramSig.Count)
+			return false;
+
+		for (var i = 0; i < paramSig.Count; i++)
+		{
+			if (context.ResolveType(ctor.Parameters[i].Type)?.Name != paramSig[i])
+				return false;
+		}
+
+		return true;
+	}
+
+	private FunctionSymbol? ResolveInitializerTarget(StructTypeSymbol extendedType, IReadOnlyList<TypeSymbol> argTypes)
+	{
+		FunctionSymbol? target = null;
+		if (context.Constructors.TryGetValue(extendedType.Name, out var registeredCtors))
+		{
+			var bestScore = -1;
+			foreach (var candidate in registeredCtors)
+			{
+				if (candidate is null)
+					continue;
+
+				// The candidate's own parameter list (excluding its implicit 'this').
+				var candParams = candidate.Parameters.Skip(1).Select(p => p.Type).ToList();
+				if (candParams.Count != argTypes.Count)
+					continue;
+
+				var score = CompareSignatureExactly(candParams, argTypes);
+				if (score > bestScore)
+				{
+					bestScore = score;
+					target = candidate;
+				}
+			}
+		}
+
+		return target;
+	}
+
+	private int CompareSignatureExactly(IReadOnlyList<TypeSymbol> paramTypes, IReadOnlyList<TypeSymbol> argTypes)
+	{
+		var score = 0;
+		for (var i = 0; i < paramTypes.Count; i++)
+		{
+			if (paramTypes[i].Equals(argTypes[i]))
+				score += 4;
+			else if (argTypes[i].Equals(TypeSymbol.Null) && (paramTypes[i] is RawPointerTypeSymbol || (paramTypes[i] is UnionTypeSymbol u && u.IsOption)))
+				score += 3;
+			else if (TypeSymbol.IsIntegerType(paramTypes[i]) && TypeSymbol.IsIntegerType(argTypes[i]))
+				score += 1;
+			else if (TypeSymbol.IsFloatingPointType(paramTypes[i]) && TypeSymbol.IsIntegerType(argTypes[i]))
+				score += 1;
+		}
+
+		return score;
 	}
 
 	private void CollectFieldAssignments(SyntaxNode node, HashSet<string> assigned)

@@ -695,6 +695,13 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		return TextSpan.FromBounds(start, end);
 	}
 
+	private static TextSpan SpanOf(Antlr4.Runtime.IToken token)
+	{
+		if (token is null)
+			return new TextSpan(0, 0);
+		return TextSpan.FromBounds(token.StartIndex, token.StopIndex + 1);
+	}
+
 	private string GetTypeName(CvoloParser.TypeContext context)
 	{
 		if (context is CvoloParser.RefVarTypeContext refVarCtx)
@@ -812,7 +819,31 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			}
 
 			var ctorAttributes = BuildAttributeList(ctorCtx.attributeList());
-			constructors.Add(new ConstructorDeclarationSyntax(SpanOf(ctorCtx), ctorCtx.Identifier().GetText(), ctorParams, BuildBlockStatement(ctorCtx.blockStatement()), ctorAttributes, GetVisibilityModifier(ctorCtx.visibilityModifier())));
+			var structName = ctorCtx.Identifier(0).GetText();
+
+			// Optional delegating initializer ': this(...)' — match the target as an
+			// Identifier (there is no lexer keyword for 'this'), validated as "this".
+			IReadOnlyList<ExpressionSyntax>? ctorArgs = null;
+			TextSpan? ctorInitSpan = null;
+			if (ctorCtx.Identifier().Length > 1)
+			{
+				var targetId = ctorCtx.Identifier(1);
+				if (targetId.GetText() == "this")
+				{
+					var argList = new List<ExpressionSyntax>();
+					var argCtx = ctorCtx.argumentList();
+					if (argCtx is not null)
+					{
+						foreach (var arg in argCtx.expression())
+							argList.Add(BuildExpression(arg));
+					}
+
+					ctorArgs = argList;
+					ctorInitSpan = SpanOf(targetId.Symbol);
+				}
+			}
+
+			constructors.Add(new ConstructorDeclarationSyntax(SpanOf(ctorCtx), structName, ctorParams, BuildBlockStatement(ctorCtx.blockStatement()), ctorArgs, ctorInitSpan, ctorAttributes, GetVisibilityModifier(ctorCtx.visibilityModifier())));
 		}
 
 		var generics = new List<string>();

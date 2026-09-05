@@ -80,7 +80,22 @@ public abstract class AstRewriterBase
 		{
 			var rewrittenCtorParams = ctor.Parameters.Select(p => new ParameterSyntax(p.Span, p.Type, p.Name, p.Attributes)).ToList();
 			var rewrittenCtorBody = (BlockStatementSyntax)Rewrite(ctor.Body);
-			return new ConstructorDeclarationSyntax(ctor.Span, ctor.StructName, rewrittenCtorParams, rewrittenCtorBody, ctor.Attributes, ctor.Visibility);
+
+			IReadOnlyList<ExpressionSyntax>? rewrittenCtorArgs = null;
+			if (ctor.ConstructorArguments is not null)
+			{
+				rewrittenCtorArgs = ctor.ConstructorArguments.Select(a => (ExpressionSyntax)Rewrite(a)).ToList();
+			}
+
+			return new ConstructorDeclarationSyntax(
+				ctor.Span,
+				ctor.StructName,
+				rewrittenCtorParams,
+				rewrittenCtorBody,
+				constructorArguments: rewrittenCtorArgs,
+				constructorInitializerSpan: ctor.ConstructorInitializerSpan,
+				attributes: ctor.Attributes,
+				visibility: ctor.SyntacticVisibility);
 		}
 
 		if (node is BlockStatementSyntax block)
