@@ -1,0 +1,53 @@
+using System;
+
+union Option<T> {
+    T Some;
+    void None;
+}
+
+struct Node {
+    int Value;
+    Option<refvar Node> Next;
+}
+
+int main() {
+    var Node a( Value: 1, Next: Option<refvar Node> { None: void } );
+    var Node b( Value: 2, Next: Option<refvar Node> { None: void } );
+    a.Next = Option<refvar Node> { Some: refvar b };
+
+    // Plain operand (no borrow): tested directly on the NPO option value.
+    var Option<refvar Node> opt = a.Next;
+    if (opt is Some node) {
+        Console.WriteLine($"plain: {node.Value}");
+    }
+
+    // 'ref' operand: matched by reference; Some payload promotes to the inner reference.
+    if (ref opt is Some refnode) {
+        Console.WriteLine($"ref: {refnode.Value}");
+    }
+
+    // 'refvar' operand: the bound reference is writable.
+    if (refvar opt is Some mut) {
+        mut.Value = 42;
+        Console.WriteLine($"refvar: {mut.Value}");
+    }
+
+    // Borrow of a struct field backing the option.
+    if (ref a.Next is Some field) {
+        Console.WriteLine($"field: {field.Value}");
+    }
+
+    // None path: matched through both a ref and a plain operand.
+    var Option<refvar Node> empty = Option<refvar Node> { None: void };
+    if (ref empty is Some no) {
+        Console.WriteLine("unexpected");
+    }
+    if (ref empty is None) {
+        Console.WriteLine("ref none");
+    }
+    if (empty is None) {
+        Console.WriteLine("plain none");
+    }
+
+    return 0;
+}

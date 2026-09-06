@@ -852,24 +852,40 @@ case DefaultExpressionSyntax d:
 					var targetType = _bindingContext!.ResolveType(d.TypeName)!;
 					return LLVMValueRef.CreateConstNull(GetLLVMType(targetType));
 				}
-			case IsPatternExpressionSyntax isPat:
+case IsPatternExpressionSyntax isPat:
 				{
-// Operand is an Option-shaped NPO union whose value IS the payload
-				// pointer (Some = non-zero, None = zero). Test the pointer for null;
-				// `is Some` yields non-null, `is None` / `is None x` yields null.
-				var operandVal = EmitExpression(isPat.Operand);
-				var isNoneVariant = isPat.VariantName is "None";
-				var isSome = _builder.BuildICmp(
-					isNoneVariant ? LLVMIntPredicate.LLVMIntEQ : LLVMIntPredicate.LLVMIntNE,
-					operandVal,
-					LLVMValueRef.CreateConstPointerNull(operandVal.TypeOf),
-					isNoneVariant ? "is_none" : "is_some");
+					// Operand is an Option-shaped NPO union whose value IS the payload
+					// pointer (Some = non-zero, None = zero). Test the pointer for null;
+					// `is Some` yields non-null, `is None` / `is None x` yields null.
+					var isNoneVariant = isPat.VariantName is "None";
+
+					LLVMValueRef operandVal;
+					if (isPat.Operand is BorrowExpressionSyntax borrowOperand)
+					{
+						// `ref opt` / `refvar opt` matches by reference: the borrow unwraps to the
+						// option's storage, whose flat value IS the payload pointer (mirrors the
+						// switch emitter's ref-target handling).
+						var (targetPtr, targetUnion) = GetFieldPointer(borrowOperand);
+						var unionType = targetUnion is PointerTypeSymbol ptrTy ? ptrTy.ReferencedType : targetUnion;
+						operandVal = _builder.BuildLoad2(GetLLVMType(unionType), targetPtr, "is_flat_val");
+					}
+					else
+					{
+						operandVal = EmitExpression(isPat.Operand);
+					}
+
+					var isSome = _builder.BuildICmp(
+						isNoneVariant ? LLVMIntPredicate.LLVMIntEQ : LLVMIntPredicate.LLVMIntNE,
+						operandVal,
+						LLVMValueRef.CreateConstPointerNull(operandVal.TypeOf),
+						isNoneVariant ? "is_none" : "is_some");
 
 					if (isPat.BoundName is not null)
 					{
 						TypeSymbol? operandType = isPat.Operand switch
 						{
 							IdentifierExpressionSyntax id => _variableTypes.GetValueOrDefault(id.Name),
+							BorrowExpressionSyntax b => GetExprType(b.Expression),
 							_ => null
 						};
 
@@ -879,7 +895,7 @@ case DefaultExpressionSyntax d:
 								? u.FindField(isPat.VariantName)?.Type ?? operandType
 								: operandType;
 
-						if (promotedType is not null)
+						if (promotedType is not null && !ReferenceEquals(promotedType, TypeSymbol.Int))
 						{
 							if (!_locals.TryGetValue(isPat.BoundName, out var bindSlot))
 							{

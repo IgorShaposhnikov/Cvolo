@@ -1,0 +1,11 @@
+union Choice {
+    int A;
+    int B;
+}
+
+int main() {
+    var Choice c = Choice { A: 1 };
+    if (c is A) {
+    }
+    return 0;
+}
