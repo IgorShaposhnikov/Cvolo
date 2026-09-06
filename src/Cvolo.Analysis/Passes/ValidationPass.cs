@@ -904,24 +904,36 @@ public sealed class ValidationPass(BindingContext context)
 			case VoidLiteralExpressionSyntax:
 				break;
 			case DefaultExpressionSyntax defaultExpr:
-				var defaultTy = context.ResolveType(defaultExpr.TypeName);
-				if (defaultTy is null)
 				{
-					var currentFileContext = context.FileContexts[context.CurrentUnit!];
-					context.Diagnostics.Report(currentFileContext, defaultExpr.Span, $"Unknown type '{defaultExpr.TypeName}' in default expression");
-				}
-				else if (defaultTy is TypeParameterSymbol)
-				{
-					// Generic type parameters (e.g., default(A) where A is a generic parameter) are always allowed.
-					break;
-				}
-				else if (defaultTy is StructTypeSymbol or UnionTypeSymbol)
-				{
-					var defaultKind = Classification.Classify(defaultTy);
-					if (defaultKind != CopyKind.TrivialCopy)
+					if (defaultExpr.TypeName is null)
+					{
+						// Bare 'default' (no type argument) is only lowered by OptionalSyntaxRewriter
+						// inside a typed declaration; anywhere else there is no type to infer.
+						var currentFileContext = context.FileContexts[context.CurrentUnit!];
+						context.Diagnostics.Report(currentFileContext, defaultExpr.Span,
+							"Cannot infer the type of a bare 'default' expression. Use default(T) or declare the variable with an explicit type.");
+						break;
+					}
+
+					var defaultTy = context.ResolveType(defaultExpr.TypeName);
+					if (defaultTy is null)
 					{
 						var currentFileContext = context.FileContexts[context.CurrentUnit!];
-						context.Diagnostics.Report(currentFileContext, defaultExpr.Span, $"Type '{defaultExpr.TypeName}' cannot be used with default because it is not a Trivial Copy Type");
+						context.Diagnostics.Report(currentFileContext, defaultExpr.Span, $"Unknown type '{defaultExpr.TypeName}' in default expression");
+					}
+					else if (defaultTy is TypeParameterSymbol)
+					{
+						// Generic type parameters (e.g., default(A) where A is a generic parameter) are always allowed.
+						break;
+					}
+					else if (defaultTy is StructTypeSymbol or UnionTypeSymbol)
+					{
+						var defaultKind = Classification.Classify(defaultTy);
+						if (defaultKind != CopyKind.TrivialCopy)
+						{
+							var currentFileContext = context.FileContexts[context.CurrentUnit!];
+							context.Diagnostics.Report(currentFileContext, defaultExpr.Span, $"Type '{defaultExpr.TypeName}' cannot be used with default because it is not a Trivial Copy Type");
+						}
 					}
 				}
 
@@ -2438,6 +2450,9 @@ public sealed class ValidationPass(BindingContext context)
 				return new TernaryExpressionSyntax(t.Span, SubstituteExpressionGenerics(t.Condition, substitutionMap), SubstituteExpressionGenerics(t.ThenExpression, substitutionMap), SubstituteExpressionGenerics(t.ElseExpression, substitutionMap));
 
 			case DefaultExpressionSyntax def:
+				if (def.TypeName is null)
+					return def;
+
 				var newDefaultType = def.TypeName;
 				foreach (var kv in substitutionMap)
 				{

@@ -11,6 +11,7 @@ public sealed class OptionalsTests : CompilerTestBase
 	[InlineData("OptionalInterior", "5\n7\n9")]
 	[InlineData("OptionalNone", "a none\nref none")]
 	[InlineData("OptionalDefault", "none")]
+	[InlineData("OptionalBareDefault", "0\nnone")]
 	[InlineData("OptionalRefNpo", "val: 7")]
 	public void Execution_Success(string caseName, string expected)
 	{

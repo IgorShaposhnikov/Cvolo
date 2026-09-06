@@ -276,6 +276,7 @@ expression
 	| NULL																				# nullLiteralExpression
 	| VOID																				# voidLiteralExpression
 	| DEFAULT LPAREN type RPAREN															# defaultExpression
+	| DEFAULT																				# defaultExpression
 	| LPAREN expression RPAREN															# parenthesizedExpression
 	;
 

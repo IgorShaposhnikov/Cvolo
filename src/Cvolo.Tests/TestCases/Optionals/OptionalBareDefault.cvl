@@ -1,0 +1,14 @@
+using System;
+
+int main() {
+    val int i = default;
+    Console.WriteLine(i);
+
+    val int? o = default;
+    if (o is Some v) {
+        Console.WriteLine("some");
+    } else {
+        Console.WriteLine("none");
+    }
+    return 0;
+}

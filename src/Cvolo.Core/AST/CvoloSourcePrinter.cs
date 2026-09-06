@@ -103,7 +103,7 @@ public sealed class CvoloSourcePrinter
 				return "void";
 
 			case DefaultExpressionSyntax def:
-				return $"default({def.TypeName})";
+				return def.TypeName is null ? "default" : $"default({def.TypeName})";
 
 			case UnionDeclarationSyntax u:
 				var uGenerics = u.GenericParameters.Count > 0 ? $"<{string.Join(", ", u.GenericParameters)}>" : "";

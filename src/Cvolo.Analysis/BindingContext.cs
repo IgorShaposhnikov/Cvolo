@@ -1015,6 +1015,9 @@ public sealed class BindingContext
 					return new TernaryExpressionSyntax(t.Span, SubstituteExpressionGenerics(t.Condition), SubstituteExpressionGenerics(t.ThenExpression), SubstituteExpressionGenerics(t.ElseExpression));
 
 				case DefaultExpressionSyntax def:
+					if (def.TypeName is null)
+						return def;
+
 					var newDefaultType = def.TypeName;
 					foreach (var kv in substitutionMap)
 					{

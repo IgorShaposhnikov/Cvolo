@@ -849,7 +849,9 @@ var ctorBaseMangledName = bindingContext.GetMangledName(extDecl.ExtendedTypeName
 				return LLVMValueRef.CreateConstPointerNull(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0));
 case DefaultExpressionSyntax d:
 				{
-					var targetType = _bindingContext!.ResolveType(d.TypeName)!;
+					// Bare 'default' is lowered by OptionalSyntaxRewriter inside declarations; if it ever
+					// reaches codegen unresolved, validation already reported an error (codegen is skipped).
+					var targetType = d.TypeName is null ? TypeSymbol.Int : _bindingContext!.ResolveType(d.TypeName)!;
 					return LLVMValueRef.CreateConstNull(GetLLVMType(targetType));
 				}
 case IsPatternExpressionSyntax isPat:

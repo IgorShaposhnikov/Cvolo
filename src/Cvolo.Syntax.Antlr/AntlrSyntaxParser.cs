@@ -577,7 +577,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			case CvoloParser.VoidLiteralExpressionContext voidCtx:
 				return new VoidLiteralExpressionSyntax(SpanOf(voidCtx));
 			case CvoloParser.DefaultExpressionContext defaultCtx:
-				return new DefaultExpressionSyntax(SpanOf(defaultCtx), GetTypeName(defaultCtx.type()));
+				return new DefaultExpressionSyntax(SpanOf(defaultCtx), defaultCtx.type() is { } defaultTypeCtx ? GetTypeName(defaultTypeCtx) : null);
 			default:
 				return new IdentifierExpressionSyntax(SpanOf(context), context.GetText());
 		}

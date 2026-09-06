@@ -39,6 +39,14 @@ public sealed class OptionalSyntaxRewriter(bool strictOption, DiagnosticBag diag
 		{
 			var rewrittenType = RewriteType(varDecl.Type, varDecl.Span);
 			ExpressionSyntax? rewrittenInit = varDecl.Initializer;
+
+			// Bare 'default' in a typed declaration: 'int x = default;' / 'int? x = default;'
+			// lower to the declared type, so 'int? x = default;' becomes default(Option<int>) (None).
+			if (rewrittenInit is DefaultExpressionSyntax { TypeName: null } bareDefault && rewrittenType is not null)
+			{
+				rewrittenInit = new DefaultExpressionSyntax(bareDefault.Span, rewrittenType);
+			}
+
 			if (IsOptionRoot(varDecl.Type))
 			{
 				if (rewrittenInit is NullLiteralExpressionSyntax)
@@ -67,6 +75,13 @@ public sealed class OptionalSyntaxRewriter(bool strictOption, DiagnosticBag diag
 		{
 			var rewrittenType = RewriteType(globalDecl.Type, globalDecl.Span);
 			ExpressionSyntax? rewrittenInit = globalDecl.Initializer;
+
+			// 'global int x = default;' → 'global int x = default(int);' (and 'int?' roots → default(Option<int>))
+			if (rewrittenInit is DefaultExpressionSyntax { TypeName: null } bareDefault && rewrittenType is not null)
+			{
+				rewrittenInit = new DefaultExpressionSyntax(bareDefault.Span, rewrittenType);
+			}
+
 			if (IsOptionRoot(globalDecl.Type))
 			{
 				if (rewrittenInit is NullLiteralExpressionSyntax)
@@ -261,7 +276,7 @@ public sealed class OptionalSyntaxRewriter(bool strictOption, DiagnosticBag diag
 			or CharacterLiteralExpressionSyntax or BooleanLiteralExpressionSyntax
 			or ArrayInitializationExpressionSyntax or ArrayReplicationExpressionSyntax => true,
 		StructInitializationExpressionSyntax si => !IsExplicitOptionType(si.StructTypeName),
-		DefaultExpressionSyntax d => !IsExplicitOptionType(d.TypeName) && !d.TypeName.EndsWith('?'),
+		DefaultExpressionSyntax d => d.TypeName is not null && !IsExplicitOptionType(d.TypeName) && !d.TypeName.EndsWith('?'),
 		_ => false,
 	};
 
