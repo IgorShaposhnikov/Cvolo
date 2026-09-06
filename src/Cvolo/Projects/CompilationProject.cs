@@ -7,13 +7,15 @@ public sealed class CompilationProject
 	public IReadOnlyList<string> SourceFiles { get; }
 	public string OutputName { get; }
 	public bool IsShared { get; private set; }
+	public bool StrictOption { get; }
 	public string ProjectDirectory { get; }
 
-	private CompilationProject(IReadOnlyList<string> sourceFiles, string outputName, bool isShared, string projectDirectory)
+	private CompilationProject(IReadOnlyList<string> sourceFiles, string outputName, bool isShared, string projectDirectory, bool strictOption = false)
 	{
 		SourceFiles = sourceFiles;
 		OutputName = outputName;
 		IsShared = isShared;
+		StrictOption = strictOption;
 		ProjectDirectory = projectDirectory;
 	}
 
@@ -22,6 +24,7 @@ public sealed class CompilationProject
 		List<string> sourceFiles = [];
 		var outputName = "main";
 		var isShared = forceShared;
+		var strictOption = false;
 
 		// 1. Automatically locate the "libraries" folder by traversing up the directory tree
 		var searchDir = compilerBaseDir ?? AppContext.BaseDirectory;
@@ -49,6 +52,7 @@ public sealed class CompilationProject
 				var xml = XDocument.Load(inputPath);
 				var assemblyName = xml.Root?.Element("PropertyGroup")?.Element("AssemblyName")?.Value;
 				var outputType = xml.Root?.Element("PropertyGroup")?.Element("OutputType")?.Value;
+				var strictOptionValue = xml.Root?.Element("PropertyGroup")?.Element("StrictOption")?.Value;
 
 				if (!string.IsNullOrEmpty(assemblyName))
 					outputName = assemblyName;
@@ -57,6 +61,9 @@ public sealed class CompilationProject
 
 				if (outputType == "Library")
 					isShared = true;
+
+				if (string.Equals(strictOptionValue, "true", StringComparison.OrdinalIgnoreCase))
+					strictOption = true;
 			}
 			catch
 			{
@@ -100,7 +107,7 @@ public sealed class CompilationProject
 			throw new InvalidOperationException($"No Cvolo source files found in '{inputPath}'");
 		}
 
-		return new CompilationProject(sourceFiles, outputName, isShared, projectDir);
+		return new CompilationProject(sourceFiles, outputName, isShared, projectDir, strictOption);
 	}
 
 	public static void CreateNewProject(string projectName)

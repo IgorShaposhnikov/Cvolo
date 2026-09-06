@@ -1,0 +1,6 @@
+using System;
+
+int main() {
+	void? x;
+	return 0;
+}

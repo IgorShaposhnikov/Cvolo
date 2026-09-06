@@ -751,6 +751,16 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			return $"{innerTypeName}<{string.Join(", ", args)}>";
 		}
 
+		if (context is CvoloParser.OptionalTypeContext optCtx)
+		{
+			if (optCtx.type() is CvoloParser.OptionalTypeContext)
+			{
+				_diagnostics.Report(_compilationContext!, SpanOf(context), "Multiple '?' in a row are not allowed. Use Option<Option<T>> for nested optional types.",
+					DiagnosticIds.OptionalTypeChainForbidden);
+			}
+			return $"{GetTypeName(optCtx.type())}?";
+		}
+
 		return context.GetText();
 	}
 

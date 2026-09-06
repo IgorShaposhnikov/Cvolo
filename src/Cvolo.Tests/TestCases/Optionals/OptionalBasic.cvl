@@ -1,0 +1,23 @@
+using System;
+
+struct Point {
+    int X;
+    int Y;
+}
+
+void take(int? p) {
+	if (p is Some v) {
+		Console.WriteLine(v);
+	}
+}
+
+int main() {
+	var int? a = 42;
+	take(a);
+	a = 99;
+	if (a is Some w) Console.WriteLine(w);
+
+	Point? p = Point { X: 10, Y: 20 };
+	if (p is Some pt) Console.WriteLine($"{pt.X},{pt.Y}");
+	return 0;
+}

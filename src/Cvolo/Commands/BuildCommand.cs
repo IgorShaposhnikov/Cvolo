@@ -19,6 +19,7 @@ internal sealed class BuildCommand : Command
 		var emitLoweredOption = new Option<bool>("--emit-lowered", "-l") { Description = "Print lowered Cvolo source code directly to stdout" };
 		var nowarnOption = new Option<string>("--nowarn") { Description = "Comma-separated diagnostic ids whose warnings are suppressed (e.g. CVL1001)" };
 		var legacyVisibilityOption = new Option<bool>("--legacy-visibility") { Description = "Disable the visibility system and treat all declarations as public (v0.2.0-alpha behavior)" };
+		var strictOption = new Option<bool>("--strict-option") { Description = "Disable the '?' optional type syntax; require explicit Option<T> types" };
 
 		Add(pathArg);
 		Add(llvmOption);
@@ -29,6 +30,7 @@ internal sealed class BuildCommand : Command
 		Add(emitLoweredOption);
 		Add(nowarnOption);
 		Add(legacyVisibilityOption);
+		Add(strictOption);
 
 		SetAction((ParseResult parseResult) =>
 		{
@@ -40,8 +42,9 @@ internal sealed class BuildCommand : Command
 			var emitLoweredVal = parseResult.GetValue(emitLoweredOption);
 			var noWarnVal = parseResult.GetValue(nowarnOption);
 			var legacyVisibilityVal = parseResult.GetValue(legacyVisibilityOption);
+			var strictOptionVal = parseResult.GetValue(strictOption);
 
-			var exitCode = _compilerDriver.Compile(path, llvmOnly, isShared, emitIrVal, optLevel, emitLowered: emitLoweredVal, noWarn: noWarnVal, legacyVisibility: legacyVisibilityVal);
+			var exitCode = _compilerDriver.Compile(path, llvmOnly, isShared, emitIrVal, optLevel, emitLowered: emitLoweredVal, noWarn: noWarnVal, legacyVisibility: legacyVisibilityVal, strictOption: strictOptionVal);
 			Environment.Exit(exitCode);
 		});
 	}

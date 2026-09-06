@@ -854,60 +854,139 @@ case DefaultExpressionSyntax d:
 				}
 case IsPatternExpressionSyntax isPat:
 				{
-					// Operand is an Option-shaped NPO union whose value IS the payload
-					// pointer (Some = non-zero, None = zero). Test the pointer for null;
-					// `is Some` yields non-null, `is None` / `is None x` yields null.
+					// Operand is an Option-shaped union. NPO options store the payload pointer
+					// flat (Some = non-zero, None = zero); tagged options store an i8 discriminator
+					// plus the payload, so the match test compares the tag against the variant index.
 					var isNoneVariant = isPat.VariantName is "None";
 
-					LLVMValueRef operandVal;
-					if (isPat.Operand is BorrowExpressionSyntax borrowOperand)
+					// Locate the option's storage: a borrow operand ('ref x') or a refvar-typed
+					// operand reads through the reference (mirrors the switch emitter's ref-target
+					// handling); otherwise the operand is the union value itself.
+					var isBorrowTarget = isPat.Operand is BorrowExpressionSyntax;
+					TypeSymbol? operandType;
+					LLVMValueRef? storagePtr = null;
+					if (isBorrowTarget)
 					{
-						// `ref opt` / `refvar opt` matches by reference: the borrow unwraps to the
-						// option's storage, whose flat value IS the payload pointer (mirrors the
-						// switch emitter's ref-target handling).
-						var (targetPtr, targetUnion) = GetFieldPointer(borrowOperand);
-						var unionType = targetUnion is PointerTypeSymbol ptrTy ? ptrTy.ReferencedType : targetUnion;
-						operandVal = _builder.BuildLoad2(GetLLVMType(unionType), targetPtr, "is_flat_val");
+						var (targetPtr, targetUnion) = GetFieldPointer(isPat.Operand);
+						operandType = targetUnion is PointerTypeSymbol ptrTy ? ptrTy.ReferencedType : targetUnion;
+						storagePtr = targetPtr;
 					}
 					else
 					{
-						operandVal = EmitExpression(isPat.Operand);
+						operandType = GetExprType(isPat.Operand);
+						if (operandType is PointerTypeSymbol aliasPtr && aliasPtr.ReferencedType is UnionTypeSymbol)
+						{
+							// refvar alias: the operand's value is a pointer to the option union.
+							isBorrowTarget = true;
+							storagePtr = EmitExpression(isPat.Operand);
+						}
 					}
 
-					var isSome = _builder.BuildICmp(
-						isNoneVariant ? LLVMIntPredicate.LLVMIntEQ : LLVMIntPredicate.LLVMIntNE,
-						operandVal,
-						LLVMValueRef.CreateConstPointerNull(operandVal.TypeOf),
-						isNoneVariant ? "is_none" : "is_some");
+					var unionType = operandType is PointerTypeSymbol pt ? pt.ReferencedType : operandType;
+					var unionTypeSym = unionType as UnionTypeSymbol;
+					var isTagged = unionTypeSym is not null && unionTypeSym.IsOption && !unionTypeSym.IsNpoEligible;
 
-					if (isPat.BoundName is not null)
+					LLVMValueRef isSome;
+					LLVMValueRef? tagPayloadPtr = null;
+					if (isTagged)
 					{
-						TypeSymbol? operandType = isPat.Operand switch
-						{
-							IdentifierExpressionSyntax id => _variableTypes.GetValueOrDefault(id.Name),
-							BorrowExpressionSyntax b => GetExprType(b.Expression),
-							_ => null
-						};
+						var unionLayout = GetLLVMType(unionType);
 
-						var promotedType = operandType is UnionTypeSymbol npoUnion && npoUnion.IsNpoEligible
-							? npoUnion.FindField(isPat.VariantName)?.Type ?? operandType
-							: (operandType as PointerTypeSymbol)?.ReferencedType is UnionTypeSymbol u && u.IsNpoEligible
-								? u.FindField(isPat.VariantName)?.Type ?? operandType
-								: operandType;
-
-						if (promotedType is not null && !ReferenceEquals(promotedType, TypeSymbol.Int))
+						// GEP directly into the union storage for borrows; otherwise materialize a
+						// pointer to the fetched union value so tag/payload offsets can be computed.
+						LLVMValueRef unionAccessPtr;
+						if (storagePtr is not null)
 						{
-							if (!_locals.TryGetValue(isPat.BoundName, out var bindSlot))
+							unionAccessPtr = storagePtr.Value;
+						}
+						else
+						{
+							var structVal = EmitExpression(isPat.Operand);
+							unionAccessPtr = _builder.BuildAlloca(unionLayout, "is_tag_tmp");
+							_builder.BuildStore(structVal, unionAccessPtr);
+						}
+
+						var tagPtr = _builder.BuildGEP2(unionLayout, unionAccessPtr, new LLVMValueRef[] {
+							LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
+							LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0)
+						}, "is_tag_ptr");
+						var tagValue = _builder.BuildLoad2(LLVMTypeRef.Int8, tagPtr, "is_tag_val2");
+
+						var matchVariant = isNoneVariant ? "None" : "Some";
+						var matchIndex = GetFieldIndex(unionTypeSym!, matchVariant);
+						isSome = _builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, tagValue,
+							LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, (ulong)matchIndex),
+							isNoneVariant ? "is_none" : "is_some");
+
+						tagPayloadPtr = _builder.BuildGEP2(unionLayout, unionAccessPtr, new LLVMValueRef[] {
+							LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
+							LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1)
+						}, "is_payload_ptr");
+					}
+					else
+					{
+						// NPO: the flat value IS the payload pointer.
+						LLVMValueRef operandVal;
+						if (storagePtr is not null)
+						{
+							var unionLayoutType = GetLLVMType(unionType);
+							operandVal = _builder.BuildLoad2(unionLayoutType, storagePtr.Value, "is_flat_val");
+						}
+						else
+						{
+							operandVal = EmitExpression(isPat.Operand);
+						}
+
+						isSome = _builder.BuildICmp(
+							isNoneVariant ? LLVMIntPredicate.LLVMIntEQ : LLVMIntPredicate.LLVMIntNE,
+							operandVal,
+							LLVMValueRef.CreateConstPointerNull(operandVal.TypeOf),
+							isNoneVariant ? "is_none" : "is_some");
+					}
+
+					if (isPat.BoundName is not null && unionTypeSym is not null)
+					{
+						TypeSymbol? promotedType = unionTypeSym.IsNpoEligible
+							? unionTypeSym.FindField(isPat.VariantName)?.Type ?? unionTypeSym
+							: isBorrowTarget
+								? new PointerTypeSymbol(
+									unionTypeSym.FindField(isPat.VariantName)?.Type ?? unionTypeSym,
+									isMutable: GetExprType(isPat.Operand) is PointerTypeSymbol borrowPtr && borrowPtr.IsMutable)
+								: unionTypeSym.FindField(isPat.VariantName)?.Type ?? unionTypeSym;
+
+						if (!_locals.TryGetValue(isPat.BoundName, out var bindSlot))
+						{
+							var bindTy = GetLLVMType(promotedType);
+							bindSlot = _builder.BuildAlloca(bindTy, isPat.BoundName);
+							_locals[isPat.BoundName] = bindSlot;
+							_variableTypes[isPat.BoundName] = promotedType;
+						}
+
+						// Every pattern evaluation re-binds the payload: the scrutinee changes
+						// between pattern sites (e.g. the same name bound in a later loop).
+						if (isTagged)
+						{
+							if (isBorrowTarget)
 							{
-								var bindTy = GetLLVMType(promotedType);
-								bindSlot = _builder.BuildAlloca(bindTy, isPat.BoundName);
-								_locals[isPat.BoundName] = bindSlot;
-								_variableTypes[isPat.BoundName] = promotedType;
+								// `ref opt is Some v`: bind v as a reference to the payload slot.
+								var castPtr = _builder.BuildBitCast(tagPayloadPtr!.Value, GetLLVMType(promotedType), "is_payload_ref");
+								_builder.BuildStore(castPtr, bindSlot);
 							}
-
-							var bindVal = operandVal.TypeOf == GetLLVMType(promotedType)
-								? operandVal
-								: _builder.BuildPointerCast(operandVal, GetLLVMType(promotedType), "is_bind");
+							else
+							{
+								var castPtr = _builder.BuildBitCast(tagPayloadPtr!.Value, LLVMTypeRef.CreatePointer(GetLLVMType(promotedType), 0), "is_payload_cast");
+								var payloadVal = _builder.BuildLoad2(GetLLVMType(promotedType), castPtr, "is_payload_val");
+								_builder.BuildStore(payloadVal, bindSlot);
+							}
+						}
+						else
+						{
+							var operandVal2 = storagePtr is not null
+								? _builder.BuildLoad2(GetLLVMType(unionType), storagePtr.Value, "is_flat_val2")
+								: EmitExpression(isPat.Operand);
+							var bindVal = operandVal2.TypeOf == GetLLVMType(promotedType)
+								? operandVal2
+								: _builder.BuildPointerCast(operandVal2, GetLLVMType(promotedType), "is_bind");
 							_builder.BuildStore(bindVal, bindSlot);
 						}
 					}
@@ -3670,32 +3749,26 @@ var (fieldPtr, _) = GetFieldPointer(id);
 		// The heap target is either a struct literal (`heap Node { ... }`) or a constructor
 		// call (`heap Node(args)`). Both allocate unmanaged memory and populate it in place.
 		StructTypeSymbol typeSymbol;
-		string structTypeName;
 
 		if (expr.Expression is StructInitializationExpressionSyntax structInit)
 		{
-			structTypeName = structInit.StructTypeName;
+			typeSymbol = _bindingContext!.ResolveType(structInit.StructTypeName) as StructTypeSymbol
+				?? throw new InvalidOperationException($"heap allocation requires a struct type, but '{structInit.StructTypeName}' did not resolve to one.");
 		}
 		else if (expr.Expression is CallExpressionSyntax ctorCall)
 		{
-			// `heap T(args)`: resolve the receiver struct type from the constructor call name.
-			// Strip generic arguments (`Foo<T>` -> `Foo`) and any namespace prefix.
-			var callName = ctorCall.FunctionName;
-			var genericIdx = callName.IndexOf('<');
-			if (genericIdx >= 0)
-			{
-				callName = callName.Substring(0, genericIdx);
-			}
-			var dotIdx = callName.LastIndexOf('.');
-			structTypeName = dotIdx >= 0 ? callName.Substring(dotIdx + 1) : callName;
+			// `heap T(args)`: the receiver struct is the constructor's RESOLVED return type
+			// (e.g. the instantiated `GBox<int>`), which carries the real fields for sizing.
+			// Re-resolving the name during codegen returns the empty generic template
+			// placeholder (store size 1), which yields a 1-byte malloc.
+			typeSymbol = GetExprType(ctorCall) as StructTypeSymbol
+				?? _bindingContext!.ResolveType(ctorCall.FunctionName) as StructTypeSymbol
+				?? throw new InvalidOperationException($"heap allocation requires a struct type, but '{ctorCall.FunctionName}' did not resolve to one.");
 		}
 		else
 		{
 			throw new InvalidOperationException($"Unsupported heap allocation target '{expr.Expression.Kind}'.");
 		}
-
-		typeSymbol = _bindingContext!.ResolveType(structTypeName) as StructTypeSymbol
-			?? throw new InvalidOperationException($"heap allocation requires a struct type, but '{structTypeName}' did not resolve to one.");
 
 		// Size the allocation from the real LLVM store size (handles alignment padding),
 		// not a heuristic field count.

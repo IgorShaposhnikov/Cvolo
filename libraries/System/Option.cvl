@@ -7,14 +7,15 @@ namespace System;
 /// </summary>
 union Option<T> {
     /// <summary>
+    /// Represents the empty, void variant indicating the absence of a value.
+    /// This is the first variant, so a zero-initialized Option (e.g. `default(T?)`) is None.
+    /// </summary>
+    void None;
+
+    /// <summary>
     /// Contains the active, safe, non-nullable value of type T.
     /// </summary>
     T Some;
-
-    /// <summary>
-    /// Represents the empty, void variant indicating the absence of a value.
-    /// </summary>
-    void None;
 }
 
 extension Option<T> {
@@ -23,6 +24,12 @@ extension Option<T> {
     /// </summary>
     Option(T value) {
         Some = value;
+    }
+
+    /// <summary>
+    /// Default constructor yields None.
+    /// </summary>
+    public Option() {
     }
 
     /// <summary>

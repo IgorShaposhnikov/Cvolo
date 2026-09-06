@@ -13,14 +13,17 @@ internal sealed class CheckCommand : Command
 
 		var pathArg = new Argument<string>("path") { Description = "The path to the Cvolo source file, directory, or .cvlproj file." };
 		var legacyVisibilityOption = new Option<bool>("--legacy-visibility") { Description = "Disable the visibility system and treat all declarations as public (v0.2.0-alpha behavior)" };
+		var strictOption = new Option<bool>("--strict-option") { Description = "Disable the '?' optional type syntax; require explicit Option<T> types" };
 		Add(pathArg);
 		Add(legacyVisibilityOption);
+		Add(strictOption);
 
 		SetAction(parseResult =>
 		{
 			var path = parseResult.GetValue(pathArg)!;
 			var legacyVisibilityVal = parseResult.GetValue(legacyVisibilityOption);
-			var exitCode = _compilerDriver.Compile(path, llvmOnly: false, isShared: false, emitIr: false, optLevel: "O0", checkOnly: true, legacyVisibility: legacyVisibilityVal);
+			var strictOptionVal = parseResult.GetValue(strictOption);
+			var exitCode = _compilerDriver.Compile(path, llvmOnly: false, isShared: false, emitIr: false, optLevel: "O0", checkOnly: true, legacyVisibility: legacyVisibilityVal, strictOption: strictOptionVal);
 			Environment.Exit(exitCode);
 		});
 	}

@@ -1,0 +1,12 @@
+using System;
+
+struct Node {
+    int Value;
+}
+
+int main() {
+    var Node node = Node { Value: 7 };
+    var ref Node? next = refvar node;
+    if (next is Some n) Console.WriteLine($"val: {n.Value}");
+    return 0;
+}

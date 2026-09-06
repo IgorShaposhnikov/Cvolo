@@ -20,6 +20,7 @@ public interface ICompilerDriver
 	/// <param name="noWarn">Comma-separated diagnostic ids (e.g. "CVL1001") whose warnings are suppressed.</param>
 	/// <param name="suppressWarnings">If set to <c>true</c>, all warnings are suppressed from output (used by <c>run</c> by default).</param>
 	/// <param name="legacyVisibility">If set to <c>true</c>, disables the visibility system and treats all declarations as public (restores v0.2.0-alpha behavior).</param>
+	/// <param name="strictOption">If set to <c>true</c>, disables the '?' optional type syntax and requires explicit `Option&lt;T&gt;` types.</param>
 	/// <returns>The exit status code of the compilation pass (0 for success, non-zero for failures).</returns>
-	int Compile(string path, bool llvmOnly, bool isShared, bool emitIr, string optLevel, bool checkOnly = false, bool runAfterCompile = false, bool verbose = false, bool emitLowered = false, string? noWarn = null, bool suppressWarnings = false, bool legacyVisibility = false);
+	int Compile(string path, bool llvmOnly, bool isShared, bool emitIr, string optLevel, bool checkOnly = false, bool runAfterCompile = false, bool verbose = false, bool emitLowered = false, string? noWarn = null, bool suppressWarnings = false, bool legacyVisibility = false, bool strictOption = false);
 }

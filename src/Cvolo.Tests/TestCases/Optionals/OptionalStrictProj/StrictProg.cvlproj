@@ -1,0 +1,7 @@
+<Project Sdk="Cvolo.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>StrictProg</AssemblyName>
+    <StrictOption>true</StrictOption>
+  </PropertyGroup>
+</Project>

@@ -31,7 +31,7 @@ public sealed class NpoTests : CompilerTestBase
 	[InlineData("LargeUnionValuePassFail", "Passing by value is forbidden for unions larger than 16 bytes")]
 	[InlineData("LargeUnionValueReturnFail", "Returning by value is forbidden for unions larger than 16 bytes")]
 	[InlineData("NpoRefArgNonOptionFail", "only Option-shaped unions (e.g. Option<ref T>) support reference type arguments")]
-	[InlineData("NpoIsNonOptionFail", "The 'is' pattern requires an Option-shaped union carrying a reference payload (e.g. Option<ref T>); 'Choice' is not eligible")]
+	[InlineData("NpoIsNonOptionFail", "The 'is' pattern requires an Option-shaped union (e.g. Option<T> or Option<ref T>); 'Choice' is not eligible")]
 	public void Semantic_Rejections(string caseName, string expectedError)
 	{
 		var fileName = $"NPO/{caseName}.cvl";

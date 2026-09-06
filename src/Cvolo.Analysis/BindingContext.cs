@@ -110,10 +110,16 @@ public sealed class BindingContext
 	/// </summary>
 	public bool LegacyVisibility { get; set; }
 
+	/// <summary>
+	/// When true (driven by the --strict-option CLI flag / .cvlproj setting), the '?' optional
+	/// type syntax is disabled entirely: any residual use resolves to a compile error.
+	/// </summary>
+	public bool StrictOption { get; set; }
+
 	/// <summary>Dedup set for per-instantiation visibility-leak diagnostics (CVL1038).</summary>
 	public HashSet<string> ReportedVisibilityLeaks { get; } = [];
 
-	/// <summary>Dedup set for per-instantiation bad 'ref'/'refvar' type-argument diagnostics (CVL1045).</summary>
+	/// <summary>Dedup set for per-instantiation bad 'ref'/'refvar' type-argument diagnostics (CVL1103).</summary>
 	public HashSet<string> ReportedRefTypeArgumentInstantiations { get; } = [];
 
 	/// <summary>
@@ -169,7 +175,47 @@ public sealed class BindingContext
 			return ptrType;
 		}
 
-		// 4. Resolve Static Array Types (e.g., int[5] or int[Color.Max + 1])
+		// 3b. Desugar Optional Type Syntax (X? -> Option<X>; ref X? -> Option<ref X>). This is a safety net
+	//     for any '?' the OptionalSyntaxRewriter did not structurally rewrite (generic type arguments,
+	//     cast targets, default(...) type names, ...); it also enforces the strict-option mode.
+	if (name.EndsWith('?') && name.Length > 1)
+	{
+		var innerName = name[..^1];
+		var currentFileContext = CurrentUnit is not null && FileContexts.TryGetValue(CurrentUnit, out var ctx) ? ctx : FileContexts.Values.FirstOrDefault();
+		if (innerName == "void")
+		{
+			if (currentFileContext is not null)
+				Diagnostics.Report(currentFileContext, new TextSpan(0, 0), "Cannot use '?' on 'void' or function types.", DiagnosticIds.OptionalOnVoid);
+			return null;
+		}
+
+		if (StrictOption)
+		{
+			if (currentFileContext is not null)
+				Diagnostics.Report(currentFileContext, new TextSpan(0, 0), "Optional syntax '?' is disabled. Use explicit Option<T> type.", DiagnosticIds.OptionalSyntaxDisabled);
+			return null;
+		}
+
+		// 'ref X?' / 'refvar X?' resolve straight to the flat NPO Option<ref X> specialization.
+		if (innerName.StartsWith("ref ", StringComparison.Ordinal) || innerName.StartsWith("refvar ", StringComparison.Ordinal))
+		{
+			var npoOptionType = ResolveType($"Option<{innerName}>");
+			if (npoOptionType is not null)
+				_typeCache[name] = npoOptionType;
+			return npoOptionType;
+		}
+
+		var elementType = ResolveType(innerName);
+		if (elementType is null)
+			return null;
+
+		var optionType = ResolveType($"Option<{innerName}>");
+		if (optionType is not null)
+			_typeCache[name] = optionType;
+		return optionType;
+	}
+
+	// 4. Resolve Static Array Types (e.g., int[5] or int[Color.Max + 1])
 		if (name.EndsWith(']'))
 		{
 			var openBracket = name.LastIndexOf('[');

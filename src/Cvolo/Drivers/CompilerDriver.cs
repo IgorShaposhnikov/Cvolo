@@ -19,7 +19,7 @@ internal sealed class CompilerDriver : ICompilerDriver
 {
 	private static readonly string[] _linkerCandidates = ["clang", "gcc", "g++"];
 
-	public int Compile(string path, bool llvmOnly, bool isShared, bool emitIr, string optLevel, bool checkOnly = false, bool runAfterCompile = false, bool verbose = false, bool emitLowered = false, string? noWarn = null, bool suppressWarnings = false, bool legacyVisibility = false)
+	public int Compile(string path, bool llvmOnly, bool isShared, bool emitIr, string optLevel, bool checkOnly = false, bool runAfterCompile = false, bool verbose = false, bool emitLowered = false, string? noWarn = null, bool suppressWarnings = false, bool legacyVisibility = false, bool strictOption = false)
 	{
 		// Diagnostics whose ids appear here are dropped from the warning stream entirely.
 		var noWarnIds = noWarn?
@@ -86,6 +86,7 @@ internal sealed class CompilerDriver : ICompilerDriver
 		};
 
 		var loweredAsts = new List<CompilationUnitSyntax>();
+		var effectiveStrictOption = strictOption || project.StrictOption;
 		try
 		{
 			foreach (var ast in asts)
@@ -94,6 +95,12 @@ internal sealed class CompilerDriver : ICompilerDriver
 				foreach (var rewriter in rewriters)
 				{
 					currentAst = (CompilationUnitSyntax)rewriter.Rewrite(currentAst);
+				}
+
+				if (binder.Context.FileContexts.TryGetValue(ast, out var rewriterContext))
+				{
+					var optionalRewriter = new OptionalSyntaxRewriter(effectiveStrictOption, binder.Diagnostics, rewriterContext);
+					currentAst = (CompilationUnitSyntax)optionalRewriter.Rewrite(currentAst);
 				}
 
 				if (binder.Context.FileContexts.TryGetValue(ast, out var fileContext))
@@ -125,6 +132,7 @@ internal sealed class CompilerDriver : ICompilerDriver
 
 		// 4. Semantic analysis passes (Name resolution, types, moves, borrows, and lifetimes validation)
 		binder.Context.LegacyVisibility = legacyVisibility;
+		binder.Context.StrictOption = effectiveStrictOption;
 		binder.Bind(asts);
 
 		if (binder.Diagnostics.HasErrors)

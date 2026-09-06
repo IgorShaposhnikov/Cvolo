@@ -1,0 +1,6 @@
+using System;
+
+int main() {
+    var int?? x = 5;
+    return 0;
+}

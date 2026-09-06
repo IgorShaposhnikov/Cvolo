@@ -1,0 +1,29 @@
+using System;
+
+struct Node {
+    int Value;
+}
+
+int main() {
+    var int? some = 42;
+    if (some is Some v) Console.WriteLine(v);
+
+    var int? none = Option.None;
+    if (none is Some n) {
+        Console.WriteLine("unexpected");
+    } else {
+        Console.WriteLine("none path");
+    }
+
+    var Node node = Node { Value: 7 };
+    var ref Node? next = refvar node;
+    if (next is Some n2) Console.WriteLine($"ref: {n2.Value}");
+
+    var int? plain = 7;
+    if (plain is Some p) {
+        Console.WriteLine(p);
+    } else {
+        Console.WriteLine("no");
+    }
+    return 0;
+}

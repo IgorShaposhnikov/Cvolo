@@ -1,0 +1,24 @@
+using System;
+
+struct Node {
+    int Value;
+}
+
+int main() {
+    var int? a = Option.None;
+    if (a is Some v) {
+        Console.WriteLine("unexpected");
+    } else {
+        Console.WriteLine("a none");
+    }
+
+    var Node node = Node { Value: 3 };
+    var refvar Node? next = refvar node;
+    next = Option.None;
+    if (next is Some n) {
+        Console.WriteLine("unexpected ref");
+    } else {
+        Console.WriteLine("ref none");
+    }
+    return 0;
+}

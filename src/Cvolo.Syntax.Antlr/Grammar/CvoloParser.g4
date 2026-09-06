@@ -126,6 +126,7 @@ type
 	| type LBRACK expression RBRACK                     # arrayType
 	| type LT typeList GT                               # genericInstantiationType
 	| type STAR                                         # pointerType
+	| type QMARK                                       # optionalType
 	| REFVAR type                                       # refVarType
 	| REF type                                          # readOnlyRefType
 	;

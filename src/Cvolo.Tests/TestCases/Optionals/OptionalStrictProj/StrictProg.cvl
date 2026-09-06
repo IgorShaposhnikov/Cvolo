@@ -1,0 +1,9 @@
+using System;
+
+int main() {
+    var int? value = 42;
+    if (value is Some v) {
+        return v == 42 ? 0 : 1;
+    }
+    return 1;
+}

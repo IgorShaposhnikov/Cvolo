@@ -1,0 +1,23 @@
+using System;
+
+struct Box {
+	int? content;
+}
+
+int main() {
+	Box b = Box { content: Option<int> { Some: 5 } };
+	if (b.content is Some c) Console.WriteLine(c);
+
+	var Option<int?> nested = Option<int?> { Some: Option<int> { Some: 7 } };
+	if (nested is Some v2) {
+		if (v2 is Some vv) Console.WriteLine(vv);
+	}
+
+	var int? other = other_of(9);
+	if (other is Some o) Console.WriteLine(o);
+	return 0;
+}
+
+Option<int> other_of(int x) {
+	return Option<int> { Some: x };
+}

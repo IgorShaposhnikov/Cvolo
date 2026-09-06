@@ -1,0 +1,11 @@
+using System;
+
+int main() {
+    var int? x = default(int?);
+    if (x is Some v) {
+        Console.WriteLine("some");
+    } else {
+        Console.WriteLine("none");
+    }
+    return 0;
+}

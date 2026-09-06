@@ -3286,14 +3286,15 @@ public sealed class ValidationPass(BindingContext context)
 			return;
 		}
 
-		// The 'is' pattern is currently defined only for Option-shaped NPO unions where the
-		// payload is the stored reference itself (e.g. Option<ref T>), so the match test is a
-		// single null-check and the bound value is the payload pointer.
-		if (!(unionType.IsOption && unionType.IsNpoEligible))
+// The 'is' pattern is defined for Option-shaped unions. NPO options (Option<ref T>)
+		// carry the stored reference flat, so the match test is a single null-check and the
+		// bound value is the payload pointer; tagged options (Option<T>) compare the tag and
+		// bind the payload value (or a reference to it when the operand is a borrow).
+		if (!unionType.IsOption)
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
 			context.Diagnostics.Report(currentFileContext, isPat.Span,
-				$"The 'is' pattern requires an Option-shaped union carrying a reference payload (e.g. Option<ref T>); '{unionType.Name}' is not eligible.");
+				$"The 'is' pattern requires an Option-shaped union (e.g. Option<T> or Option<ref T>); '{unionType.Name}' is not eligible.");
 			return;
 		}
 
@@ -3307,9 +3308,16 @@ public sealed class ValidationPass(BindingContext context)
 			}
 
 			// NPO option: the payload is the stored reference/pointer itself.
-			TypeSymbol promotedType = variant.Type is PointerTypeSymbol inner
-				? new PointerTypeSymbol(inner.ReferencedType, isMutable: inner.IsMutable)
-				: variant.Type;
+			// Tagged option: the payload is the value (bound by value), or a reference to the
+			// payload slot when the operand was taken by borrow ('ref opt is Some v').
+			var isBorrowOperand = isPat.Operand is BorrowExpressionSyntax;
+			TypeSymbol promotedType = unionType.IsNpoEligible
+				? variant.Type is PointerTypeSymbol inner
+					? new PointerTypeSymbol(inner.ReferencedType, isMutable: inner.IsMutable)
+					: variant.Type
+				: isBorrowOperand
+					? new PointerTypeSymbol(variant.Type, isMutable: true)
+					: variant.Type;
 
 			scope.Declare(new VariableSymbol(isPat.BoundName, promotedType, isMutable: true) { IsInitialized = true });
 		}

@@ -97,7 +97,19 @@ public static class DiagnosticIds
 	public const string NonEmptyDelegatingConstructorBody = "CVL1044";
 
 	/// <summary>A `ref`/`refvar` type argument is used for a generic type other than an Option-shaped union.</summary>
-	public const string RefTypeArgumentNotAllowed = "CVL1045";
+	public const string RefTypeArgumentNotAllowed = "CVL1103";
+
+	/// <summary>Optional type syntax `T?` is used although `--strict-option` disables it.</summary>
+	public const string OptionalSyntaxDisabled = "CVL1100";
+
+	/// <summary>Multiple `?` tokens in a row (e.g. `T??`) are not allowed.</summary>
+	public const string OptionalTypeChainForbidden = "CVL1101";
+
+	/// <summary>Optional type syntax `?` is applied to `void` or a function type.</summary>
+	public const string OptionalOnVoid = "CVL1102";
+
+	/// <summary>`null` is assigned/initialized on a `T?`-declared variable in safe code.</summary>
+	public const string NullForOptionalType = "CVL1104";
 
 	/// <summary>'expose using' directive used outside a namespace declaration.</summary>
 	public const string ExposeUsingOutsideNamespace = "CVL1060";
