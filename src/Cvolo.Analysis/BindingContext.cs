@@ -250,7 +250,7 @@ public sealed class BindingContext
 					}
 				}
 
-				var instantiatedType = InstantiateGenericStruct(templateDecl, baseType.Name, typeArgs);
+				var instantiatedType = InstantiateGenericStruct(templateDecl, baseType.Name, typeArgs, name);
 				StructTypes[name] = instantiatedType;
 				_typeCache[name] = instantiatedType;
 				return instantiatedType;
@@ -662,7 +662,7 @@ public sealed class BindingContext
 	}
 
 
-	private StructTypeSymbol InstantiateGenericStruct(StructDeclarationSyntax templateDecl, string templateMangledName, List<TypeSymbol> typeArgs)
+	private StructTypeSymbol InstantiateGenericStruct(StructDeclarationSyntax templateDecl, string templateMangledName, List<TypeSymbol> typeArgs, string? sourceName = null)
 	{
 		for (var i = 0; i < templateDecl.GenericParameters.Count && i < typeArgs.Count; i++)
 		{
@@ -710,6 +710,35 @@ public sealed class BindingContext
 		}
 
 		var fields = new List<StructFieldSymbol>();
+
+		// Compute effective visibility: min(Template.Visibility, TypeArgs.Visibility)
+		var effectiveVisibility = templateDecl.Visibility;
+		foreach (var arg in typeArgs)
+		{
+			var argVis = GetSymbolVisibility(arg);
+			if (argVis < effectiveVisibility)
+				effectiveVisibility = argVis;
+		}
+
+		var isStrictMut = templateDecl.Attributes.Any(a => NormalizeAttributeName(a.Name) == "StrictMutability");
+
+		// CRITICAL: Register a placeholder in the cache BEFORE resolving fields to break
+		// infinite recursion for self-referential generic structs (e.g. LinkedListNode<T>
+		// with a field of type Option<refvar LinkedListNode<T>>, whose instantiation
+		// re-enters this method for the same type argument while still in progress).
+		var instantiatedType = new StructTypeSymbol(instName, Array.Empty<StructFieldSymbol>())
+		{
+			Visibility = effectiveVisibility,
+			IsStrictMutability = isStrictMut
+		};
+		StructTypes[instName] = instantiatedType;
+		_typeCache[instName] = instantiatedType;
+		if (sourceName is not null)
+		{
+			StructTypes[sourceName] = instantiatedType;
+			_typeCache[sourceName] = instantiatedType;
+		}
+
 		foreach (var field in templateDecl.Fields)
 		{
 			// 1. Substitute placeholders inside type name strings
@@ -731,30 +760,11 @@ public sealed class BindingContext
 			fields.Add(new StructFieldSymbol(field.Name, fieldType) { Visibility = field.Visibility });
 		}
 
-		// Compute effective visibility: min(Template.Visibility, TypeArgs.Visibility)
-		var effectiveVisibility = templateDecl.Visibility;
-		foreach (var arg in typeArgs)
-		{
-			var argVis = GetSymbolVisibility(arg);
-			if (argVis < effectiveVisibility)
-				effectiveVisibility = argVis;
-		}
-
-		var isStrictMut = templateDecl.Attributes.Any(a => NormalizeAttributeName(a.Name) == "StrictMutability");
-
-		var instantiatedType = new StructTypeSymbol(instName, fields)
-		{
-			Visibility = effectiveVisibility,
-			IsStrictMutability = isStrictMut
-		};
+		instantiatedType.PopulateFields(fields);
 
 		// Restore active contexts back to previous state
 		CurrentUnit = prevUnit;
 		CurrentNamespace = prevNamespace;
-
-		// CRITICAL: Register in cache BEFORE calling the monomorphizer to break recursion cycles
-		StructTypes[instName] = instantiatedType;
-		_typeCache[instName] = instantiatedType;
 
 		MonomorphizeExtensionsForType(instantiatedType, typeArgs, templateMangledName);
 
@@ -879,7 +889,17 @@ public sealed class BindingContext
 				case ExpressionStatementSyntax e:
 					return new ExpressionStatementSyntax(e.Span, SubstituteExpressionGenerics(e.Expression));
 
+				case SwitchStatementSyntax s:
+					return new SwitchStatementSyntax(s.Span, SubstituteExpressionGenerics(s.Expression),
+						s.Cases.Select(c => new SwitchCaseSyntax(c.Span, c.VariantName, c.VariableName, c.IsDefault,
+							c.Body.Select(SubstituteStatementGenerics).ToList())).ToList());
+
+				case SwitchCaseSyntax c:
+					return new SwitchCaseSyntax(c.Span, c.VariantName, c.VariableName, c.IsDefault,
+						c.Body.Select(SubstituteStatementGenerics).ToList());
+
 				default:
+
 					return stmt;
 			}
 		}
@@ -902,6 +922,9 @@ public sealed class BindingContext
 					}
 
 					return new UnaryExpressionSyntax(unary.Span, newOp, SubstituteExpressionGenerics(unary.Operand));
+
+				case IsPatternExpressionSyntax isPat:
+					return new IsPatternExpressionSyntax(isPat.Span, SubstituteExpressionGenerics(isPat.Operand), isPat.VariantName, isPat.BoundName);
 
 				case CallExpressionSyntax call:
 					var newTypeArgs = call.TypeArguments.Select(t =>

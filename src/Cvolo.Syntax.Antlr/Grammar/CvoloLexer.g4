@@ -54,6 +54,7 @@ SWITCH: 'switch';
 CASE: 'case';
 DEFAULT: 'default';
 WHERE: 'where';
+IS: 'is';
 
 // Punctuation
 LPAREN: '(';
@@ -97,8 +98,6 @@ ELLIPSIS: '...';
 INC: '++';
 DEC: '--';
 LSHIFT: '<<';
-RSHIFT: '>>';
-URSHIFT: '>>>';
 LSHIFT_ASSIGN: '<<=';
 RSHIFT_ASSIGN: '>>=';
 URSHIFT_ASSIGN: '>>>=';

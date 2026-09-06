@@ -165,6 +165,12 @@ public abstract class AstRewriterBase
 			return new UnaryExpressionSyntax(unary.Span, unary.Operator, operand);
 		}
 
+		if (node is IsPatternExpressionSyntax isPat)
+		{
+			var operand = (ExpressionSyntax)Rewrite(isPat.Operand);
+			return new IsPatternExpressionSyntax(isPat.Span, operand, isPat.VariantName, isPat.BoundName);
+		}
+
 		if (node is TernaryExpressionSyntax ternary)
 		{
 			var cond = (ExpressionSyntax)Rewrite(ternary.Condition);

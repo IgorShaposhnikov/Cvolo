@@ -795,12 +795,12 @@ public sealed class ValidationPass(BindingContext context)
 					// Record the resolved overload for CodeGenerator consumption
 					context.ResolvedCalls[call] = func;
 
-                    // Caller-side unsafe invocation check (Memory & Safety spec §6.A): a raw 'unsafe fn'
-                    // (form A) must be invoked from an unsafe context. '[UnsafeBody]' functions expose a safe
-                    // API (form B) and are exempt, as are calls already inside an unsafe context.
-                    // Enforce CVL1009: Calling a raw 'unsafe function' from code that is not in an unsafe context
-                    // Note: [UnsafeBody] functions are encapsulated and exempt from this call-site restriction.
-                    if (func.SafetyTier == SafetyTier.Unsafe && !func.IsUnsafeBody && _unsafeDepth == 0)
+					// Caller-side unsafe invocation check (Memory & Safety spec §6.A): a raw 'unsafe fn'
+					// (form A) must be invoked from an unsafe context. '[UnsafeBody]' functions expose a safe
+					// API (form B) and are exempt, as are calls already inside an unsafe context.
+					// Enforce CVL1009: Calling a raw 'unsafe function' from code that is not in an unsafe context
+					// Note: [UnsafeBody] functions are encapsulated and exempt from this call-site restriction.
+					if (func.SafetyTier == SafetyTier.Unsafe && !func.IsUnsafeBody && _unsafeDepth == 0)
 					{
 						var currentFileContext = context.FileContexts[context.CurrentUnit!];
 						context.Diagnostics.Report(
@@ -897,6 +897,9 @@ public sealed class ValidationPass(BindingContext context)
 				CheckExpression(unary.Operand, scope);
 				CheckUnaryCast(unary, scope);
 				CheckUnaryEnumTilde(unary, scope);
+				break;
+			case IsPatternExpressionSyntax isPat:
+				CheckIsPatternExpression(isPat, scope);
 				break;
 			case VoidLiteralExpressionSyntax:
 				break;
@@ -1408,6 +1411,7 @@ public sealed class ValidationPass(BindingContext context)
 			VoidLiteralExpressionSyntax => TypeSymbol.Void,
 			DefaultExpressionSyntax d => context.ResolveType(d.TypeName),
 			UnaryExpressionSyntax unary => GetUnaryExpressionType(unary, scope),
+			IsPatternExpressionSyntax => TypeSymbol.Bool,
 			BinaryExpressionSyntax bin when bin.Operator is "|" or "&" or "^" => GetFlagsBinaryType(bin, scope),
 			_ => null
 		};
@@ -1506,7 +1510,11 @@ public sealed class ValidationPass(BindingContext context)
 			instParameters.Add(new ParameterSyntax(param.Span, paramType.Name, param.Name));
 		}
 
-		var instSymbol = new FunctionSymbol(instName, returnType, parameters) { Visibility = templateDecl.Visibility };
+		var instSymbol = new FunctionSymbol(instName, returnType, parameters)
+		{
+			Visibility = templateDecl.Visibility,
+			SafetyTier = templateDecl.Modifier ?? SafetyTier.Safe
+		};
 		context.MonomorphizedFunctions[instName] = instSymbol;
 
 		var instBody = SubstituteBlockGenerics(templateDecl.Body, substitutionMap);
@@ -1717,7 +1725,11 @@ public sealed class ValidationPass(BindingContext context)
 			instParameters.Add(new ParameterSyntax(param.Span, paramType.Name, param.Name));
 		}
 
-		var instSymbol = new FunctionSymbol(instName, returnType, parameters) { Visibility = templateDecl.Visibility };
+		var instSymbol = new FunctionSymbol(instName, returnType, parameters)
+		{
+			Visibility = templateDecl.Visibility,
+			SafetyTier = templateDecl.Modifier ?? SafetyTier.Safe
+		};
 		context.MonomorphizedFunctions[instName] = instSymbol;
 
 		var instBody = SubstituteBlockGenerics(templateDecl.Body, substitutionMap);
@@ -2347,6 +2359,15 @@ public sealed class ValidationPass(BindingContext context)
 			case ExpressionStatementSyntax e:
 				return new ExpressionStatementSyntax(e.Span, SubstituteExpressionGenerics(e.Expression, substitutionMap));
 
+			case SwitchStatementSyntax s:
+				return new SwitchStatementSyntax(s.Span, SubstituteExpressionGenerics(s.Expression, substitutionMap),
+					s.Cases.Select(c => new SwitchCaseSyntax(c.Span, c.VariantName, c.VariableName, c.IsDefault,
+						c.Body.Select(st => SubstituteStatementGenerics(st, substitutionMap)).ToList())).ToList());
+
+			case SwitchCaseSyntax c:
+				return new SwitchCaseSyntax(c.Span, c.VariantName, c.VariableName, c.IsDefault,
+					c.Body.Select(st => SubstituteStatementGenerics(st, substitutionMap)).ToList());
+
 			default:
 				return stmt;
 		}
@@ -2370,6 +2391,9 @@ public sealed class ValidationPass(BindingContext context)
 				}
 
 				return new UnaryExpressionSyntax(unary.Span, newOp, SubstituteExpressionGenerics(unary.Operand, substitutionMap));
+
+			case IsPatternExpressionSyntax isPat:
+				return new IsPatternExpressionSyntax(isPat.Span, SubstituteExpressionGenerics(isPat.Operand, substitutionMap), isPat.VariantName, isPat.BoundName);
 
 			case CallExpressionSyntax call:
 				var newTypeArgs = call.TypeArguments.Select(t =>
@@ -2573,6 +2597,20 @@ public sealed class ValidationPass(BindingContext context)
 
 				if (ctorType is not null)
 					adjustedArgTypes.Insert(0, new PointerTypeSymbol(ctorType, isMutable: true));
+			}
+			else if (scope.Lookup("this") is VariableSymbol enclosingThis
+					 && enclosingThis.Type is PointerTypeSymbol thisPtrType
+					 && thisPtrType.ReferencedType is StructTypeSymbol or UnionTypeSymbol or EnumTypeSymbol)
+			{
+				// Implicit receiver call of a sibling extension method (e.g. calling a
+				// private helper of the same extended type from another extension method).
+				// The monomorphized sibling is registered under '{InstantiatedType.Name}.{MethodName}'.
+				var enclosingType = thisPtrType.ReferencedType;
+				if (context.OverloadedFunctions.ContainsKey($"{enclosingType.Name}.{name}"))
+				{
+					baseName = $"{enclosingType.Name}.{name}";
+					adjustedArgTypes.Insert(0, new PointerTypeSymbol(enclosingType, isMutable: thisPtrType.IsMutable));
+				}
 			}
 		}
 
@@ -3220,6 +3258,60 @@ public sealed class ValidationPass(BindingContext context)
 						$"Destructive cast '({targetTypeName}*)' requires an owning heap handle; '{id.Name}' is a stack value. Allocate it with 'heap {targetTypeName} {{ ... }}' or 'heap {targetTypeName}(...)', or cast its address with '&{id.Name}'.");
 				}
 			}
+		}
+	}
+
+	private void CheckIsPatternExpression(IsPatternExpressionSyntax isPat, SymbolTable scope)
+	{
+		CheckExpression(isPat.Operand, scope);
+		var operandType = GetExpressionType(isPat.Operand, scope);
+		if (operandType is null)
+			return;
+
+		if (operandType is PointerTypeSymbol ptr)
+			operandType = ptr.ReferencedType;
+
+		if (operandType is not UnionTypeSymbol unionType)
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, isPat.Span, $"The 'is' pattern can only be applied to a union type, got '{operandType.Name}'.");
+			return;
+		}
+
+		var variant = unionType.FindField(isPat.VariantName);
+		if (variant is null)
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, isPat.Span, $"Union '{unionType.Name}' does not contain variant '{isPat.VariantName}'");
+			return;
+		}
+
+		// The 'is' pattern is currently defined only for Option-shaped NPO unions where the
+		// payload is the stored reference itself (e.g. Option<ref T>), so the match test is a
+		// single null-check and the bound value is the payload pointer.
+		if (!(unionType.IsOption && unionType.IsNpoEligible))
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, isPat.Span,
+				$"The 'is' pattern requires an Option-shaped union carrying a reference payload (e.g. Option<ref T>); '{unionType.Name}' is not eligible.");
+			return;
+		}
+
+		if (isPat.BoundName is not null)
+		{
+			if (variant.IsVoidVariant)
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, isPat.Span, $"Void variant '{isPat.VariantName}' cannot carry a bound variable.");
+				return;
+			}
+
+			// NPO option: the payload is the stored reference/pointer itself.
+			TypeSymbol promotedType = variant.Type is PointerTypeSymbol inner
+				? new PointerTypeSymbol(inner.ReferencedType, isMutable: inner.IsMutable)
+				: variant.Type;
+
+			scope.Declare(new VariableSymbol(isPat.BoundName, promotedType, isMutable: true) { IsInitialized = true });
 		}
 	}
 

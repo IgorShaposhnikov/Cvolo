@@ -584,7 +584,7 @@ public sealed class DeclarationPass(BindingContext context)
 	/// and applies intrinsic attributes like [StrictMutability].
 	/// </summary>
 	/// <param name="structDecl">The syntax node for the struct declaration.</param>
-private void DeclareStruct(StructDeclarationSyntax structDecl)
+	private void DeclareStruct(StructDeclarationSyntax structDecl)
 	{
 		var mangledName = context.GetMangledName(structDecl.Name, context.CurrentNamespace);
 
@@ -880,6 +880,7 @@ private void DeclareStruct(StructDeclarationSyntax structDecl)
 				var instSymbol = new FunctionSymbol(instName, returnType!, specParameters)
 				{
 					Visibility = func.Visibility,
+					SafetyTier = func.Modifier ?? SafetyTier.Safe,
 					DeclaringUnit = context.CurrentUnit
 				};
 				context.MonomorphizedFunctions[instName] = instSymbol;

@@ -556,7 +556,8 @@ var ctorBaseMangledName = bindingContext.GetMangledName(extDecl.ExtendedTypeName
 		_movedVars.Clear();
 		_disposedVars.Clear();
 
-		var funcSymbol = _bindingContext!.Globals.Lookup(mangledName) as FunctionSymbol;
+		var funcSymbol = _bindingContext!.Globals.Lookup(mangledName) as FunctionSymbol
+			?? (_bindingContext.MonomorphizedFunctions.TryGetValue(mangledName, out var monoSymbol) ? monoSymbol : null);
 		_unsafeDepth = funcSymbol is not null && (funcSymbol.SafetyTier == SafetyTier.Unsafe || funcSymbol.IsUnsafeBody) ? 1 : 0;
 
 		// An 'unbound' factory that returns a heap-escaping graph handle transfers ownership of
@@ -753,10 +754,13 @@ var ctorBaseMangledName = bindingContext.GetMangledName(extDecl.ExtendedTypeName
 				type = retPtr.ReferencedType;
 			}
 
-			// Materialize memory-resident return values (structs/unions living in allocas/heap
+// Materialize memory-resident return values (structs/unions living in allocas/heap
 			// slots) BEFORE scope cleanup frees them - the loaded register is what survives.
+			// NPO-eligible unions lower to a single scalar (the flat ptr), so their emitted value
+			// is already the scalar - loading it again would double-dereference.
 			LLVMValueRef? materialized = null;
-			if ((type is StructTypeSymbol || type is UnionTypeSymbol) && value.TypeOf.Kind == LLVMTypeKind.LLVMPointerTypeKind)
+			var isMemResident = type is StructTypeSymbol || (type is UnionTypeSymbol u && !u.IsNpoEligible);
+			if (isMemResident && value.TypeOf.Kind == LLVMTypeKind.LLVMPointerTypeKind)
 			{
 				var layout = GetLLVMType(type);
 				materialized = _builder.BuildLoad2(layout, value, "struct_ret_val");
@@ -843,10 +847,56 @@ var ctorBaseMangledName = bindingContext.GetMangledName(extDecl.ExtendedTypeName
 			case NullLiteralExpressionSyntax:
 				// Defensive: the binder rejects 'null' in safe code before emission.
 				return LLVMValueRef.CreateConstPointerNull(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0));
-			case DefaultExpressionSyntax d:
+case DefaultExpressionSyntax d:
 				{
 					var targetType = _bindingContext!.ResolveType(d.TypeName)!;
 					return LLVMValueRef.CreateConstNull(GetLLVMType(targetType));
+				}
+			case IsPatternExpressionSyntax isPat:
+				{
+// Operand is an Option-shaped NPO union whose value IS the payload
+				// pointer (Some = non-zero, None = zero). Test the pointer for null;
+				// `is Some` yields non-null, `is None` / `is None x` yields null.
+				var operandVal = EmitExpression(isPat.Operand);
+				var isNoneVariant = isPat.VariantName is "None";
+				var isSome = _builder.BuildICmp(
+					isNoneVariant ? LLVMIntPredicate.LLVMIntEQ : LLVMIntPredicate.LLVMIntNE,
+					operandVal,
+					LLVMValueRef.CreateConstPointerNull(operandVal.TypeOf),
+					isNoneVariant ? "is_none" : "is_some");
+
+					if (isPat.BoundName is not null)
+					{
+						TypeSymbol? operandType = isPat.Operand switch
+						{
+							IdentifierExpressionSyntax id => _variableTypes.GetValueOrDefault(id.Name),
+							_ => null
+						};
+
+						var promotedType = operandType is UnionTypeSymbol npoUnion && npoUnion.IsNpoEligible
+							? npoUnion.FindField(isPat.VariantName)?.Type ?? operandType
+							: (operandType as PointerTypeSymbol)?.ReferencedType is UnionTypeSymbol u && u.IsNpoEligible
+								? u.FindField(isPat.VariantName)?.Type ?? operandType
+								: operandType;
+
+						if (promotedType is not null)
+						{
+							if (!_locals.TryGetValue(isPat.BoundName, out var bindSlot))
+							{
+								var bindTy = GetLLVMType(promotedType);
+								bindSlot = _builder.BuildAlloca(bindTy, isPat.BoundName);
+								_locals[isPat.BoundName] = bindSlot;
+								_variableTypes[isPat.BoundName] = promotedType;
+							}
+
+							var bindVal = operandVal.TypeOf == GetLLVMType(promotedType)
+								? operandVal
+								: _builder.BuildPointerCast(operandVal, GetLLVMType(promotedType), "is_bind");
+							_builder.BuildStore(bindVal, bindSlot);
+						}
+					}
+
+					return isSome;
 				}
 			case IdentifierExpressionSyntax id:
 				return Load(id.Name);
@@ -1062,13 +1112,12 @@ var ctorBaseMangledName = bindingContext.GetMangledName(extDecl.ExtendedTypeName
 
 		var args = new List<LLVMValueRef>();
 
-		// Ensure it's ACTUALLY an extension method (has a 'this' parameter) before treating the left side as a variable receiver!
-		var isExtensionCall = call.FunctionName.Contains('.')
-			&& _bindingContext!.ResolvedCalls.TryGetValue(call, out var resolvedExt)
+// Ensure it's ACTUALLY an extension method (has a 'this' parameter) before treating the left side as a variable receiver!
+		var isExtensionCall = _bindingContext!.ResolvedCalls.TryGetValue(call, out var resolvedExt)
 			&& resolvedExt.Parameters.Count > 0
 			&& resolvedExt.Parameters[0].Name == "this";
 
-		if (isExtensionCall)
+		if (isExtensionCall && call.FunctionName.Contains('.'))
 		{
 			var lastDot = call.FunctionName.LastIndexOf('.');
 			var receiverName = call.FunctionName[..lastDot];
@@ -1128,6 +1177,15 @@ var ctorBaseMangledName = bindingContext.GetMangledName(extDecl.ExtendedTypeName
 		{
 			// Constructor call: first parameter is the destination storage
 			args.Add(implicitThisPtr.Value);
+		}
+else if (isExtensionCall)
+		{
+			// Bare call to a sibling extension method (e.g. `AddLast(value)` from within
+			// another method of the same extension): inject the current 'this' pointer.
+			if (!_locals.TryGetValue("this", out var thisSlot))
+				throw new InvalidOperationException($"Cannot resolve implicit receiver 'this' for method call '{call.FunctionName}'.");
+
+			args.Add(_builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), thisSlot, "loaded_this_ptr"));
 		}
 
 		// Adjust offset if an implicit 'this' receiver was dynamically injected into the args list above
@@ -1611,12 +1669,17 @@ var ctorBaseMangledName = bindingContext.GetMangledName(extDecl.ExtendedTypeName
 			}
 			else if (_globalVariables.TryGetValue(id.Name, out var globalPtr))
 			{
-				var globalType = _globalVariableTypes[id.Name];
-				var coerced = (bin.Right is MemberAccessExpressionSyntax or IndexExpressionSyntax)
-					? EmitRefToValue(right, GetExprType(bin.Right))
-					: right;
-				coerced = CoerceIntegerWidth(coerced, rTy, globalType);
-				_builder.BuildStore(coerced, globalPtr);
+var globalType = _globalVariableTypes[id.Name];
+				if (globalType is UnionTypeSymbol && bin.Right is StructInitializationExpressionSyntax globalReinit)
+					EmitStructInitializationInPlace(globalReinit, globalPtr);
+				else
+				{
+					var coerced = (bin.Right is MemberAccessExpressionSyntax or IndexExpressionSyntax)
+						? EmitRefToValue(right, GetExprType(bin.Right))
+						: right;
+					coerced = CoerceIntegerWidth(coerced, rTy, globalType);
+					_builder.BuildStore(coerced, globalPtr);
+				}
 				return right;
 			}
 			else if (_locals.TryGetValue("this", out var thisPtr))
@@ -1629,10 +1692,16 @@ var ctorBaseMangledName = bindingContext.GetMangledName(extDecl.ExtendedTypeName
 					var field = structType.FindField(id.Name);
 					if (field is not null)
 					{
-						var (fieldPtr, _) = GetFieldPointer(id);
+var (fieldPtr, _) = GetFieldPointer(id);
+					if (field.Type is UnionTypeSymbol && bin.Right is StructInitializationExpressionSyntax fieldReinit)
+						EmitStructInitializationInPlace(fieldReinit, fieldPtr);
+					else
+					{
 						var coerced = CoerceIntegerWidth(right, rTy, field.Type);
 						_builder.BuildStore(coerced, fieldPtr);
-						return right;
+					}
+
+					return right;
 					}
 				}
 				else if (refType is UnionTypeSymbol unionType)
@@ -3458,6 +3527,14 @@ var ctorBaseMangledName = bindingContext.GetMangledName(extDecl.ExtendedTypeName
 		var structLayout = GetLLVMType(typeSymbol!);
 		var tempAlloc = _builder.BuildAlloca(structLayout, "struct_tmp");
 		EmitStructInitializationInPlace(expr, tempAlloc);
+
+		// NPO-eligible unions lower to a single scalar (the flat pointer), so the expression's
+		// VALUE is the loaded scalar, not the address of its materialization slot.
+		if (typeSymbol is UnionTypeSymbol { IsNpoEligible: true })
+		{
+			return _builder.BuildLoad2(structLayout, tempAlloc, $"struct_val_{expr.StructTypeName}");
+		}
+
 		return tempAlloc;
 	}
 

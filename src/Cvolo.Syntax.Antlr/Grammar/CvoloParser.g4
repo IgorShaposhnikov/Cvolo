@@ -244,9 +244,12 @@ expression
 	| DEC expression                                        							# prefixDecrementExpression
 	| expression (STAR | DIV | PERCENT) expression          							# multiplicativeExpression
 	| expression (PLUS | MINUS) expression                  							# additiveExpression
-	| expression (LSHIFT | RSHIFT | URSHIFT) expression									# shiftExpression
+	| expression LSHIFT expression														# leftShiftExpression
+	| expression GT GT GT expression													# arithmeticRightShiftExpression
+	| expression GT GT expression														# rightShiftExpression
 	| expression (LT | GT | LTE | GTE) expression										# relationalExpression
 	| expression (EQ | NEQ) expression													# equalityExpression
+	| expression IS Identifier (Identifier)?											# isPatternExpression
 	| expression AMPERSAND expression													# bitwiseAndExpression
 	| expression CARET expression														# bitwiseXorExpression
 	| expression PIPE expression														# bitwiseOrExpression

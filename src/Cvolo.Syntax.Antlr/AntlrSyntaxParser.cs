@@ -459,6 +459,12 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				return new BinaryExpressionSyntax(SpanOf(relCtx), BuildExpression(relCtx.expression(0)), relCtx.GetChild(1).GetText(), BuildExpression(relCtx.expression(1)));
 			case CvoloParser.EqualityExpressionContext eqCtx:
 				return new BinaryExpressionSyntax(SpanOf(eqCtx), BuildExpression(eqCtx.expression(0)), eqCtx.GetChild(1).GetText(), BuildExpression(eqCtx.expression(1)));
+			case CvoloParser.IsPatternExpressionContext isCtx:
+				return new IsPatternExpressionSyntax(
+					SpanOf(isCtx),
+					BuildExpression(isCtx.expression()),
+					isCtx.Identifier(0).GetText(),
+					isCtx.Identifier().Length > 1 ? isCtx.Identifier(1).GetText() : null);
 			case CvoloParser.LogicalAndExpressionContext andCtx:
 				return new BinaryExpressionSyntax(SpanOf(andCtx), BuildExpression(andCtx.expression(0)), "&&", BuildExpression(andCtx.expression(1)));
 			case CvoloParser.LogicalOrExpressionContext orCtx:
@@ -480,8 +486,12 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				return new UnaryExpressionSyntax(SpanOf(decCtx), "--_postfix", BuildExpression(decCtx.expression()));
 			case CvoloParser.BitwiseNotExpressionContext notCtx:
 				return new UnaryExpressionSyntax(SpanOf(notCtx), "~", BuildExpression(notCtx.expression()));
-			case CvoloParser.ShiftExpressionContext shiftCtx:
-				return new BinaryExpressionSyntax(SpanOf(shiftCtx), BuildExpression(shiftCtx.expression(0)), shiftCtx.GetChild(1).GetText(), BuildExpression(shiftCtx.expression(1)));
+			case CvoloParser.LeftShiftExpressionContext leftCtx:
+				return new BinaryExpressionSyntax(SpanOf(leftCtx), BuildExpression(leftCtx.expression(0)), "<<", BuildExpression(leftCtx.expression(1)));
+			case CvoloParser.RightShiftExpressionContext rightCtx:
+				return new BinaryExpressionSyntax(SpanOf(rightCtx), BuildExpression(rightCtx.expression(0)), ">>", BuildExpression(rightCtx.expression(1)));
+			case CvoloParser.ArithmeticRightShiftExpressionContext arithCtx:
+				return new BinaryExpressionSyntax(SpanOf(arithCtx), BuildExpression(arithCtx.expression(0)), ">>>", BuildExpression(arithCtx.expression(1)));
 			case CvoloParser.BitwiseAndExpressionContext andCtx:
 				return new BinaryExpressionSyntax(SpanOf(andCtx), BuildExpression(andCtx.expression(0)), "&", BuildExpression(andCtx.expression(1)));
 			case CvoloParser.BitwiseXorExpressionContext xorCtx:
