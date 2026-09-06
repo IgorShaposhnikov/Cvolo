@@ -1,0 +1,17 @@
+using System;
+
+alias ID = int;
+
+struct Node {
+    ID id;
+}
+
+int main() {
+    var ID x = 42;
+    Console.WriteLine(x + 1);
+
+    var Node n = Node { id: 7 };
+    Console.WriteLine(n.id);
+
+    return 0;
+}

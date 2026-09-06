@@ -1,0 +1,6 @@
+alias Dup = int;
+alias Dup = string;
+
+int main() {
+    return 0;
+}

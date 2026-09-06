@@ -118,6 +118,10 @@ public sealed class CvoloSourcePrinter
 			case EnumVariantDeclarationSyntax ev:
 				return ev.Value != null ? $"{ev.Name} = {Print(ev.Value)}" : ev.Name;
 
+			case TypeAliasDeclarationSyntax a:
+				var aGenerics = a.GenericParameters.Count > 0 ? $"<{string.Join(", ", a.GenericParameters)}>" : "";
+				return $"{ind}alias {a.Name}{aGenerics} = {a.Type};\n";
+
 			case SwitchStatementSyntax sw:
 				var casesStr = string.Join("", sw.Cases.Select(c => {
 					var patternStr = c.IsDefault ? "default" : (c.VariableName != null ? $"{c.VariantName} {c.VariableName}" : c.VariantName);

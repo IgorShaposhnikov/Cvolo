@@ -60,7 +60,23 @@ public sealed class DeclarationPass(BindingContext context)
 
 	public void Process(IEnumerable<CompilationUnitSyntax> units)
 	{
-		ProcessExposeUsings(units);
+ProcessExposeUsings(units);
+
+		// Pass 0a-pre: Register all type aliases before any type/field/parameter resolution
+		// so struct fields and function signatures may reference them. Names are reserved
+		// now; underlying types are validated eagerly in Pass 0a-post (below).
+		foreach (var unit in units)
+		{
+			context.CurrentUnit = unit;
+			context.CurrentNamespace = unit.NamespaceDeclaration?.Name;
+
+			var aliasMembers = context.CurrentNamespace != null ? unit.NamespaceDeclaration!.Members : unit.Members;
+			foreach (var member in aliasMembers)
+			{
+				if (member is TypeAliasDeclarationSyntax aliasDecl)
+					DeclareAlias(aliasDecl);
+			}
+		}
 
 		// Pass 0a: Register all Struct/Union/Interface/Protocol raw symbols across all files
 		foreach (var unit in units)
@@ -83,6 +99,11 @@ public sealed class DeclarationPass(BindingContext context)
 					DeclareEnum(enumDecl);
 			}
 		}
+
+		// Pass 0a-post: Eagerly validate every type alias now that all real type names are
+		// registered — alias-vs-type conflicts, unresolvable targets (CVL1200), alias cycles
+		// (CVL1201), and aliases in `where` constraints (CVL1202).
+		ValidateAliases(units);
 
 		// Pass 0b: Link contract hierarchy (`:` base clauses) — validate bases,
 		// compute protocol effective members (transitive closure), and rebuild the
@@ -142,6 +163,132 @@ public sealed class DeclarationPass(BindingContext context)
 		// structural protocol conformance is proven by the presence of the extended methods
 		// on the concrete type — so it cannot live inside Pass 0a's DeclareStruct.
 		ValidateDefaultTypeConstraints(units);
+	}
+
+	/// <summary>
+	/// Pass 0a-pre. Registers a type alias under its mangled (namespace-aware) name so any
+	/// later struct field, parameter, or signature may reference it. Duplicate aliases are
+	/// rejected here; underlying-type validation happens in Pass 0a-post (ValidateAliases).
+	/// </summary>
+	private void DeclareAlias(TypeAliasDeclarationSyntax aliasDecl)
+	{
+		var mangledName = context.GetMangledName(aliasDecl.Name, context.CurrentNamespace);
+
+		if (!context.TypeAliases.TryAdd(mangledName, aliasDecl))
+		{
+			ReportDeclarationDiagnostic(aliasDecl, $"Duplicate type alias '{aliasDecl.Name}'");
+			return;
+		}
+
+		context.SymbolUnits[mangledName] = context.CurrentUnit!;
+	}
+
+	/// <summary>
+	/// Pass 0a-post. Eagerly validates every registered type alias now that all real type
+	/// names exist: rejects aliases that shadow a real type, aliases whose underlying type
+	/// cannot be resolved (CVL1200), alias cycles (CVL1201), and aliases used as generic
+	/// parameter constraints in `where` clauses (CVL1202).
+	/// </summary>
+	private void ValidateAliases(IEnumerable<CompilationUnitSyntax> units)
+	{
+		foreach (var unit in units)
+		{
+			context.CurrentUnit = unit;
+			context.CurrentNamespace = unit.NamespaceDeclaration?.Name;
+
+			var members = context.CurrentNamespace != null ? unit.NamespaceDeclaration!.Members : unit.Members;
+
+			// CVL1202: a type alias may not appear in a `where` generic-parameter constraint.
+			// Only structs retain constraint types in the AST today (unions/extensions drop them).
+			foreach (var member in members)
+			{
+				if (member is not StructDeclarationSyntax structDecl)
+					continue;
+
+				foreach (var constraint in structDecl.GenericParameterConstraints.Values.SelectMany(list => list))
+				{
+					if (!context.IsAliasReference(constraint))
+						continue;
+
+					var currentFileContext = context.FileContexts[context.CurrentUnit!];
+					context.Diagnostics.Report(currentFileContext, structDecl.Span,
+						$"Type alias '{constraint}' cannot be used as a generic parameter constraint.",
+						DiagnosticIds.AliasAsConstraint);
+				}
+			}
+
+			foreach (var member in members)
+			{
+				if (member is not TypeAliasDeclarationSyntax aliasDecl)
+					continue;
+
+				var mangledName = context.GetMangledName(aliasDecl.Name, context.CurrentNamespace);
+
+				if (ResolvesToRealType(aliasDecl.Name))
+				{
+					ReportDeclarationDiagnostic(aliasDecl, $"Type alias '{aliasDecl.Name}' conflicts with an existing type name.");
+					continue;
+				}
+
+				// Generic aliases are validated with their bare generic parameters substituted to a
+				// concrete placeholder ('int') so the resolution never instantiates a template
+				// with a TypeParameterSymbol argument (which would poison extension
+				// monomorphization state for the real, typed instantiations).
+				if (context.ResolveAliasForValidation(mangledName, aliasDecl) is null
+					&& !context.ReportedAliasCycles.Contains(mangledName))
+				{
+					ReportDeclarationDiagnostic(aliasDecl,
+						$"Cannot resolve type alias '{aliasDecl.Name}'. Referenced type does not exist.",
+						DiagnosticIds.UnknownTypeAlias);
+				}
+			}
+		}
+	}
+
+	/// <summary>
+	/// True when a real type (primitive, struct, union, enum, interface, or protocol,
+	/// namespaced or imported) already claims the given name — in which case an alias with
+	/// that name would silently shadow it.
+	/// </summary>
+	private bool ResolvesToRealType(string name)
+	{
+		if (TypeSymbol.FromName(name) is not null)
+			return true;
+
+		var currentUnit = context.CurrentUnit;
+		if (context.CurrentNamespace is not null)
+		{
+			var localMangled = context.GetMangledName(name, context.CurrentNamespace);
+			if (IsRegisteredTypeName(localMangled))
+				return true;
+		}
+
+		if (IsRegisteredTypeName(name))
+			return true;
+
+		if (currentUnit is null)
+			return false;
+
+		foreach (var ns in context.GetActiveUsings(currentUnit))
+		{
+			if (IsRegisteredTypeName(context.GetMangledName(name, ns)))
+				return true;
+		}
+
+		return false;
+	}
+
+	private bool IsRegisteredTypeName(string name) =>
+		context.StructTypes.ContainsKey(name)
+		|| context.UnionTypes.ContainsKey(name)
+		|| context.EnumTypes.ContainsKey(name)
+		|| context.InterfaceTypes.ContainsKey(name)
+		|| context.ProtocolTypes.ContainsKey(name);
+
+	private void ReportDeclarationDiagnostic(SyntaxNode node, string message, string diagnosticId)
+	{
+		var currentFileContext = context.FileContexts[context.CurrentUnit!];
+		context.Diagnostics.Report(currentFileContext, node.Span, message, diagnosticId);
 	}
 
 	/// <summary>

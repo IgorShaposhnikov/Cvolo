@@ -1,0 +1,9 @@
+alias C1 = int;
+
+struct Box<T> where T : C1 {
+    T value;
+}
+
+int main() {
+    return 0;
+}

@@ -116,4 +116,13 @@ public static class DiagnosticIds
 
 	/// <summary>'expose using' targets a namespace that cannot be resolved.</summary>
 	public const string ExposeUsingNamespaceNotFound = "CVL1061";
+
+	/// <summary>A type alias references an underlying type that does not exist.</summary>
+	public const string UnknownTypeAlias = "CVL1200";
+
+	/// <summary>A type alias resolves (transitively) to itself.</summary>
+	public const string CyclicTypeAlias = "CVL1201";
+
+	/// <summary>A type alias is used as a generic parameter constraint in a `where` clause.</summary>
+	public const string AliasAsConstraint = "CVL1202";
 }

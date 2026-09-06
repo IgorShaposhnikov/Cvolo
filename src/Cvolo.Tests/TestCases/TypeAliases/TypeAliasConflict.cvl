@@ -1,0 +1,7 @@
+struct Foo { }
+
+alias Foo = int;
+
+int main() {
+    return 0;
+}

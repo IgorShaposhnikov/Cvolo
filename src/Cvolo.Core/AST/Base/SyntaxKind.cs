@@ -58,4 +58,5 @@ UnionDeclaration,
 	ProtocolMember,
 	DefaultExpression,
 	IsPatternExpression,
+	TypeAliasDeclaration,
 }

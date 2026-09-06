@@ -1,0 +1,13 @@
+using System;
+
+alias ID = int;
+alias RefID = ID;
+alias RefRefID = RefID;
+
+int main() {
+    var ID x = 42;
+    var RefID y = x;
+    var RefRefID z = y;
+    Console.WriteLine(x + y + z);
+    return 0;
+}

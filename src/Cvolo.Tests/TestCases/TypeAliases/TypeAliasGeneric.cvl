@@ -1,0 +1,19 @@
+using System;
+
+struct Box<T> {
+    T value;
+}
+
+alias IntBox = Box<int>;
+alias MyBox<T> = Box<T>;
+
+int main() {
+    var MyBox<int> b = Box<int> { value: 42 };
+    var IntBox b2 = Box<int> { value: 10 };
+    Console.WriteLine(b.value + b2.value);
+
+    var MyBox<bool> bb = Box<bool> { value: true };
+    Console.WriteLine(bb.value ? 1 : 0);
+
+    return 0;
+}

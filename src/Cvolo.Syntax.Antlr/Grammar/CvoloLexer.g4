@@ -55,6 +55,7 @@ CASE: 'case';
 DEFAULT: 'default';
 WHERE: 'where';
 IS: 'is';
+ALIAS: 'alias';
 
 // Punctuation
 LPAREN: '(';

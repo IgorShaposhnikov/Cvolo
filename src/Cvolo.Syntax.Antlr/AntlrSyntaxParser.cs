@@ -79,7 +79,21 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			return BuildProtocolDeclaration(protocolDecl);
 		if (context.globalVariableDeclaration() is { } globalDecl)
 			return BuildGlobalVariableDeclaration(globalDecl);
+		if (context.aliasDeclaration() is { } aliasDecl)
+			return BuildAliasDeclaration(aliasDecl);
 		return null;
+	}
+
+	private TypeAliasDeclarationSyntax BuildAliasDeclaration(CvoloParser.AliasDeclarationContext context)
+	{
+		var generics = new List<string>();
+		if (context.genericParameterList() is { } genList)
+		{
+			foreach (var id in genList.Identifier())
+				generics.Add(id.GetText());
+		}
+
+		return new TypeAliasDeclarationSyntax(SpanOf(context), context.Identifier().GetText(), GetTypeName(context.type()), generics);
 	}
 
 	private GlobalVariableDeclarationSyntax BuildGlobalVariableDeclaration(CvoloParser.GlobalVariableDeclarationContext context)

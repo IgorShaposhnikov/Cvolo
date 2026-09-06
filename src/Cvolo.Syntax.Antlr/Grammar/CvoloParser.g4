@@ -28,6 +28,11 @@ declaration
 	| interfaceDeclaration
 	| protocolDeclaration
 	| globalVariableDeclaration
+	| aliasDeclaration
+	;
+
+aliasDeclaration
+	: ALIAS Identifier (LT genericParameterList GT)? ASSIGN type SEMI
 	;
 
 globalVariableDeclaration

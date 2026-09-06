@@ -1,0 +1,6 @@
+alias A = B;
+alias B = A;
+
+int main() {
+    return 0;
+}

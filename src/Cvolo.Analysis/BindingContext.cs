@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Cvolo.Analysis.Passes;
 using Cvolo.Analysis.Symbols;
 using Cvolo.Analysis.Symbols.Base;
@@ -57,6 +58,26 @@ public sealed class BindingContext
 	public Dictionary<string, UnionTypeSymbol> UnionTypes { get; } = [];
 	public Dictionary<string, UnionDeclarationSyntax> GenericUnionTemplates { get; } = [];
 	public Dictionary<string, EnumTypeSymbol> EnumTypes { get; } = [];
+
+	// Zero-cost type aliases ('alias Name = Type;'), keyed by the mangled alias name
+	// (namespace-aware, mirroring type registration). Resolved at bind time and erased
+	// before code generation.
+	public Dictionary<string, TypeAliasDeclarationSyntax> TypeAliases { get; } = [];
+
+	/// <summary>
+	/// Aliases that participate in a detected resolution cycle (dedup guard for CVL1201
+	/// and suppression of cascading CVL1200 'cannot resolve' reports for cycle members).
+	/// </summary>
+	public HashSet<string> ReportedAliasCycles { get; } = [];
+
+	// Active alias expansions during a single ResolveType call (cycle detection).
+	private readonly HashSet<string> _aliasExpansionStack = [];
+
+	// During eager alias validation (DeclarationPass Pass 0a-post), each generic alias's
+	// RHS is substituted with its bare parameters bound to a concrete placeholder so
+	// resolution never instantiates a template with a TypeParameterSymbol argument.
+	// Keyed by the mangled alias name; populated transiently by ResolveAliasForValidation.
+	private readonly Dictionary<string, string> _aliasValidationRhs = [];
 
 	// Nominal interface declarations (mangled name -> declaration) and types.
 	public Dictionary<string, InterfaceDeclarationSyntax> InterfaceTemplates { get; } = [];
@@ -147,6 +168,52 @@ public sealed class BindingContext
 		// 1. Check Canonical Type Cache first (Flyweight Pattern)
 		if (_typeCache.TryGetValue(name, out var cached))
 			return cached;
+
+		// 1b. Expand Type Aliases ('alias Name = Type;'). Aliases are transparent: the
+		//     underlying type string is resolved in place of the alias name, and generic
+		//     aliases substitute their type arguments first. Resolution recurses so
+		//     aliases-of-aliases and nested alias references work naturally; a cycle
+		//     short-circuits with CVL1201.
+		var aliasHit = TryResolveAliasName(name, out var aliasTypeArgs);
+		if (aliasHit is not null)
+		{
+			// A chain that already exploded stays consistently unresolvable; it was
+			// reported once, so fail fast here instead of cascading CVL1200-style noise.
+			if (ReportedAliasCycles.Contains(aliasHit.Value.Key) && !_aliasExpansionStack.Contains(aliasHit.Value.Key))
+				return null;
+
+			// Cycle: this alias is already being expanded by an outer ResolveType call.
+			if (!_aliasExpansionStack.Add(aliasHit.Value.Key))
+			{
+				foreach (var active in _aliasExpansionStack)
+					ReportedAliasCycles.Add(active);
+				ReportedAliasCycles.Add(aliasHit.Value.Key);
+
+				if (CurrentUnit is not null && FileContexts.TryGetValue(CurrentUnit, out var cycleFileContext))
+				{
+					Diagnostics.Report(cycleFileContext, aliasHit.Value.Decl.Span,
+						$"Cyclic type alias detected: '{aliasHit.Value.Decl.Name}'.", DiagnosticIds.CyclicTypeAlias);
+				}
+
+				return null;
+			}
+
+			try
+			{
+				var aliasTarget = ExpandAliasTarget(aliasHit.Value, aliasTypeArgs);
+				if (aliasTarget is null)
+					return null;
+
+				var aliasResolved = ResolveType(aliasTarget);
+				if (aliasResolved?.Name == name)
+					_typeCache[name] = aliasResolved;
+				return aliasResolved;
+			}
+			finally
+			{
+				_aliasExpansionStack.Remove(aliasHit.Value.Key);
+			}
+		}
 
 		// 2. Resolve Raw Pointer Types (e.g., int*, char*) — must check before ref/refvar
 		if (name.EndsWith('*') && !name.StartsWith("ref"))
@@ -553,8 +620,13 @@ public sealed class BindingContext
 			var argType = ResolveType(rawArg.Trim());
 			if (argType is null)
 			{
-				var currentFileContext = FileContexts[CurrentUnit!];
-				Diagnostics.Report(currentFileContext, new TextSpan(0, 0), $"Unknown type argument '{rawArg.Trim()}'");
+				// Alias failures already produce their own diagnosis (CVL1200/1201/arity);
+				// skipping here avoids cascading "Unknown type argument" noise for those.
+				if (!IsAliasReference(rawArg.Trim()))
+				{
+					var currentFileContext = FileContexts[CurrentUnit!];
+					Diagnostics.Report(currentFileContext, new TextSpan(0, 0), $"Unknown type argument '{rawArg.Trim()}'");
+				}
 				return false;
 			}
 
@@ -666,6 +738,117 @@ public sealed class BindingContext
 		Visibility.Internal => 1,
 		_ => 0
 	};
+
+	/// <summary>
+	/// True when the (possibly generic-instantiated) type name refers to a declared type
+	/// alias. Used to reject aliases in `where` constraint positions (CVL1202).
+	/// </summary>
+	public bool IsAliasReference(string typeName) => TryResolveAliasName(typeName, out _) is not null;
+
+	/// <summary>
+	/// Locates the alias declaration for a type name (or the base name of a generic
+	/// instantiation) using the same namespace-priority rules as type resolution:
+	/// current namespace, then global/exact, then imported `using` namespaces.
+	/// Returns null when the name is not an alias.
+	/// </summary>
+	private (string Key, TypeAliasDeclarationSyntax Decl)? TryResolveAliasName(string name, out List<string>? typeArgs)
+	{
+		typeArgs = null;
+
+		var openBracket = name.IndexOf('<');
+		var isGeneric = openBracket >= 0;
+		var baseName = isGeneric ? name[..openBracket] : name;
+		if (isGeneric)
+		{
+			var argsPart = name.Substring(openBracket + 1, name.Length - openBracket - 2);
+			typeArgs = argsPart.Split(',').Select(a => a.Trim()).Where(a => a.Length > 0).ToList();
+		}
+
+		// Priority 1: current namespace
+		if (CurrentNamespace is not null)
+		{
+			var localMangled = GetMangledName(baseName, CurrentNamespace);
+			if (TypeAliases.TryGetValue(localMangled, out var localAlias))
+				return (localMangled, localAlias);
+		}
+
+		// Priority 2: global / exact
+		if (TypeAliases.TryGetValue(baseName, out var globalAlias))
+			return (baseName, globalAlias);
+
+		// Priority 3: imported usings
+		if (CurrentUnit is not null)
+		{
+			foreach (var ns in GetActiveUsings(CurrentUnit))
+			{
+				var importedMangled = GetMangledName(baseName, ns);
+				if (TypeAliases.TryGetValue(importedMangled, out var importedAlias))
+					return (importedMangled, importedAlias);
+			}
+		}
+
+		return null;
+	}
+
+	/// <summary>
+	/// Resolves an alias for eager validation (Pass 0a-post). Non-generic aliases resolve
+	/// normally; generic aliases resolve with their bare parameters bound to the concrete
+	/// placeholder 'int', so generic templates are never instantiated with a
+	/// TypeParameterSymbol argument during validation.
+	/// </summary>
+	public TypeSymbol? ResolveAliasForValidation(string mangledName, TypeAliasDeclarationSyntax decl)
+	{
+		if (decl.GenericParameters.Count == 0)
+			return ResolveType(mangledName);
+
+		var substituted = decl.Type;
+		foreach (var param in decl.GenericParameters)
+		{
+			substituted = Regex.Replace(substituted, $@"\b{Regex.Escape(param)}\b", "int");
+		}
+
+		_aliasValidationRhs[mangledName] = substituted;
+		try
+		{
+			return ResolveType(mangledName);
+		}
+		finally
+		{
+			_aliasValidationRhs.Remove(mangledName);
+		}
+	}
+
+	/// <summary>
+	/// Substitutes generic arguments into an alias's underlying type string and returns the
+	/// expanded target. Reports and returns null when a generic alias is used with the wrong
+	/// arity. Does not manage the cycle-detection stack — callers (ResolveType) do.
+	/// </summary>
+	private string? ExpandAliasTarget((string Key, TypeAliasDeclarationSyntax Decl) alias, List<string>? typeArgs)
+	{
+		var decl = alias.Decl;
+		var rhs = _aliasValidationRhs.TryGetValue(alias.Key, out var validationRhs) ? validationRhs : decl.Type;
+
+		if (typeArgs is null || typeArgs.Count == 0)
+			return rhs;
+
+		if (typeArgs.Count != decl.GenericParameters.Count)
+		{
+			if (CurrentUnit is not null && FileContexts.TryGetValue(CurrentUnit, out var fileContext))
+			{
+				Diagnostics.Report(fileContext, decl.Span,
+					$"Type alias '{decl.Name}' expects {decl.GenericParameters.Count} type argument(s), but {typeArgs.Count} was given.",
+					diagnosticId: null);
+			}
+			return null;
+		}
+
+		for (var i = 0; i < decl.GenericParameters.Count; i++)
+		{
+			rhs = Regex.Replace(rhs, $@"\b{Regex.Escape(decl.GenericParameters[i])}\b", typeArgs[i]);
+		}
+
+		return rhs;
+	}
 
 	/// <summary>
 	/// Updates the canonical type cache for a name. Used when a placeholder

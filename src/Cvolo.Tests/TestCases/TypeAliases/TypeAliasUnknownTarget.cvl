@@ -1,0 +1,5 @@
+alias Bad = DoesNotExist;
+
+int main() {
+    return 0;
+}
