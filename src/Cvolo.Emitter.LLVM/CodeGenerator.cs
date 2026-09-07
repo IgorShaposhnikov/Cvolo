@@ -500,10 +500,36 @@ var ctorBaseMangledName = bindingContext.GetMangledName(extDecl.ExtendedTypeName
 					}
 				}
 			}
+
+			// [Inline] / [NeverInline] -> LLVM alwaysinline / noinline function attributes
+			// (applied before the body is emitted, matching the noalias pattern above).
+			if (funcSym.IsInline)
+				AddFunctionStringAttribute(llvmFunc, "alwaysinline");
+			else if (funcSym.IsNeverInline)
+				AddFunctionStringAttribute(llvmFunc, "noinline");
 		}
 
 		_globals[emitName] = llvmFunc;
 		_functionTypes[emitName] = funcType;
+	}
+
+	/// <summary>
+	/// Attaches a function-level string attribute (e.g. "alwaysinline" / "noinline") to the given LLVM function.
+	/// Well-known names are canonicalized to their enum attribute kind by LLVM.
+	/// </summary>
+	private void AddFunctionStringAttribute(LLVMValueRef llvmFunc, string name)
+	{
+		var nameBytes = System.Text.Encoding.UTF8.GetBytes(name + "\0");
+		var emptyBytes = System.Text.Encoding.UTF8.GetBytes("\0");
+		unsafe
+		{
+			fixed (byte* namePtr = nameBytes)
+			fixed (byte* valPtr = emptyBytes)
+			{
+				var attr = LLVMSharp.Interop.LLVM.CreateStringAttribute(_context, (sbyte*)namePtr, (uint)name.Length, (sbyte*)valPtr, 0);
+				llvmFunc.AddAttributeAtIndex((LLVMAttributeIndex)(-1), attr);
+			}
+		}
 	}
 
 /// <summary>Maps a registered constructor candidate back to its corresponding source

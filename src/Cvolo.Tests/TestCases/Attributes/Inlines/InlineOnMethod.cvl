@@ -1,0 +1,23 @@
+using System;
+
+struct Pair
+{
+    int A;
+    int B;
+}
+
+extension Pair
+{
+    [Inline]
+    int Sum()
+    {
+        return A + B;
+    }
+}
+
+int main()
+{
+    var Pair p(A: 20, B: 22);
+    Console.WriteLine($"Answer: {p.Sum()}");
+    return 0;
+}

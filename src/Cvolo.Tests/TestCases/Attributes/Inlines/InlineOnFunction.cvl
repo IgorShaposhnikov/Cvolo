@@ -1,0 +1,13 @@
+using System;
+
+[Inline]
+int FastAdd(int a, int b)
+{
+    return a + b;
+}
+
+int main()
+{
+    Console.WriteLine($"Answer: {FastAdd(20, 22)}");
+    return 0;
+}

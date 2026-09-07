@@ -51,6 +51,12 @@ public static class DiagnosticIds
 	/// <summary>Return value of a function or type marked '[MustUse]' is ignored.</summary>
 	public const string MustUseIgnoredWarning = "CVL1013";
 
+	/// <summary>'[Inline]' and '[NeverInline]' applied to the same declaration.</summary>
+	public const string ConflictingInlineAttributes = "CVL1400";
+
+	/// <summary>'[Inline]' on a recursive function; LLVM may ignore the hint.</summary>
+	public const string InlineOnRecursiveFunction = "CVL1401";
+
 	/// <summary>A member is accessed outside its allowed visibility scope (file/module/package).</summary>
 	public const string InaccessibleMember = "CVL1030";
 

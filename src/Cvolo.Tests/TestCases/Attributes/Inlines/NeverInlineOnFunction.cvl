@@ -1,0 +1,13 @@
+using System;
+
+[NeverInline]
+int DoubleIt(int v)
+{
+    return v * 2;
+}
+
+int main()
+{
+    Console.WriteLine($"Answer: {DoubleIt(6)}");
+    return 0;
+}

@@ -28,11 +28,13 @@ public sealed class DeclarationPass(BindingContext context)
 		["StrictMutability"] = (["Struct"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
 		["Intrinsic"] = (["Function", "Method"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
 		["MustUse"] = (["Function", "Method", "Constructor", "Struct", "Union", "Enum"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
+		["Inline"] = (["Function", "Method", "Constructor"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
+		["NeverInline"] = (["Function", "Method", "Constructor"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
 	};
 
 	private static readonly HashSet<string> KnownWarningIds =
 	[
-		DiagnosticIds.UnsafeBodyNoEffect, DiagnosticIds.UnknownAttribute, DiagnosticIds.UnboundNoRefParams, DiagnosticIds.AutoInferMutationWarning, DiagnosticIds.MustUseIgnoredWarning
+		DiagnosticIds.UnsafeBodyNoEffect, DiagnosticIds.UnknownAttribute, DiagnosticIds.UnboundNoRefParams, DiagnosticIds.AutoInferMutationWarning, DiagnosticIds.MustUseIgnoredWarning, DiagnosticIds.InlineOnRecursiveFunction
 	];
 
 	// E1 enum underlying storage types (§1.A). Enums are strictly flat, unmanaged
@@ -1120,6 +1122,15 @@ ProcessExposeUsings(units);
 
 		WarnIfUnsafeBodyUnused(func.Span, func.Body, newSymbol, suppressedWarnings);
 
+		// [Inline] on a (directly) recursive function: LLVM may ignore the hint. Only a warning.
+		if (newSymbol.IsInline
+			&& func.HasBody
+			&& !suppressedWarnings.Contains(DiagnosticIds.InlineOnRecursiveFunction)
+			&& BodyReferencesFunction(func.Body!, func.Name))
+		{
+			ReportDeclarationWarning(func, $"Function '{func.Name}' is recursive; LLVM may ignore the '[Inline]' hint.", DiagnosticIds.InlineOnRecursiveFunction);
+		}
+
 		// Warn if 'unbound' is used but no ref/refvar parameters exist. A by-value factory that returns
 		// a Move type (a struct with reference fields) still gains escape-relaxation value from 'unbound'
 		// (spec §5 Rule 9 heap-relative escape), so the warning is suppressed in that case.
@@ -1278,6 +1289,23 @@ ProcessExposeUsings(units);
 			}
 		}
 
+		var inline = appliedKeys.Contains("Inline");
+		var neverInline = appliedKeys.Contains("NeverInline");
+		if (inline && neverInline)
+		{
+			var conflicting = attributes?.FirstOrDefault(a =>
+			{
+				var n = NormalizeAttributeName(a.Name);
+				return n is "Inline" or "NeverInline";
+			});
+			if (conflicting is not null)
+				ReportDeclarationDiagnostic(conflicting, $"Attribute '[{NormalizeAttributeName(conflicting.Name)}]' cannot be combined with the other inlining attribute on the same declaration.", DiagnosticIds.ConflictingInlineAttributes);
+		}
+		if (inline)
+			symbol.IsInline = true;
+		if (neverInline)
+			symbol.IsNeverInline = true;
+
 		foreach (var warningId in suppressedWarnings)
 			symbol.SuppressedWarnings.Add(warningId);
 	}
@@ -1301,6 +1329,24 @@ ProcessExposeUsings(units);
 			declarationSpan,
 			"'[UnsafeBody]' attribute has no effect because function contains no unsafe operations.",
 			DiagnosticIds.UnsafeBodyNoEffect);
+	}
+
+	/// <summary>
+	/// Best-effort direct-recursion scan: true when the body contains a call expression whose
+	/// simple name matches <paramref name="functionName"/>. Used only to warn on '[Inline]'.
+	/// </summary>
+	private static bool BodyReferencesFunction(SyntaxNode node, string functionName)
+	{
+		if (node is CallExpressionSyntax call && call.FunctionName == functionName)
+			return true;
+
+		foreach (var child in node.GetChildren())
+		{
+			if (BodyReferencesFunction(child, functionName))
+				return true;
+		}
+
+		return false;
 	}
 
 	/// <summary>

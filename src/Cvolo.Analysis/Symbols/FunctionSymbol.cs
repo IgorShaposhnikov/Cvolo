@@ -44,4 +44,14 @@ public sealed class FunctionSymbol(
 	/// </summary>
 	public bool IsMustUse { get; set; }
 	public string? MustUseMessage { get; set; }
+
+	/// <summary>
+	/// Intrinsic [Inline] marker - emitter attaches LLVM 'alwaysinline' to the function.
+	/// </summary>
+	public bool IsInline { get; set; }
+
+	/// <summary>
+	/// Intrinsic [NeverInline] marker - emitter attaches LLVM 'noinline' to the function.
+	/// </summary>
+	public bool IsNeverInline { get; set; }
 }
