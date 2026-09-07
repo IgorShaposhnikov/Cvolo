@@ -1,0 +1,21 @@
+using System;
+
+struct Cell
+{
+    int V;
+}
+
+// [UnsafeBody] opts the function out of TBAA tagging entirely.
+[UnsafeBody]
+int Poke()
+{
+    var Cell c (V: 0);
+    c.V = c.V + 1;
+    return c.V;
+}
+
+int main()
+{
+    Console.WriteLine($"Answer: {Poke()}");
+    return 0;
+}

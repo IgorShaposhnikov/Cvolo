@@ -1,0 +1,29 @@
+using System;
+
+struct Point
+{
+    int X;
+    int Y;
+}
+
+// Owned local scalar fields are tagged with !tbaa even in an unbound function.
+unbound int Sweep(refvar int seed, int n)
+{
+    var Point p(X: 0, Y: 0);
+    var i = 0;
+    while (i < n)
+    {
+        p.X = p.X + 1;
+        p.Y = p.Y + 2;
+        i = i + 1;
+    }
+    return p.X + p.Y;
+}
+
+int main()
+{
+    var int s = 0;
+    var int r = Sweep(refvar s, 3);
+    Console.WriteLine($"Answer: {r}");
+    return 0;
+}

@@ -41,6 +41,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	private CompilationUnitSyntax? _currentUnit;
 	private readonly HashSet<string> _disposedVars = [];
 	private int _unsafeDepth;
+	private TbaaMetadata? _tbaa;
 	private (LLVMTypeRef Type, LLVMValueRef Func)? _llvmTrap;
 private readonly Dictionary<string, LLVMValueRef> _enumValuesGlobals = [];
 	private readonly Dictionary<string, ConstructorDeclarationSyntax> _constructorInitializers = [];
@@ -895,7 +896,7 @@ case IsPatternExpressionSyntax isPat:
 					LLVMValueRef? storagePtr = null;
 					if (isBorrowTarget)
 					{
-						var (targetPtr, targetUnion) = GetFieldPointer(isPat.Operand);
+						var (targetPtr, targetUnion, _, _) = GetFieldPointer(isPat.Operand);
 						operandType = targetUnion is PointerTypeSymbol ptrTy ? ptrTy.ReferencedType : targetUnion;
 						storagePtr = targetPtr;
 					}
@@ -1057,13 +1058,17 @@ case IsPatternExpressionSyntax isPat:
 						}
 					}
 
-					var (ptr, type) = GetFieldPointer(m);
-					return _builder.BuildLoad2(GetLLVMType(type), ptr, "member_val");
+					var (ptr, type, _, tbaa) = GetFieldPointer(m);
+					var instr = _builder.BuildLoad2(GetLLVMType(type), ptr, "member_val");
+					ApplyTbaa(tbaa, instr);
+					return instr;
 				}
 			case IndexExpressionSyntax idx:
 				{
-					var (ptr, type) = GetFieldPointer(idx);
-					return _builder.BuildLoad2(GetLLVMType(type), ptr, "index_val");
+					var (ptr, type, _, tbaa) = GetFieldPointer(idx);
+					var instr = _builder.BuildLoad2(GetLLVMType(type), ptr, "index_val");
+					ApplyTbaa(tbaa, instr);
+					return instr;
 				}
 			case BorrowExpressionSyntax b:
 				return EmitBorrowExpression(b);
@@ -1337,7 +1342,7 @@ else if (isExtensionCall)
 				}
 				else
 				{
-					var (ptr, _) = GetFieldPointer(argExpr);
+					var (ptr, _, _, _) = GetFieldPointer(argExpr);
 					arrayPtr = ptr;
 				}
 
@@ -1430,7 +1435,7 @@ else if (isExtensionCall)
 				}
 				else
 				{
-					var (ptr, _) = GetFieldPointer(argExpr);
+					var (ptr, _, _, _) = GetFieldPointer(argExpr);
 					arrayPtr = ptr;
 				}
 
@@ -1445,7 +1450,7 @@ else if (isExtensionCall)
 				}
 				else
 				{
-					var (ptr, _) = GetFieldPointer(argExpr);
+					var (ptr, _, _, _) = GetFieldPointer(argExpr);
 					slicePtr = ptr;
 				}
 
@@ -1667,7 +1672,7 @@ else if (isExtensionCall)
 					var structType = thisType?.ReferencedType as StructTypeSymbol;
 					if (structType?.FindField(ctorId.Name) is not null)
 					{
-						var (fieldPtr, _) = GetFieldPointer(ctorId);
+						var (fieldPtr, _, _, _) = GetFieldPointer(ctorId);
 						EmitCallExpression(ctorCall, fieldPtr);
 						return fieldPtr;
 					}
@@ -1675,13 +1680,13 @@ else if (isExtensionCall)
 			}
 			else if (bin.Left is MemberAccessExpressionSyntax m)
 			{
-				var (fieldPtr, _) = GetFieldPointer(m);
+				var (fieldPtr, _, _, _) = GetFieldPointer(m);
 				EmitCallExpression(ctorCall, fieldPtr);
 				return fieldPtr;
 			}
 			else if (bin.Left is IndexExpressionSyntax idx)
 			{
-				var (elementPtr, _) = GetFieldPointer(idx);
+				var (elementPtr, _, _, _) = GetFieldPointer(idx);
 				EmitCallExpression(ctorCall, elementPtr);
 				return elementPtr;
 			}
@@ -1815,13 +1820,14 @@ var globalType = _globalVariableTypes[id.Name];
 					var field = structType.FindField(id.Name);
 					if (field is not null)
 					{
-var (fieldPtr, _) = GetFieldPointer(id);
+var (fieldPtr, _, _, tbaa) = GetFieldPointer(id);
 					if (field.Type is UnionTypeSymbol && bin.Right is StructInitializationExpressionSyntax fieldReinit)
 						EmitStructInitializationInPlace(fieldReinit, fieldPtr);
 					else
 					{
 						var coerced = CoerceIntegerWidth(right, rTy, field.Type);
-						_builder.BuildStore(coerced, fieldPtr);
+						var store = _builder.BuildStore(coerced, fieldPtr);
+						ApplyTbaa(tbaa, store);
 					}
 
 					return right;
@@ -1832,7 +1838,7 @@ var (fieldPtr, _) = GetFieldPointer(id);
 					var field = unionType.FindField(id.Name);
 					if (field is not null)
 					{
-						var (fieldPtr, _) = GetFieldPointer(id);
+						var (fieldPtr, _, _, _) = GetFieldPointer(id);
 						if (bin.Right is StructInitializationExpressionSyntax thisFieldReinit)
 							EmitStructInitializationInPlace(thisFieldReinit, fieldPtr);
 						else
@@ -1848,12 +1854,12 @@ var (fieldPtr, _) = GetFieldPointer(id);
 		}
 		else if (bin.Left is MemberAccessExpressionSyntax m)
 		{
-			var (fieldPtr, fieldType) = GetFieldPointer(m);
+			var (fieldPtr, fieldType, _, tbaa) = GetFieldPointer(m);
 
 			// Set active variant tag when assigning a union variant (e.g. 'this.Some = value')
 			if (GetExprType(m.Expression) is UnionTypeSymbol unionType && !unionType.IsNpoEligible)
 			{
-				var (unionPtr, _) = GetFieldPointer(m.Expression);
+				var (unionPtr, _, _, _) = GetFieldPointer(m.Expression);
 				var variantIndex = GetFieldIndex(unionType, m.MemberName);
 				var unionLayout = GetLLVMType(unionType);
 				var tagPtr = _builder.BuildGEP2(unionLayout, unionPtr, new LLVMValueRef[] {
@@ -1878,14 +1884,15 @@ var (fieldPtr, _) = GetFieldPointer(id);
 					? EmitRefToValue(right, GetExprType(bin.Right))
 					: right;
 				coerced = CoerceIntegerWidth(coerced, rTy, fieldType);
-				_builder.BuildStore(coerced, fieldPtr);
+				var fieldStore = _builder.BuildStore(coerced, fieldPtr);
+				ApplyTbaa(tbaa, fieldStore);
 			}
 
 			return right;
 		}
 		else if (bin.Left is IndexExpressionSyntax idx)
 		{
-			var (elementPtr, elementType) = GetFieldPointer(idx);
+			var (elementPtr, elementType, _, tbaa) = GetFieldPointer(idx);
 			if (elementType is UnionTypeSymbol elemUnion
 				&& UnionNeedsTagCheckedCleanup(elemUnion)
 				&& bin.Right is StructInitializationExpressionSyntax)
@@ -1901,7 +1908,8 @@ var (fieldPtr, _) = GetFieldPointer(id);
 					? EmitRefToValue(right, GetExprType(bin.Right))
 					: right;
 				coerced = CoerceIntegerWidth(coerced, rTy, elementType);
-				_builder.BuildStore(coerced, elementPtr);
+				var elemStore = _builder.BuildStore(coerced, elementPtr);
+				ApplyTbaa(tbaa, elemStore);
 			}
 
 			return right;
@@ -2132,13 +2140,13 @@ var (fieldPtr, _) = GetFieldPointer(id);
 						return ptr;
 					if (unary.Operand is MemberAccessExpressionSyntax memberAccess)
 					{
-						var (fieldPtr, _) = GetFieldPointer(memberAccess);
+						var (fieldPtr, _, _, _) = GetFieldPointer(memberAccess);
 						return fieldPtr;
 					}
 
 					if (unary.Operand is IndexExpressionSyntax indexExpr)
 					{
-						var (elementPtr, _) = GetFieldPointer(indexExpr);
+						var (elementPtr, _, _, _) = GetFieldPointer(indexExpr);
 						return elementPtr;
 					}
 
@@ -2444,7 +2452,9 @@ var (fieldPtr, _) = GetFieldPointer(id);
 					var index = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)fieldIndex);
 
 					var fieldPtr = _builder.BuildGEP2(structLayoutTy, actualThisPtr, new LLVMValueRef[] { zero, index }, "this_field_ptr");
-					return _builder.BuildLoad2(GetLLVMType(field.Type), fieldPtr, "this_field_val");
+					var thisFieldLoad = _builder.BuildLoad2(GetLLVMType(field.Type), fieldPtr, "this_field_val");
+					ApplyTbaa(GetTbaaTag(structType, fieldIndex), thisFieldLoad);
+					return thisFieldLoad;
 				}
 			}
 
@@ -2497,12 +2507,12 @@ var (fieldPtr, _) = GetFieldPointer(id);
 		}
 		else if (expr.Expression is MemberAccessExpressionSyntax m)
 		{
-			var (fieldPtr, _) = GetFieldPointer(m);
+			var (fieldPtr, _, _, _) = GetFieldPointer(m);
 			return fieldPtr;
 		}
 		else if (expr.Expression is IndexExpressionSyntax idx)
 		{
-			var (elementPtr, _) = GetFieldPointer(idx);
+			var (elementPtr, _, _, _) = GetFieldPointer(idx);
 			return elementPtr;
 		}
 		// Borrowing a dereferenced pointer ('ref *ptr' or 'refvar *ptr') returns the underlying pointer value
@@ -2516,17 +2526,19 @@ var (fieldPtr, _) = GetFieldPointer(id);
 
 	private LLVMValueRef EmitIncrementDecrement(UnaryExpressionSyntax u, bool isPrefix, bool isIncrement)
 	{
-		var (ptr, type) = GetFieldPointer(u.Operand);
+		var (ptr, type, _, tbaa) = GetFieldPointer(u.Operand);
 		var ty = GetLLVMType(type);
 
 		var currentVal = _builder.BuildLoad2(ty, ptr, "incdec_current");
+		ApplyTbaa(tbaa, currentVal);
 		var step = LLVMValueRef.CreateConstInt(ty, 1);
 
 		var newVal = isIncrement
 			? _builder.BuildAdd(currentVal, step, "incdec_new")
 			: _builder.BuildSub(currentVal, step, "incdec_new");
 
-		_builder.BuildStore(newVal, ptr);
+		var store = _builder.BuildStore(newVal, ptr);
+		ApplyTbaa(tbaa, store);
 
 		return isPrefix ? newVal : currentVal;
 	}
@@ -3226,7 +3238,7 @@ var (fieldPtr, _) = GetFieldPointer(id);
 		};
 	}
 
-	private (LLVMValueRef ptr, TypeSymbol type) GetFieldPointer(ExpressionSyntax expr)
+	private (LLVMValueRef ptr, TypeSymbol type, bool valueProvenance, LLVMValueRef? tbaa) GetFieldPointer(ExpressionSyntax expr)
 	{
 		if (expr is IdentifierExpressionSyntax id)
 		{
@@ -3251,7 +3263,7 @@ var (fieldPtr, _) = GetFieldPointer(id);
 							var index = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)fieldIndex);
 
 							var fieldPtr = _builder.BuildGEP2(structLayoutTy, actualThisPtr, new LLVMValueRef[] { zero, index }, "this_field_ptr");
-							return (fieldPtr, field.Type);
+							return (fieldPtr, field.Type, true, GetTbaaTag(structType, fieldIndex));
 						}
 					}
 					else if (refType is UnionTypeSymbol unionType)
@@ -3264,7 +3276,7 @@ var (fieldPtr, _) = GetFieldPointer(id);
 							// Null-Pointer Optimization: the flat slot IS the value (a ref/refvar pointer).
 							// Some = value stores directly; there is no tag/payload struct to index into.
 							if (unionType.IsNpoEligible && !field.IsVoidVariant)
-								return (actualThisPtr, field.Type);
+								return (actualThisPtr, field.Type, false, null);
 
 							var fieldIndex = GetFieldIndex(unionType, id.Name);
 							var structLayoutTy = GetLLVMType(unionType);
@@ -3276,7 +3288,7 @@ var (fieldPtr, _) = GetFieldPointer(id);
 							}, "union_payload_ptr");
 
 							var castPtr = _builder.BuildBitCast(payloadPtr, LLVMTypeRef.CreatePointer(GetLLVMType(field.Type), 0), "payload_cast_ptr");
-							return (castPtr, field.Type);
+							return (castPtr, field.Type, false, null);
 						}
 					}
 				}
@@ -3292,10 +3304,11 @@ var (fieldPtr, _) = GetFieldPointer(id);
 			{
 				var actualPtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), structPtr, "loaded_ptr");
 				var innerType = type is PointerTypeSymbol ptrType ? ptrType.ReferencedType : type;
-				return (actualPtr, innerType);
+				var isReadOnlyRef = type is PointerTypeSymbol { IsMutable: false } && !isHeap;
+				return (actualPtr, innerType, isReadOnlyRef, null);
 			}
 
-			return (structPtr, type);
+			return (structPtr, type, true, null);
 		}
 		else if (expr is MemberAccessExpressionSyntax m)
 		{
@@ -3304,16 +3317,17 @@ var (fieldPtr, _) = GetFieldPointer(id);
 			// parent lookup below.
 			if (TryResolveEnumVariantReceiver(m) is { } enumValuesType && m.MemberName == "Values")
 			{
-				return EmitEnumValuesSlicePointer(enumValuesType);
+				var (enumPtr, enumType) = EmitEnumValuesSlicePointer(enumValuesType);
+				return (enumPtr, enumType, false, null);
 			}
 
-			var (parentPtr, parentType) = GetFieldPointer(m.Expression);
+			var (parentPtr, parentType, valueProvenance, _) = GetFieldPointer(m.Expression);
 
 			if (parentType is SliceTypeSymbol sliceType && m.MemberName == "Length")
 			{
 				var structLayout = GetLLVMType(sliceType);
 				var lengthPtr = _builder.BuildGEP2(structLayout, parentPtr, new LLVMValueRef[] { LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0), LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1) }, "len_ptr");
-				return (lengthPtr, TypeSymbol.Int);
+				return (lengthPtr, TypeSymbol.Int, false, null);
 			}
 
 			// Dot access through a reference field (auto-deref): parentPtr addresses a
@@ -3334,7 +3348,7 @@ var (fieldPtr, _) = GetFieldPointer(id);
 					var refIndex = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)refFieldIndex);
 
 					var refFieldPtr = _builder.BuildGEP2(refStructLayoutTy, rawPtr, new LLVMValueRef[] { refZero, refIndex }, "reffield_member_ptr");
-					return (refFieldPtr, refFieldType);
+					return (refFieldPtr, refFieldType, false, null);
 				}
 
 				parentType = referred;
@@ -3362,7 +3376,7 @@ var (fieldPtr, _) = GetFieldPointer(id);
 				var index = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)fieldIndex);
 
 				var fieldPtr = _builder.BuildGEP2(structLayoutTy, rawPtr, new LLVMValueRef[] { zero, index }, "arrow_field_ptr");
-				return (fieldPtr, fieldType);
+				return (fieldPtr, fieldType, false, null);
 			}
 
 			// Ensure parentType is resolved to concrete StructTypeSymbol or UnionTypeSymbol
@@ -3379,7 +3393,7 @@ var (fieldPtr, _) = GetFieldPointer(id);
 				// Null-Pointer Optimization: the flat slot IS the ref/refvar value. Reading u.Some
 				// yields the flat pointer itself; there is no tag/payload struct to index into.
 				if (unionType.IsNpoEligible && !unionType.Fields[fieldIndex].IsVoidVariant)
-					return (parentPtr, fieldType);
+					return (parentPtr, fieldType, false, null);
 
 				var structLayoutTy = GetLLVMType(parentType);
 				var payloadPtr = _builder.BuildGEP2(structLayoutTy, parentPtr, new LLVMValueRef[] {
@@ -3388,7 +3402,7 @@ var (fieldPtr, _) = GetFieldPointer(id);
 			}, "union_payload_ptr");
 
 				var castPtr = SafeBitCast(payloadPtr, LLVMTypeRef.CreatePointer(GetLLVMType(fieldType), 0), "payload_cast_ptr");
-				return (castPtr, fieldType);
+				return (castPtr, fieldType, false, null);
 			}
 
 			var dotStructType = (parentType as StructTypeSymbol)
@@ -3407,11 +3421,11 @@ var (fieldPtr, _) = GetFieldPointer(id);
 			var dotIndex = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)dotFieldIndex);
 
 			var dotFieldPtr = _builder.BuildGEP2(dotStructLayoutTy, parentPtr, new LLVMValueRef[] { dotZero, dotIndex }, "member_ptr");
-			return (dotFieldPtr, dotFieldType);
+			return (dotFieldPtr, dotFieldType, valueProvenance, valueProvenance ? GetTbaaTag(dotStructType, dotFieldIndex) : null);
 		}
 		else if (expr is IndexExpressionSyntax idx)
 		{
-			var (parentPtr, parentType) = GetFieldPointer(idx.Left);
+			var (parentPtr, parentType, _, _) = GetFieldPointer(idx.Left);
 			var indexVal = EmitExpression(idx.Index);
 
 			if (parentType is SliceTypeSymbol sliceType)
@@ -3430,7 +3444,7 @@ var (fieldPtr, _) = GetFieldPointer(id);
 
 				var elementLlvmTy = GetLLVMType(sliceType.ElementType);
 				var elementPtr = _builder.BuildGEP2(elementLlvmTy, arrayPtr, new LLVMValueRef[] { indexVal }, "element_ptr");
-				return (elementPtr, sliceType.ElementType);
+				return (elementPtr, sliceType.ElementType, false, null);
 			}
 			else if (parentType is ArrayTypeSymbol arrayType)
 			{
@@ -3440,7 +3454,7 @@ var (fieldPtr, _) = GetFieldPointer(id);
 				InjectBoundsCheck(idx, indexVal, limit);
 
 				var elementPtr = _builder.BuildGEP2(arrayLayout, parentPtr, new LLVMValueRef[] { LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0), indexVal }, "element_ptr");
-				return (elementPtr, arrayType.ElementType);
+				return (elementPtr, arrayType.ElementType, false, null);
 			}
 		}
 		else if (expr is BorrowExpressionSyntax b)
@@ -3459,7 +3473,8 @@ var (fieldPtr, _) = GetFieldPointer(id);
 					_bindingContext.ResolveType($"Option<{castEnum.Name}>") is UnionTypeSymbol castOption)
 				{
 					var castOperand = EmitExpression(castExpr.Operand);
-					return MaterializeEnumCastOption(castEnum, castOperand, castOperandType, castOption);
+					var (castPtr, castType) = MaterializeEnumCastOption(castEnum, castOperand, castOperandType, castOption);
+					return (castPtr, castType, false, null);
 				}
 			}
 		}
@@ -3474,7 +3489,7 @@ var (fieldPtr, _) = GetFieldPointer(id);
 				var inner = ptrType.ReferencedType;
 				if (inner is not (StructTypeSymbol or UnionTypeSymbol) && _bindingContext?.ResolveType(inner.Name) is TypeSymbol resolvedInner)
 					inner = resolvedInner;
-				return (callVal, inner);
+				return (callVal, inner, false, null);
 			}
 
 			if (retType is RawPointerTypeSymbol rawPtrType)
@@ -3482,7 +3497,7 @@ var (fieldPtr, _) = GetFieldPointer(id);
 				var inner = rawPtrType.ElementType;
 				if (inner is not (StructTypeSymbol or UnionTypeSymbol) && _bindingContext?.ResolveType(inner.Name) is TypeSymbol resolvedInner)
 					inner = resolvedInner;
-				return (callVal, inner);
+				return (callVal, inner, false, null);
 			}
 
 			// 2. If call returns a struct or union by value, spill to a stack temporary to allow field GEP
@@ -3492,7 +3507,7 @@ var (fieldPtr, _) = GetFieldPointer(id);
 				var structLayout = GetLLVMType(structType);
 				var tempAlloc = _builder.BuildAlloca(structLayout, "call_struct_tmp");
 				_builder.BuildStore(callVal, tempAlloc);
-				return (tempAlloc, structType);
+				return (tempAlloc, structType, false, null);
 			}
 
 			var unionType = retType as UnionTypeSymbol ?? _bindingContext?.ResolveType(retType.Name) as UnionTypeSymbol;
@@ -3501,13 +3516,29 @@ var (fieldPtr, _) = GetFieldPointer(id);
 				var unionLayout = GetLLVMType(unionType);
 				var tempAlloc = _builder.BuildAlloca(unionLayout, "call_union_tmp");
 				_builder.BuildStore(callVal, tempAlloc);
-				return (tempAlloc, unionType);
+				return (tempAlloc, unionType, false, null);
 			}
 
-			return (callVal, retType);
+			return (callVal, retType, false, null);
 		}
 
 		throw new InvalidOperationException($"Unsupported {expr.GetType()} field pointer expression");
+	}
+
+	private TbaaMetadata Tbaa => _tbaa ??= new TbaaMetadata(_context, _module, s => GetLLVMType(s));
+
+	private LLVMValueRef? GetTbaaTag(StructTypeSymbol structType, int fieldIndex)
+	{
+		if (_unsafeDepth != 0 || !TbaaMetadata.IsScalar(structType.Fields[fieldIndex].Type))
+			return null;
+
+		return Tbaa.GetFieldTag(structType, fieldIndex);
+	}
+
+	private void ApplyTbaa(LLVMValueRef? tag, LLVMValueRef instruction)
+	{
+		if (tag is not null)
+			instruction.SetMetadata(Tbaa.TbaaKindId, tag.Value);
 	}
 
 	private int GetFieldIndex(StructTypeSymbol type, string name)
@@ -4178,7 +4209,7 @@ var (fieldPtr, _) = GetFieldPointer(id);
 			return;
 		}
 
-		var (targetVal, unionType) = GetFieldPointer(sw.Expression);
+		var (targetVal, unionType, _, _) = GetFieldPointer(sw.Expression);
 		var isRefTarget = GetExprType(sw.Expression) is PointerTypeSymbol;
 		var isMutableRef = GetExprType(sw.Expression) is PointerTypeSymbol ptrSymbol && ptrSymbol.IsMutable; // Capture original reference mutability
 

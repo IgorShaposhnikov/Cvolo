@@ -156,6 +156,66 @@ public sealed class AttributesTests : CompilerTestBase
 		Assert.Contains("Attribute '[Inline]' cannot be combined with the other inlining attribute on the same declaration.", stderr);
 	}
 
+	[Fact]
+	public void Tbaa_Scalar_Field_Access_Emits_Tags_In_IR()
+	{
+		var fileName = "Attributes/Tbaa/TbaaScalarField.cvl";
+		var (exitCode, stdout, stderr) = RunCompiler(fileName, "--llvm", "--emit-ir", "-O0");
+		AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
+		Assert.Contains("!tbaa", stdout.Replace("\r\n", "\n"));
+
+		(exitCode, stdout, stderr) = RunCompiler(fileName);
+		AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
+		var (runCode, runStdout) = ExecuteBinary("TbaaScalarField", "Attributes/Tbaa");
+		Assert.Equal(0, runCode);
+		Assert.Contains("Answer: 9", runStdout);
+	}
+
+	[Fact]
+	public void Tbaa_Refvar_Access_Is_Suppressed_In_IR()
+	{
+		var fileName = "Attributes/Tbaa/TbaaRefvarSuppressed.cvl";
+		var (exitCode, stdout, stderr) = RunCompiler(fileName, "--llvm", "--emit-ir", "-O0");
+		AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
+		Assert.DoesNotContain("!tbaa", stdout.Replace("\r\n", "\n"));
+
+		(exitCode, stdout, stderr) = RunCompiler(fileName);
+		AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
+		var (runCode, runStdout) = ExecuteBinary("TbaaRefvarSuppressed", "Attributes/Tbaa");
+		Assert.Equal(0, runCode);
+		Assert.Contains("Answer: 43", runStdout);
+	}
+
+	[Fact]
+	public void Tbaa_UnsafeBody_Is_Suppressed_In_IR()
+	{
+		var fileName = "Attributes/Tbaa/TbaaUnsafeSuppressed.cvl";
+		var (exitCode, stdout, stderr) = RunCompiler(fileName, "--llvm", "--emit-ir", "-O0");
+		AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
+		Assert.DoesNotContain("!tbaa", stdout.Replace("\r\n", "\n"));
+
+		(exitCode, stdout, stderr) = RunCompiler(fileName);
+		AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
+		var (runCode, runStdout) = ExecuteBinary("TbaaUnsafeSuppressed", "Attributes/Tbaa");
+		Assert.Equal(0, runCode);
+		Assert.Contains("Answer: 1", runStdout);
+	}
+
+	[Fact]
+	public void Tbaa_Struct_With_Ref_Field_Is_Suppressed_In_IR()
+	{
+		var fileName = "Attributes/Tbaa/TbaaRefFieldSuppressed.cvl";
+		var (exitCode, stdout, stderr) = RunCompiler(fileName, "--llvm", "--emit-ir", "-O0");
+		AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
+		Assert.DoesNotContain("!tbaa", stdout.Replace("\r\n", "\n"));
+
+		(exitCode, stdout, stderr) = RunCompiler(fileName);
+		AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
+		var (runCode, runStdout) = ExecuteBinary("TbaaRefFieldSuppressed", "Attributes/Tbaa");
+		Assert.Equal(0, runCode);
+		Assert.Contains("Answer: 3", runStdout);
+	}
+
 	[Theory]
 	[InlineData("NoAliasOnFunctionFail", "Attribute '[NoAlias]' cannot be applied in Safe context.")]
 	[InlineData("ParamAttrContextFail", "Attribute '[NoAlias]' cannot be applied in Safe context.")]
