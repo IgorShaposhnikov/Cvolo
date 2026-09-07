@@ -40,19 +40,21 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	private CompilationContext? _compilationContext; // Renamed to avoid LLVM _context conflict
 	private CompilationUnitSyntax? _currentUnit;
 	private readonly HashSet<string> _disposedVars = [];
+	private readonly bool _enableTbaa;
 	private int _unsafeDepth;
 	private TbaaMetadata? _tbaa;
 	private (LLVMTypeRef Type, LLVMValueRef Func)? _llvmTrap;
 private readonly Dictionary<string, LLVMValueRef> _enumValuesGlobals = [];
 	private readonly Dictionary<string, ConstructorDeclarationSyntax> _constructorInitializers = [];
 
-	public CodeGenerator(string moduleName, ILLVMOptimizer? optimizer = null, IRVerifier? irVerifier = null)
+	public CodeGenerator(string moduleName, ILLVMOptimizer? optimizer = null, IRVerifier? irVerifier = null, bool enableTbaa = true)
 	{
 		_context = LLVMContextRef.Global;
 		_module = _context.CreateModuleWithName(moduleName);
 		_builder = _context.CreateBuilder();
 		_optimizer = optimizer;
 		_irVerifier = irVerifier;
+		_enableTbaa = enableTbaa;
 	}
 
 	public LLVMModuleRef Module => _module;
@@ -3529,7 +3531,7 @@ var (fieldPtr, _, _, tbaa) = GetFieldPointer(id);
 
 	private LLVMValueRef? GetTbaaTag(StructTypeSymbol structType, int fieldIndex)
 	{
-		if (_unsafeDepth != 0 || !TbaaMetadata.IsScalar(structType.Fields[fieldIndex].Type))
+		if (!_enableTbaa || _unsafeDepth != 0 || !TbaaMetadata.IsScalar(structType.Fields[fieldIndex].Type))
 			return null;
 
 		return Tbaa.GetFieldTag(structType, fieldIndex);

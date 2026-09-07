@@ -1,0 +1,19 @@
+﻿using System;
+struct Point { int X; int Y; }
+int Run() {
+    var Point[2048] pts = {};
+    var i = 0;
+    while (i < 2048) { pts[i].X = i * 3; pts[i].Y = i + 1; i += 1; }
+    var total = 0;
+    var rep = 0;
+    while (rep < 2000) {
+        i = 0;
+        while (i < 2048) { total = total + (pts[i].X & 255) + (pts[i].Y & 255); i += 1; }
+        rep += 1;
+    }
+    return total;
+}
+int main() {
+    Console.WriteLine($"Answer: {Run()}");
+    return 0;
+}

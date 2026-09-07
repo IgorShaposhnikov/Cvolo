@@ -20,6 +20,7 @@ internal sealed class BuildCommand : Command
 		var nowarnOption = new Option<string>("--nowarn") { Description = "Comma-separated diagnostic ids whose warnings are suppressed (e.g. CVL1001)" };
 		var legacyVisibilityOption = new Option<bool>("--legacy-visibility") { Description = "Disable the visibility system and treat all declarations as public (v0.2.0-alpha behavior)" };
 		var strictOption = new Option<bool>("--strict-option") { Description = "Disable the '?' optional type syntax; require explicit Option<T> types" };
+		var noTbaaOption = new Option<bool>("--no-tbaa") { Description = "Disable generation of !tbaa alias-analysis metadata nodes" };
 
 		Add(pathArg);
 		Add(llvmOption);
@@ -31,6 +32,7 @@ internal sealed class BuildCommand : Command
 		Add(nowarnOption);
 		Add(legacyVisibilityOption);
 		Add(strictOption);
+		Add(noTbaaOption);
 
 		SetAction((ParseResult parseResult) =>
 		{
@@ -43,8 +45,9 @@ internal sealed class BuildCommand : Command
 			var noWarnVal = parseResult.GetValue(nowarnOption);
 			var legacyVisibilityVal = parseResult.GetValue(legacyVisibilityOption);
 			var strictOptionVal = parseResult.GetValue(strictOption);
+			var noTbaaVal = parseResult.GetValue(noTbaaOption);
 
-			var exitCode = _compilerDriver.Compile(path, llvmOnly, isShared, emitIrVal, optLevel, emitLowered: emitLoweredVal, noWarn: noWarnVal, legacyVisibility: legacyVisibilityVal, strictOption: strictOptionVal);
+			var exitCode = _compilerDriver.Compile(path, llvmOnly, isShared, emitIrVal, optLevel, emitLowered: emitLoweredVal, noWarn: noWarnVal, legacyVisibility: legacyVisibilityVal, strictOption: strictOptionVal, noTbaa: noTbaaVal);
 			Environment.Exit(exitCode);
 		});
 	}

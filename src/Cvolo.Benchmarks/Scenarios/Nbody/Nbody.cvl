@@ -1,0 +1,40 @@
+using System;
+
+struct Body {
+    public double X;
+    public double Y;
+    public double Z;
+    public double VX;
+    public double VY;
+    public double VZ;
+}
+
+int Run(int n) {
+    // Initialize with a non-zero velocity
+    var Body[100] bodies = {}; 
+    var k = 0;
+    while(k < 100) {
+        bodies[k].VX = 0.1;
+        bodies[k].VY = 0.1;
+        bodies[k].VZ = 0.1;
+        k = k + 1;
+    }
+    
+    var i = 0;
+    while (i < n) {
+        var j = 0;
+        while (j < 100) {
+            bodies[j].X = bodies[j].X + bodies[j].VX;
+            bodies[j].Y = bodies[j].Y + bodies[j].VY;
+            bodies[j].Z = bodies[j].Z + bodies[j].VZ;	
+            j += 1;
+        }
+        i += 1;
+    }
+    return (int)bodies[0].X;
+}
+
+int Main() {
+    Console.WriteLine($"Answer: {Run(200000)}");
+    return 0;
+}

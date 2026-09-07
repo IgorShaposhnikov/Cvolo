@@ -110,13 +110,27 @@ internal sealed class TbaaMetadata
 
 	private static bool HasReferenceField(StructTypeSymbol structType)
 	{
-		foreach (var field in structType.Fields)
-		{
-			if (field.Type is PointerTypeSymbol or SliceTypeSymbol or InterfaceTypeSymbol)
-				return true;
-		}
+		var visited = new HashSet<TypeSymbol>();
+		return HasReferenceFieldCore(structType, visited);
+	}
 
-		return false;
+	private static bool HasReferenceFieldCore(TypeSymbol type, HashSet<TypeSymbol> visited)
+	{
+		if (!visited.Add(type))
+			return false;
+
+		return type switch
+		{
+			// A ref/refvar/pointer/slice/interface/protocol field can alias arbitrary
+			// storage, so a struct carrying one (directly or through an embedded
+			// struct/union/array) is never a TBAA participant (Memory spec §4.C.1).
+			PointerTypeSymbol or RawPointerTypeSymbol or SliceTypeSymbol
+				or InterfaceTypeSymbol or ProtocolTypeSymbol => true,
+			StructTypeSymbol st => st.Fields.Any(f => HasReferenceFieldCore(f.Type, visited)),
+			UnionTypeSymbol u => u.Fields.Any(f => HasReferenceFieldCore(f.Type, visited)),
+			ArrayTypeSymbol arr => HasReferenceFieldCore(arr.ElementType, visited),
+			_ => false,
+		};
 	}
 
 	private LLVMValueRef ScalarRoot() =>

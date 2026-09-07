@@ -1,0 +1,18 @@
+﻿using System;
+struct Point { int X; int Y; }
+int Run(int n) {
+    var Point p(X: 1, Y: 2);
+    var i = 0;
+    var acc = 0;
+    while (i < n) {
+        p.X = p.X + 3;
+        p.Y = p.Y + 5;
+        acc = acc + (p.X & 255) + (p.Y & 255);
+        i = i + 1;
+    }
+    return acc;
+}
+int main() {
+    Console.WriteLine($"Answer: {Run(20000000)}");
+    return 0;
+}

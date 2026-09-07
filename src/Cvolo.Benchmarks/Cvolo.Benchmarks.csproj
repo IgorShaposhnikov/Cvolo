@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<OutputType>Exe</OutputType>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\Cvolo\Cvolo.csproj" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<None Include="Scenarios\**\*.cvl" CopyToOutputDirectory="PreserveNewest" />
+		<None Include="Scenarios\**\src.rs" CopyToOutputDirectory="PreserveNewest" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<PackageReference Include="BenchmarkDotNet" />
+	</ItemGroup>
+
+	<ItemGroup>
+	  <Folder Include="Scenarios\Nbody\" />
+	</ItemGroup>
+
+</Project>

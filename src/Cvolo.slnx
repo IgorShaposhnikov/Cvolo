@@ -16,4 +16,5 @@
   <Project Path="Cvolo.Syntax.Antlr/Cvolo.Syntax.Antlr.csproj" />
   <Project Path="Cvolo.Tests/Cvolo.Tests.csproj" Id="40873693-d69b-43fe-8615-aa2341c4fd06" />
   <Project Path="Cvolo/Cvolo.csproj" />
+  <Project Path="Cvolo.Benchmarks/Cvolo.Benchmarks.csproj" />
 </Solution>

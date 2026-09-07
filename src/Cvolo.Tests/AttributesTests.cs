@@ -216,6 +216,15 @@ public sealed class AttributesTests : CompilerTestBase
 		Assert.Contains("Answer: 3", runStdout);
 	}
 
+	[Fact]
+	public void Tbaa_NoTbaa_Flag_Suppresses_Tags_In_IR()
+	{
+		var fileName = "Attributes/Tbaa/TbaaScalarField.cvl";
+		var (exitCode, stdout, stderr) = RunCompiler(fileName, "--llvm", "--emit-ir", "-O0", "--no-tbaa");
+		AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
+		Assert.DoesNotContain("!tbaa", stdout.Replace("\r\n", "\n"));
+	}
+
 	[Theory]
 	[InlineData("NoAliasOnFunctionFail", "Attribute '[NoAlias]' cannot be applied in Safe context.")]
 	[InlineData("ParamAttrContextFail", "Attribute '[NoAlias]' cannot be applied in Safe context.")]

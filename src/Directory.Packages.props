@@ -5,6 +5,7 @@
   <ItemGroup>
     <PackageVersion Include="Antlr4.Runtime.Standard" Version="4.13.1" />
     <PackageVersion Include="Antlr4BuildTasks" Version="12.8.0" />
+    <PackageVersion Include="BenchmarkDotNet" Version="0.15.8" />
     <PackageVersion Include="libLLVM.runtime.win-x64" Version="20.1.2" />
     <PackageVersion Include="libLLVM.runtime.linux-x64" Version="20.1.2" />
     <PackageVersion Include="LLVMSharp" Version="20.1.2" />
