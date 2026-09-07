@@ -4,7 +4,7 @@ namespace Cvolo.Strategies;
 
 internal sealed class IrOnlyStrategy : ICompilationStrategy
 {
-	public int Execute(string llPath, CompilationProject project, string? linkerPath, string? linkerName, bool verbose = false)
+	public int Execute(string llPath, CompilationProject project, string? linkerPath, string? linkerName, string optLevel = "Os", bool verbose = false)
 	{
 		if (verbose)
 		{

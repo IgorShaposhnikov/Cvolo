@@ -5,7 +5,7 @@ namespace Cvolo.Strategies;
 
 internal sealed class LinkStrategy(string binDirectory) : ICompilationStrategy
 {
-	public int Execute(string llPath, CompilationProject project, string? linkerPath, string? linkerName, bool verbose = false)
+	public int Execute(string llPath, CompilationProject project, string? linkerPath, string? linkerName, string optLevel = "Os", bool verbose = false)
 	{
 		if (linkerPath is null)
 		{
@@ -19,6 +19,12 @@ internal sealed class LinkStrategy(string binDirectory) : ICompilationStrategy
 		var binaryPath = Path.Combine(binDirectory, project.OutputName + binaryExt);
 
 		var typeFlag = project.IsShared ? " -shared" : "";
+
+		// The IR is already optimized in-process via IrOptimizer; passing the same
+		// -O level to the backend linker keeps instruction selection, scheduling,
+		// and register allocation at matching aggressiveness instead of clang's
+		// default -O0 codegen.
+		var optFlag = $" -O{optLevel.TrimStart('-')[1..]}";
 
 		// Subsystem flag is needed when using Clang (bundled or system) on Windows
 		var isClang = linkerName == "bundled-clang" || linkerName == "clang";
@@ -35,7 +41,7 @@ internal sealed class LinkStrategy(string binDirectory) : ICompilationStrategy
 		var psi = new ProcessStartInfo
 		{
 			FileName = linkerPath,
-			Arguments = $"-o \"{binaryPath}\" \"{llPath}\"{typeFlag}{subsystemFlag}",
+			Arguments = $"-o \"{binaryPath}\" \"{llPath}\"{typeFlag}{optFlag}{subsystemFlag}",
 			RedirectStandardOutput = !verbose,
 			RedirectStandardError = !verbose,
 			UseShellExecute = false,

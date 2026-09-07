@@ -246,7 +246,7 @@ internal sealed class CompilerDriver : ICompilerDriver
 			? new IrOnlyStrategy()
 			: new LinkStrategy(binDirectory);
 
-		var linkResult = strategy.Execute(llPath, project, linkerPath, linkerName, verbose);
+		var linkResult = strategy.Execute(llPath, project, linkerPath, linkerName, optLevel, verbose);
 		if (linkResult != 0)
 		{
 			return linkResult;
