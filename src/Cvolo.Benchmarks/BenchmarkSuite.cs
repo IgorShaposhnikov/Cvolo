@@ -119,6 +119,17 @@ public class BenchmarkSuite
 	[Benchmark, BenchmarkCategory("Nbody")]
 	public string NBody_Rust_O3() => RunRust(Scenario("Nbody"));
 
+	// ---- ptr-mix (TBAA pointer-aliasing showcase) -----------------------------------
+
+	[Benchmark, BenchmarkCategory("PtrMix")]
+	public string PtrMix_Cvolo_O3_Tbaa() => RunCvolo(Scenario("PtrMix"), "O3", false);
+
+	[Benchmark, BenchmarkCategory("PtrMix")]
+	public string PtrMix_Cvolo_O3_NoTbaa() => RunCvolo(Scenario("PtrMix"), "O3", true);
+
+	[Benchmark, BenchmarkCategory("PtrMix")]
+	public string PtrMix_Rust_O3() => RunRust(Scenario("PtrMix"));
+
 	private static Scenario Scenario(string name) => ScenarioCatalog.All.First(s => s.Name == name);
 
 	private static string RunCvolo(Scenario s, string opt, bool noTbaa)

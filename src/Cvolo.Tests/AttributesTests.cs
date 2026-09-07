@@ -172,16 +172,16 @@ public sealed class AttributesTests : CompilerTestBase
 	}
 
 	[Fact]
-	public void Tbaa_Refvar_Access_Is_Suppressed_In_IR()
+	public void Tbaa_Refvar_Access_Is_Tagged_In_IR()
 	{
-		var fileName = "Attributes/Tbaa/TbaaRefvarSuppressed.cvl";
+		var fileName = "Attributes/Tbaa/TbaaRefvarTagged.cvl";
 		var (exitCode, stdout, stderr) = RunCompiler(fileName, "--llvm", "--emit-ir", "-O0");
 		AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
-		Assert.DoesNotContain("!tbaa", stdout.Replace("\r\n", "\n"));
+		Assert.Contains("!tbaa", stdout.Replace("\r\n", "\n"));
 
 		(exitCode, stdout, stderr) = RunCompiler(fileName);
 		AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
-		var (runCode, runStdout) = ExecuteBinary("TbaaRefvarSuppressed", "Attributes/Tbaa");
+		var (runCode, runStdout) = ExecuteBinary("TbaaRefvarTagged", "Attributes/Tbaa");
 		Assert.Equal(0, runCode);
 		Assert.Contains("Answer: 43", runStdout);
 	}

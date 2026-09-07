@@ -5,7 +5,8 @@ struct Box
     int V;
 }
 
-// Fields mutated through a refvar borrow are NOT tagged (would alias), even unbound.
+// Fields mutated through a refvar borrow to a struct without reference-layer
+// fields carry !tbaa tags (distinct struct types are disambiguated by TBAA).
 unbound int Bump(refvar Box b, int n)
 {
     var i = 0;

@@ -17,6 +17,7 @@ internal static class ScenarioCatalog
         new("LinkedList", "49995000"),
         new("RingBuffer", "1499850000", SkipO0: true),
 		new("Nbody", "19999"),
+		new("PtrMix", "805032704"),
 	};
 }
 

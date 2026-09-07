@@ -1,0 +1,35 @@
+using System;
+
+struct Point
+{
+    public int X;
+    public int Y;
+}
+
+struct Box
+{
+    public int V;
+}
+
+[NeverInline]
+int Mix(refvar Point p, refvar Box b, int n)
+{
+    var i = 0;
+    var acc = 0;
+    while (i < n)
+    {
+        p.X = p.X + 1;
+        b.V = b.V + 1;
+        acc += (p.X & 255) + (b.V & 255);
+        i = i + 1;
+    }
+    return acc;
+}
+
+int Main()
+{
+    var Point p (X: 1, Y: 2);
+    var Box b (V: 0);
+    Console.WriteLine($"Answer: {Mix(refvar p, refvar b, 20000000)}");
+    return 0;
+}

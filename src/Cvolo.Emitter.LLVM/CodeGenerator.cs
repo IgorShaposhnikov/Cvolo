@@ -475,13 +475,20 @@ var ctorBaseMangledName = bindingContext.GetMangledName(extDecl.ExtendedTypeName
 
 		var llvmFunc = _module.AddFunction(emitName, funcType);
 
-		if (emitName != "main")
+		var declaredSymbol = emitName == "main" ? null : _bindingContext!.Globals.Lookup(emitName);
+		if (emitName != "main" && declaredSymbol is FunctionSymbol { IsNeverInline: true })
+		{
+			// External linkage keeps the [NeverInline] function itself from being
+			// inlined or stripped by LLVM's optimizers; the symbol export is harmless.
+			llvmFunc.Linkage = LLVMLinkage.LLVMExternalLinkage;
+		}
+		else if (emitName != "main")
 		{
 			llvmFunc.Linkage = LLVMLinkage.LLVMInternalLinkage;
 		}
 
 		// Attach noalias attributes if [NoAlias] is present on the function or individual parameters
-		if (_bindingContext!.Globals.Lookup(emitName) is FunctionSymbol funcSym)
+		if (declaredSymbol is FunctionSymbol funcSym)
 		{
 			for (var i = 0; i < funcSym.Parameters.Count; i++)
 			{
@@ -2096,6 +2103,21 @@ var (fieldPtr, _, _, tbaa) = GetFieldPointer(id);
 				}
 			}
 
+			// 5. Pointer <-> Integer: a raw pointer re-interpreted as an integer
+			// (e.g. (ulong)QueryPerformanceCounter()) is a ptrtoint, and the inverse
+			// is an inttoptr. A plain bitcast between ptr and iN is invalid LLVM IR.
+			if (operandLlvmType.Kind == LLVMTypeKind.LLVMPointerTypeKind &&
+				targetType.Kind == LLVMTypeKind.LLVMIntegerTypeKind)
+			{
+				return _builder.BuildPtrToInt(operand, targetType, "cast_ptrtoint");
+			}
+
+			if (operandLlvmType.Kind == LLVMTypeKind.LLVMIntegerTypeKind &&
+				targetType.Kind == LLVMTypeKind.LLVMPointerTypeKind)
+			{
+				return _builder.BuildIntToPtr(operand, targetType, "cast_inttoptr");
+			}
+
 			return SafeBitCast(operand, targetType, "cast_bitcast");
 		}
 
@@ -3306,8 +3328,11 @@ var (fieldPtr, _, _, tbaa) = GetFieldPointer(id);
 			{
 				var actualPtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), structPtr, "loaded_ptr");
 				var innerType = type is PointerTypeSymbol ptrType ? ptrType.ReferencedType : type;
-				var isReadOnlyRef = type is PointerTypeSymbol { IsMutable: false } && !isHeap;
-				return (actualPtr, innerType, isReadOnlyRef, null);
+				// ref/refvar/heap borrows all address a typed struct directly; members are
+				// tagged the same way on every access so LLVM can use !tbaa to disambiguate
+				// between distinct struct types. Soundness is preserved by GetFieldTag, which
+				// still refuses structs carrying reference-layer fields, plus the unsafe gate.
+				return (actualPtr, innerType, true, null);
 			}
 
 			return (structPtr, type, true, null);
@@ -3350,7 +3375,7 @@ var (fieldPtr, _, _, tbaa) = GetFieldPointer(id);
 					var refIndex = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)refFieldIndex);
 
 					var refFieldPtr = _builder.BuildGEP2(refStructLayoutTy, rawPtr, new LLVMValueRef[] { refZero, refIndex }, "reffield_member_ptr");
-					return (refFieldPtr, refFieldType, false, null);
+					return (refFieldPtr, refFieldType, false, GetTbaaTag(refStruct, refFieldIndex));
 				}
 
 				parentType = referred;
@@ -3378,7 +3403,7 @@ var (fieldPtr, _, _, tbaa) = GetFieldPointer(id);
 				var index = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)fieldIndex);
 
 				var fieldPtr = _builder.BuildGEP2(structLayoutTy, rawPtr, new LLVMValueRef[] { zero, index }, "arrow_field_ptr");
-				return (fieldPtr, fieldType, false, null);
+				return (fieldPtr, fieldType, false, GetTbaaTag(structType, fieldIndex));
 			}
 
 			// Ensure parentType is resolved to concrete StructTypeSymbol or UnionTypeSymbol
