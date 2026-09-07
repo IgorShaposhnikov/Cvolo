@@ -352,6 +352,8 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			return BuildForStatement(forStmt);
 		if (context.unsafeBlockStatement() is { } unsafeBlock)
 			return new UnsafeBlockStatementSyntax(SpanOf(unsafeBlock), BuildBlockStatement(unsafeBlock.blockStatement()));
+		if (context.deferStatement() is { } defer)
+			return BuildDeferStatement(defer);
 		return null;
 	}
 
@@ -367,6 +369,21 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 	{
 		var expr = BuildExpression(context.expression());
 		return new ExpressionStatementSyntax(SpanOf(context), expr);
+	}
+
+	private DeferStatementSyntax BuildDeferStatement(CvoloParser.DeferStatementContext context)
+	{
+		if (context.expressionStatement() is { } exprStmt)
+		{
+			var body = BuildExpressionStatement(exprStmt);
+			return new DeferStatementSyntax(SpanOf(context), body);
+		}
+		if (context.blockStatement() is { } block)
+		{
+			var body = BuildBlockStatement(block);
+			return new DeferStatementSyntax(SpanOf(context), body);
+		}
+		throw new InvalidOperationException("Defer statement has no valid body (expression or block).");
 	}
 
 	private ExpressionSyntax BuildExpression(CvoloParser.ExpressionContext context)

@@ -1,0 +1,11 @@
+using System;
+
+int main()
+{
+	defer Console.Write("A");
+	{
+		defer Console.Write("B");
+		Console.Write("X");
+	}
+	return 0;
+}

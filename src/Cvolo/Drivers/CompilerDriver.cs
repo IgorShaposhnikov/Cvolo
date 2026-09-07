@@ -82,6 +82,7 @@ internal sealed class CompilerDriver : ICompilerDriver
 		}
 
 		var rewriters = new List<AstRewriterBase> {
+			new DeferRewriter(),
 			new StringInterpolationRewriter(parser)
 		};
 

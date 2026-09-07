@@ -59,4 +59,5 @@ UnionDeclaration,
 	DefaultExpression,
 	IsPatternExpression,
 	TypeAliasDeclaration,
+	DeferStatement,
 }

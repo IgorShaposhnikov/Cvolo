@@ -196,6 +196,11 @@ statement
 	| unsafeBlockStatement
 	| switchStatement
 	| blockStatement
+	| deferStatement
+	;
+
+deferStatement
+	: DEFER (expressionStatement | blockStatement)
 	;
 
 unsafeBlockStatement

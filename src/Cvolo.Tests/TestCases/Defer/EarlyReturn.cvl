@@ -1,0 +1,19 @@
+using System;
+
+int Check(int x)
+{
+	defer Console.Write("D");
+	if (x > 0) {
+		Console.Write("T");
+		return x;
+	}
+	Console.Write("F");
+	return x;
+}
+
+int main()
+{
+	Check(5);
+	Check(-1);
+	return 0;
+}

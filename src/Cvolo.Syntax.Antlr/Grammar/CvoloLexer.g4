@@ -56,6 +56,7 @@ DEFAULT: 'default';
 WHERE: 'where';
 IS: 'is';
 ALIAS: 'alias';
+DEFER: 'defer';
 
 // Punctuation
 LPAREN: '(';

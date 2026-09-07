@@ -1,0 +1,9 @@
+using System;
+
+int main()
+{
+	defer Console.Write("1");
+	defer Console.Write("2");
+	defer Console.Write("3");
+	return 0;
+}
