@@ -36,7 +36,7 @@ public class BenchmarkSuite
 	[Benchmark, BenchmarkCategory("ScalarLoop")]
 	public string ScalarLoop_Cvolo_O0_NoTbaa() => RunCvolo(Scenario("ScalarLoop"), "O0", true);
 
-	[Benchmark]
+	[Benchmark, BenchmarkCategory("ScalarLoop")]
 	public string ScalarLoop_Cvolo_O2_Tbaa() => RunCvolo(Scenario("ScalarLoop"), "O2", false);
 
 	[Benchmark, BenchmarkCategory("ScalarLoop")]
