@@ -1,0 +1,8 @@
+int main()
+{
+	unsafe
+	{
+		asm("nop", "r15");
+	}
+	return 0;
+}

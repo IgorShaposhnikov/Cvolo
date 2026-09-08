@@ -1,0 +1,10 @@
+int main()
+{
+	unsafe
+	{
+		short port = 0x3F8;
+		char value = 'A';
+		asm("outb %[value], %[port]", [port] "{dx}" : port, [value] "{al}" : value);
+	}
+	return 0;
+}

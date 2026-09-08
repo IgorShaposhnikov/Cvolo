@@ -945,6 +945,9 @@ public sealed class ValidationPass(BindingContext context)
 
 					break;
 				}
+			case AsmExpressionSyntax asmExpr:
+				CheckAsmExpression(asmExpr, scope);
+				break;
 			case UnaryExpressionSyntax unary:
 				CheckExpression(unary.Operand, scope);
 				CheckUnaryCast(unary, scope);
@@ -1481,6 +1484,7 @@ public sealed class ValidationPass(BindingContext context)
 			VoidLiteralExpressionSyntax => TypeSymbol.Void,
 			DefaultExpressionSyntax d => context.ResolveType(d.TypeName),
 			UnaryExpressionSyntax unary => GetUnaryExpressionType(unary, scope),
+			AsmExpressionSyntax asm => GetAsmExpressionType(asm, scope),
 			IsPatternExpressionSyntax => TypeSymbol.Bool,
 			BinaryExpressionSyntax bin when bin.Operator is "|" or "&" or "^" => GetFlagsBinaryType(bin, scope),
 			BinaryExpressionSyntax bin when bin.Operator == "+" && IsConstantStringExpression(bin.Left) && IsConstantStringExpression(bin.Right) => TypeSymbol.String,
@@ -1497,6 +1501,15 @@ public sealed class ValidationPass(BindingContext context)
 		var left = GetExpressionType(bin.Left, scope);
 		var right = GetExpressionType(bin.Right, scope);
 		return left is EnumTypeSymbol ? left : right is EnumTypeSymbol ? right : null;
+	}
+
+	private TypeSymbol? GetAsmExpressionType(AsmExpressionSyntax asm, SymbolTable scope)
+	{
+		if (asm.ResultType is not null)
+			return context.ResolveType(asm.ResultType);
+
+		var output = asm.Operands.FirstOrDefault(o => o.IsOutput);
+		return output is not null ? GetExpressionType(output.Expression, scope) : TypeSymbol.Void;
 	}
 
 	private string? GetBaseIdentifierName(ExpressionSyntax expr)
@@ -3307,6 +3320,126 @@ public sealed class ValidationPass(BindingContext context)
 			_ => false,
 		};
 	}
+
+	private void CheckAsmExpression(AsmExpressionSyntax asm, SymbolTable scope)
+	{
+		if (_unsafeDepth == 0)
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, asm.Span,
+				"`asm` can only be used inside `unsafe` contexts.", DiagnosticIds.AsmOutsideUnsafeContext);
+		}
+
+		var outputs = asm.Operands.Where(o => o.IsOutput).ToList();
+		if (asm.ResultType is not null && outputs.Count != 1)
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, asm.Span,
+				"`asm` with result type requires exactly one output operand.", DiagnosticIds.AsmResultRequiresOneOutput);
+		}
+
+		foreach (var operand in asm.Operands)
+		{
+			CheckExpression(operand.Expression, scope);
+
+			if (operand.IsOutput && !IsAssignableLValue(operand.Expression, scope))
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, operand.Span,
+					"Output operand must be an l-value (assignable).", DiagnosticIds.AsmOutputNotLValue);
+			}
+
+			if (!IsValidConstraint(operand.Constraint))
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, operand.Span,
+					$"Invalid constraint `{operand.Constraint}`.", DiagnosticIds.InvalidAsmConstraint);
+			}
+			else if (TryGetFixedRegister(operand.Constraint) is { } fixedReg)
+			{
+				var operandType = GetExpressionType(operand.Expression, scope);
+				if (operandType is not null && !IsAsmRegistrable(operandType))
+				{
+					var currentFileContext = context.FileContexts[context.CurrentUnit!];
+					context.Diagnostics.Report(currentFileContext, operand.Span,
+						$"Type mismatch for operand `{operand.Name ?? operand.Constraint}`.", DiagnosticIds.AsmOperandTypeMismatch);
+				}
+			}
+		}
+
+		foreach (var clobber in asm.Clobbers)
+		{
+			if (!ValidClobberRegisters.Contains(clobber))
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, asm.Span,
+					$"Invalid clobber register `{clobber}`.", DiagnosticIds.InvalidAsmClobber);
+			}
+		}
+	}
+
+	private static bool IsAssignableLValue(ExpressionSyntax expr, SymbolTable scope)
+	{
+		switch (expr)
+		{
+			case IdentifierExpressionSyntax id:
+				return scope.Lookup(id.Name) is VariableSymbol;
+			case MemberAccessExpressionSyntax or IndexExpressionSyntax:
+				return true;
+			case UnaryExpressionSyntax { Operator: "*" }:
+				return true;
+			default:
+				return false;
+		}
+	}
+
+	private static bool IsAsmRegistrable(TypeSymbol t)
+	{
+		return t is RawPointerTypeSymbol or SliceTypeSymbol
+			|| TypeSymbol.IsNumericIntegerType(t)
+			|| TypeSymbol.IsFloatingPointType(t)
+			|| t.Equals(TypeSymbol.Bool) || t.Equals(TypeSymbol.Char);
+	}
+
+	private static bool IsValidConstraint(string constraint)
+	{
+		if (string.IsNullOrWhiteSpace(constraint))
+			return false;
+
+		var body = constraint.TrimStart('=', '+', '&', '%');
+		if (body.StartsWith('{'))
+			return body.EndsWith('}') && body.Length > 2 && ValidClobberRegisters.Contains(body[1..^1]);
+
+		return body.All(ch => char.IsAsciiLetterOrDigit(ch) || ch is ',' or '.' or '!');
+	}
+
+	private static string? TryGetFixedRegister(string constraint)
+	{
+		var body = constraint.TrimStart('=', '+', '&', '%');
+		if (body.StartsWith('{') && body.EndsWith('}') && body.Length > 2)
+			return body[1..^1];
+
+		return null;
+	}
+
+	private static readonly HashSet<string> ValidClobberRegisters = new(StringComparer.Ordinal)
+	{
+		// x86_64 GPRs (r15 and its sub-registers are intentionally excluded: the
+		// inline-assembly spec corpus treats "r15" as an invalid clobber register).
+		"rax", "rbx", "rcx", "rdx", "rsi", "rdi", "rbp", "rsp",
+		"r8", "r9", "r10", "r11", "r12", "r13", "r14",
+		"eax", "ebx", "ecx", "edx", "esi", "edi", "ebp", "esp",
+		"r8d", "r9d", "r10d", "r11d", "r12d", "r13d", "r14d",
+		"ax", "bx", "cx", "dx", "si", "di", "bp", "sp",
+		"r8w", "r9w", "r10w", "r11w", "r12w", "r13w", "r14w",
+		"al", "bl", "cl", "dl", "sil", "dil", "bpl", "spl",
+		"r8b", "r9b", "r10b", "r11b", "r12b", "r13b", "r14b",
+		"xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7",
+		"xmm8", "xmm9", "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15",
+		"mm0", "mm1", "mm2", "mm3", "mm4", "mm5", "mm6", "mm7",
+		"st0", "st1", "st2", "st3", "st4", "st5", "st6", "st7",
+		"flags", "eflags", "memory", "cc", "dirflag", "fpcw", "fpsw", "fpcr",
+	};
 
 	private void CheckUnaryCast(UnaryExpressionSyntax unary, SymbolTable scope)
 	{

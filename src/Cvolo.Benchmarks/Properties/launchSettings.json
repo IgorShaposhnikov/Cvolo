@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "benchmarks": {
+      "commandName": "Project",
+      "commandLineArgs": ""
+    }
+  }
+}

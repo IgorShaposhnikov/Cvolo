@@ -394,6 +394,11 @@ public sealed class SafetyPass(BindingContext context)
 					CheckExpressionSafety(member.Expression, scope);
 				break;
 
+			case AsmExpressionSyntax asm:
+				foreach (var operand in asm.Operands)
+					CheckExpressionSafety(operand.Expression, scope);
+				break;
+
 			case CallExpressionSyntax call:
 				foreach (var arg in call.Arguments)
 				{

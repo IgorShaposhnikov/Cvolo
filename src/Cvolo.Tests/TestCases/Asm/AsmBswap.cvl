@@ -1,0 +1,14 @@
+unsafe int Bswap(int x)
+{
+	return asm<int>("bswap $0", "=r" : x);
+}
+
+int main()
+{
+	var result = 0;
+	unsafe
+	{
+		result = Bswap(0x12345678);
+	}
+	return result == 0 ? 2 : 0;
+}

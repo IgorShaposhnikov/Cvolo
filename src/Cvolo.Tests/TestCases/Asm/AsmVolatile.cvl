@@ -1,0 +1,10 @@
+int main()
+{
+	unsafe
+	{
+		int result = 0;
+		int arg = 0;
+		asm volatile("cpuid", "=r" : result, "r" : arg, "rcx", "r11");
+	}
+	return 0;
+}

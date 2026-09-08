@@ -57,6 +57,10 @@ WHERE: 'where';
 IS: 'is';
 ALIAS: 'alias';
 DEFER: 'defer';
+ASM: 'asm';
+VOLATILE: 'volatile';
+ALIGNSTACK: 'alignstack';
+INTEL: 'intel';
 
 // Punctuation
 LPAREN: '(';

@@ -292,6 +292,7 @@ expression
 	| expression ASSIGN expression														# assignmentExpression
 	| expression (PLUS_ASSIGN | MINUS_ASSIGN | STAR_ASSIGN | DIV_ASSIGN | AND_ASSIGN | OR_ASSIGN | XOR_ASSIGN | LSHIFT_ASSIGN | RSHIFT_ASSIGN | URSHIFT_ASSIGN) expression		# compoundAssignmentExpression
 	| qualifiedName (LT typeList GT)? LPAREN argumentList? RPAREN						# callExpression
+	| ASM asmOption* (LT type GT)? LPAREN StringLiteral (COMMA asmArgument)* RPAREN	# asmExpression
 	| HEAP expression                                       							# heapAllocationExpression
 	| HEAP type LBRACK expression RBRACK                                                # heapArrayAllocationExpression
 	| LBRACE (expression (COMMA expression)*)? RBRACE									# arrayInitializationExpression
@@ -324,6 +325,18 @@ expression
 
 argumentList
 	: expression (COMMA expression)*
+	;
+
+asmOption
+	: VOLATILE
+	| ALIGNSTACK
+	| INTEL
+	;
+
+asmArgument
+	: (LBRACK Identifier RBRACK)? StringLiteral COLON expression	# asmOperandArgument
+	| StringLiteral													# asmClobberArgument
+	| asmOption														# asmOptionArgument
 	;
 
 structInitializerList

@@ -36,6 +36,10 @@ internal static class UnsafeOperationScanner
 			if (child is NullLiteralExpressionSyntax)
 				return true;
 
+			// Inline assembly is only allowed inside unsafe contexts (CVL1600).
+			if (child is AsmExpressionSyntax)
+				return true;
+
 			if (ContainsUnsafeOperations(child))
 				return true;
 		}

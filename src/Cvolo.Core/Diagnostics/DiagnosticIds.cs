@@ -194,4 +194,27 @@ public static class DiagnosticIds
 
 	/// <summary>Casting a `string` to `char*` is only allowed inside unsafe contexts.</summary>
 	public const string StringToCharPointerOutsideUnsafe = "CVL2002";
+
+	// ── Inline Assembly (CVL16xx) ──
+
+	/// <summary>`asm` can only be used inside `unsafe` contexts.</summary>
+	public const string AsmOutsideUnsafeContext = "CVL1600";
+
+	/// <summary>The operand constraint string is not a valid LLVM constraint.</summary>
+	public const string InvalidAsmConstraint = "CVL1601";
+
+	/// <summary>The clobber list contains an unknown register name.</summary>
+	public const string InvalidAsmClobber = "CVL1602";
+
+	/// <summary>`asm&lt;T&gt;` with a result type requires exactly one output operand.</summary>
+	public const string AsmResultRequiresOneOutput = "CVL1603";
+
+	/// <summary>An output operand of an `asm` must be an l-value (assignable).</summary>
+	public const string AsmOutputNotLValue = "CVL1604";
+
+	/// <summary>The operand type does not match the requested register/size of the constraint.</summary>
+	public const string AsmOperandTypeMismatch = "CVL1605";
+
+	/// <summary>Unknown register in the clobber list.</summary>
+	public const string UnknownAsmClobberRegister = "CVL1606";
 }

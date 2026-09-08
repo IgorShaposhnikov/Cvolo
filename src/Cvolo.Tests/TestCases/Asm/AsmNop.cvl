@@ -1,0 +1,11 @@
+using System;
+
+int main()
+{
+	unsafe
+	{
+		asm("nop");
+	}
+	Console.WriteLine("ok");
+	return 0;
+}

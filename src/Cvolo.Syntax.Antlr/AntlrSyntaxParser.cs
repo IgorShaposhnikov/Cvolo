@@ -471,6 +471,46 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				return new StringLiteralExpressionSyntax(SpanOf(rawCtx), DecodeRawString(rawCtx.RawStringLiteral().GetText()));
 			case CvoloParser.InterpolatedRawStringExpressionContext rawInterCtx:
 				return new InterpolatedStringExpressionSyntax(SpanOf(rawInterCtx), rawInterCtx.InterpolatedRawStringLiteral().GetText());
+			case CvoloParser.AsmExpressionContext asmCtx:
+				{
+					var options = AsmOptions.None;
+					foreach (var opt in asmCtx.asmOption())
+						options |= ParseAsmOption(opt);
+
+					string? resultType = null;
+					if (asmCtx.type() is { } asmTypeCtx)
+						resultType = GetTypeName(asmTypeCtx);
+
+					var template = DecodeString(asmCtx.StringLiteral().GetText());
+
+					var operands = new List<AsmOperandSyntax>();
+					var clobbers = new List<string>();
+					foreach (var arg in asmCtx.asmArgument())
+					{
+						switch (arg)
+						{
+							case CvoloParser.AsmOperandArgumentContext operandArgCtx:
+								{
+									string? name = null;
+									if (operandArgCtx.Identifier() is { } idTok)
+										name = idTok.GetText();
+
+									var constraint = DecodeString(operandArgCtx.StringLiteral().GetText());
+									var expr = BuildExpression(operandArgCtx.expression());
+									operands.Add(new AsmOperandSyntax(SpanOf(operandArgCtx), name, constraint, expr));
+									break;
+								}
+							case CvoloParser.AsmClobberArgumentContext clobberArgCtx:
+								clobbers.Add(DecodeString(clobberArgCtx.StringLiteral().GetText()));
+								break;
+							case CvoloParser.AsmOptionArgumentContext optionArgCtx:
+								options |= ParseAsmOption(optionArgCtx.asmOption());
+								break;
+						}
+					}
+
+					return new AsmExpressionSyntax(SpanOf(asmCtx), template, operands, clobbers, options, resultType);
+				}
 			case CvoloParser.BadRawStringExpressionContext badRawCtx:
 				{
 					ReportParseError(badRawCtx, "Unterminated raw string literal. Every `@\"` must have a matching closing quote.", DiagnosticIds.UnbalancedRawStringLiteral);
@@ -787,6 +827,14 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 	{
 		var body = text[2..^1];
 		return body.Replace("\"\"", "\"");
+	}
+
+	private static AsmOptions ParseAsmOption(CvoloParser.AsmOptionContext ctx)
+	{
+		if (ctx.VOLATILE() is not null) return AsmOptions.Volatile;
+		if (ctx.ALIGNSTACK() is not null) return AsmOptions.AlignStack;
+		if (ctx.INTEL() is not null) return AsmOptions.Intel;
+		return AsmOptions.None;
 	}
 
 	private static (char Value, string? OutOfRangeHex) DecodeCharLiteral(string content)

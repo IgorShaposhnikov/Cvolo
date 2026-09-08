@@ -1,0 +1,10 @@
+int main()
+{
+	unsafe
+	{
+		int a = 0;
+		int b = 0;
+		asm<int>("nop", "=r" : a, "=r" : b);
+	}
+	return 0;
+}

@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Text;
 using Cvolo.Analysis;
 using Cvolo.Analysis.Symbols;
 using Cvolo.Analysis.Symbols.Base;
@@ -936,6 +937,8 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				return EmitStringLiteral(strLit.Value);
 			case CharacterLiteralExpressionSyntax charLit:
 				return LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, charLit.Value);
+			case AsmExpressionSyntax asmExpr:
+				return EmitInlineAsm(asmExpr);
 			case NullLiteralExpressionSyntax:
 				// Defensive: the binder rejects 'null' in safe code before emission.
 				return LLVMValueRef.CreateConstPointerNull(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0));
@@ -1166,6 +1169,90 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	{
 		// Safely wraps string allocation natively via robust built-in BuildGlobalStringPtr API
 		return _builder.BuildGlobalStringPtr(value, "str");
+	}
+
+	private LLVMValueRef EmitInlineAsm(AsmExpressionSyntax asm)
+	{
+		var outputs = asm.Operands.Where(o => o.IsOutput).ToList();
+		var inputs = asm.Operands.Where(o => !o.IsOutput).ToList();
+
+		// Result type: asm<T> wins; otherwise the first output operand's type; void when absent.
+		TypeSymbol resultType;
+		if (asm.ResultType is not null && _bindingContext!.ResolveType(asm.ResultType) is { } rt)
+			resultType = rt;
+		else if (outputs.Count > 0)
+			resultType = GetExprType(outputs[0].Expression);
+		else
+			resultType = TypeSymbol.Void;
+
+		// Constraint list: outputs first, then inputs, then clobbers, then intel-dialect keyword.
+		var constraints = new List<string>();
+		constraints.AddRange(outputs.Select(o => o.Constraint));
+		constraints.AddRange(inputs.Select(i => i.Constraint));
+		constraints.AddRange(asm.Clobbers.Select(c => $"~{{{c}}}"));
+		if ((asm.Options & AsmOptions.Intel) != 0)
+			constraints.Add("inteldialect");
+
+		// GCC-style %[name] references in the template -> LLVM positional $N (outputs first).
+		var template = InlineAsmRewriteTemplate(asm.Template, outputs, inputs);
+
+		var fnType = LLVMTypeRef.CreateFunction(
+			GetLLVMType(resultType),
+			inputs.Select(i => GetLLVMType(GetExprType(i.Expression))).ToArray());
+
+		var asmFn = LLVMValueRef.CreateConstInlineAsm(
+			fnType,
+			template,
+			string.Join(",", constraints),
+			(asm.Options & AsmOptions.Volatile) != 0,
+			(asm.Options & AsmOptions.AlignStack) != 0);
+
+		var args = inputs.Select(i => EmitExpression(i.Expression)).ToArray();
+		var callName = resultType.Equals(TypeSymbol.Void) ? "" : "asm";
+		return _builder.BuildCall2(fnType, asmFn, args, callName);
+	}
+
+	private static string InlineAsmRewriteTemplate(string template, List<AsmOperandSyntax> outputs, List<AsmOperandSyntax> inputs)
+	{
+		var all = outputs.Concat(inputs).ToList();
+		var named = new Dictionary<string, int>(StringComparer.Ordinal);
+		for (var i = 0; i < all.Count; i++)
+		{
+			if (all[i].Name is not null)
+				named[all[i].Name!] = i;
+		}
+
+		var sb = new StringBuilder();
+		for (var i = 0; i < template.Length; i++)
+		{
+			if (template[i] == '%' && i + 1 < template.Length && template[i + 1] == '[')
+			{
+				var close = template.IndexOf(']', i + 2);
+				if (close > i + 2)
+				{
+					var name = template[(i + 2)..close];
+					if (named.TryGetValue(name, out var operandIndex))
+					{
+						sb.Append('$').Append(operandIndex);
+						i = close;
+						continue;
+					}
+				}
+			}
+
+			sb.Append(template[i]);
+		}
+
+		return sb.ToString();
+	}
+
+	private TypeSymbol GetAsmExprType(AsmExpressionSyntax asm)
+	{
+		if (asm.ResultType is not null && _bindingContext!.ResolveType(asm.ResultType) is { } rt)
+			return rt;
+
+		var output = asm.Operands.FirstOrDefault(o => o.IsOutput);
+		return output is not null ? GetExprType(output.Expression) : TypeSymbol.Void;
 	}
 
 	private static bool IsConstantStringTree(ExpressionSyntax expr)
@@ -2770,6 +2857,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			BorrowExpressionSyntax b => new PointerTypeSymbol(GetExprType(b.Expression), false),
 			StructInitializationExpressionSyntax s => _bindingContext!.ResolveType(s.StructTypeName)!,
 			UnaryExpressionSyntax u => ResolveUnaryExprType(u),
+			AsmExpressionSyntax asm => GetAsmExprType(asm),
 			TernaryExpressionSyntax t => GetExprType(t.ThenExpression),
 			CallExpressionSyntax call => ResolveCallReturnType(call),
 			BinaryExpressionSyntax bin => ResolveBinaryExpressionType(bin),
