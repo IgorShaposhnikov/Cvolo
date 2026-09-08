@@ -55,10 +55,24 @@ internal sealed class LinkStrategy(string binDirectory) : ICompilationStrategy
 
 				if (!string.IsNullOrEmpty(targetPath))
 				{
-					libraryFlags += $" \"{Path.GetFullPath(targetPath, project.ProjectDirectory)}\"";
+					// System marker: If the path does not contain directory separators, treat it as a 
+					// system library name from the Windows SDK / Linux library search paths (e.g., "opengl32.lib").
+					if (!targetPath.Contains('/') && !targetPath.Contains('\\'))
+					{
+						// Strip the file extension (e.g., "opengl32.lib" -> "opengl32") to pass cleanly to Clang
+						var cleanLibName = Path.GetFileNameWithoutExtension(targetPath);
+						libraryFlags += $" -l{cleanLibName}";
+					}
+					else
+					{
+						// If separators are present, it is a local relative asset path; resolve it 
+						// deterministically relative to the project directory root.
+						libraryFlags += $" \"{Path.GetFullPath(targetPath, project.ProjectDirectory)}\"";
+					}
 				}
 				else
 				{
+					// Core fallback: Use the base library primitive identifier name if target parameters are absent
 					libraryFlags += $" -l{lib.LibraryName}";
 				}
 			}
