@@ -1,0 +1,7 @@
+using System;
+
+int main() {
+    string name = "bob";
+    string s = "a" + name;
+    return 0;
+}

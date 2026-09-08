@@ -1,0 +1,9 @@
+using System;
+
+[UnsafeBody]
+int main() {
+    string s = "Hello";
+    char* p = (char*)s;
+    Console.WriteLine(*p);
+    return 0;
+}

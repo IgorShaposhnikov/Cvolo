@@ -1,0 +1,12 @@
+using System;
+
+int main() {
+    string path = @"C:\deps\win";
+    Console.WriteLine(path);
+    string quoted = @"He said ""hi""";
+    Console.WriteLine(quoted);
+    string multi = @"line1
+line2";
+    Console.WriteLine(multi);
+    return 0;
+}

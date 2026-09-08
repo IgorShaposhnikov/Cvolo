@@ -1,0 +1,8 @@
+using System;
+
+int main() {
+    string greeting = "Hello, " + "world";
+    Console.WriteLine(greeting);
+    Console.WriteLine("Hello, " + "World" + "!");
+    return 0;
+}

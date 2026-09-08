@@ -1,0 +1,8 @@
+using System;
+
+int main() {
+    string word = "hi";
+    Console.WriteLine(@$"Value: {40 + 2}");
+    Console.WriteLine($@"He said ""{word}""!");
+    return 0;
+}

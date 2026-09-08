@@ -183,4 +183,15 @@ public static class DiagnosticIds
 
 	/// <summary>Cannot assign `null` to a safe reference (`ref`/`refvar`).</summary>
 	public const string NullToSafeReference = "CVL1910";
+
+	// ── Strings (CVL20xx) ──
+
+	/// <summary>A raw string literal is missing its closing quote.</summary>
+	public const string UnbalancedRawStringLiteral = "CVL2000";
+
+	/// <summary>The `+` operator is only allowed between compile-time constant strings.</summary>
+	public const string DynamicStringConcatenation = "CVL2001";
+
+	/// <summary>Casting a `string` to `char*` is only allowed inside unsafe contexts.</summary>
+	public const string StringToCharPointerOutsideUnsafe = "CVL2002";
 }

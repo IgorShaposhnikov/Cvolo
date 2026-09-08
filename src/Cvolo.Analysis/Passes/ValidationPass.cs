@@ -929,6 +929,18 @@ public sealed class ValidationPass(BindingContext context)
 						CheckExpression(bin.Left, scope);
 						CheckExpression(bin.Right, scope);
 						CheckEnumIntMismatch(GetExpressionType(bin.Left, scope), GetExpressionType(bin.Right, scope), bin.Span);
+
+						var binLeftType = GetExpressionType(bin.Left, scope);
+						var binRightType = GetExpressionType(bin.Right, scope);
+						if (bin.Operator == "+" &&
+							((binLeftType?.Equals(TypeSymbol.String) ?? false) || (binRightType?.Equals(TypeSymbol.String) ?? false)) &&
+							(!IsConstantStringExpression(bin.Left) || !IsConstantStringExpression(bin.Right)))
+						{
+							var currentFileContext = context.FileContexts[context.CurrentUnit!];
+							context.Diagnostics.Report(currentFileContext, bin.Span,
+								"The `+` operator on strings is only allowed between compile-time constant strings (literals).",
+								DiagnosticIds.DynamicStringConcatenation);
+						}
 					}
 
 					break;
@@ -1471,6 +1483,7 @@ public sealed class ValidationPass(BindingContext context)
 			UnaryExpressionSyntax unary => GetUnaryExpressionType(unary, scope),
 			IsPatternExpressionSyntax => TypeSymbol.Bool,
 			BinaryExpressionSyntax bin when bin.Operator is "|" or "&" or "^" => GetFlagsBinaryType(bin, scope),
+			BinaryExpressionSyntax bin when bin.Operator == "+" && IsConstantStringExpression(bin.Left) && IsConstantStringExpression(bin.Right) => TypeSymbol.String,
 			_ => null
 		};
 	}
@@ -3284,6 +3297,17 @@ public sealed class ValidationPass(BindingContext context)
 			$"Implicit conversion between enum '{enumType.Name}' and '{otherType.Name}' is forbidden; use an explicit cast.");
 	}
 
+	private static bool IsConstantStringExpression(ExpressionSyntax expr)
+	{
+		return expr switch
+		{
+			StringLiteralExpressionSyntax => true,
+			BinaryExpressionSyntax bin when bin.Operator == "+" =>
+				IsConstantStringExpression(bin.Left) && IsConstantStringExpression(bin.Right),
+			_ => false,
+		};
+	}
+
 	private void CheckUnaryCast(UnaryExpressionSyntax unary, SymbolTable scope)
 	{
 		if (!unary.Operator.StartsWith('(') || !unary.Operator.EndsWith("*)") || unary.Operator.Length < 4)
@@ -3319,6 +3343,15 @@ public sealed class ValidationPass(BindingContext context)
 						$"Destructive cast '({targetTypeName}*)' requires an owning heap handle; '{id.Name}' is a stack value. Allocate it with 'heap {targetTypeName} {{ ... }}' or 'heap {targetTypeName}(...)', or cast its address with '&{id.Name}'.");
 				}
 			}
+		}
+
+		if (targetType is not null && targetType.Equals(TypeSymbol.Char) &&
+			operandType.Equals(TypeSymbol.String) && _unsafeDepth == 0)
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, unary.Span,
+				"Casting a `string` to `char*` requires an unsafe context. Wrap the cast in `unsafe { }` or mark the enclosing function `[UnsafeBody]`.",
+				DiagnosticIds.StringToCharPointerOutsideUnsafe);
 		}
 	}
 

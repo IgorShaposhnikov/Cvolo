@@ -301,7 +301,11 @@ expression
 	| IntegerLiteral                                        							# integerLiteralExpression
 	| DoubleLiteral                                         							# doubleLiteralExpression
 	| StringLiteral                                         							# stringLiteralExpression
+	| RawStringLiteral										# rawStringExpression
+	| BadRawStringLiteral									# badRawStringExpression
+	| BadInterpolatedRawStringLiteral						# badRawStringExpression
 	| InterpolatedStringLiteral															# interpolatedStringExpression
+	| InterpolatedRawStringLiteral							# interpolatedRawStringExpression
 	| CharLiteral																		# charLiteralExpression
 	| BadEmptyCharLiteral																# badEmptyCharLiteralExpression
 	| BadCharLiteral																	# badCharLiteralExpression

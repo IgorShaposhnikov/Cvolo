@@ -57,7 +57,9 @@ public sealed class StringInterpolationRewriter(ISyntaxParser parser) : AstRewri
 
 	private List<(string text, bool isExpression)> ParseInterpolatedString(string raw)
 	{
-		var content = raw.Substring(2, raw.Length - 3);
+		var isRaw = raw.StartsWith("@$\"") || raw.StartsWith("$@\"");
+		var prefixLength = isRaw ? 3 : 2;
+		var content = raw.Substring(prefixLength, raw.Length - prefixLength - 1);
 		var list = new List<(string text, bool isExpression)>();
 
 		var i = 0;
@@ -74,7 +76,7 @@ public sealed class StringInterpolationRewriter(ISyntaxParser parser) : AstRewri
 
 				if (i > start)
 				{
-					list.Add((content.Substring(start, i - start), false));
+					list.Add((NormalizeText(content.Substring(start, i - start), isRaw), false));
 				}
 
 				var depth = 1;
@@ -108,11 +110,14 @@ public sealed class StringInterpolationRewriter(ISyntaxParser parser) : AstRewri
 
 		if (start < content.Length)
 		{
-			list.Add((content.Substring(start), false));
+			list.Add((NormalizeText(content.Substring(start), isRaw), false));
 		}
 
 		return list;
 	}
+
+	private static string NormalizeText(string text, bool isRaw)
+		=> isRaw ? text.Replace("\"\"", "\"") : text;
 
 	private ExpressionSyntax ParseExpressionSegment(string source)
 	{

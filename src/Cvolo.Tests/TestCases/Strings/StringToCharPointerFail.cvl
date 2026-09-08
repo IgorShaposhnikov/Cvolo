@@ -1,0 +1,7 @@
+using System;
+
+int main() {
+    string s = "Hello";
+    char* p = (char*)s;
+    return 0;
+}

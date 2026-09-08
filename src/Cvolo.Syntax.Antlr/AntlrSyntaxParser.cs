@@ -29,6 +29,19 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		parser.AddErrorListener(new SyntaxErrorListener(_diagnostics, context));
 
 		var tree = parser.compilationUnit();
+
+		// Unterminated raw strings abort tree building (the surrounding statement is
+		// missing its ';'), so surface them here from the raw token stream as CVL2000.
+		foreach (var token in tokenStream.GetTokens())
+		{
+			if (token.Type == CvoloLexer.BadRawStringLiteral || token.Type == CvoloLexer.BadInterpolatedRawStringLiteral)
+			{
+				_diagnostics.Report(_compilationContext, SpanOf(token),
+					"Unterminated raw string literal. Every `@\"` must have a matching closing quote.",
+					DiagnosticIds.UnbalancedRawStringLiteral);
+			}
+		}
+
 		if (_diagnostics.HasErrors)
 			return null;
 
@@ -454,6 +467,15 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				}
 			case CvoloParser.InterpolatedStringExpressionContext interCtx:
 				return new InterpolatedStringExpressionSyntax(SpanOf(interCtx), interCtx.InterpolatedStringLiteral().GetText());
+			case CvoloParser.RawStringExpressionContext rawCtx:
+				return new StringLiteralExpressionSyntax(SpanOf(rawCtx), DecodeRawString(rawCtx.RawStringLiteral().GetText()));
+			case CvoloParser.InterpolatedRawStringExpressionContext rawInterCtx:
+				return new InterpolatedStringExpressionSyntax(SpanOf(rawInterCtx), rawInterCtx.InterpolatedRawStringLiteral().GetText());
+			case CvoloParser.BadRawStringExpressionContext badRawCtx:
+				{
+					ReportParseError(badRawCtx, "Unterminated raw string literal. Every `@\"` must have a matching closing quote.", DiagnosticIds.UnbalancedRawStringLiteral);
+					return new StringLiteralExpressionSyntax(SpanOf(badRawCtx), "");
+				}
 			case CvoloParser.CharLiteralExpressionContext charCtx:
 				{
 					var text = charCtx.CharLiteral().GetText();
@@ -759,6 +781,12 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 
 			return sb.ToString();
 		}
+	}
+
+	private static string DecodeRawString(string text)
+	{
+		var body = text[2..^1];
+		return body.Replace("\"\"", "\"");
 	}
 
 	private static (char Value, string? OutOfRangeHex) DecodeCharLiteral(string content)

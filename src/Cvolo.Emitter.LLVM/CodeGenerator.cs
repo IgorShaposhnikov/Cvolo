@@ -1168,6 +1168,28 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		return _builder.BuildGlobalStringPtr(value, "str");
 	}
 
+	private static bool IsConstantStringTree(ExpressionSyntax expr)
+	{
+		return expr switch
+		{
+			StringLiteralExpressionSyntax => true,
+			BinaryExpressionSyntax bin when bin.Operator == "+" =>
+				IsConstantStringTree(bin.Left) && IsConstantStringTree(bin.Right),
+			_ => false,
+		};
+	}
+
+	private static string ConstantStringValue(ExpressionSyntax expr)
+	{
+		return expr switch
+		{
+			StringLiteralExpressionSyntax lit => lit.Value,
+			BinaryExpressionSyntax bin when bin.Operator == "+" =>
+				ConstantStringValue(bin.Left) + ConstantStringValue(bin.Right),
+			_ => throw new InvalidOperationException($"Cannot fold non-constant string expression '{expr.GetType().Name}'."),
+		};
+	}
+
 	private bool IsConstructorCall(CallExpressionSyntax call, TypeSymbol targetType)
 	{
 		// Strip generics from the target type name to match the call's function name (e.g. Point<int> -> Point)
@@ -1546,6 +1568,12 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		if (bin.Operator == "=")
 		{
 			return EmitAssignStore(bin);
+		}
+
+		// Fold '+': constant string concatenation lowers to a single constant.
+		if (bin.Operator == "+" && IsConstantStringTree(bin.Left) && IsConstantStringTree(bin.Right))
+		{
+			return EmitStringLiteral(ConstantStringValue(bin.Left) + ConstantStringValue(bin.Right));
 		}
 
 		var left = EmitExpression(bin.Left);
@@ -2834,6 +2862,11 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 	private TypeSymbol ResolveBinaryExpressionType(BinaryExpressionSyntax bin)
 	{
+		if (bin.Operator == "+" && IsConstantStringTree(bin.Left) && IsConstantStringTree(bin.Right))
+		{
+			return TypeSymbol.String;
+		}
+
 		if (bin.Operator == "==" || bin.Operator == "!=" || bin.Operator == "<" ||
 			bin.Operator == ">" || bin.Operator == "<=" || bin.Operator == ">=")
 		{
