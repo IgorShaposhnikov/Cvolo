@@ -5,7 +5,7 @@ namespace Cvolo.Tests;
 public sealed class NullabilityTests : CompilerTestBase
 {
 	[Theory]
-	[InlineData("NullLiteralFail", "requires a pointer type")]
+	[InlineData("NullLiteralFail", "null is not allowed in safe code")]
 	public void Safety_Rejections(string caseName, string expectedError)
 	{
 		var fileName = $"Nullability/{caseName}.cvl";

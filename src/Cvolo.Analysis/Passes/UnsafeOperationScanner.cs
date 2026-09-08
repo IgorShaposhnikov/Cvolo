@@ -31,6 +31,11 @@ internal static class UnsafeOperationScanner
 			if (child is UnaryExpressionSyntax cast && cast.Operator.StartsWith("(") && cast.Operator.EndsWith("*)"))
 				return true;
 
+			// The null literal is unsafe-only: in safe/unbound code it is a compile error
+			// (CVL1104), so a body that uses it genuinely requires an unsafe context.
+			if (child is NullLiteralExpressionSyntax)
+				return true;
+
 			if (ContainsUnsafeOperations(child))
 				return true;
 		}

@@ -49,12 +49,9 @@ public sealed class OptionalSyntaxRewriter(bool strictOption, DiagnosticBag diag
 
 			if (IsOptionRoot(varDecl.Type))
 			{
-				if (rewrittenInit is NullLiteralExpressionSyntax)
-				{
-					Report(varDecl.Initializer!.Span, DiagnosticIds.NullForOptionalType,
-						"null is not allowed in safe code. Use Option.None instead.");
-				}
-				else if (IsOptionNoneExpression(rewrittenInit))
+				// A bare `null` initializer is left in the tree for SafetyPass to reject
+				// (CVL1104); `int? x = null` must NOT be silently lowered to None.
+				if (IsOptionNoneExpression(rewrittenInit))
 				{
 					rewrittenInit = BuildNone(rewrittenType, rewrittenInit!.Span);
 				}
@@ -84,12 +81,8 @@ public sealed class OptionalSyntaxRewriter(bool strictOption, DiagnosticBag diag
 
 			if (IsOptionRoot(globalDecl.Type))
 			{
-				if (rewrittenInit is NullLiteralExpressionSyntax)
-				{
-					Report(globalDecl.Initializer!.Span, DiagnosticIds.NullForOptionalType,
-						"null is not allowed in safe code. Use Option.None instead.");
-				}
-				else if (IsOptionNoneExpression(rewrittenInit))
+				// Bare `null` is left for SafetyPass to reject (CVL1104).
+				if (IsOptionNoneExpression(rewrittenInit))
 				{
 					rewrittenInit = BuildNone(rewrittenType, rewrittenInit!.Span);
 				}
@@ -175,12 +168,8 @@ public sealed class OptionalSyntaxRewriter(bool strictOption, DiagnosticBag diag
 
 			if (inner is not null)
 			{
-				if (bin.Right is NullLiteralExpressionSyntax)
-				{
-					Report(bin.Right.Span, DiagnosticIds.NullForOptionalType,
-						"null is not allowed in safe code. Use Option.None instead.");
-				}
-				else if (IsOptionNoneExpression(bin.Right))
+				// A `= null` assignment is left for SafetyPass to reject (CVL1104).
+				if (IsOptionNoneExpression(bin.Right))
 				{
 					var rewrittenNone = BuildNone($"Option<{inner}>", bin.Right.Span);
 					return new BinaryExpressionSyntax(bin.Span, bin.Left, "=", rewrittenNone);

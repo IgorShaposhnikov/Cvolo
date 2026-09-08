@@ -29,6 +29,7 @@ extension Buffer<T, A>
         // empty delegating body
     }
 
+    [UnsafeBody]
     ~Buffer() {
         if (ptr != null) {
             var allocator = default(A);

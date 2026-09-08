@@ -15,7 +15,7 @@ int main() {
         var Option<Resource> some = Option<Resource> { Some: Resource { Handle: 1 } };
     }
     {
-        var Option<Resource> none = null;
+        var Option<Resource> none = Option<Resource> { None: void };
     }
     Console.WriteLine("Done");
     return 0;

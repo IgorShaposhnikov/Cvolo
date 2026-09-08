@@ -26,6 +26,7 @@ extension Buffer<T, A>
         Length = size;
     }
 
+    [UnsafeBody]
     ~Buffer() {
         if (ptr != null) {
             var allocator = default(A);

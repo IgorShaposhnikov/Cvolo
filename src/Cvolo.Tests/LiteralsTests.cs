@@ -35,8 +35,8 @@ public sealed class LiteralsTests : CompilerTestBase
 	[InlineData("UnknownEscapeFail", "CVL1906")]
 	[InlineData("MultiCharLiteralFail", "CVL1907")]
 	[InlineData("HexEscapeRangeFail", "CVL1908")]
-	[InlineData("NullOutsideUnsafeFail", "CVL1909")]
-	[InlineData("NullToRefFail", "CVL1910")]
+	[InlineData("NullOutsideUnsafeFail", "CVL1104")]
+	[InlineData("NullToRefFail", "CVL1104")]
 	public void Literals_BadInputRejected(string caseName, string expectedId)
 	{
 		var fileName = $"{Category}/{caseName}.cvl";

@@ -23,7 +23,9 @@ extension Node {
 int main() {
     Node n;
     n.Id = 7;
-    n.next = null;
+    unsafe {
+        n.next = null;
+    }
     Console.WriteLine("done");
     Console.WriteLine("main end");
     return 0;

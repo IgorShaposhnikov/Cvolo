@@ -12,8 +12,8 @@ unsafe void CheckRawPointerNull(int* p) {
 }
 
 int main() {
-    // 1. Safe null assignment (Option.None)
-    Option<int> opt = null;
+    // 1. Empty option via explicit None literal (null is unsafe-only)
+    Option<int> opt = Option<int> { None: void };
     Console.WriteLine("Safe Option null initialized successfully.");
 
     // 2. Unsafe null pointer check

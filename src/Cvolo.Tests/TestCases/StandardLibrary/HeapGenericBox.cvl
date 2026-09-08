@@ -1,0 +1,17 @@
+using System;
+
+struct GBox<T> {
+    T Value;
+}
+
+extension GBox<T> {
+    GBox(T v) {
+        Value = v;
+    }
+}
+
+int main() {
+    var GBox<int> b = heap GBox<int>(7);
+    Console.WriteLine($"{b.Value}");
+    return 0;
+}

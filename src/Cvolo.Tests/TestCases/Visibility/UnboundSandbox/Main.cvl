@@ -1,5 +1,7 @@
 unbound void Poke(refvar Node n) {
-    n.Next = null;
+    unsafe {
+        n.Next = null;
+    }
 }
 
 int main() {

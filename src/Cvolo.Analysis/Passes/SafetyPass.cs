@@ -356,6 +356,15 @@ public sealed class SafetyPass(BindingContext context)
 					context.Diagnostics.Report(context.CurrentUnit!.Context, id.Span, $"Use of moved variable '{id.Name}'");
 				break;
 
+			case NullLiteralExpressionSyntax:
+				// CVL1104: the null literal is only meaningful as a null pointer / empty
+				// option. In safe or unbound code it is always an error.
+				if (CurrentTier != SafetyTier.Unsafe)
+					context.Diagnostics.Report(context.CurrentUnit!.Context, expr.Span,
+						"null is not allowed in safe code. Use Option.None instead.",
+						DiagnosticIds.NullForOptionalType);
+				break;
+
 			case MemberAccessExpressionSyntax m:
 				CheckExpressionSafety(m.Expression, scope);
 				ReportUnboundRefFieldVisibilityLeak(m.Expression, m.MemberName, m.Span, scope);
@@ -378,6 +387,11 @@ public sealed class SafetyPass(BindingContext context)
 				// CVL1007: Address-of only in unsafe
 				if (u.Operator == "&" && CurrentTier != SafetyTier.Unsafe)
 					context.Diagnostics.Report(context.CurrentUnit!.Context, u.Span, "Cannot take address outside unsafe context.");
+				break;
+
+			case StructInitializationExpressionSyntax init:
+				foreach (var member in init.Initializers)
+					CheckExpressionSafety(member.Expression, scope);
 				break;
 
 			case CallExpressionSyntax call:

@@ -601,15 +601,14 @@ public sealed class ValidationPass(BindingContext context)
 					&& TypeSymbol.IsFloatingPointType(initializerType)
 					&& resolvedType.Equals(TypeSymbol.Double);
 
-				if (initializerType.Equals(TypeSymbol.Null))
+				if (initializerType.Equals(TypeSymbol.Null) && _unsafeDepth > 0)
 				{
+					// In safe/unbound code the blanket 'null is not allowed' (CVL1104)
+					// from SafetyPass applies; these pointer-shape rules only matter
+					// inside unsafe contexts where null is a real value.
 					if (resolvedType is PointerTypeSymbol)
 					{
 						context.Diagnostics.Report(currentFileContext, varDecl.Span, "Cannot assign `null` to a safe reference (`ref` / `refvar`).", DiagnosticIds.NullToSafeReference);
-					}
-					else if (resolvedType is RawPointerTypeSymbol && _unsafeDepth == 0)
-					{
-						context.Diagnostics.Report(currentFileContext, varDecl.Span, "`null` can only be used inside `unsafe` contexts.", DiagnosticIds.NullOutsideUnsafeContext);
 					}
 					else if (!isValidNull)
 					{
@@ -1195,7 +1194,7 @@ public sealed class ValidationPass(BindingContext context)
 				if (!isValidNull)
 				{
 					var currentFileContext = context.FileContexts[context.CurrentUnit!];
-					if (initType.Equals(TypeSymbol.Null))
+					if (_unsafeDepth > 0 && initType.Equals(TypeSymbol.Null))
 					{
 						context.Diagnostics.Report(currentFileContext, init.Span, "The 'null' literal requires a pointer type (Option or raw pointer).");
 					}
@@ -1425,7 +1424,7 @@ public sealed class ValidationPass(BindingContext context)
 				if (!isValidNull)
 				{
 					var currentFileContext = context.FileContexts[context.CurrentUnit!];
-					if (actualType.Equals(TypeSymbol.Null))
+					if (_unsafeDepth > 0 && actualType.Equals(TypeSymbol.Null))
 					{
 						context.Diagnostics.Report(currentFileContext, ret.Expression.Span, "The 'null' literal requires a pointer type (Option or raw pointer).");
 					}
