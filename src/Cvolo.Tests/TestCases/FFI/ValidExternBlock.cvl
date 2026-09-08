@@ -1,0 +1,9 @@
+[LibraryImport("test")]
+extern "C" {
+    void DoSomething();
+    int AddNumbers(int a, int b);
+}
+
+int main() {
+    return 0;
+}

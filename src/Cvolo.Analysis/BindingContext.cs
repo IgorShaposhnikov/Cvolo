@@ -3,6 +3,7 @@ using Cvolo.Analysis.Passes;
 using Cvolo.Analysis.Symbols;
 using Cvolo.Analysis.Symbols.Base;
 using Cvolo.Analysis.Symbols.Collections;
+using Cvolo.Analysis.Symbols.FFI;
 using Cvolo.Analysis.Symbols.Structs;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
@@ -35,6 +36,9 @@ public sealed class BindingContext
 	public Dictionary<string, CompilationUnitSyntax> SymbolUnits { get; } = [];
 	public Dictionary<string, List<FunctionSymbol>> OverloadedFunctions { get; } = [];
 	public Dictionary<CallExpressionSyntax, FunctionSymbol> ResolvedCalls { get; } = [];
+	// Native libraries requested via [LibraryImport] on extern blocks, keyed by the bare
+	// library identifier; consumed by the linker strategy to emit -l/--library flags.
+	public Dictionary<string, NativeLibraryInfo> NativeLibraries { get; } = [];
 	// Delegating-constructor targets (this(...) initializer), keyed by the delegating
 	// constructor's overloaded name; used by the code generator to emit the chained call.
 	public Dictionary<string, FunctionSymbol> ConstructorDelegationTargets { get; } = [];
@@ -243,46 +247,46 @@ public sealed class BindingContext
 		}
 
 		// 3b. Desugar Optional Type Syntax (X? -> Option<X>; ref X? -> Option<ref X>). This is a safety net
-	//     for any '?' the OptionalSyntaxRewriter did not structurally rewrite (generic type arguments,
-	//     cast targets, default(...) type names, ...); it also enforces the strict-option mode.
-	if (name.EndsWith('?') && name.Length > 1)
-	{
-		var innerName = name[..^1];
-		var currentFileContext = CurrentUnit is not null && FileContexts.TryGetValue(CurrentUnit, out var ctx) ? ctx : FileContexts.Values.FirstOrDefault();
-		if (innerName == "void")
+		//     for any '?' the OptionalSyntaxRewriter did not structurally rewrite (generic type arguments,
+		//     cast targets, default(...) type names, ...); it also enforces the strict-option mode.
+		if (name.EndsWith('?') && name.Length > 1)
 		{
-			if (currentFileContext is not null)
-				Diagnostics.Report(currentFileContext, new TextSpan(0, 0), "Cannot use '?' on 'void' or function types.", DiagnosticIds.OptionalOnVoid);
-			return null;
+			var innerName = name[..^1];
+			var currentFileContext = CurrentUnit is not null && FileContexts.TryGetValue(CurrentUnit, out var ctx) ? ctx : FileContexts.Values.FirstOrDefault();
+			if (innerName == "void")
+			{
+				if (currentFileContext is not null)
+					Diagnostics.Report(currentFileContext, new TextSpan(0, 0), "Cannot use '?' on 'void' or function types.", DiagnosticIds.OptionalOnVoid);
+				return null;
+			}
+
+			if (StrictOption)
+			{
+				if (currentFileContext is not null)
+					Diagnostics.Report(currentFileContext, new TextSpan(0, 0), "Optional syntax '?' is disabled. Use explicit Option<T> type.", DiagnosticIds.OptionalSyntaxDisabled);
+				return null;
+			}
+
+			// 'ref X?' / 'refvar X?' resolve straight to the flat NPO Option<ref X> specialization.
+			if (innerName.StartsWith("ref ", StringComparison.Ordinal) || innerName.StartsWith("refvar ", StringComparison.Ordinal))
+			{
+				var npoOptionType = ResolveType($"Option<{innerName}>");
+				if (npoOptionType is not null)
+					_typeCache[name] = npoOptionType;
+				return npoOptionType;
+			}
+
+			var elementType = ResolveType(innerName);
+			if (elementType is null)
+				return null;
+
+			var optionType = ResolveType($"Option<{innerName}>");
+			if (optionType is not null)
+				_typeCache[name] = optionType;
+			return optionType;
 		}
 
-		if (StrictOption)
-		{
-			if (currentFileContext is not null)
-				Diagnostics.Report(currentFileContext, new TextSpan(0, 0), "Optional syntax '?' is disabled. Use explicit Option<T> type.", DiagnosticIds.OptionalSyntaxDisabled);
-			return null;
-		}
-
-		// 'ref X?' / 'refvar X?' resolve straight to the flat NPO Option<ref X> specialization.
-		if (innerName.StartsWith("ref ", StringComparison.Ordinal) || innerName.StartsWith("refvar ", StringComparison.Ordinal))
-		{
-			var npoOptionType = ResolveType($"Option<{innerName}>");
-			if (npoOptionType is not null)
-				_typeCache[name] = npoOptionType;
-			return npoOptionType;
-		}
-
-		var elementType = ResolveType(innerName);
-		if (elementType is null)
-			return null;
-
-		var optionType = ResolveType($"Option<{innerName}>");
-		if (optionType is not null)
-			_typeCache[name] = optionType;
-		return optionType;
-	}
-
-	// 4. Resolve Static Array Types (e.g., int[5] or int[Color.Max + 1])
+		// 4. Resolve Static Array Types (e.g., int[5] or int[Color.Max + 1])
 		if (name.EndsWith(']'))
 		{
 			var openBracket = name.LastIndexOf('[');
@@ -1574,7 +1578,7 @@ public sealed class BindingContext
 		return simple;
 	}
 
-public bool TypeSatisfiesContract(TypeSymbol type, TypeSymbol contract)
+	public bool TypeSatisfiesContract(TypeSymbol type, TypeSymbol contract)
 	{
 		var baseType = type is PointerTypeSymbol ptr ? ptr.ReferencedType : type;
 

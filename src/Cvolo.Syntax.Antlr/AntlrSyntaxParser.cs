@@ -65,6 +65,8 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			return BuildFunctionDeclaration(func);
 		if (context.externDeclaration() is { } ext)
 			return BuildExternDeclaration(ext);
+		if (context.externBlockDeclaration() is { } extBlock)
+			return BuildExternBlockDeclaration(extBlock);
 		if (context.structDeclaration() is { } structDecl)
 			return BuildStructDeclaration(structDecl);
 		if (context.unionDeclaration() is { } unionDecl)
@@ -134,6 +136,43 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		}
 
 		return new ExternDeclarationSyntax(SpanOf(context), returnType, name, parameters, isVariadic, GetVisibilityModifier(context.visibilityModifier()));
+	}
+
+	private ExternBlockSyntax BuildExternBlockDeclaration(CvoloParser.ExternBlockDeclarationContext context)
+	{
+		var attributes = BuildAttributeList(context.attributeList());
+		var callingConvention = context.callingConvention()?.StringLiteral()?.GetText();
+		if (callingConvention is not null)
+		{
+			// Strip the surrounding double quotes to recover the raw "C" / "system" value.
+			callingConvention = callingConvention.Length >= 2 ? callingConvention[1..^1] : callingConvention;
+		}
+
+		var functions = new List<ExternBlockFunctionSyntax>();
+		foreach (var funcCtx in context.externBlockFunction())
+			functions.Add(BuildExternBlockFunction(funcCtx));
+
+		return new ExternBlockSyntax(SpanOf(context), attributes, callingConvention, functions, GetVisibilityModifier(context.visibilityModifier()));
+	}
+
+	private ExternBlockFunctionSyntax BuildExternBlockFunction(CvoloParser.ExternBlockFunctionContext context)
+	{
+		var returnType = GetReturnTypeName(context.returnType());
+		var name = context.Identifier().GetText();
+		var parameters = new List<ParameterSyntax>();
+		var isVariadic = false;
+		if (context.externParameterList() is { } paramList)
+		{
+			foreach (var param in paramList.externParameter())
+			{
+				if (param.ELLIPSIS() is not null)
+					isVariadic = true;
+				else
+					parameters.Add(new ParameterSyntax(SpanOf(param), param.type().GetText(), param.Identifier().GetText()));
+			}
+		}
+
+		return new ExternBlockFunctionSyntax(SpanOf(context), returnType, name, parameters, isVariadic, BuildAttributeList(context.attributeList()));
 	}
 
 	private FunctionDeclarationSyntax BuildFunctionDeclaration(CvoloParser.FunctionDeclarationContext context)
@@ -223,13 +262,17 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			foreach (var attrCtx in listCtx.attribute())
 			{
 				var args = new List<ExpressionSyntax>();
-				if (attrCtx.argumentList() is { } argList)
+				var argNames = new List<string?>();
+				if (attrCtx.attributeArgumentList() is { } argList)
 				{
-					foreach (var arg in argList.expression())
-						args.Add(BuildExpression(arg));
+					foreach (var arg in argList.attributeArgument())
+					{
+						args.Add(BuildExpression(arg.expression()));
+						argNames.Add(arg.Identifier()?.GetText() ?? null);
+					}
 				}
 
-				attributes.Add(new AttributeSyntax(SpanOf(attrCtx), attrCtx.qualifiedName().GetText(), args));
+				attributes.Add(new AttributeSyntax(SpanOf(attrCtx), attrCtx.qualifiedName().GetText(), args, argNames));
 			}
 		}
 

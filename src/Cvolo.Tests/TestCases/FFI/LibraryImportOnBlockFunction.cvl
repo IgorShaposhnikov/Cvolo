@@ -1,0 +1,5 @@
+[LibraryImport("test")]
+extern "C" {
+    [LibraryImport("override")]
+    void DoSomething();
+}

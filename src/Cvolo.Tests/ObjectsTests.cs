@@ -10,6 +10,7 @@ public sealed class ObjectsTests : CompilerTestBase
 	[InlineData("ExtensionSuccess", "Point Coords: X = 15, Y = 25")]
 	[InlineData("ConstructorBasic", "A=21, B=42")]
 	[InlineData("ConstructorRaii", "Opening logs.txt\nOpening temp.txt\nwork\nClosing handle: 42\nClosing handle: 42")]
+	[InlineData("ConstructorNamespaceVar", "window=42")]
 	public void Structs(string caseName, string expected)
 	{
 		var fileName = $"Objects/{caseName}.cvl";

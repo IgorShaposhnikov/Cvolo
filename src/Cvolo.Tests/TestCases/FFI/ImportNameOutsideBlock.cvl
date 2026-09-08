@@ -1,0 +1,4 @@
+[ImportName("other")]
+int main() {
+    return 0;
+}

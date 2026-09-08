@@ -1,0 +1,7 @@
+extern "fastcall" {
+    void DoSomething();
+}
+
+int main() {
+    return 0;
+}

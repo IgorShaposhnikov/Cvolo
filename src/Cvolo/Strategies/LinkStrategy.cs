@@ -1,11 +1,13 @@
 using System.Diagnostics;
+using Cvolo.Analysis.Symbols.FFI;
+using Cvolo.Core.Diagnostics;
 using Cvolo.Projects;
 
 namespace Cvolo.Strategies;
 
 internal sealed class LinkStrategy(string binDirectory) : ICompilationStrategy
 {
-	public int Execute(string llPath, CompilationProject project, string? linkerPath, string? linkerName, string optLevel = "Os", bool verbose = false)
+	public int Execute(string llPath, CompilationProject project, string? linkerPath, string? linkerName, string optLevel = "Os", bool verbose = false, IEnumerable<NativeLibraryInfo>? nativeLibraries = null, string? targetOs = null)
 	{
 		if (linkerPath is null)
 		{
@@ -32,6 +34,36 @@ internal sealed class LinkStrategy(string binDirectory) : ICompilationStrategy
 			? " -Xlinker /subsystem:console"
 			: "";
 
+		// FFI native libraries: [LibraryImport] forwards ONLY the path matching the current
+		// compilation target OS (win:/linux:/mac:); a missing target path falls back to the
+		// bare library name via -l<name>. Path strings are forwarded verbatim (resolved
+		// relative to the project directory) — no host-disk existence check, so cross
+		// compilation is respected and the static linker reports CVL1704 if a file is gone.
+		var effectiveOs = ResolveTargetOs(targetOs);
+		var libraryFlags = "";
+		if (nativeLibraries is not null)
+		{
+			foreach (var lib in nativeLibraries)
+			{
+				var targetPath = effectiveOs switch
+				{
+					"windows" => lib.WinPath,
+					"linux" => lib.LinuxPath,
+					"macos" => lib.MacPath,
+					_ => null
+				};
+
+				if (!string.IsNullOrEmpty(targetPath))
+				{
+					libraryFlags += $" \"{Path.GetFullPath(targetPath, project.ProjectDirectory)}\"";
+				}
+				else
+				{
+					libraryFlags += $" -l{lib.LibraryName}";
+				}
+			}
+		}
+
 		if (verbose)
 		{
 			Console.WriteLine($"Linking using: {linkerName}...");
@@ -41,7 +73,7 @@ internal sealed class LinkStrategy(string binDirectory) : ICompilationStrategy
 		var psi = new ProcessStartInfo
 		{
 			FileName = linkerPath,
-			Arguments = $"-o \"{binaryPath}\" \"{llPath}\"{typeFlag}{optFlag}{subsystemFlag}",
+			Arguments = $"-o \"{binaryPath}\" \"{llPath}\"{typeFlag}{optFlag}{libraryFlags}{subsystemFlag}",
 			RedirectStandardOutput = !verbose,
 			RedirectStandardError = !verbose,
 			UseShellExecute = false,
@@ -65,10 +97,33 @@ internal sealed class LinkStrategy(string binDirectory) : ICompilationStrategy
 		if (!verbose && linkResult is not null)
 		{
 			var errors = linkResult.StandardError.ReadToEnd();
+			if (nativeLibraries is not null && nativeLibraries.Any())
+			{
+				Console.Error.WriteLine($"Compile Error {DiagnosticIds.NativeLibraryUnresolved}: A native library requested via [LibraryImport] could not be resolved by the linker.");
+			}
 			Console.Error.WriteLine("Linking failed:");
 			Console.Error.WriteLine(errors);
 		}
 
 		return 1;
+	}
+
+	private static string ResolveTargetOs(string? targetOs)
+	{
+		if (string.IsNullOrWhiteSpace(targetOs) || targetOs.Equals("host", StringComparison.OrdinalIgnoreCase))
+		{
+			if (OperatingSystem.IsWindows()) return "windows";
+			if (OperatingSystem.IsLinux()) return "linux";
+			if (OperatingSystem.IsMacOS()) return "macos";
+			return "windows";
+		}
+
+		return targetOs.ToLowerInvariant() switch
+		{
+			"windows" or "win" or "win32" => "windows",
+			"linux" => "linux",
+			"macos" or "mac" or "osx" or "darwin" => "macos",
+			_ => "windows"
+		};
 	}
 }

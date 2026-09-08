@@ -32,6 +32,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	private bool _ownershipTransferFunction;
 	private readonly Dictionary<string, StructDeclarationSyntax> _astStructs = [];
 	private readonly Dictionary<string, ExternDeclarationSyntax> _astExterns = [];
+	private readonly Dictionary<string, ExternBlockFunctionSyntax> _astExternBlockFunctions = [];
 	private readonly Dictionary<string, List<TypeSymbol>> _functionParameterTypes = [];
 	private readonly Dictionary<string, TypeSymbol> _functionReturnTypes = [];
 	private readonly Dictionary<string, LLVMValueRef> _globalVariables = [];
@@ -44,7 +45,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	private int _unsafeDepth;
 	private TbaaMetadata? _tbaa;
 	private (LLVMTypeRef Type, LLVMValueRef Func)? _llvmTrap;
-private readonly Dictionary<string, LLVMValueRef> _enumValuesGlobals = [];
+	private readonly Dictionary<string, LLVMValueRef> _enumValuesGlobals = [];
 	private readonly Dictionary<string, ConstructorDeclarationSyntax> _constructorInitializers = [];
 
 	public CodeGenerator(string moduleName, ILLVMOptimizer? optimizer = null, IRVerifier? irVerifier = null, bool enableTbaa = true)
@@ -172,6 +173,16 @@ private readonly Dictionary<string, LLVMValueRef> _enumValuesGlobals = [];
 						_astExterns[ext.Name] = ext;
 						DeclareExternFunction(ext);
 						break;
+					case ExternBlockSyntax extBlock:
+						foreach (var fn in extBlock.Functions)
+						{
+							var funcSym = _bindingContext!.Globals.Lookup(fn.Name) as FunctionSymbol;
+							if (funcSym is null)
+								continue;
+							_astExternBlockFunctions[fn.Name] = fn;
+							DeclareExternBlockFunction(fn, funcSym);
+						}
+						break;
 					case FunctionDeclarationSyntax func when func.GenericParameters.Count == 0 && !func.Name.Contains('<'):
 						// Skip abstract interface/protocol templates and bodyless intrinsic functions
 						var ifaceTemplateName = bindingContext.GetMangledName(func.Name, ns);
@@ -209,7 +220,7 @@ private readonly Dictionary<string, LLVMValueRef> _enumValuesGlobals = [];
 							}
 						}
 
-foreach (var ctorDecl in extDecl.Constructors)
+						foreach (var ctorDecl in extDecl.Constructors)
 						{
 							var ctorBaseMangledName = bindingContext.GetMangledName(extDecl.ExtendedTypeName, ns);
 							if (bindingContext.OverloadedFunctions.TryGetValue(ctorBaseMangledName, out var ctorCandidates))
@@ -249,7 +260,7 @@ foreach (var ctorDecl in extDecl.Constructors)
 			{
 				DeclareFunction(func, emitName);
 			}
-else if (decl is ConstructorDeclarationSyntax ctor)
+			else if (decl is ConstructorDeclarationSyntax ctor)
 			{
 				DeclareFunction(ctor.ToFunctionDeclaration(), emitName);
 
@@ -322,7 +333,7 @@ else if (decl is ConstructorDeclarationSyntax ctor)
 						}
 					}
 
-var ctorBaseMangledName = bindingContext.GetMangledName(extDecl.ExtendedTypeName, ns);
+					var ctorBaseMangledName = bindingContext.GetMangledName(extDecl.ExtendedTypeName, ns);
 					if (bindingContext.OverloadedFunctions.TryGetValue(ctorBaseMangledName, out var ctorCandidates))
 					{
 						foreach (var candidate in ctorCandidates)
@@ -439,6 +450,43 @@ var ctorBaseMangledName = bindingContext.GetMangledName(extDecl.ExtendedTypeName
 		_functionTypes[ext.Name] = funcType;
 	}
 
+	private void DeclareExternBlockFunction(ExternBlockFunctionSyntax fn, FunctionSymbol symbol)
+	{
+		// Deduplicate: If this extern block function has already been declared, return early.
+		if (_globals.ContainsKey(fn.Name))
+			return;
+
+		var returnTypeSymbol = _bindingContext!.ResolveType(fn.ReturnType)!;
+		var returnType = GetLLVMType(returnTypeSymbol);
+		_functionReturnTypes[fn.Name] = returnTypeSymbol;
+
+		var paramTypes = new List<LLVMTypeRef>();
+		var paramSymbols = new List<TypeSymbol>();
+		foreach (var param in fn.Parameters)
+		{
+			var paramTypeSymbol = _bindingContext.ResolveType(param.Type)!;
+			paramTypes.Add(GetLLVMType(paramTypeSymbol));
+			paramSymbols.Add(paramTypeSymbol);
+		}
+
+		_functionParameterTypes[fn.Name] = paramSymbols;
+
+		var funcType = fn.IsVariadic
+			? LLVMTypeRef.CreateFunction(returnType, [.. paramTypes], IsVarArg: true)
+			: LLVMTypeRef.CreateFunction(returnType, [.. paramTypes]);
+
+		// Extern block functions are declared under their native symbol name ([ImportName] ?? source
+		// name); the _globals cache stays keyed by the Cvolo-level name so call-site resolution
+		// (_globals[resolvedFunc.Name]) keeps working unchanged. "C" -> cdecl (ccc), "system" -> stdcall.
+		var nativeName = symbol.ImportName ?? fn.Name;
+		var func = _module.AddFunction(nativeName, funcType);
+		func.FunctionCallConv = symbol.CallingConvention == "system"
+			? (uint)LLVMCallConv.LLVMX86StdcallCallConv
+			: (uint)LLVMCallConv.LLVMCCallConv;
+		_globals[fn.Name] = func;
+		_functionTypes[fn.Name] = funcType;
+	}
+
 	private void DeclareFunction(FunctionDeclarationSyntax func, string emitName)
 	{
 		// Deduplicate: If this function has already been declared, return early
@@ -542,7 +590,7 @@ var ctorBaseMangledName = bindingContext.GetMangledName(extDecl.ExtendedTypeName
 		}
 	}
 
-/// <summary>Maps a registered constructor candidate back to its corresponding source
+	/// <summary>Maps a registered constructor candidate back to its corresponding source
 	/// declaration (matching by parameter count/types, ignoring the implicit 'this').</summary>
 	private ConstructorDeclarationSyntax? FindCtorDeclaration(
 		IReadOnlyList<ConstructorDeclarationSyntax> ctors, FunctionSymbol candidate)
@@ -790,7 +838,7 @@ var ctorBaseMangledName = bindingContext.GetMangledName(extDecl.ExtendedTypeName
 				type = retPtr.ReferencedType;
 			}
 
-// Materialize memory-resident return values (structs/unions living in allocas/heap
+			// Materialize memory-resident return values (structs/unions living in allocas/heap
 			// slots) BEFORE scope cleanup frees them - the loaded register is what survives.
 			// NPO-eligible unions lower to a single scalar (the flat ptr), so their emitted value
 			// is already the scalar - loading it again would double-dereference.
@@ -883,14 +931,14 @@ var ctorBaseMangledName = bindingContext.GetMangledName(extDecl.ExtendedTypeName
 			case NullLiteralExpressionSyntax:
 				// Defensive: the binder rejects 'null' in safe code before emission.
 				return LLVMValueRef.CreateConstPointerNull(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0));
-case DefaultExpressionSyntax d:
+			case DefaultExpressionSyntax d:
 				{
 					// Bare 'default' is lowered by OptionalSyntaxRewriter inside declarations; if it ever
 					// reaches codegen unresolved, validation already reported an error (codegen is skipped).
 					var targetType = d.TypeName is null ? TypeSymbol.Int : _bindingContext!.ResolveType(d.TypeName)!;
 					return LLVMValueRef.CreateConstNull(GetLLVMType(targetType));
 				}
-case IsPatternExpressionSyntax isPat:
+			case IsPatternExpressionSyntax isPat:
 				{
 					// Operand is an Option-shaped union. NPO options store the payload pointer
 					// flat (Some = non-zero, None = zero); tagged options store an i8 discriminator
@@ -1133,9 +1181,13 @@ case IsPatternExpressionSyntax isPat:
 		if (!string.Equals(shortCallName, shortTargetTypeName, StringComparison.Ordinal))
 			return false;
 
-		// Look up either the concrete instantiated constructor or the base template constructor
-		if (!_bindingContext!.Constructors.TryGetValue(targetType.Name, out var ctors) &&
-			!_bindingContext.Constructors.TryGetValue(targetTypeName, out ctors))
+		// Look up either the concrete instantiated constructor or the base template constructor.
+		// Constructors are keyed by their unqualified source name (e.g. "Window"), so also try
+		// the namespace-stripped short name when the type symbol name is qualified (e.g. "App.Window").
+		var ctors = _bindingContext!.Constructors;
+		if (!ctors.TryGetValue(targetType.Name, out var constructorList) &&
+			!ctors.TryGetValue(targetTypeName, out constructorList) &&
+			!ctors.TryGetValue(shortTargetTypeName, out constructorList))
 		{
 			return false;
 		}
@@ -1249,7 +1301,7 @@ case IsPatternExpressionSyntax isPat:
 
 		var args = new List<LLVMValueRef>();
 
-// Ensure it's ACTUALLY an extension method (has a 'this' parameter) before treating the left side as a variable receiver!
+		// Ensure it's ACTUALLY an extension method (has a 'this' parameter) before treating the left side as a variable receiver!
 		var isExtensionCall = _bindingContext!.ResolvedCalls.TryGetValue(call, out var resolvedExt)
 			&& resolvedExt.Parameters.Count > 0
 			&& resolvedExt.Parameters[0].Name == "this";
@@ -1315,7 +1367,7 @@ case IsPatternExpressionSyntax isPat:
 			// Constructor call: first parameter is the destination storage
 			args.Add(implicitThisPtr.Value);
 		}
-else if (isExtensionCall)
+		else if (isExtensionCall)
 		{
 			// Bare call to a sibling extension method (e.g. `AddLast(value)` from within
 			// another method of the same extension): inject the current 'this' pointer.
@@ -1382,7 +1434,8 @@ else if (isExtensionCall)
 			}
 
 			// Detect if this argument is part of the variadic (...) portion
-			var isVariadic = _astExterns.TryGetValue(emitName, out var ext) && ext.IsVariadic;
+			var isVariadic = (_astExterns.TryGetValue(emitName, out var ext) && ext.IsVariadic)
+				|| (_astExternBlockFunctions.TryGetValue(emitName, out var blockFn) && blockFn.IsVariadic);
 			var declaredParamCount = _functionParameterTypes.TryGetValue(emitName, out var fpt) ? fpt.Count : 0;
 			var isVariadicArg = isVariadic && (i + actualParamOffset >= declaredParamCount);
 
@@ -1806,7 +1859,7 @@ else if (isExtensionCall)
 			}
 			else if (_globalVariables.TryGetValue(id.Name, out var globalPtr))
 			{
-var globalType = _globalVariableTypes[id.Name];
+				var globalType = _globalVariableTypes[id.Name];
 				if (globalType is UnionTypeSymbol && bin.Right is StructInitializationExpressionSyntax globalReinit)
 					EmitStructInitializationInPlace(globalReinit, globalPtr);
 				else
@@ -1829,17 +1882,17 @@ var globalType = _globalVariableTypes[id.Name];
 					var field = structType.FindField(id.Name);
 					if (field is not null)
 					{
-var (fieldPtr, _, _, tbaa) = GetFieldPointer(id);
-					if (field.Type is UnionTypeSymbol && bin.Right is StructInitializationExpressionSyntax fieldReinit)
-						EmitStructInitializationInPlace(fieldReinit, fieldPtr);
-					else
-					{
-						var coerced = CoerceIntegerWidth(right, rTy, field.Type);
-						var store = _builder.BuildStore(coerced, fieldPtr);
-						ApplyTbaa(tbaa, store);
-					}
+						var (fieldPtr, _, _, tbaa) = GetFieldPointer(id);
+						if (field.Type is UnionTypeSymbol && bin.Right is StructInitializationExpressionSyntax fieldReinit)
+							EmitStructInitializationInPlace(fieldReinit, fieldPtr);
+						else
+						{
+							var coerced = CoerceIntegerWidth(right, rTy, field.Type);
+							var store = _builder.BuildStore(coerced, fieldPtr);
+							ApplyTbaa(tbaa, store);
+						}
 
-					return right;
+						return right;
 					}
 				}
 				else if (refType is UnionTypeSymbol unionType)
@@ -2640,7 +2693,7 @@ var (fieldPtr, _, _, tbaa) = GetFieldPointer(id);
 			return type;
 		}
 
-// Unqualified enum variant access inside an enum extension body.
+		// Unqualified enum variant access inside an enum extension body.
 		if (_variableTypes.TryGetValue("this", out var thisTy)
 			&& thisTy is PointerTypeSymbol thisPtr
 			&& thisPtr.ReferencedType is EnumTypeSymbol enumSelf

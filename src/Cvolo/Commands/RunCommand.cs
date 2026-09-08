@@ -20,6 +20,7 @@ internal sealed class RunCommand : Command
 		var legacyVisibilityOption = new Option<bool>("--legacy-visibility") { Description = "Disable the visibility system and treat all declarations as public (v0.2.0-alpha behavior)" };
 		var strictOption = new Option<bool>("--strict-option") { Description = "Disable the '?' optional type syntax; require explicit Option<T> types" };
 		var noTbaaOption = new Option<bool>("--no-tbaa") { Description = "Disable generation of !tbaa alias-analysis metadata nodes" };
+		var targetOption = new Option<string>("--target") { Description = "Target OS for native library resolution (host, windows, linux, macos)." };
 
 		Add(pathArg);
 		Add(optOption);
@@ -30,6 +31,7 @@ internal sealed class RunCommand : Command
 		Add(legacyVisibilityOption);
 		Add(strictOption);
 		Add(noTbaaOption);
+		Add(targetOption);
 
 		SetAction(parseResult =>
 		{
@@ -42,9 +44,10 @@ internal sealed class RunCommand : Command
 			var legacyVisibilityVal = parseResult.GetValue(legacyVisibilityOption);
 			var strictOptionVal = parseResult.GetValue(strictOption);
 			var noTbaaVal = parseResult.GetValue(noTbaaOption);
+			var targetOsVal = parseResult.GetValue(targetOption);
 			if (verboseVal) warnVal = true;
 
-			var exitCode = _compilerDriver.Compile(path, llvmOnly: false, isShared: false, emitIr: false, optLevel, checkOnly: false, runAfterCompile: true, verbose: verboseVal, emitLowered: emitLoweredVal, noWarn: noWarnVal, suppressWarnings: !warnVal, legacyVisibility: legacyVisibilityVal, strictOption: strictOptionVal, noTbaa: noTbaaVal);
+			var exitCode = _compilerDriver.Compile(path, llvmOnly: false, isShared: false, emitIr: false, optLevel, checkOnly: false, runAfterCompile: true, verbose: verboseVal, emitLowered: emitLoweredVal, noWarn: noWarnVal, suppressWarnings: !warnVal, legacyVisibility: legacyVisibilityVal, strictOption: strictOptionVal, noTbaa: noTbaaVal, targetOs: targetOsVal);
 			Environment.Exit(exitCode);
 		});
 	}

@@ -19,7 +19,7 @@ internal sealed class CompilerDriver : ICompilerDriver
 {
 	private static readonly string[] _linkerCandidates = ["clang", "gcc", "g++"];
 
-	public int Compile(string path, bool llvmOnly, bool isShared, bool emitIr, string optLevel, bool checkOnly = false, bool runAfterCompile = false, bool verbose = false, bool emitLowered = false, string? noWarn = null, bool suppressWarnings = false, bool legacyVisibility = false, bool strictOption = false, bool noTbaa = false)
+	public int Compile(string path, bool llvmOnly, bool isShared, bool emitIr, string optLevel, bool checkOnly = false, bool runAfterCompile = false, bool verbose = false, bool emitLowered = false, string? noWarn = null, bool suppressWarnings = false, bool legacyVisibility = false, bool strictOption = false, bool noTbaa = false, string? targetOs = null)
 	{
 		// Diagnostics whose ids appear here are dropped from the warning stream entirely.
 		var noWarnIds = noWarn?
@@ -247,7 +247,7 @@ internal sealed class CompilerDriver : ICompilerDriver
 			? new IrOnlyStrategy()
 			: new LinkStrategy(binDirectory);
 
-		var linkResult = strategy.Execute(llPath, project, linkerPath, linkerName, optLevel, verbose);
+		var linkResult = strategy.Execute(llPath, project, linkerPath, linkerName, optLevel, verbose, binder.Context.NativeLibraries.Values, targetOs);
 		if (linkResult != 0)
 		{
 			return linkResult;

@@ -1,0 +1,8 @@
+[LibraryImport("test", win: "./x.dll", linux: "./lib.so", mac: "./lib.dylib")]
+extern "C" {
+    void DoSomething();
+}
+
+int main() {
+    return 0;
+}

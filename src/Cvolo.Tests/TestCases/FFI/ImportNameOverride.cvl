@@ -1,0 +1,9 @@
+[LibraryImport("test")]
+extern "C" {
+    [ImportName("native_init")]
+    bool Init();
+}
+
+int main() {
+    return 0;
+}

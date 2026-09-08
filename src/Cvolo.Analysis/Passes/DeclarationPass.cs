@@ -1,6 +1,7 @@
 using Cvolo.Analysis.Symbols;
 using Cvolo.Analysis.Symbols.Base;
 using Cvolo.Analysis.Symbols.Collections;
+using Cvolo.Analysis.Symbols.FFI;
 using Cvolo.Analysis.Symbols.Structs;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
@@ -30,6 +31,12 @@ public sealed class DeclarationPass(BindingContext context)
 		["MustUse"] = (["Function", "Method", "Constructor", "Struct", "Union", "Enum"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
 		["Inline"] = (["Function", "Method", "Constructor"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
 		["NeverInline"] = (["Function", "Method", "Constructor"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
+		// FFI attributes are handled specially in native code declarations: they never go through
+		// VerifyAttributes with a normal syntactic target (the extern-block paths extract them
+		// directly). Registering them here only keeps them out of the unknown-attribute CVL1002
+		// stream; VerifyAttributes intercepts them before the target check with CVL1701/CVL1702.
+		["LibraryImport"] = (["ExternBlock"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
+		["ImportName"] = (["ExternBlockFunction"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
 	};
 
 	private static readonly HashSet<string> KnownWarningIds =
@@ -62,7 +69,7 @@ public sealed class DeclarationPass(BindingContext context)
 
 	public void Process(IEnumerable<CompilationUnitSyntax> units)
 	{
-ProcessExposeUsings(units);
+		ProcessExposeUsings(units);
 
 		// Pass 0a-pre: Register all type aliases before any type/field/parameter resolution
 		// so struct fields and function signatures may reference them. Names are reserved
@@ -143,6 +150,8 @@ ProcessExposeUsings(units);
 					DeclareFunction(func);
 				else if (member is ExternDeclarationSyntax ext)
 					DeclareExternFunction(ext);
+				else if (member is ExternBlockSyntax extBlock)
+					DeclareExternBlock(extBlock);
 				else if (member is ExtensionDeclarationSyntax extDecl)
 					DeclareExtension(extDecl);
 				else if (member is GlobalVariableDeclarationSyntax globalDecl)
@@ -1208,6 +1217,21 @@ ProcessExposeUsings(units);
 				continue;
 			}
 
+			// FFI attributes are only legal on extern blocks / their child functions (handled
+			// directly in DeclareExternBlock, which never reaches this method). Any appearance
+			// here is a misplaced application — report the specific spec'd error.
+			if (key == "LibraryImport")
+			{
+				ReportDeclarationDiagnostic(attr, "Attribute '[LibraryImport]' can only be applied to an extern block.", DiagnosticIds.LibraryImportOnNonBlock);
+				continue;
+			}
+
+			if (key == "ImportName")
+			{
+				ReportDeclarationDiagnostic(attr, "Attribute '[ImportName]' can only be applied to a function declaration inside an extern block.", DiagnosticIds.ImportNameOutsideBlock);
+				continue;
+			}
+
 			if (!seen.Add(key))
 			{
 				ReportDeclarationDiagnostic(attr, $"Duplicate attribute '[{key}]'.");
@@ -1444,6 +1468,223 @@ ProcessExposeUsings(units);
 		}
 
 		candidates.Add(newSymbol);
+	}
+
+	/// <summary>
+	/// FFI extern block: [LibraryImport("lib")] extern "C" { ... }.
+	/// Validates the calling convention (CVL1700), extracts [LibraryImport] library metadata
+	/// (library name + optional win:/linux:/mac: platform paths forwarded to the linker for the
+	/// current compilation target), rejects misplaced [ImportName] (CVL1702), and registers every
+	/// block function as an extern FunctionSymbol carrying the block's library/convention metadata.
+	/// Standalone extern declarations (DeclareExternFunction) remain supported alongside blocks.
+	/// </summary>
+	private void DeclareExternBlock(ExternBlockSyntax block)
+	{
+		var convention = block.CallingConvention ?? "C";
+		if (convention is not ("C" or "system"))
+		{
+			ReportDeclarationDiagnostic(block,
+				$"Unknown calling convention '{convention}'. Supported calling conventions are \"C\" and \"system\".",
+				DiagnosticIds.UnknownCallingConvention);
+			return;
+		}
+
+		string? libraryName = null;
+		string? winPath = null;
+		string? linuxPath = null;
+		string? macPath = null;
+		var sawLibraryImport = false;
+
+		foreach (var attr in block.Attributes)
+		{
+			var key = NormalizeAttributeName(attr.Name);
+			switch (key)
+			{
+				case "LibraryImport":
+					if (sawLibraryImport)
+					{
+						ReportDeclarationDiagnostic(attr, "Duplicate attribute '[LibraryImport]'.");
+						continue;
+					}
+
+					sawLibraryImport = true;
+					(libraryName, winPath, linuxPath, macPath) = ExtractLibraryImportAttribute(attr, libraryName, winPath, linuxPath, macPath);
+					break;
+				case "ImportName":
+					ReportDeclarationDiagnostic(attr, "Attribute '[ImportName]' can only be applied to a function declaration inside an extern block.", DiagnosticIds.ImportNameOutsideBlock);
+					break;
+				case null:
+					ReportDeclarationWarning(attr, $"Unknown attribute '{attr.Name}'; it will be ignored.", DiagnosticIds.UnknownAttribute);
+					break;
+				default:
+					ReportDeclarationDiagnostic(attr, $"Attribute '[{key}]' cannot be applied to extern block declarations.");
+					break;
+			}
+		}
+
+		// Platform-specific win:/linux:/mac: paths are forwarded verbatim to the linker, which
+		// resolves the path for the current compilation target OS (see LinkStrategy). There is no
+		// frontend file-existence check: cross-compilation must not probe the host disk.
+		if (libraryName is not null)
+			context.NativeLibraries[libraryName] = new NativeLibraryInfo(libraryName, winPath, linuxPath, macPath);
+
+		// Same visibility rule as standalone externs: the block's visibility propagates to its functions.
+		if (!context.LegacyVisibility && block.Visibility == Visibility.Public)
+		{
+			ReportDeclarationDiagnostic(block,
+				"Global 'extern' declarations cannot be marked public. Wrap foreign symbols in a safe, standard public Cvolo routine to expose them across package boundaries.",
+				DiagnosticIds.PublicExtern);
+		}
+
+		foreach (var fn in block.Functions)
+			DeclareExternBlockFunction(block, fn, convention, libraryName, winPath, linuxPath, macPath);
+	}
+
+	private void DeclareExternBlockFunction(ExternBlockSyntax block, ExternBlockFunctionSyntax fn, string convention, string? libraryName, string? winPath, string? linuxPath, string? macPath)
+	{
+		context.SymbolUnits[fn.Name] = context.CurrentUnit!;
+		var returnType = context.ResolveType(fn.ReturnType);
+		if (returnType is null)
+		{
+			ReportDeclarationDiagnostic(fn, $"Unknown return type '{fn.ReturnType}'");
+			return;
+		}
+
+		var parameters = new List<ParameterSymbol>();
+		foreach (var param in fn.Parameters)
+		{
+			var paramType = context.ResolveType(param.Type);
+			if (paramType is null)
+			{
+				ReportDeclarationDiagnostic(param, $"Unknown parameter type '{param.Type}'");
+				continue;
+			}
+
+			parameters.Add(new ParameterSymbol(param.Name, paramType));
+		}
+
+		var existing = context.Globals.Lookup(fn.Name);
+		if (existing is not null)
+		{
+			// If the existing symbol is also an extern, we can safely ignore the duplicate declaration
+			if (existing is FunctionSymbol existingFunc && existingFunc.IsExtern)
+				return;
+
+			ReportDeclarationDiagnostic(fn, $"Duplicate definition of '{fn.Name}'");
+			return;
+		}
+
+		string? importName = null;
+		var sawImportName = false;
+		foreach (var attr in fn.Attributes)
+		{
+			var key = NormalizeAttributeName(attr.Name);
+			switch (key)
+			{
+				case "ImportName":
+					if (sawImportName)
+					{
+						ReportDeclarationDiagnostic(attr, "Duplicate attribute '[ImportName]'.");
+						continue;
+					}
+
+					sawImportName = true;
+					importName = ExtractImportNameAttribute(attr);
+					break;
+				case "LibraryImport":
+					ReportDeclarationDiagnostic(attr,
+						"Attribute '[LibraryImport]' attaches a library to an extern block, not to an individual function inside it. Move it to the enclosing extern block.",
+						DiagnosticIds.LibraryImportInsideBlock);
+					break;
+				case null:
+					ReportDeclarationWarning(attr, $"Unknown attribute '{attr.Name}'; it will be ignored.", DiagnosticIds.UnknownAttribute);
+					break;
+				default:
+					ReportDeclarationDiagnostic(attr, $"Attribute '[{key}]' cannot be applied to extern block function declarations.");
+					break;
+			}
+		}
+
+		// Extern block functions are never name-mangled; their symbol name IS the native name
+		// unless [ImportName] overrides it (ImportName ?? Name).
+		var newSymbol = new FunctionSymbol(fn.Name, returnType, parameters, isExtern: true, isVariadic: fn.IsVariadic)
+		{
+			Visibility = block.Visibility,
+			DeclaringUnit = context.CurrentUnit,
+			ImportName = importName,
+			LibraryName = libraryName,
+			WinPath = winPath,
+			LinuxPath = linuxPath,
+			MacPath = macPath,
+			CallingConvention = convention
+		};
+		context.Globals.Declare(newSymbol);
+
+		// Keep candidates registered for lookup under the unmangled name
+		if (!context.OverloadedFunctions.TryGetValue(fn.Name, out var candidates))
+		{
+			candidates = [];
+			context.OverloadedFunctions[fn.Name] = candidates;
+		}
+
+		candidates.Add(newSymbol);
+	}
+
+	private (string? LibraryName, string? WinPath, string? LinuxPath, string? MacPath) ExtractLibraryImportAttribute(
+		AttributeSyntax attr, string? libraryName, string? winPath, string? linuxPath, string? macPath)
+	{
+		for (var i = 0; i < attr.Arguments.Count; i++)
+		{
+			var argName = attr.ArgumentNames.Count > i ? attr.ArgumentNames[i] : null;
+			var expr = attr.Arguments[i];
+			if (expr is not StringLiteralExpressionSyntax lit)
+			{
+				ReportDeclarationDiagnostic(attr, "Attribute '[LibraryImport]' arguments must be string literals (the library name, then optional 'win'/'linux'/'mac' native paths).");
+				continue;
+			}
+
+			if (argName is null)
+			{
+				if (libraryName is not null)
+				{
+					ReportDeclarationDiagnostic(attr, "Attribute '[LibraryImport]' accepts at most one positional argument: the library name.");
+					continue;
+				}
+
+				libraryName = lit.Value;
+			}
+			else
+			{
+				switch (argName)
+				{
+					case "win":
+						winPath = lit.Value;
+						break;
+					case "linux":
+						linuxPath = lit.Value;
+						break;
+					case "mac":
+						macPath = lit.Value;
+						break;
+					default:
+						ReportDeclarationDiagnostic(attr, $"Unknown [LibraryImport] named argument '{argName}'. Supported names are 'win', 'linux' and 'mac'.");
+						break;
+				}
+			}
+		}
+
+		return (libraryName, winPath, linuxPath, macPath);
+	}
+
+	private string? ExtractImportNameAttribute(AttributeSyntax attr)
+	{
+		if (attr.Arguments.Count != 1 || attr.Arguments[0] is not StringLiteralExpressionSyntax literal)
+		{
+			ReportDeclarationDiagnostic(attr, "Attribute '[ImportName]' requires exactly one string literal argument naming the native symbol.");
+			return null;
+		}
+
+		return literal.Value;
 	}
 
 	private void DeclareExtension(ExtensionDeclarationSyntax extDecl)

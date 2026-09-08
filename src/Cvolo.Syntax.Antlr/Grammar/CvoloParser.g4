@@ -21,6 +21,7 @@ qualifiedName
 declaration
 	: functionDeclaration
 	| externDeclaration
+	| externBlockDeclaration
 	| structDeclaration
 	| unionDeclaration
 	| enumDeclaration
@@ -50,7 +51,16 @@ attributeList
 	;
 
 attribute
-	: qualifiedName (LPAREN argumentList? RPAREN)?
+	: qualifiedName (LPAREN attributeArgumentList? RPAREN)?
+	;
+
+attributeArgumentList
+	: attributeArgument (COMMA attributeArgument)*
+	;
+
+attributeArgument
+	: Identifier COLON expression
+	| expression
 	;
 
 functionModifier
@@ -64,6 +74,18 @@ functionDeclaration
 
 externDeclaration
 	: visibilityModifier? EXTERN returnType Identifier LPAREN externParameterList? RPAREN SEMI
+	;
+
+externBlockDeclaration
+	: attributeList* visibilityModifier? EXTERN callingConvention? LBRACE externBlockFunction* RBRACE SEMI?
+	;
+
+callingConvention
+	: StringLiteral
+	;
+
+externBlockFunction
+	: attributeList* returnType Identifier LPAREN externParameterList? RPAREN SEMI
 	;
 
 structDeclaration

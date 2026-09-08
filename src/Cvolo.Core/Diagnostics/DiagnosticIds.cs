@@ -131,4 +131,21 @@ public static class DiagnosticIds
 
 	/// <summary>A type alias is used as a generic parameter constraint in a `where` clause.</summary>
 	public const string AliasAsConstraint = "CVL1202";
+
+	// ── FFI / C-ABI interop (CVLFxxxx) ──
+
+	/// <summary>Unknown calling convention string. Expected "C" or "system".</summary>
+	public const string UnknownCallingConvention = "CVL1700";
+
+	/// <summary>[LibraryImport] applied to a non-extern-block declaration.</summary>
+	public const string LibraryImportOnNonBlock = "CVL1701";
+
+	/// <summary>[ImportName] applied outside an extern block.</summary>
+	public const string ImportNameOutsideBlock = "CVL1702";
+
+	/// <summary>[LibraryImport] used inside an extern block (place it on the block itself).</summary>
+	public const string LibraryImportInsideBlock = "CVL1703";
+
+	/// <summary>Native library could not be resolved by the linker.</summary>
+	public const string NativeLibraryUnresolved = "CVL1704";
 }

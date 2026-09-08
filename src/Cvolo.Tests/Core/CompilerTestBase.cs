@@ -40,6 +40,16 @@ public abstract class CompilerTestBase
 
 	protected (int ExitCode, string StdOut, string StdErr) RunCompiler(string sourcePath, params string[] extraArgs)
 	{
+		return RunCompilerCore(sourcePath, useCheck: false, extraArgs);
+	}
+
+	protected (int ExitCode, string StdOut, string StdErr) RunCompilerCheck(string sourcePath, params string[] extraArgs)
+	{
+		return RunCompilerCore(sourcePath, useCheck: true, extraArgs);
+	}
+
+	private (int ExitCode, string StdOut, string StdErr) RunCompilerCore(string sourcePath, bool useCheck, string[] extraArgs)
+	{
 		var assemblyDir = Path.GetDirectoryName(typeof(CompilerTestBase).Assembly.Location)!;
 		var compilerExe = Path.Combine(assemblyDir, OperatingSystem.IsWindows() ? "Cvolo.exe" : "Cvolo");
 		var fullSourcePath = Path.Combine(assemblyDir, TestCasesDirectory, sourcePath);
@@ -53,10 +63,11 @@ public abstract class CompilerTestBase
 			fullSourcePath = IsolateSingleFileCase(assemblyDir, sourcePath);
 		}
 
+		var command = useCheck ? "check" : "build";
 		var psi = new ProcessStartInfo
 		{
 			FileName = compilerExe,
-			Arguments = $"build \"{fullSourcePath}\" {string.Join(" ", extraArgs)}",
+			Arguments = $"{command} \"{fullSourcePath}\" {string.Join(" ", extraArgs)}",
 			RedirectStandardOutput = true,
 			RedirectStandardError = true,
 			UseShellExecute = false,

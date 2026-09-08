@@ -1,0 +1,28 @@
+using System;
+
+namespace App;
+
+struct WindowParameters {
+    int width;
+}
+
+struct Window {
+    int handle;
+}
+
+public extension Window {
+    public Window(ref WindowParameters args) {
+        handle = args.width * 2;
+    }
+
+    int GetHandle() {
+        return handle;
+    }
+}
+
+int main() {
+    var parameters = WindowParameters { width: 21 };
+    var window = Window(ref parameters);
+    Console.WriteLine($"window={window.GetHandle()}");
+    return 0;
+}
