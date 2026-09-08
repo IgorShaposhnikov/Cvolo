@@ -148,4 +148,39 @@ public static class DiagnosticIds
 
 	/// <summary>Native library could not be resolved by the linker.</summary>
 	public const string NativeLibraryUnresolved = "CVL1704";
+
+	// ── Literals / Lexer (CVL19xx) ──
+
+	/// <summary>A literal `double` is assigned to a `float` target; a `f` suffix is required.</summary>
+	public const string DoubleLiteralToFloatAssignment = "CVL1900";
+
+	/// <summary>Unknown floating-point suffix (e.g. `1.0m`).</summary>
+	public const string UnknownFloatSuffix = "CVL1901";
+
+	/// <summary>The integer literal does not fit in the type implied by its suffix (or the target type).</summary>
+	public const string IntegerLiteralTooLarge = "CVL1902";
+
+	/// <summary>Invalid integer suffix (e.g. `42x`).</summary>
+	public const string InvalidIntegerSuffix = "CVL1903";
+
+	/// <summary>A digit separator `_` appears at the start or end of a numeric literal.</summary>
+	public const string InvalidDigitSeparator = "CVL1904";
+
+	/// <summary>A character literal has no character between the quotes (`''`).</summary>
+	public const string EmptyCharacterLiteral = "CVL1905";
+
+	/// <summary>Unknown escape sequence in a character/string literal, e.g. `'\q'`.</summary>
+	public const string UnknownEscapeSequence = "CVL1906";
+
+	/// <summary>A character literal contains more than one character.</summary>
+	public const string MultipleCharacterLiteral = "CVL1907";
+
+	/// <summary>A hex escape `\xNN` is outside the 0-255 range.</summary>
+	public const string HexEscapeOutOfRange = "CVL1908";
+
+	/// <summary>The `null` literal is used outside an unsafe context.</summary>
+	public const string NullOutsideUnsafeContext = "CVL1909";
+
+	/// <summary>Cannot assign `null` to a safe reference (`ref`/`refvar`).</summary>
+	public const string NullToSafeReference = "CVL1910";
 }

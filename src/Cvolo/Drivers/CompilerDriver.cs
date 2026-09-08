@@ -67,7 +67,8 @@ internal sealed class CompilerDriver : ICompilerDriver
 			{
 				foreach (var diag in parser.Diagnostics.Diagnostics)
 				{
-					var lines = diag.Context.FormatDiagnostic("Parse Error", diag.Message, diag.Span);
+					var label = diag.Id is null ? "Parse Error" : $"Compile Error {diag.Id}";
+					var lines = diag.Context.FormatDiagnostic(label, diag.Message, diag.Span);
 					foreach (var line in lines)
 					{
 						Console.Error.WriteLine(line);

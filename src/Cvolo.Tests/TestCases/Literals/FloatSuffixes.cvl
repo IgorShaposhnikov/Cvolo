@@ -1,0 +1,18 @@
+using System;
+
+int main()
+{
+    val float f = 1.5f;
+    val float g = 2.0F;
+    val double h = 3.0d;
+    val double i = 3.14e2;
+    val double j = 6.28e-3;
+    val double y = 1.0f;
+    Console.WriteLine(f);
+    Console.WriteLine(g);
+    Console.WriteLine(h);
+    Console.WriteLine(i);
+    Console.WriteLine(j);
+    Console.WriteLine(y);
+    return 0;
+}

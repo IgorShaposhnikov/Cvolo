@@ -1,0 +1,14 @@
+using System;
+
+int main()
+{
+    val uint u = 0xFF00U;
+    val int b = 0b1010;
+    val int mask = 0b1111_1111_1111_1111;
+    val long big = 0xDEAD_BEEF;
+    Console.WriteLine(u);
+    Console.WriteLine(b);
+    Console.WriteLine(mask);
+    Console.WriteLine(big);
+    return 0;
+}

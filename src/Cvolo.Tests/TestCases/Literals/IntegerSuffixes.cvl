@@ -1,0 +1,18 @@
+using System;
+
+int main()
+{
+    val uint u = 4000000000U;
+    val long l = 9000000000L;
+    val ulong ul = 18000000000UL;
+    val ulong lu = 18000000001LU;
+    val int plain = 42;
+    val long bigPlain = 9999999999;
+    Console.WriteLine(u);
+    Console.WriteLine(l);
+    Console.WriteLine(ul);
+    Console.WriteLine(lu);
+    Console.WriteLine(plain);
+    Console.WriteLine(bigPlain);
+    return 0;
+}

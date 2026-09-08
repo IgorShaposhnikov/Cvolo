@@ -916,12 +916,20 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		{
 			case IntegerLiteralExpressionSyntax intLit:
 				{
-					// Out-of-int-range literals are 64-bit; in-range literals stay int.
-					var litTy = intLit.Value is > int.MaxValue or < int.MinValue ? TypeSymbol.Long : TypeSymbol.Int;
-					return LLVMValueRef.CreateConstInt(GetLLVMType(litTy), unchecked((ulong)intLit.Value));
+					// Suffixed literals fix their width; others are int unless out of int range.
+					var litTy = intLit.LiteralType switch
+					{
+						"uint" => TypeSymbol.UInt,
+						"long" => TypeSymbol.Long,
+						"ulong" => TypeSymbol.ULong,
+						_ => intLit.Value <= (ulong)int.MaxValue ? TypeSymbol.Int : TypeSymbol.Long,
+					};
+					return LLVMValueRef.CreateConstInt(GetLLVMType(litTy), intLit.Value);
 				}
 			case DoubleLiteralExpressionSyntax dblLit:
-				return LLVMValueRef.CreateConstReal(LLVMTypeRef.Double, dblLit.Value);
+				return dblLit.IsFloat
+					? LLVMValueRef.CreateConstReal(LLVMTypeRef.Float, dblLit.Value)
+					: LLVMValueRef.CreateConstReal(LLVMTypeRef.Double, dblLit.Value);
 			case BooleanLiteralExpressionSyntax boolLit:
 				return LLVMValueRef.CreateConstInt(LLVMTypeRef.Int1, boolLit.Value ? 1UL : 0UL);
 			case StringLiteralExpressionSyntax strLit:
@@ -1681,6 +1689,19 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		};
 	}
 
+	private LLVMValueRef CoerceFloatWidth(LLVMValueRef value, TypeSymbol fromType, TypeSymbol toType)
+	{
+		if (!TypeSymbol.IsFloatingPointType(fromType) || !TypeSymbol.IsFloatingPointType(toType))
+			return value;
+
+		if (fromType.Equals(toType))
+			return value;
+
+		return toType.Equals(TypeSymbol.Double)
+			? _builder.BuildFPExt(value, LLVMTypeRef.Double, "store_fpext")
+			: _builder.BuildFPTrunc(value, LLVMTypeRef.Float, "store_fptrunc");
+	}
+
 	private LLVMValueRef CoerceIntegerWidth(LLVMValueRef value, TypeSymbol fromType, TypeSymbol toType)
 	{
 		if (!TypeSymbol.IsIntegerType(fromType) || !TypeSymbol.IsIntegerType(toType))
@@ -1827,6 +1848,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 					{
 						var actualPtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), ptr, "target_ptr");
 						var coerced = CoerceIntegerWidth(right, rTy, type);
+						coerced = CoerceFloatWidth(coerced, rTy, type);
 						_builder.BuildStore(coerced, actualPtr);
 					}
 				}
@@ -1851,6 +1873,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 							? EmitRefToValue(right, GetExprType(bin.Right))
 							: right;
 						coerced = CoerceIntegerWidth(coerced, rTy, type);
+						coerced = CoerceFloatWidth(coerced, rTy, type);
 						_builder.BuildStore(coerced, ptr);
 					}
 				}
@@ -1868,6 +1891,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 						? EmitRefToValue(right, GetExprType(bin.Right))
 						: right;
 					coerced = CoerceIntegerWidth(coerced, rTy, globalType);
+					coerced = CoerceFloatWidth(coerced, rTy, globalType);
 					_builder.BuildStore(coerced, globalPtr);
 				}
 				return right;
@@ -1888,7 +1912,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 						else
 						{
 							var coerced = CoerceIntegerWidth(right, rTy, field.Type);
-							var store = _builder.BuildStore(coerced, fieldPtr);
+							var store = _builder.BuildStore(CoerceFloatWidth(coerced, rTy, field.Type), fieldPtr);
 							ApplyTbaa(tbaa, store);
 						}
 
@@ -1906,7 +1930,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 						else
 						{
 							var coerced = CoerceIntegerWidth(right, rTy, field.Type);
-							_builder.BuildStore(coerced, fieldPtr);
+							_builder.BuildStore(CoerceFloatWidth(coerced, rTy, field.Type), fieldPtr);
 						}
 
 						return right;
@@ -1946,6 +1970,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 					? EmitRefToValue(right, GetExprType(bin.Right))
 					: right;
 				coerced = CoerceIntegerWidth(coerced, rTy, fieldType);
+				coerced = CoerceFloatWidth(coerced, rTy, fieldType);
 				var fieldStore = _builder.BuildStore(coerced, fieldPtr);
 				ApplyTbaa(tbaa, fieldStore);
 			}
@@ -1970,6 +1995,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 					? EmitRefToValue(right, GetExprType(bin.Right))
 					: right;
 				coerced = CoerceIntegerWidth(coerced, rTy, elementType);
+				coerced = CoerceFloatWidth(coerced, rTy, elementType);
 				var elemStore = _builder.BuildStore(coerced, elementPtr);
 				ApplyTbaa(tbaa, elemStore);
 			}
@@ -1998,6 +2024,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 					? EmitRefToValue(right, GetExprType(bin.Right))
 					: right;
 				coerced = CoerceIntegerWidth(coerced, rTy, targetType);
+				coerced = CoerceFloatWidth(coerced, rTy, targetType);
 				_builder.BuildStore(coerced, targetPtr);
 			}
 
@@ -2028,6 +2055,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 					? EmitRefToValue(right, GetExprType(bin.Right))
 					: right;
 				coerced = CoerceIntegerWidth(coerced, rTy, targetType);
+				coerced = CoerceFloatWidth(coerced, rTy, targetType);
 				_builder.BuildStore(coerced, targetPtr);
 			}
 
@@ -2367,6 +2395,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 						? EmitRefToValue(value, GetExprType(varDecl.Initializer!))
 						: value;
 					coerced = CoerceIntegerWidth(coerced, GetExprType(varDecl.Initializer!) ?? typeSymbol, typeSymbol);
+					coerced = CoerceFloatWidth(coerced, GetExprType(varDecl.Initializer!) ?? typeSymbol, typeSymbol);
 					_builder.BuildStore(coerced, alloca);
 				}
 			}
@@ -2661,8 +2690,14 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 		return expr switch
 		{
-			IntegerLiteralExpressionSyntax intLit => intLit.Value is > int.MaxValue or < int.MinValue ? TypeSymbol.Long : TypeSymbol.Int,
-			DoubleLiteralExpressionSyntax => TypeSymbol.Double,
+			IntegerLiteralExpressionSyntax intLit => intLit.LiteralType switch
+			{
+				"uint" => TypeSymbol.UInt,
+				"long" => TypeSymbol.Long,
+				"ulong" => TypeSymbol.ULong,
+				_ => intLit.Value <= (ulong)int.MaxValue ? TypeSymbol.Int : TypeSymbol.Long,
+			},
+			DoubleLiteralExpressionSyntax dblLit => dblLit.IsFloat ? TypeSymbol.Float : TypeSymbol.Double,
 			BooleanLiteralExpressionSyntax => TypeSymbol.Bool,
 			StringLiteralExpressionSyntax => TypeSymbol.String,
 			CharacterLiteralExpressionSyntax => TypeSymbol.Char,
@@ -3237,7 +3272,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				switch (unary.Operand)
 				{
 					case IntegerLiteralExpressionSyntax negInt:
-						return LLVMValueRef.CreateConstInt(llvmType, unchecked((ulong)(long)-negInt.Value));
+						return LLVMValueRef.CreateConstInt(llvmType, 0UL - negInt.Value);
 					case DoubleLiteralExpressionSyntax negDbl:
 						return LLVMValueRef.CreateConstReal(llvmType, -negDbl.Value);
 					default:

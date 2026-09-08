@@ -584,6 +584,8 @@ public sealed class ValidationPass(BindingContext context)
 
 			if (resolvedType != null && initializerType != null && !resolvedType.Equals(initializerType))
 			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+
 				var isValidNull = initializerType.Equals(TypeSymbol.Null) &&
 								  (resolvedType is RawPointerTypeSymbol ||
 								  (resolvedType is UnionTypeSymbol union && union.IsOption));
@@ -593,17 +595,56 @@ public sealed class ValidationPass(BindingContext context)
 				var isIntegerWidthConversion = TypeSymbol.IsNumericIntegerType(resolvedType)
 					&& TypeSymbol.IsNumericIntegerType(initializerType);
 
-				if (!isValidNull && !isIntegerWidthConversion)
+				// Implicit float -> double widening is allowed; the reverse needs an
+				// explicit cast (a bare `double` literal to `float` is a dedicated error).
+				var isFloatWidening = TypeSymbol.IsFloatingPointType(resolvedType)
+					&& TypeSymbol.IsFloatingPointType(initializerType)
+					&& resolvedType.Equals(TypeSymbol.Double);
+
+				if (initializerType.Equals(TypeSymbol.Null))
 				{
-					var currentFileContext = context.FileContexts[context.CurrentUnit!];
-					if (initializerType.Equals(TypeSymbol.Null))
+					if (resolvedType is PointerTypeSymbol)
 					{
-						context.Diagnostics.Report(currentFileContext, varDecl.Span, "The 'null' literal requires a pointer type (Option or raw pointer).");
+						context.Diagnostics.Report(currentFileContext, varDecl.Span, "Cannot assign `null` to a safe reference (`ref` / `refvar`).", DiagnosticIds.NullToSafeReference);
+					}
+					else if (resolvedType is RawPointerTypeSymbol && _unsafeDepth == 0)
+					{
+						context.Diagnostics.Report(currentFileContext, varDecl.Span, "`null` can only be used inside `unsafe` contexts.", DiagnosticIds.NullOutsideUnsafeContext);
+					}
+					else if (!isValidNull)
+					{
+						context.Diagnostics.Report(currentFileContext, varDecl.Span, "The 'null' literal requires a pointer type (Option or raw pointer).", DiagnosticIds.NullOutsideUnsafeContext);
+					}
+				}
+				else if (!isIntegerWidthConversion && !isFloatWidening)
+				{
+					if (resolvedType.Equals(TypeSymbol.Float) && varDecl.Initializer is DoubleLiteralExpressionSyntax)
+					{
+						context.Diagnostics.Report(currentFileContext, varDecl.Span, "Cannot implicitly convert `double` literal to `float`. Use `f` suffix.", DiagnosticIds.DoubleLiteralToFloatAssignment);
 					}
 					else
 					{
 						context.Diagnostics.Report(currentFileContext, varDecl.Span, $"Cannot initialize variable of type '{resolvedType.Name}' with value of type '{initializerType.Name}'");
 					}
+				}
+			}
+
+			// CVL1902: an integer literal must fit the declared numeric integer type.
+			if (varDecl.Initializer is IntegerLiteralExpressionSyntax intLiteral
+				&& resolvedType is not null
+				&& TypeSymbol.IsNumericIntegerType(resolvedType))
+			{
+				var width = TypeSymbol.IntegerBitWidth(resolvedType);
+				var maxValue = TypeSymbol.IsSignedIntegerType(resolvedType)
+					? (1UL << (width - 1)) - 1
+					: width == 64 ? ulong.MaxValue : (1UL << width) - 1;
+
+				if (intLiteral.Value > maxValue)
+				{
+					var currentFileContext = context.FileContexts[context.CurrentUnit!];
+					var literalText = currentFileContext.Source.Substring(intLiteral.Span.Start, intLiteral.Span.Length);
+					context.Diagnostics.Report(currentFileContext, varDecl.Span,
+						$"Integer literal `{literalText}` is too large for type `{resolvedType.Name}`.", DiagnosticIds.IntegerLiteralTooLarge);
 				}
 			}
 		}
@@ -1402,8 +1443,14 @@ public sealed class ValidationPass(BindingContext context)
 		return expr switch
 		{
 			IdentifierExpressionSyntax id => (scope.Lookup(id.Name) as VariableSymbol)?.Type,
-			IntegerLiteralExpressionSyntax intLit => intLit.Value is > int.MaxValue or < int.MinValue ? TypeSymbol.Long : TypeSymbol.Int,
-			DoubleLiteralExpressionSyntax => TypeSymbol.Double,
+			IntegerLiteralExpressionSyntax intLit => intLit.LiteralType switch
+			{
+				"uint" => TypeSymbol.UInt,
+				"long" => TypeSymbol.Long,
+				"ulong" => TypeSymbol.ULong,
+				_ => intLit.Value <= (ulong)int.MaxValue ? TypeSymbol.Int : TypeSymbol.Long,
+			},
+			DoubleLiteralExpressionSyntax dblLit => dblLit.IsFloat ? TypeSymbol.Float : TypeSymbol.Double,
 			BooleanLiteralExpressionSyntax => TypeSymbol.Bool,
 			NullLiteralExpressionSyntax => TypeSymbol.Null,
 			StringLiteralExpressionSyntax => TypeSymbol.String,
@@ -3301,7 +3348,7 @@ public sealed class ValidationPass(BindingContext context)
 			return;
 		}
 
-// The 'is' pattern is defined for Option-shaped unions. NPO options (Option<ref T>)
+		// The 'is' pattern is defined for Option-shaped unions. NPO options (Option<ref T>)
 		// carry the stored reference flat, so the match test is a single null-check and the
 		// bound value is the payload pointer; tagged options (Option<T>) compare the tag and
 		// bind the payload value (or a reference to it when the operand is a borrow).

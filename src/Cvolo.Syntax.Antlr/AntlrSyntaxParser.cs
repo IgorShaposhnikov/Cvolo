@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 using Antlr4.Runtime;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
@@ -254,6 +255,12 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			_diagnostics.Report(_compilationContext, SpanOf(context), message);
 	}
 
+	private void ReportParseError(Antlr4.Runtime.ParserRuleContext context, string message, string diagnosticId)
+	{
+		if (_compilationContext is not null)
+			_diagnostics.Report(_compilationContext, SpanOf(context), message, diagnosticId);
+	}
+
 	private List<AttributeSyntax> BuildAttributeList(IEnumerable<CvoloParser.AttributeListContext> contexts)
 	{
 		var attributes = new List<AttributeSyntax>();
@@ -450,28 +457,72 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			case CvoloParser.CharLiteralExpressionContext charCtx:
 				{
 					var text = charCtx.CharLiteral().GetText();
-					var val = text[1..^1];
-					if (val.StartsWith("\\"))
-					{
-						val = val switch
-						{
-							"\\n" => "\n",
-							"\\t" => "\t",
-							"\\r" => "\r",
-							"\\'" => "'",
-							"\\\\" => "\\",
-							"\\0" => "\0",
-							_ => val[1..]
-						};
-					}
+					var (value, outOfRangeHex) = DecodeCharLiteral(text[1..^1]);
+					if (outOfRangeHex is not null)
+						ReportParseError(charCtx, $"Hexadecimal escape sequence `\\x{outOfRangeHex}` is out of range (0-255).", DiagnosticIds.HexEscapeOutOfRange);
 
-					return new CharacterLiteralExpressionSyntax(SpanOf(charCtx), val[0]);
+					return new CharacterLiteralExpressionSyntax(SpanOf(charCtx), value);
+				}
+
+			case CvoloParser.BadEmptyCharLiteralExpressionContext badEmptyCtx:
+				{
+					ReportParseError(badEmptyCtx, "Empty character literal.", DiagnosticIds.EmptyCharacterLiteral);
+					return new CharacterLiteralExpressionSyntax(SpanOf(badEmptyCtx), '\0');
+				}
+
+			case CvoloParser.BadCharLiteralExpressionContext badCharCtx:
+				{
+					var text = badCharCtx.BadCharLiteral().GetText();
+					var content = text[1..^1];
+					if (content[0] == '\\')
+						ReportParseError(badCharCtx, $"Unknown escape sequence `{content}`.", DiagnosticIds.UnknownEscapeSequence);
+					else
+						ReportParseError(badCharCtx, "Character literal must be a single character (or escape sequence).", DiagnosticIds.MultipleCharacterLiteral);
+
+					return new CharacterLiteralExpressionSyntax(SpanOf(badCharCtx), '\0');
 				}
 
 			case CvoloParser.IntegerLiteralExpressionContext intCtx:
-				return new IntegerLiteralExpressionSyntax(SpanOf(intCtx), long.Parse(intCtx.IntegerLiteral().GetText(), CultureInfo.InvariantCulture));
+				{
+					var text = intCtx.IntegerLiteral().GetText();
+					var result = DecodeIntegerLiteral(text);
+					if (result.OverflowType is not null)
+						ReportParseError(intCtx, $"Integer literal `{text}` is too large for type `{result.OverflowType}`.", DiagnosticIds.IntegerLiteralTooLarge);
+
+					return new IntegerLiteralExpressionSyntax(SpanOf(intCtx), result.Value, result.LiteralType);
+				}
+
+			case CvoloParser.BadIntegerSuffixExpressionContext badSuffixCtx:
+				{
+					var suffix = GetAlphaTail(badSuffixCtx.BadIntegerSuffix().GetText());
+					ReportParseError(badSuffixCtx, $"Invalid integer suffix `{suffix}`. Expected `U`, `L`, or `UL`.", DiagnosticIds.InvalidIntegerSuffix);
+					return new IntegerLiteralExpressionSyntax(SpanOf(badSuffixCtx), 0);
+				}
+
+			case CvoloParser.BadLeadingUnderscoreExpressionContext badLeadingCtx:
+				{
+					ReportParseError(badLeadingCtx, "Digit separators cannot appear at the start or end of a literal.", DiagnosticIds.InvalidDigitSeparator);
+					return new IntegerLiteralExpressionSyntax(SpanOf(badLeadingCtx), 0);
+				}
+
+			case CvoloParser.BadIntegerSeparatorExpressionContext badSeparatorCtx:
+				{
+					ReportParseError(badSeparatorCtx, "Digit separators cannot appear at the start or end of a literal.", DiagnosticIds.InvalidDigitSeparator);
+					return new IntegerLiteralExpressionSyntax(SpanOf(badSeparatorCtx), 0);
+				}
+
 			case CvoloParser.DoubleLiteralExpressionContext dblCtx:
-				return new DoubleLiteralExpressionSyntax(SpanOf(dblCtx), double.Parse(dblCtx.DoubleLiteral().GetText(), CultureInfo.InvariantCulture));
+				{
+					var (value, isFloat) = DecodeDoubleLiteral(dblCtx.DoubleLiteral().GetText());
+					return new DoubleLiteralExpressionSyntax(SpanOf(dblCtx), value, isFloat);
+				}
+
+			case CvoloParser.BadDoubleLiteralExpressionContext badDblCtx:
+				{
+					var suffix = badDblCtx.BadDoubleLiteral().GetText()[^1];
+					ReportParseError(badDblCtx, $"Unknown floating-point suffix `{suffix}`. Expected `f`, `F`, `d`, or `D`.", DiagnosticIds.UnknownFloatSuffix);
+					return new DoubleLiteralExpressionSyntax(SpanOf(badDblCtx), 0);
+				}
 			case CvoloParser.BooleanLiteralExpressionContext boolCtx:
 				return new BooleanLiteralExpressionSyntax(SpanOf(boolCtx), boolCtx.TRUE() is not null);
 			case CvoloParser.NullLiteralExpressionContext nullCtx:
@@ -658,14 +709,168 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 
 		string DecodeString(string literal)
 		{
-			return literal[1..^1]
-				.Replace("\\n", "\n")
-				.Replace("\\t", "\t")
-				.Replace("\\r", "\r")
-				.Replace("\\\"", "\"")
-				.Replace("\\\\", "\\")
-				.Replace("\\0", "\0");
+			var inner = literal[1..^1];
+			var sb = new StringBuilder(inner.Length);
+			for (var i = 0; i < inner.Length; i++)
+			{
+				var c = inner[i];
+				if (c != '\\' || i + 1 >= inner.Length)
+				{
+					sb.Append(c);
+					continue;
+				}
+
+				var next = inner[i + 1];
+				switch (next)
+				{
+					case 'n': sb.Append('\n'); i++; break;
+					case 't': sb.Append('\t'); i++; break;
+					case 'r': sb.Append('\r'); i++; break;
+					case '"': sb.Append('"'); i++; break;
+					case '\\': sb.Append('\\'); i++; break;
+					case '0': sb.Append('\0'); i++; break;
+					case 'x' or 'X':
+						{
+							var start = i + 2;
+							var hexEnd = start;
+							while (hexEnd < inner.Length && Uri.IsHexDigit(inner[hexEnd]))
+								hexEnd++;
+							if (hexEnd > start)
+							{
+								try
+								{
+									sb.Append((char)Convert.ToInt32(inner[start..hexEnd], 16));
+								}
+								catch (OverflowException)
+								{
+									sb.Append('?');
+								}
+								i = hexEnd - 1;
+							}
+							else
+							{
+								sb.Append('\\');
+							}
+							break;
+						}
+					default: sb.Append('\\'); break;
+				}
+			}
+
+			return sb.ToString();
 		}
+	}
+
+	private static (char Value, string? OutOfRangeHex) DecodeCharLiteral(string content)
+	{
+		if (content.Length == 1)
+			return (content[0], null);
+
+		if (content.Length >= 2 && content[0] == '\\')
+		{
+			return content[1] switch
+			{
+				'n' => ('\n', null),
+				't' => ('\t', null),
+				'r' => ('\r', null),
+				'\'' => ('\'', null),
+				'"' => ('"', null),
+				'\\' => ('\\', null),
+				'0' => ('\0', null),
+				'x' or 'X' => DecodeHexChar(content),
+				_ => ('\0', null),
+			};
+		}
+
+		return ('\0', null);
+	}
+
+	private static (char Value, string? OutOfRangeHex) DecodeHexChar(string content)
+	{
+		var hexPart = content[2..];
+		if (int.TryParse(hexPart, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var hexValue))
+			return hexValue <= 255 ? ((char)hexValue, null) : ('\0', hexPart);
+
+		return ('\0', hexPart);
+	}
+
+	private static (ulong Value, string? LiteralType, string? OverflowType) DecodeIntegerLiteral(string text)
+	{
+		var digits = text.Replace("_", "");
+		var numberBase = 10;
+		if (digits.Length > 2 && digits[0] == '0' && (digits[1] == 'x' || digits[1] == 'X'))
+		{
+			numberBase = 16;
+			digits = digits[2..];
+		}
+		else if (digits.Length > 2 && digits[0] == '0' && (digits[1] == 'b' || digits[1] == 'B'))
+		{
+			numberBase = 2;
+			digits = digits[2..];
+		}
+
+		string? suffix = null;
+		var last = digits[^1];
+		if (last is 'u' or 'U' or 'l' or 'L')
+		{
+			var prev = digits.Length > 1 ? digits[^2] : '\0';
+			if (prev is 'u' or 'U' or 'l' or 'L')
+			{
+				suffix = digits[^2..];
+				digits = digits[..^2];
+			}
+			else
+			{
+				suffix = digits[^1..];
+				digits = digits[..^1];
+			}
+		}
+
+		ulong value;
+		try
+		{
+			value = numberBase == 10 ? ulong.Parse(digits, CultureInfo.InvariantCulture) : Convert.ToUInt64(digits, numberBase);
+		}
+		catch (Exception ex) when (ex is OverflowException or FormatException)
+		{
+			return (0, null, "ulong");
+		}
+
+		return suffix switch
+		{
+			"u" or "U" => value <= uint.MaxValue ? (value, "uint", null) : (value, "uint", "uint"),
+			"l" or "L" => value <= long.MaxValue ? (value, "long", null) : (value, "long", "long"),
+			"ul" or "uL" or "Ul" or "UL" or "lu" or "lU" or "Lu" or "LU" => (value, "ulong", null),
+			_ => value <= int.MaxValue ? (value, null, null)
+				: value <= long.MaxValue ? (value, "long", null)
+				: (value, "long", "ulong"),
+		};
+	}
+
+	private static (double Value, bool IsFloat) DecodeDoubleLiteral(string text)
+	{
+		var digits = text.Replace("_", "");
+		var isFloat = false;
+		var last = digits[^1];
+		if (last is 'f' or 'F')
+		{
+			isFloat = true;
+			digits = digits[..^1];
+		}
+		else if (last is 'd' or 'D')
+		{
+			digits = digits[..^1];
+		}
+
+		return (double.Parse(digits, CultureInfo.InvariantCulture), isFloat);
+	}
+
+	private static string GetAlphaTail(string text)
+	{
+		var index = text.Length - 1;
+		while (index >= 0 && char.IsLetter(text[index]))
+			index--;
+		return text[(index + 1)..];
 	}
 
 	private VariableDeclarationSyntax BuildVariableDeclaration(CvoloParser.VariableDeclarationContext context)
@@ -698,13 +903,19 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 
 			if (typeCtx is CvoloParser.ArrayTypeContext arrayCtx)
 			{
-				var sizeText = arrayCtx.expression().GetText();
-				if (!int.TryParse(sizeText, NumberStyles.None, CultureInfo.InvariantCulture, out var countVal))
+				var sizeExpr = BuildExpression(arrayCtx.expression());
+
+				long countVal;
+				if (sizeExpr is IntegerLiteralExpressionSyntax countLit)
 				{
-					throw new InvalidOperationException($"Array replication size must be a literal integer: '{sizeText}'.");
+					countVal = (long)countLit.Value;
+				}
+				else if (!long.TryParse(arrayCtx.expression().GetText(), NumberStyles.None, CultureInfo.InvariantCulture, out countVal))
+				{
+					throw new InvalidOperationException($"Array replication size must be a literal integer: '{arrayCtx.expression().GetText()}'.");
 				}
 
-				var countExpr = new IntegerLiteralExpressionSyntax(SpanOf(arrayCtx), countVal);
+				var countExpr = new IntegerLiteralExpressionSyntax(SpanOf(arrayCtx), (ulong)countVal);
 				var implicitInitializer = new ArrayReplicationExpressionSyntax(SpanOf(context), valueExpr, countExpr);
 				return new VariableDeclarationSyntax(SpanOf(context), isMutable, baseTypeName, name, implicitInitializer);
 			}

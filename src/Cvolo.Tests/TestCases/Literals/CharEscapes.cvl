@@ -1,0 +1,18 @@
+using System;
+
+int main()
+{
+    char n = '\n';
+    char t = '\t';
+    char zero = '\0';
+    char back = '\\';
+    char quote = '\'';
+    char hexA = '\x41';
+    Console.WriteLine((int)n);
+    Console.WriteLine((int)t);
+    Console.WriteLine((int)zero);
+    Console.WriteLine((int)back);
+    Console.WriteLine((int)quote);
+    Console.WriteLine((int)hexA);
+    return 0;
+}

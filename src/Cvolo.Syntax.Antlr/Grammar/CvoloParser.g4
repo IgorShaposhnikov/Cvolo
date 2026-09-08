@@ -303,6 +303,12 @@ expression
 	| StringLiteral                                         							# stringLiteralExpression
 	| InterpolatedStringLiteral															# interpolatedStringExpression
 	| CharLiteral																		# charLiteralExpression
+	| BadEmptyCharLiteral																# badEmptyCharLiteralExpression
+	| BadCharLiteral																	# badCharLiteralExpression
+	| BadIntegerSuffix																	# badIntegerSuffixExpression
+	| BadLeadingUnderscoreNumber															# badLeadingUnderscoreExpression
+	| TrailingUnderInteger																# badIntegerSeparatorExpression
+	| BadDoubleLiteral																	# badDoubleLiteralExpression
 	| TRUE																				# booleanLiteralExpression
 	| FALSE																				# booleanLiteralExpression
 	| NULL																				# nullLiteralExpression

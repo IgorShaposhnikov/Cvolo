@@ -109,11 +109,24 @@ XOR_ASSIGN: '^=';
 
 // Literals
 CharLiteral: '\'' (EscapeSequence | ~['\\\r\n]) '\'';
+BadEmptyCharLiteral: '\'' '\'';
+BadCharLiteral: '\'' (~['\r\n])+ '\'';
 InterpolatedStringLiteral: '$"' (EscapeSequence | ~["\\\r\n])* '"';
 StringLiteral: '"' (EscapeSequence | ~["\\\r\n])* '"';
-fragment EscapeSequence: '\\' [0nrt"\\];
-IntegerLiteral: [0-9]+;
-DoubleLiteral: [0-9]+ '.' [0-9]+;
+fragment EscapeSequence: '\\' [0nrt'"\\] | '\\' 'x' HexDigit+;
+fragment Digit: [0-9];
+fragment HexDigit: [0-9a-fA-F];
+fragment BinaryDigit: [01];
+fragment Digits: Digit ('_'* Digit)*;
+fragment IntegerSuffix: [uU] [lL]? | [lL] [uU]?;
+IntegerLiteral: '0' [xX] HexDigit ('_'* HexDigit)* IntegerSuffix? | '0' [bB] BinaryDigit ('_'* BinaryDigit)* IntegerSuffix? | Digits IntegerSuffix?;
+BadLeadingUnderscoreNumber: '_' Digit+;
+DoubleLiteral: Digits '.' Digits ExponentPart? FloatSuffix? | Digits ExponentPart FloatSuffix? | Digits FloatSuffix;
+fragment ExponentPart: [eE] [+-]? Digit+;
+fragment FloatSuffix: [fFdD];
+TrailingUnderInteger: Digits '_';
+BadIntegerSuffix: ('0' [xX] HexDigit ('_'* HexDigit)* | '0' [bB] BinaryDigit ('_'* BinaryDigit)* | Digits IntegerSuffix?) [a-zA-Z]+;
+BadDoubleLiteral: (Digits '.' Digits ExponentPart? | Digits ExponentPart) [a-zA-Z];
 Identifier: [a-zA-Z_][a-zA-Z0-9_]*;
 
 // Whitespace and comments

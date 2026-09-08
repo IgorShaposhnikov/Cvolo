@@ -1,0 +1,5 @@
+int main()
+{
+    ref int r = null;
+    return 0;
+}

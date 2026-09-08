@@ -1,0 +1,5 @@
+int main()
+{
+    double a = 1.0m;
+    return 0;
+}

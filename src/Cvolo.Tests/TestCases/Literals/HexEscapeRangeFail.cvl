@@ -1,0 +1,5 @@
+int main()
+{
+    char c = '\x100';
+    return 0;
+}

@@ -1,0 +1,14 @@
+using System;
+
+int main()
+{
+    val int a = 1_000_000;
+    val int b = 1__000;
+    val double c = 1_000.5;
+    val int hexSep = 0xFF_FF;
+    Console.WriteLine(a);
+    Console.WriteLine(b);
+    Console.WriteLine(c);
+    Console.WriteLine(hexSep);
+    return 0;
+}

@@ -2513,7 +2513,7 @@ public sealed class DeclarationPass(BindingContext context)
 		switch (expr)
 		{
 			case IntegerLiteralExpressionSyntax intLit:
-				return intLit.Value;
+				return (long)intLit.Value;
 			case UnaryExpressionSyntax { Operator: "-" } unary:
 				var operand = EvaluateEnumConstant(unary.Operand, variantLookup);
 				return operand is null ? null : -operand.Value;
