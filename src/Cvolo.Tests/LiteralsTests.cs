@@ -11,6 +11,7 @@ public sealed class LiteralsTests : CompilerTestBase
 	[InlineData("IntegerSuffixes", "4000000000\n9000000000\n18000000000\n18000000001\n42\n9999999999\n")]
 	[InlineData("DigitSeparators", "1000000\n1000\n1000.500000\n65535\n")]
 	[InlineData("FloatSuffixes", "1.500000\n2.000000\n3.000000\n314.000000\n0.006280\n1.000000\n")]
+	[InlineData("FloatNegation", "-0.250000\n-0.500000\n-0.500000\n")]
 	[InlineData("CharEscapes", "10\n9\n0\n92\n39\n65\n")]
 	public void Literals_CompileAndRun(string caseName, string expected)
 	{

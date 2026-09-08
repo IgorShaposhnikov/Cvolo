@@ -2205,7 +2205,10 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		switch (unary.Operator)
 		{
 			case "-":
-				return _builder.BuildNeg(operand);
+				{
+					var handled = TryFoldConstantNegation(unary, operand, out var folded);
+					return handled ? folded : _builder.BuildNeg(operand);
+				}
 			case "!":
 				return _builder.BuildNot(operand);
 			case "~":
@@ -2260,6 +2263,38 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			default:
 				throw new InvalidOperationException($"Unknown unary operator '{unary.Operator}'");
 		}
+	}
+
+	private bool TryFoldConstantNegation(UnaryExpressionSyntax unary, LLVMValueRef operand, out LLVMValueRef folded)
+	{
+		var operandType = GetExprType(unary.Operand);
+
+		switch (unary.Operand)
+		{
+			case DoubleLiteralExpressionSyntax dblLit when operandType is not null
+				&& TypeSymbol.IsFloatingPointType(operandType):
+				// Native, pre-folded negative real constant: an inline LLVM constant
+				// expression cannot express floating-point math (constexpr ops are
+				// integer-only), so invert the sign in the compiler and emit a plain
+				// constant value (e.g. `float -5.000000e-01`).
+				folded = LLVMValueRef.CreateConstReal(GetLLVMType(operandType), -dblLit.Value);
+				return true;
+			case IntegerLiteralExpressionSyntax intLit when operandType is not null:
+				folded = LLVMValueRef.CreateConstInt(GetLLVMType(operandType), 0UL - intLit.Value);
+				return true;
+		}
+
+		if (operandType is not null && TypeSymbol.IsFloatingPointType(operandType))
+		{
+			// Runtime fallback for dynamic real operands: emit an explicit `fsub`
+			// against zero bound to a virtual register, never an inline constexpr.
+			folded = _builder.BuildFSub(
+				LLVMValueRef.CreateConstReal(GetLLVMType(operandType), 0.0), operand, "fneg_tmp");
+			return true;
+		}
+
+		folded = default;
+		return false;
 	}
 
 	private void EmitVariableDeclaration(VariableDeclarationSyntax varDecl)

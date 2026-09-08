@@ -1,0 +1,12 @@
+using System;
+
+int main()
+{
+    val float pos = 0.5f;
+    val float neg = -0.25f;
+    val float dyn = -pos;
+    Console.WriteLine(neg);
+    Console.WriteLine(dyn);
+    Console.WriteLine(-0.5f);
+    return 0;
+}
