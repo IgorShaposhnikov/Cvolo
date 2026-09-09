@@ -1,0 +1,6 @@
+using System;
+
+int main() {
+    Console.WriteLine(nameof(1 + 2));
+    return 0;
+}

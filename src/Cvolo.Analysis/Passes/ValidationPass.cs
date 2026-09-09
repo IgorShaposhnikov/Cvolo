@@ -948,6 +948,12 @@ public sealed class ValidationPass(BindingContext context)
 			case AsmExpressionSyntax asmExpr:
 				CheckAsmExpression(asmExpr, scope);
 				break;
+			case NameofExpressionSyntax nameofExpr:
+				CheckNameofExpression(nameofExpr, scope);
+				break;
+			case TypeofExpressionSyntax typeofExpr:
+				CheckTypeofExpression(typeofExpr, scope);
+				break;
 			case UnaryExpressionSyntax unary:
 				CheckExpression(unary.Operand, scope);
 				CheckUnaryCast(unary, scope);
@@ -1485,6 +1491,8 @@ public sealed class ValidationPass(BindingContext context)
 			DefaultExpressionSyntax d => context.ResolveType(d.TypeName),
 			UnaryExpressionSyntax unary => GetUnaryExpressionType(unary, scope),
 			AsmExpressionSyntax asm => GetAsmExpressionType(asm, scope),
+			NameofExpressionSyntax => TypeSymbol.String,
+			TypeofExpressionSyntax => context.ResolveType("System.Type"),
 			IsPatternExpressionSyntax => TypeSymbol.Bool,
 			BinaryExpressionSyntax bin when bin.Operator is "|" or "&" or "^" => GetFlagsBinaryType(bin, scope),
 			BinaryExpressionSyntax bin when bin.Operator == "+" && IsConstantStringExpression(bin.Left) && IsConstantStringExpression(bin.Right) => TypeSymbol.String,
@@ -3319,6 +3327,93 @@ public sealed class ValidationPass(BindingContext context)
 				IsConstantStringExpression(bin.Left) && IsConstantStringExpression(bin.Right),
 			_ => false,
 		};
+	}
+
+	private static string? GetNameofFoldedName(ExpressionSyntax expr) => expr switch
+	{
+		IdentifierExpressionSyntax id => id.Name,
+		MemberAccessExpressionSyntax m => m.MemberName,
+		_ => null,
+	};
+
+	private void CheckNameofExpression(NameofExpressionSyntax nameofExpr, SymbolTable scope)
+	{
+		var currentFileContext = context.FileContexts[context.CurrentUnit!];
+		var argument = nameofExpr.Argument;
+
+		if (GetNameofFoldedName(argument) is null)
+		{
+			context.Diagnostics.Report(currentFileContext, nameofExpr.Span, "Operator `nameof` cannot be applied to an expression with an empty identifier node.", DiagnosticIds.NameofExpressionInvalid);
+			return;
+		}
+
+		// Static/type receiver: `nameof(StructName.Field)` must not bind the base as a variable.
+		if (argument is MemberAccessExpressionSyntax mem
+			&& GetBaseIdentifierName(mem.Expression) is { } baseName
+			&& scope.Lookup(baseName) is not VariableSymbol
+			&& context.ResolveType(baseName) is { } staticType)
+		{
+			if (!TryValidateStaticNameof(staticType, mem))
+			{
+				context.Diagnostics.Report(currentFileContext, mem.Span, $"The name {mem.MemberName} does not exist in the current context. Cannot evaluate `nameof`.", DiagnosticIds.NameofInvalidSymbolError);
+			}
+			return;
+		}
+
+		// Bare type name (e.g. `nameof(Point)`): nothing needs instance binding.
+		var isBareTypeName = argument is IdentifierExpressionSyntax bareId
+			&& scope.Lookup(bareId.Name) is not VariableSymbol
+			&& context.ResolveType(bareId.Name) is not null;
+		if (!isBareTypeName)
+			CheckExpression(argument, scope);
+
+		if (argument is MemberAccessExpressionSyntax memAccess && GetExpressionType(memAccess, scope) is null)
+		{
+			context.Diagnostics.Report(currentFileContext, memAccess.Span, $"The name {memAccess.MemberName} does not exist in the current context. Cannot evaluate `nameof`.", DiagnosticIds.NameofInvalidSymbolError);
+		}
+		else if (argument is IdentifierExpressionSyntax id
+			&& scope.Lookup(id.Name) is not VariableSymbol
+			&& context.ResolveType(id.Name) is null)
+		{
+			context.Diagnostics.Report(currentFileContext, id.Span, $"The name {id.Name} does not exist in the current context. Cannot evaluate `nameof`.", DiagnosticIds.NameofInvalidSymbolError);
+		}
+	}
+
+	private void CheckTypeofExpression(TypeofExpressionSyntax typeofExpr, SymbolTable scope)
+	{
+		if (context.ResolveType(typeofExpr.TypeName) is null)
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, typeofExpr.Span, $"Type {typeofExpr.TypeName} could not be found. Cannot evaluate `typeof`.", DiagnosticIds.TypeofInvalidTypeError);
+		}
+	}
+
+	private static bool TryValidateStaticNameof(TypeSymbol type, MemberAccessExpressionSyntax mem)
+	{
+		var segments = new List<string>();
+		ExpressionSyntax current = mem;
+		while (current is MemberAccessExpressionSyntax m)
+		{
+			segments.Insert(0, m.MemberName);
+			current = m.Expression;
+		}
+		if (current is not IdentifierExpressionSyntax)
+			return false;
+
+		var currentType = type;
+		foreach (var segment in segments)
+		{
+			currentType = currentType switch
+			{
+				StructTypeSymbol s => s.FindField(segment)?.Type,
+				UnionTypeSymbol u => u.FindField(segment)?.Type,
+				EnumTypeSymbol e => e.FindVariant(segment) is null ? null : TypeSymbol.Int,
+				_ => null,
+			};
+			if (currentType is null)
+				return false;
+		}
+		return true;
 	}
 
 	private void CheckAsmExpression(AsmExpressionSyntax asm, SymbolTable scope)

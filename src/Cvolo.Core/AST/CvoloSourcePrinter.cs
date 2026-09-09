@@ -105,6 +105,12 @@ public sealed class CvoloSourcePrinter
 			case DefaultExpressionSyntax def:
 				return def.TypeName is null ? "default" : $"default({def.TypeName})";
 
+			case NameofExpressionSyntax nameofExpr:
+				return $"nameof({Print(nameofExpr.Argument)})";
+
+			case TypeofExpressionSyntax typeofExpr:
+				return $"typeof({typeofExpr.TypeName})";
+
 			case UnionDeclarationSyntax u:
 				var uGenerics = u.GenericParameters.Count > 0 ? $"<{string.Join(", ", u.GenericParameters)}>" : "";
 				var uFields = string.Join("\n", u.Fields.Select(f => $"{ind}    {f.Type} {f.Name};"));
@@ -123,7 +129,8 @@ public sealed class CvoloSourcePrinter
 				return $"{ind}alias {a.Name}{aGenerics} = {a.Type};\n";
 
 			case SwitchStatementSyntax sw:
-				var casesStr = string.Join("", sw.Cases.Select(c => {
+				var casesStr = string.Join("", sw.Cases.Select(c =>
+				{
 					var patternStr = c.IsDefault ? "default" : (c.VariableName != null ? $"{c.VariantName} {c.VariableName}" : c.VariantName);
 					var bodyStr = string.Join("", c.Body.Select(s => Print(s, indent + 2)));
 					return $"{ind}    case {patternStr}:\n{bodyStr}";

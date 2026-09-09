@@ -1,0 +1,9 @@
+using System;
+
+int main() {
+    int localVar = 42;
+    int second = 7;
+    Console.WriteLine(nameof(localVar));
+    Console.WriteLine(nameof(second));
+    return 0;
+}

@@ -217,4 +217,15 @@ public static class DiagnosticIds
 
 	/// <summary>Unknown register in the clobber list.</summary>
 	public const string UnknownAsmClobberRegister = "CVL1606";
+
+	// ── Compile-Time Operators (CVL21xx) ──
+
+	/// <summary>The symbol referenced by `nameof` could not be resolved in the current context.</summary>
+	public const string NameofInvalidSymbolError = "CVL2100";
+
+	/// <summary>The type referenced by `typeof` could not be resolved.</summary>
+	public const string TypeofInvalidTypeError = "CVL2101";
+
+	/// <summary>`nameof` was applied to an expression with no valid identifier.</summary>
+	public const string NameofExpressionInvalid = "CVL2102";
 }

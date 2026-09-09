@@ -64,4 +64,6 @@ public enum SyntaxKind
 	ExternBlockFunction,
 	AsmExpression,
 	AsmOperand,
+	NameOfExpression,
+	TypeOfExpression,
 }

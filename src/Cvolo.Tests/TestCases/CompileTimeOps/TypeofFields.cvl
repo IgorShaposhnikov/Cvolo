@@ -1,0 +1,16 @@
+using System;
+
+struct Point {
+    int X;
+    int Y;
+}
+
+int main() {
+    System.Type t = typeof(Point);
+    Console.WriteLine((long)t.id);
+    Console.WriteLine(t.name);
+    System.Type i = typeof(int);
+    Console.WriteLine((long)i.id);
+    Console.WriteLine(i.name);
+    return 0;
+}

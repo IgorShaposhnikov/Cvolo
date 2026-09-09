@@ -1,0 +1,7 @@
+using System;
+
+int main() {
+    System.Type t = typeof(DoesNotExist);
+    Console.WriteLine(t.name);
+    return 0;
+}

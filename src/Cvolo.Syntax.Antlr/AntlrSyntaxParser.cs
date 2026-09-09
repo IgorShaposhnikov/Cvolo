@@ -511,6 +511,10 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 
 					return new AsmExpressionSyntax(SpanOf(asmCtx), template, operands, clobbers, options, resultType);
 				}
+			case CvoloParser.NameofExpressionContext nameofCtx:
+				return new NameofExpressionSyntax(SpanOf(nameofCtx), BuildExpression(nameofCtx.expression()));
+			case CvoloParser.TypeofExpressionContext typeofCtx:
+				return new TypeofExpressionSyntax(SpanOf(typeofCtx), GetTypeName(typeofCtx.type()));
 			case CvoloParser.BadRawStringExpressionContext badRawCtx:
 				{
 					ReportParseError(badRawCtx, "Unterminated raw string literal. Every `@\"` must have a matching closing quote.", DiagnosticIds.UnbalancedRawStringLiteral);

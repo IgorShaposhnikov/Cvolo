@@ -61,6 +61,8 @@ ASM: 'asm';
 VOLATILE: 'volatile';
 ALIGNSTACK: 'alignstack';
 INTEL: 'intel';
+NAMEOF: 'nameof';
+TYPEOF: 'typeof';
 
 // Punctuation
 LPAREN: '(';

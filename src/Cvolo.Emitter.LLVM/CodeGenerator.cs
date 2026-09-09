@@ -48,6 +48,8 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	private (LLVMTypeRef Type, LLVMValueRef Func)? _llvmTrap;
 	private readonly Dictionary<string, LLVMValueRef> _enumValuesGlobals = [];
 	private readonly Dictionary<string, ConstructorDeclarationSyntax> _constructorInitializers = [];
+	private readonly Dictionary<string, LLVMValueRef> _typeofGlobals = [];
+	private int _typeofCounter;
 
 	public CodeGenerator(string moduleName, ILLVMOptimizer? optimizer = null, IRVerifier? irVerifier = null, bool enableTbaa = true)
 	{
@@ -939,6 +941,10 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				return LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, charLit.Value);
 			case AsmExpressionSyntax asmExpr:
 				return EmitInlineAsm(asmExpr);
+			case NameofExpressionSyntax nameofExpr:
+				return EmitStringLiteral(GetNameofFoldedName(nameofExpr.Argument));
+			case TypeofExpressionSyntax typeofExpr:
+				return EmitTypeof(typeofExpr);
 			case NullLiteralExpressionSyntax:
 				// Defensive: the binder rejects 'null' in safe code before emission.
 				return LLVMValueRef.CreateConstPointerNull(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0));
@@ -1169,6 +1175,59 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	{
 		// Safely wraps string allocation natively via robust built-in BuildGlobalStringPtr API
 		return _builder.BuildGlobalStringPtr(value, "str");
+	}
+
+	private static string GetNameofFoldedName(ExpressionSyntax expr) => expr switch
+	{
+		IdentifierExpressionSyntax id => id.Name,
+		MemberAccessExpressionSyntax m => m.MemberName,
+		_ => "<invalid>",
+	};
+
+	private static uint Fnv1a32(string value)
+	{
+		unchecked
+		{
+			uint hash = 2166136261;
+			foreach (var c in value)
+			{
+				hash ^= c;
+				hash *= 16777619;
+			}
+			return hash;
+		}
+	}
+
+	private LLVMValueRef EmitTypeof(TypeofExpressionSyntax typeofExpr)
+	{
+		var typeName = typeofExpr.TypeName;
+		if (_typeofGlobals.TryGetValue(typeName, out var cached))
+			return cached;
+
+		var systemType = _bindingContext!.ResolveType("System.Type")
+			?? throw new InvalidOperationException($"typeof requires System.Type to be available for '{typeName}'.");
+		var systemLlvmType = GetLLVMType(systemType);
+
+		// @type_name.<name>.<n> = private unnamed_addr constant [N x i8] c"<name>\00"
+		var bytes = typeName.Select(c => (byte)c).Append((byte)0).ToArray();
+		var arrayType = LLVMTypeRef.CreateArray(LLVMTypeRef.Int8, (uint)bytes.Length);
+		var nameGlobal = _module.AddGlobal(arrayType, $"type_name_{typeName.ToLowerInvariant()}_{++_typeofCounter}");
+		nameGlobal.Initializer = LLVMValueRef.CreateConstArray(
+			LLVMTypeRef.Int8,
+			bytes.Select(b => LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, b)).ToArray());
+		nameGlobal.IsGlobalConstant = true;
+		nameGlobal.Linkage = LLVMLinkage.LLVMPrivateLinkage;
+
+		var zero = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int64, 0);
+		var namePtr = LLVMValueRef.CreateConstInBoundsGEP2(arrayType, nameGlobal, [zero, zero]);
+
+		var value = LLVMValueRef.CreateConstNamedStruct(systemLlvmType,
+		[
+			LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, Fnv1a32(typeName)),
+			namePtr,
+		]);
+		_typeofGlobals[typeName] = value;
+		return value;
 	}
 
 	private LLVMValueRef EmitInlineAsm(AsmExpressionSyntax asm)
@@ -2858,6 +2917,8 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			StructInitializationExpressionSyntax s => _bindingContext!.ResolveType(s.StructTypeName)!,
 			UnaryExpressionSyntax u => ResolveUnaryExprType(u),
 			AsmExpressionSyntax asm => GetAsmExprType(asm),
+			NameofExpressionSyntax => TypeSymbol.String,
+			TypeofExpressionSyntax t => _bindingContext!.ResolveType("System.Type") ?? TypeSymbol.String,
 			TernaryExpressionSyntax t => GetExprType(t.ThenExpression),
 			CallExpressionSyntax call => ResolveCallReturnType(call),
 			BinaryExpressionSyntax bin => ResolveBinaryExpressionType(bin),

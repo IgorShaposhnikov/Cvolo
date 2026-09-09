@@ -1,0 +1,11 @@
+using System;
+
+struct Point {
+    int X;
+    int Y;
+}
+
+int main() {
+    Console.WriteLine(nameof(Point.Missing));
+    return 0;
+}

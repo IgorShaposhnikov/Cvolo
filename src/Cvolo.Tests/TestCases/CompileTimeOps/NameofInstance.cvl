@@ -1,0 +1,13 @@
+using System;
+
+struct Point {
+    int X;
+    int Y;
+}
+
+int main() {
+    Point p = Point { X: 10, Y: 20 };
+    Console.WriteLine(nameof(p.X));
+    Console.WriteLine(nameof(p.Y));
+    return 0;
+}
