@@ -22,6 +22,10 @@ public sealed class FlowAnalysisPass(BindingContext context)
 			foreach (var member in members)
 				if (member is FunctionDeclarationSyntax func && func.GenericParameters.Count == 0)
 					AnalyzeFunctionFlow(func);
+				else if (member is ExposeExternBlockSyntax exportBlock)
+					foreach (var exportFunc in exportBlock.Functions)
+						if (exportFunc.GenericParameters.Count == 0)
+							AnalyzeFunctionFlow(exportFunc);
 		}
 	}
 

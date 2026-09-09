@@ -1,0 +1,11 @@
+using System;
+
+[ExposeName("bad_symbol")]
+int InternalCompute(int x) {
+    return x * 2;
+}
+
+int main() {
+    Console.WriteLine(InternalCompute(21));
+    return 0;
+}

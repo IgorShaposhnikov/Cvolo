@@ -149,6 +149,17 @@ public static class DiagnosticIds
 	/// <summary>Native library could not be resolved by the linker.</summary>
 	public const string NativeLibraryUnresolved = "CVL1704";
 
+	// ── Native Binary Export (CVL18xx) ──
+
+	/// <summary>An exported function contains a value interface parameter across a binary ABI boundary.</summary>
+	public const string ExposedInterfaceParameter = "CVL1801";
+
+	/// <summary>Two exported functions share the same export symbol name in module scope.</summary>
+	public const string DuplicateExportSymbol = "CVL1802";
+
+	/// <summary>[ExposeName] applied to a function outside an `expose extern` scope.</summary>
+	public const string ExposeNameOutsideExport = "CVL1803";
+
 	// ── Literals / Lexer (CVL19xx) ──
 
 	/// <summary>A literal `double` is assigned to a `float` target; a `f` suffix is required.</summary>

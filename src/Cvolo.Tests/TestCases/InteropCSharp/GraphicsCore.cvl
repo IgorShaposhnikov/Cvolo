@@ -1,0 +1,6 @@
+expose extern "C" {
+    [ExposeName("native_render_frame")]
+    public int RenderFrame(void* windowHandle, float clearColor) {
+        return (int)(clearColor * 255);
+    }
+}

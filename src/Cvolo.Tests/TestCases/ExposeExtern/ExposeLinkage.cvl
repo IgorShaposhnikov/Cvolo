@@ -1,0 +1,18 @@
+using System;
+
+expose extern "C" {
+    [ExposeName("native_render_frame")]
+    public int RenderFrame(float clearColor) {
+        return (int)(clearColor * 255);
+    }
+
+    public int RenderTick(int deltaMs) {
+        return deltaMs;
+    }
+}
+
+int main() {
+    Console.WriteLine(RenderFrame(0.5f));
+    Console.WriteLine(RenderTick(16));
+    return 0;
+}

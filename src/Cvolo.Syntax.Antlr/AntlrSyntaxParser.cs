@@ -81,6 +81,10 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			return BuildExternDeclaration(ext);
 		if (context.externBlockDeclaration() is { } extBlock)
 			return BuildExternBlockDeclaration(extBlock);
+		if (context.exposeExternBlockDeclaration() is { } exposeBlock)
+			return BuildExposeExternBlockDeclaration(exposeBlock);
+		if (context.exposeExternExportDeclaration() is { } exposeExport)
+			return BuildExposeExternExportDeclaration(exposeExport);
 		if (context.structDeclaration() is { } structDecl)
 			return BuildStructDeclaration(structDecl);
 		if (context.unionDeclaration() is { } unionDecl)
@@ -187,6 +191,80 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		}
 
 		return new ExternBlockFunctionSyntax(SpanOf(context), returnType, name, parameters, isVariadic, BuildAttributeList(context.attributeList()));
+	}
+
+	private ExposeExternBlockSyntax BuildExposeExternBlockDeclaration(CvoloParser.ExposeExternBlockDeclarationContext context)
+	{
+		var attributes = BuildAttributeList(context.attributeList());
+		var callingConvention = GetRawCallingConvention(context.callingConvention());
+
+		var functions = new List<FunctionDeclarationSyntax>();
+		foreach (var funcCtx in context.exposeExternFunction())
+			functions.Add(BuildExposeExternFunction(funcCtx));
+
+		return new ExposeExternBlockSyntax(SpanOf(context), attributes, callingConvention, functions, GetVisibilityModifier(context.visibilityModifier()));
+	}
+
+	private ExposeExternBlockSyntax BuildExposeExternExportDeclaration(CvoloParser.ExposeExternExportDeclarationContext context)
+	{
+		var callingConvention = GetRawCallingConvention(context.callingConvention());
+		var blockBody = context.blockStatement() is { } blockCtx ? BuildBlockStatement(blockCtx) : null;
+
+		var function = new FunctionDeclarationSyntax(
+			SpanOf(context),
+			GetReturnTypeName(context.returnType()),
+			context.Identifier().GetText(),
+			[],
+			BuildParameterList(context.parameterList()),
+			blockBody!);
+
+		return new ExposeExternBlockSyntax(SpanOf(context), [], callingConvention, [function], null);
+	}
+
+	private FunctionDeclarationSyntax BuildExposeExternFunction(CvoloParser.ExposeExternFunctionContext context)
+	{
+		var generics = new List<string>();
+		if (context.typeList() is { } typeListCtx)
+		{
+			foreach (var t in typeListCtx.type())
+				generics.Add(GetTypeName(t));
+		}
+
+		var blockBody = context.blockStatement() is { } blockCtx ? BuildBlockStatement(blockCtx) : null;
+
+		return new FunctionDeclarationSyntax(
+			SpanOf(context),
+			GetReturnTypeName(context.returnType()),
+			context.Identifier().GetText(),
+			generics,
+			BuildParameterList(context.parameterList()),
+			blockBody!,
+			BuildAttributeList(context.attributeList()),
+			null,
+			ReceiverContract.None,
+			GetVisibilityModifier(context.visibilityModifier()));
+	}
+
+	private List<ParameterSyntax> BuildParameterList(CvoloParser.ParameterListContext? paramList)
+	{
+		var parameters = new List<ParameterSyntax>();
+		if (paramList is null)
+			return parameters;
+
+		foreach (var param in paramList.parameter())
+			parameters.Add(BuildParameter(param));
+		return parameters;
+	}
+
+	private static string? GetRawCallingConvention(CvoloParser.CallingConventionContext? context)
+	{
+		var callingConvention = context?.StringLiteral()?.GetText();
+		if (callingConvention is not null)
+		{
+			// Strip the surrounding double quotes to recover the raw "C" / "system" value.
+			callingConvention = callingConvention.Length >= 2 ? callingConvention[1..^1] : callingConvention;
+		}
+		return callingConvention;
 	}
 
 	private FunctionDeclarationSyntax BuildFunctionDeclaration(CvoloParser.FunctionDeclarationContext context)

@@ -62,6 +62,7 @@ public enum SyntaxKind
 	DeferStatement,
 	ExternBlock,
 	ExternBlockFunction,
+	ExposeExternBlock,
 	AsmExpression,
 	AsmOperand,
 	NameOfExpression,

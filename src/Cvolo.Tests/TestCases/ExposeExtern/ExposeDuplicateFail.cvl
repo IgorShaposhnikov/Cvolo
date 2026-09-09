@@ -1,0 +1,17 @@
+using System;
+
+expose extern "C" {
+    [ExposeName("dup")]
+    public int FirstExport(int x) {
+        return x;
+    }
+
+    [ExposeName("dup")]
+    public int SecondExport(int x) {
+        return x;
+    }
+}
+
+int main() {
+    return 0;
+}

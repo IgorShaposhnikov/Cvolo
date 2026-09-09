@@ -65,6 +65,21 @@ public sealed class ValidationPass(BindingContext context)
 						}
 					}
 				}
+				else if (member is ExposeExternBlockSyntax exportBlock)
+				{
+					foreach (var exportFunc in exportBlock.Functions)
+					{
+						var isTemplate = exportFunc.GenericParameters.Count > 0 && exportFunc.GenericParameters.Any(p => context.ResolveType(p) == null);
+						var ifaceTemplateName = context.GetMangledName(exportFunc.Name, context.CurrentNamespace);
+						var isInterfaceTemplate = context.InterfaceFunctionTemplates.ContainsKey(ifaceTemplateName);
+						var isProtocolTemplate = context.ProtocolFunctionTemplates.ContainsKey(ifaceTemplateName);
+						if (isTemplate || isInterfaceTemplate || isProtocolTemplate)
+							continue;
+
+						// Exposed functions are never generic; fall back to direct body validation.
+						CheckFunctionBody(exportFunc);
+					}
+				}
 				else if (member is ExtensionDeclarationSyntax extDecl)
 				{
 					var extendedType = context.ResolveType(extDecl.ExtendedTypeName);

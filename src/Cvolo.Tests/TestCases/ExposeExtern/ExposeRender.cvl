@@ -1,0 +1,13 @@
+using System;
+
+expose extern "C" {
+    [ExposeName("native_render_frame")]
+    public int RenderFrame(void* windowHandle, float clearColor) {
+        return (int)(clearColor * 255);
+    }
+}
+
+int main() {
+    Console.WriteLine(RenderFrame((void*)0, 0.5f));
+    return 0;
+}

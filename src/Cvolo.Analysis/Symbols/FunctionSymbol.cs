@@ -77,4 +77,14 @@ public sealed class FunctionSymbol(
 	/// Calling convention from the extern block ("C" or "system"). Null defaults to "C".
 	/// </summary>
 	public string? CallingConvention { get; set; }
+
+	/// <summary>
+	/// True when this function lives inside an `expose extern` block and receives a synthesized export alias.
+	/// </summary>
+	public bool IsExported { get; set; }
+
+	/// <summary>
+	/// Native symbol name used by the export alias. Set by [ExposeName]; defaults to the source function name.
+	/// </summary>
+	public string? ExposeName { get; set; }
 }

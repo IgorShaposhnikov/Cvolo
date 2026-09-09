@@ -22,6 +22,8 @@ declaration
 	: functionDeclaration
 	| externDeclaration
 	| externBlockDeclaration
+	| exposeExternExportDeclaration
+	| exposeExternBlockDeclaration
 	| structDeclaration
 	| unionDeclaration
 	| enumDeclaration
@@ -86,6 +88,18 @@ callingConvention
 
 externBlockFunction
 	: attributeList* returnType Identifier LPAREN externParameterList? RPAREN SEMI
+	;
+
+exposeExternExportDeclaration
+	: EXPOSE EXTERN callingConvention returnType Identifier LPAREN parameterList? RPAREN (blockStatement | SEMI)
+	;
+
+exposeExternBlockDeclaration
+	: attributeList* visibilityModifier? EXPOSE EXTERN callingConvention LBRACE exposeExternFunction* RBRACE SEMI?
+	;
+
+exposeExternFunction
+	: attributeList* visibilityModifier? returnType Identifier (LT typeList GT)? LPAREN parameterList? RPAREN (blockStatement | SEMI)
 	;
 
 structDeclaration

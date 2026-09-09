@@ -50,6 +50,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	private readonly Dictionary<string, ConstructorDeclarationSyntax> _constructorInitializers = [];
 	private readonly Dictionary<string, LLVMValueRef> _typeofGlobals = [];
 	private int _typeofCounter;
+	private readonly HashSet<string> _exportedSymbols = [];
 
 	public CodeGenerator(string moduleName, ILLVMOptimizer? optimizer = null, IRVerifier? irVerifier = null, bool enableTbaa = true)
 	{
@@ -205,6 +206,38 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 						var overloadedMangledName = bindingContext.GetOverloadedMangledName(mangledName, paramTypes);
 						DeclareFunction(func, overloadedMangledName);
 						break;
+					case ExposeExternBlockSyntax exportBlock:
+						foreach (var exportFunc in exportBlock.Functions)
+						{
+							// Skip abstract interface/protocol templates and bodyless intrinsic functions
+							var exportIfaceTemplateName = bindingContext.GetMangledName(exportFunc.Name, ns);
+							if (bindingContext.InterfaceFunctionTemplates.ContainsKey(exportIfaceTemplateName) ||
+								bindingContext.ProtocolFunctionTemplates.ContainsKey(exportIfaceTemplateName) ||
+								!exportFunc.HasBody ||
+								exportFunc.Attributes.Any(a => a.Name is "Intrinsic" or "System.Intrinsic" or "IntrinsicAttribute"))
+							{
+								continue;
+							}
+
+							var exportedMangledName = (exportFunc.Name == "main" || exportFunc.Name == "Main")
+								? "main"
+								: bindingContext.GetMangledName(exportFunc.Name, ns);
+
+							var exportedParamTypes = exportFunc.Parameters.Select(p => bindingContext.ResolveType(p.Type)!).ToList();
+							var exportedOverloadedName = bindingContext.GetOverloadedMangledName(exportedMangledName, exportedParamTypes);
+							DeclareFunction(exportFunc, exportedOverloadedName);
+
+							// Synthesize the exported alias if the binder tagged this function for export.
+							if (bindingContext.Globals.Lookup(exportedOverloadedName) is FunctionSymbol exportFuncSym
+								&& exportFuncSym.IsExported
+								&& _exportedSymbols.Add(exportFuncSym.ExposeName ?? exportFunc.Name)
+								&& _globals.TryGetValue(exportedOverloadedName, out var exportedTarget)
+								&& _functionTypes.TryGetValue(exportedOverloadedName, out var exportedFuncType))
+							{
+								CreateExportAlias(exportFuncSym.ExposeName ?? exportFunc.Name, exportedTarget, exportedFuncType);
+							}
+						}
+						break;
 					case ExtensionDeclarationSyntax extDecl:
 						// Skip protocol extension defaults in Pass C (they are materialized onto concrete conformers)
 						if (bindingContext.ResolveType(extDecl.ExtendedTypeName) is ProtocolTypeSymbol)
@@ -310,6 +343,31 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 					if (emittedFunctionNames.Add(overloadedMangledName))
 					{
 						EmitFunctionBody(func, overloadedMangledName);
+					}
+				}
+				else if (member is ExposeExternBlockSyntax exportBlock)
+				{
+					foreach (var exportFunc in exportBlock.Functions)
+					{
+						if (exportFunc.GenericParameters.Count > 0 || exportFunc.Name.Contains('<'))
+							continue;
+
+						var exportIfaceTemplateName = bindingContext.GetMangledName(exportFunc.Name, ns);
+						if (bindingContext.InterfaceFunctionTemplates.ContainsKey(exportIfaceTemplateName)
+							|| bindingContext.ProtocolFunctionTemplates.ContainsKey(exportIfaceTemplateName))
+							continue;
+
+						var exportedMangledName = (exportFunc.Name == "main" || exportFunc.Name == "Main")
+							? "main"
+							: bindingContext.GetMangledName(exportFunc.Name, ns);
+
+						var exportedParamTypes = exportFunc.Parameters.Select(p => bindingContext.ResolveType(p.Type)!).ToList();
+						var exportedOverloadedName = bindingContext.GetOverloadedMangledName(exportedMangledName, exportedParamTypes);
+
+						if (emittedFunctionNames.Add(exportedOverloadedName))
+						{
+							EmitFunctionBody(exportFunc, exportedOverloadedName);
+						}
 					}
 				}
 				else if (member is ExtensionDeclarationSyntax extDecl)
@@ -1184,6 +1242,17 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		_ => "<invalid>",
 	};
 
+	private void CreateExportAlias(string exportName, LLVMValueRef target, LLVMTypeRef funcType)
+	{
+		// An exported entry forward-declares nothing new: it is a weak-free alias over the
+		// internal (mangled) function, exposed to the host binary's dynamic linker.
+		var alias = _module.AddAlias2(funcType, 0, target, exportName);
+		if (OperatingSystem.IsWindows())
+			alias.DLLStorageClass = LLVMDLLStorageClass.LLVMDLLExportStorageClass;
+		else
+			alias.Visibility = LLVMVisibility.LLVMProtectedVisibility;
+	}
+
 	private static uint Fnv1a32(string value)
 	{
 		unchecked
@@ -1234,8 +1303,6 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	{
 		var outputs = asm.Operands.Where(o => o.IsOutput).ToList();
 		var inputs = asm.Operands.Where(o => !o.IsOutput).ToList();
-
-		// Result type: asm<T> wins; otherwise the first output operand's type; void when absent.
 		TypeSymbol resultType;
 		if (asm.ResultType is not null && _bindingContext!.ResolveType(asm.ResultType) is { } rt)
 			resultType = rt;

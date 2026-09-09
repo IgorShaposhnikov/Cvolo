@@ -1,0 +1,13 @@
+using System;
+
+interface IPrintable {
+    void Print();
+}
+
+expose extern "C" void Process(IPrintable v) {
+    v.Print();
+}
+
+int main() {
+    return 0;
+}

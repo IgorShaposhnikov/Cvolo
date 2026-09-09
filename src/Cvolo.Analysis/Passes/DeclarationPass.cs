@@ -37,12 +37,19 @@ public sealed class DeclarationPass(BindingContext context)
 		// stream; VerifyAttributes intercepts them before the target check with CVL1701/CVL1702.
 		["LibraryImport"] = (["ExternBlock"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
 		["ImportName"] = (["ExternBlockFunction"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
+		// [ExposeName] is only legal on functions inside an expose extern block, where the
+		// expose path extracts it directly. Registering it here keeps it out of the
+		// unknown-attribute CVL1002 stream; VerifyAttributes intercepts it with CVL1803.
+		["ExposeName"] = (["Function"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
 	};
 
 	private static readonly HashSet<string> KnownWarningIds =
 	[
 		DiagnosticIds.UnsafeBodyNoEffect, DiagnosticIds.UnknownAttribute, DiagnosticIds.UnboundNoRefParams, DiagnosticIds.AutoInferMutationWarning, DiagnosticIds.MustUseIgnoredWarning, DiagnosticIds.InlineOnRecursiveFunction
 	];
+
+	/// <summary>Export symbol names already claimed by an `expose extern` function (module scope).</summary>
+	private readonly HashSet<string> _exportSymbolNames = [];
 
 	// E1 enum underlying storage types (§1.A). Enums are strictly flat, unmanaged
 	// scalar integers. 'char' is allowed as a 1-byte storage type.
@@ -152,6 +159,8 @@ public sealed class DeclarationPass(BindingContext context)
 					DeclareExternFunction(ext);
 				else if (member is ExternBlockSyntax extBlock)
 					DeclareExternBlock(extBlock);
+				else if (member is ExposeExternBlockSyntax exportBlock)
+					DeclareExposeExternBlock(exportBlock);
 				else if (member is ExtensionDeclarationSyntax extDecl)
 					DeclareExtension(extDecl);
 				else if (member is GlobalVariableDeclarationSyntax globalDecl)
@@ -1232,6 +1241,12 @@ public sealed class DeclarationPass(BindingContext context)
 				continue;
 			}
 
+			if (key == "ExposeName")
+			{
+				ReportDeclarationDiagnostic(attr, "[ExposeName] can only be applied to functions marked for binary export via the `expose` modifier.", DiagnosticIds.ExposeNameOutsideExport);
+				continue;
+			}
+
 			if (!seen.Add(key))
 			{
 				ReportDeclarationDiagnostic(attr, $"Duplicate attribute '[{key}]'.");
@@ -1628,6 +1643,120 @@ public sealed class DeclarationPass(BindingContext context)
 		}
 
 		candidates.Add(newSymbol);
+	}
+
+	private void DeclareExposeExternBlock(ExposeExternBlockSyntax block)
+	{
+		var convention = block.CallingConvention ?? "C";
+		if (convention is not ("C" or "system"))
+		{
+			ReportDeclarationDiagnostic(block,
+				$"Unknown calling convention '{convention}'. Supported calling conventions are \"C\" and \"system\".",
+				DiagnosticIds.UnknownCallingConvention);
+			return;
+		}
+
+		if (!context.LegacyVisibility && block.Visibility == Visibility.Public)
+		{
+			ReportDeclarationDiagnostic(block,
+				"An expose extern block cannot be marked public. Mark the individual functions inside it public to promote them across the binary ABI.",
+				DiagnosticIds.PublicExtern);
+		}
+
+		foreach (var attr in block.Attributes)
+		{
+			var key = NormalizeAttributeName(attr.Name);
+			if (key is null)
+			{
+				ReportDeclarationWarning(attr, $"Unknown attribute '{attr.Name}'; it will be ignored.", DiagnosticIds.UnknownAttribute);
+				continue;
+			}
+
+			ReportDeclarationDiagnostic(attr, $"Attribute '[{key}]' cannot be applied to expose extern block declarations.");
+		}
+
+		foreach (var func in block.Functions)
+			DeclareExposeExternFunction(block, func, convention);
+	}
+
+	private void DeclareExposeExternFunction(ExposeExternBlockSyntax block, FunctionDeclarationSyntax func, string convention)
+	{
+		context.SymbolUnits[func.Name] = context.CurrentUnit!;
+
+		// CVL1801: interface/protocol types have no value representation, so a by-value
+		// parameter cannot cross a binary ABI boundary. 'ref'/pointer forms are allowed.
+		foreach (var param in func.Parameters)
+		{
+			if (context.ResolveType(param.Type) is InterfaceTypeSymbol or ProtocolTypeSymbol)
+			{
+				ReportDeclarationDiagnostic(func,
+					$"Exported function '{func.Name}' cannot contain value interface parameter '{param.Name}' across binary ABI boundaries. Use explicit pointers or 'ref' dynamic dispatch.",
+					DiagnosticIds.ExposedInterfaceParameter);
+				return;
+			}
+		}
+
+		string? exposeName = null;
+		var sawExposeName = false;
+		var filteredAttributes = new List<AttributeSyntax>();
+		foreach (var attr in func.Attributes)
+		{
+			var key = NormalizeAttributeName(attr.Name);
+			if (key == "ExposeName")
+			{
+				if (sawExposeName)
+				{
+					ReportDeclarationDiagnostic(attr, "Duplicate attribute '[ExposeName]'.");
+					continue;
+				}
+
+				sawExposeName = true;
+				exposeName = ExtractExposeNameAttribute(attr);
+				continue;
+			}
+
+			// Everything except [ExposeName] is forwarded to the normal function
+			// declaration path for target/context verification.
+			filteredAttributes.Add(attr);
+		}
+
+		var exportName = exposeName ?? func.Name;
+		if (!_exportSymbolNames.Add(exportName))
+		{
+			ReportDeclarationDiagnostic(func, $"Duplicate export symbol name `{exportName}` detected in module scope.", DiagnosticIds.DuplicateExportSymbol);
+			return;
+		}
+
+		// Declare the function through the normal path (with [ExposeName] stripped) so it is
+		// registered, attribute-verified, and validatable exactly like any other function.
+		var clone = new FunctionDeclarationSyntax(func.Span, func.ReturnType, func.Name, func.GenericParameters, func.Parameters, func.Body!, filteredAttributes, func.Modifier, func.Receiver, func.Visibility);
+		DeclareFunction(clone);
+
+		// Locate the symbol the normal path just registered to tag it for export.
+		var mangledName = func.Name is "main" or "Main" ? "main" : context.GetMangledName(func.Name, context.CurrentNamespace);
+		var paramTypes = new List<TypeSymbol>();
+		foreach (var p in func.Parameters)
+		{
+			if (CreateParameter(p) is { } paramSymbol)
+				paramTypes.Add(paramSymbol.Type);
+		}
+
+		var overloadedMangledName = context.GetOverloadedMangledName(mangledName, paramTypes);
+		if (context.Globals.Lookup(overloadedMangledName) is not FunctionSymbol fnSym)
+			return;
+
+		fnSym.IsExported = true;
+		fnSym.ExposeName = exportName;
+		fnSym.CallingConvention = convention;
+	}
+
+	private string? ExtractExposeNameAttribute(AttributeSyntax attr)
+	{
+		if (attr.Arguments.Count == 1 && attr.Arguments[0] is StringLiteralExpressionSyntax literal)
+			return literal.Value;
+
+		ReportDeclarationDiagnostic(attr, "Attribute '[ExposeName]' requires exactly one string literal argument naming the exported symbol.");
+		return null;
 	}
 
 	private (string? LibraryName, string? WinPath, string? LinuxPath, string? MacPath) ExtractLibraryImportAttribute(

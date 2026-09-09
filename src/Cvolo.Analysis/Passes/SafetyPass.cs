@@ -41,6 +41,14 @@ public sealed class SafetyPass(BindingContext context)
 				{
 					CheckFunctionSafety(func);
 				}
+				else if (member is ExposeExternBlockSyntax exportBlock)
+				{
+					foreach (var exportFunc in exportBlock.Functions)
+					{
+						if (exportFunc.GenericParameters.Count == 0 && !exportFunc.Name.Contains('<'))
+							CheckFunctionSafety(exportFunc);
+					}
+				}
 				else if (member is ExtensionDeclarationSyntax extDecl)
 				{
 					// Skip generic templates; their monomorphized concrete instances are checked below
