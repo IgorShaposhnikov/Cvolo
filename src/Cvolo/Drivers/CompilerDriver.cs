@@ -84,7 +84,6 @@ internal sealed class CompilerDriver : ICompilerDriver
 		}
 
 		var rewriters = new List<AstRewriterBase> {
-			new DeferRewriter(),
 			new StringInterpolationRewriter(parser)
 		};
 
@@ -95,6 +94,12 @@ internal sealed class CompilerDriver : ICompilerDriver
 			foreach (var ast in asts)
 			{
 				var currentAst = ast;
+				if (binder.Context.FileContexts.TryGetValue(ast, out var deferContext))
+				{
+					var deferRewriter = new DeferRewriter(binder.Diagnostics, deferContext);
+					currentAst = (CompilationUnitSyntax)deferRewriter.Rewrite(currentAst);
+				}
+
 				foreach (var rewriter in rewriters)
 				{
 					currentAst = (CompilationUnitSyntax)rewriter.Rewrite(currentAst);

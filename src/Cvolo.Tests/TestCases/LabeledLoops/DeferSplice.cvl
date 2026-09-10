@@ -1,0 +1,16 @@
+using System;
+
+int main()
+{
+outer: for (var step = 0; step < 2; step++) {
+		defer Console.Write("O");
+		for (var k = 0; k < 2; k++) {
+			defer Console.Write("I");
+			if (k == 1) {
+				continue outer;
+			}
+			Console.Write(k);
+		}
+	}
+	return 0;
+}

@@ -137,6 +137,12 @@ public sealed class CvoloSourcePrinter
 				}));
 				return $"{ind}switch ({Print(sw.Expression)}) {{\n{casesStr}{ind}}}\n";
 
+			case BreakStatementSyntax brk:
+				return brk.Label is not null ? $"{ind}break({brk.Label});\n" : $"{ind}break;\n";
+
+			case ContinueStatementSyntax cont:
+				return cont.Label is not null ? $"{ind}continue({cont.Label});\n" : $"{ind}continue;\n";
+
 			default:
 				return node.ToString() ?? "";
 		}

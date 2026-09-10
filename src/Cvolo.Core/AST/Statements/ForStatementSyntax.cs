@@ -9,7 +9,8 @@ public sealed class ForStatementSyntax(
 	VariableDeclarationSyntax initializer,
 	ExpressionSyntax condition,
 	ExpressionSyntax increment,
-	SyntaxNode body) : SyntaxNode(span)
+	SyntaxNode body,
+	string? label = null) : SyntaxNode(span)
 {
 	public override SyntaxKind Kind => SyntaxKind.ForStatement;
 
@@ -17,6 +18,7 @@ public sealed class ForStatementSyntax(
 	public ExpressionSyntax Condition { get; } = condition;
 	public ExpressionSyntax Increment { get; } = increment;
 	public SyntaxNode Body { get; } = body;
+	public string? Label { get; } = label;
 
 	public override IEnumerable<SyntaxNode> GetChildren()
 	{

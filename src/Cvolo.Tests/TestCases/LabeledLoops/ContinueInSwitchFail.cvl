@@ -1,0 +1,22 @@
+/// <summary>
+/// Rejection: `continue;` is a loop construct — a switch case does NOT legitimize it.
+/// Expect CVL1070.
+/// </summary>
+using System;
+
+enum Status : byte {
+    Active = 1,
+    Pending = 2
+}
+
+int main() {
+    var s = Status.Active;
+    switch (s) {
+        case Active:
+            Console.Write("A");
+            continue;
+        case Pending:
+            Console.Write("P");
+    }
+    return 0;
+}

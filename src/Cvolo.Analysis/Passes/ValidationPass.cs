@@ -19,6 +19,17 @@ public sealed class ValidationPass(BindingContext context)
 	private bool _inUnbound;
 	private IReadOnlyList<CompilationUnitSyntax> _units = [];
 
+	// Loop-label validation state: _labelScopes mirrors the enclosing-scope-block
+	// chain for CVL1062 duplicate detection; _loopLabels mirrors the active loop
+	// ancestry for CVL1063 resolution and CVL1070 in-loop enforcement.
+	private readonly Stack<HashSet<string>> _labelScopes = new();
+	private readonly Stack<string?> _loopLabels = [];
+
+	// Depth of switch frames whose CASE BODIES are being validated. An unlabeled `break;` is
+	// legal inside a switch case (C-style exit) even when no loop encloses it; `continue;` is
+	// still loop-only.
+	private int _switchDepth;
+
 	public void Process(IEnumerable<CompilationUnitSyntax> units)
 	{
 		_units = units as IReadOnlyList<CompilationUnitSyntax> ?? units.ToList();
@@ -494,9 +505,17 @@ public sealed class ValidationPass(BindingContext context)
 		if (block is null)
 			return;
 
-		foreach (var stmt in block.Statements)
+		_labelScopes.Push([]);
+		try
 		{
-			CheckStatement(stmt, scope, currentFunc);
+			foreach (var stmt in block.Statements)
+			{
+				CheckStatement(stmt, scope, currentFunc);
+			}
+		}
+		finally
+		{
+			_labelScopes.Pop();
 		}
 	}
 
@@ -524,16 +543,20 @@ public sealed class ValidationPass(BindingContext context)
 					CheckStatement(ifStmt.ElseClause.Body, scope, currentFunc);
 				break;
 			case WhileStatementSyntax whileStmt:
+				EnterLoop(whileStmt.Label, whileStmt.Span);
 				CheckExpression(whileStmt.Condition, scope);
 				CheckStatement(whileStmt.Body, scope, currentFunc);
+				ExitLoop();
 				break;
 			case ForStatementSyntax forStmt:
 				{
 					var forScope = new SymbolTable(scope);
+					EnterLoop(forStmt.Label, forStmt.Span);
 					CheckVariableDeclaration(forStmt.Initializer, forScope, currentFunc);
 					CheckExpression(forStmt.Condition, forScope);
 					CheckExpression(forStmt.Increment, forScope);
 					CheckStatement(forStmt.Body, forScope, currentFunc);
+					ExitLoop();
 					break;
 				}
 			case UnsafeBlockStatementSyntax unsafeBlock:
@@ -544,6 +567,64 @@ public sealed class ValidationPass(BindingContext context)
 			case SwitchStatementSyntax sw:
 				CheckSwitchStatement(sw, scope, currentFunc);
 				break;
+			case BreakStatementSyntax brk:
+				CheckControlExit(brk.Label, brk.Span, isBreak: true);
+				break;
+			case ContinueStatementSyntax cont:
+				CheckControlExit(cont.Label, cont.Span, isBreak: false);
+				break;
+		}
+	}
+
+	private void EnterLoop(string? label, TextSpan span)
+	{
+		if (label is not null)
+		{
+			var currentScope = _labelScopes.Count > 0 ? _labelScopes.Peek() : null;
+			if (currentScope is not null && !currentScope.Add(label))
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, span,
+					$"Loop iteration label identifier '{label}' is redeclared within the same enclosing scope block.",
+					DiagnosticIds.DuplicateLoopLabel);
+			}
+		}
+
+		_loopLabels.Push(label);
+	}
+
+	private void ExitLoop()
+	{
+		if (_loopLabels.Count > 0)
+			_loopLabels.Pop();
+	}
+
+	private void CheckControlExit(string? label, TextSpan span, bool isBreak)
+	{
+		if (label is null)
+		{
+			var inLoop = _loopLabels.Count > 0;
+			var inSwitch = _switchDepth > 0;
+
+			// An unlabeled break is legal inside a switch case (C-style switch exit) even with
+			// no enclosing loop; continue is strictly a loop construct.
+			if (!inLoop && !(isBreak && inSwitch))
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, span,
+					"The unstructured iteration statement 'break' or 'continue' can only be executed inside an active loop or switch-case body context.",
+					DiagnosticIds.LoopControlOutsideLoop);
+			}
+
+			return;
+		}
+
+		if (!_loopLabels.Contains(label))
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, span,
+				$"Labeled branch target '{label}' could not be resolved inside the active iteration scope ancestry chain.",
+				DiagnosticIds.LabeledBranchTargetNotFound);
 		}
 	}
 
@@ -2455,10 +2536,10 @@ public sealed class ValidationPass(BindingContext context)
 				return new IfStatementSyntax(i.Span, SubstituteExpressionGenerics(i.Condition, substitutionMap), SubstituteStatementGenerics(i.ThenStatement, substitutionMap), i.ElseClause != null ? new ElseClauseSyntax(i.ElseClause.Span, SubstituteBlockGenerics(i.ElseClause.Body, substitutionMap)) : null);
 
 			case WhileStatementSyntax w:
-				return new WhileStatementSyntax(w.Span, SubstituteExpressionGenerics(w.Condition, substitutionMap), SubstituteStatementGenerics(w.Body, substitutionMap));
+				return new WhileStatementSyntax(w.Span, SubstituteExpressionGenerics(w.Condition, substitutionMap), SubstituteStatementGenerics(w.Body, substitutionMap), w.Label);
 
 			case ForStatementSyntax f:
-				return new ForStatementSyntax(f.Span, SubstituteStatementGenerics(f.Initializer, substitutionMap) as VariableDeclarationSyntax ?? f.Initializer, SubstituteExpressionGenerics(f.Condition, substitutionMap), SubstituteExpressionGenerics(f.Increment, substitutionMap), SubstituteStatementGenerics(f.Body, substitutionMap));
+				return new ForStatementSyntax(f.Span, SubstituteStatementGenerics(f.Initializer, substitutionMap) as VariableDeclarationSyntax ?? f.Initializer, SubstituteExpressionGenerics(f.Condition, substitutionMap), SubstituteExpressionGenerics(f.Increment, substitutionMap), SubstituteStatementGenerics(f.Body, substitutionMap), f.Label);
 
 			case ReturnStatementSyntax r:
 				return new ReturnStatementSyntax(r.Span, r.Expression != null ? SubstituteExpressionGenerics(r.Expression, substitutionMap) : null);
@@ -3115,79 +3196,87 @@ public sealed class ValidationPass(BindingContext context)
 		var matchedVariants = new HashSet<string>();
 		var hasDefault = false;
 
-		foreach (var c in sw.Cases)
+		_switchDepth++;
+		try
 		{
-			if (c.IsDefault || c.VariantName == "_")
+			foreach (var c in sw.Cases)
 			{
-				hasDefault = true;
-				CheckBlock(new BlockStatementSyntax(c.Span, c.Body), new SymbolTable(scope), currentFunc);
-				continue;
-			}
-
-			matchedVariants.Add(c.VariantName);
-			var variant = unionType.FindField(c.VariantName);
-			if (variant is null)
-			{
-				var currentFileContext = context.FileContexts[context.CurrentUnit!];
-				context.Diagnostics.Report(currentFileContext, c.Span, $"Union '{unionType.Name}' does not contain variant '{c.VariantName}'");
-				continue;
-			}
-
-			if (!context.LegacyVisibility && c.VariableName is not null && !VisibilityChecker.IsAccessible(variant.Visibility, context.CurrentUnit, GetDeclaringUnit(unionType)))
-			{
-				var currentFileContext = context.FileContexts[context.CurrentUnit!];
-				context.Diagnostics.Report(currentFileContext, c.Span,
-					$"Pattern matching binding failed for type '{unionType.Name}'. Payload variant field '{variant.Name}' is obscured by visibility constraints.", DiagnosticIds.HiddenPayloadMatch);
-			}
-
-			var caseScope = new SymbolTable(scope);
-
-			if (c.VariableName is not null)
-			{
-				if (variant.IsVoidVariant)
+				if (c.IsDefault || c.VariantName == "_")
 				{
-					var currentFileContext = context.FileContexts[context.CurrentUnit!];
-					context.Diagnostics.Report(currentFileContext, c.Span, $"Void variant '{c.VariantName}' cannot carry a promoted variable.");
+					hasDefault = true;
+					CheckBlock(new BlockStatementSyntax(c.Span, c.Body), new SymbolTable(scope), currentFunc);
 					continue;
 				}
 
-				// Type Promotion (Reference targets promote to pointers; value targets copy/move)
-				TypeSymbol promotedType;
-				if (unionType.IsNpoEligible)
+				matchedVariants.Add(c.VariantName);
+				var variant = unionType.FindField(c.VariantName);
+				if (variant is null)
 				{
-					// NPO: the payload IS the reference already (flat pointer). Extracting it under
-					// a ref/refvar switch yields the inner reference directly, lock-protected.
-					if (variant.Type is not PointerTypeSymbol)
+					var currentFileContext = context.FileContexts[context.CurrentUnit!];
+					context.Diagnostics.Report(currentFileContext, c.Span, $"Union '{unionType.Name}' does not contain variant '{c.VariantName}'");
+					continue;
+				}
+
+				if (!context.LegacyVisibility && c.VariableName is not null && !VisibilityChecker.IsAccessible(variant.Visibility, context.CurrentUnit, GetDeclaringUnit(unionType)))
+				{
+					var currentFileContext = context.FileContexts[context.CurrentUnit!];
+					context.Diagnostics.Report(currentFileContext, c.Span,
+						$"Pattern matching binding failed for type '{unionType.Name}'. Payload variant field '{variant.Name}' is obscured by visibility constraints.", DiagnosticIds.HiddenPayloadMatch);
+				}
+
+				var caseScope = new SymbolTable(scope);
+
+				if (c.VariableName is not null)
+				{
+					if (variant.IsVoidVariant)
 					{
-						promotedType = variant.Type;
-					}
-					else if (GetExpressionType(sw.Expression, scope) is not PointerTypeSymbol)
-					{
-						// A by-value switch over an NPO reference option would copy the ref out of the
-						// borrow lock, creating an unsound aliased reference.
 						var currentFileContext = context.FileContexts[context.CurrentUnit!];
-						context.Diagnostics.Report(currentFileContext, c.Span,
-							$"Cannot pattern-match '{c.VariantName} {c.VariableName}' by value on a nullable reference option; switch on 'ref'/'refvar' to extract the reference safely.");
+						context.Diagnostics.Report(currentFileContext, c.Span, $"Void variant '{c.VariantName}' cannot carry a promoted variable.");
 						continue;
+					}
+
+					// Type Promotion (Reference targets promote to pointers; value targets copy/move)
+					TypeSymbol promotedType;
+					if (unionType.IsNpoEligible)
+					{
+						// NPO: the payload IS the reference already (flat pointer). Extracting it under
+						// a ref/refvar switch yields the inner reference directly, lock-protected.
+						if (variant.Type is not PointerTypeSymbol)
+						{
+							promotedType = variant.Type;
+						}
+						else if (GetExpressionType(sw.Expression, scope) is not PointerTypeSymbol)
+						{
+							// A by-value switch over an NPO reference option would copy the ref out of the
+							// borrow lock, creating an unsound aliased reference.
+							var currentFileContext = context.FileContexts[context.CurrentUnit!];
+							context.Diagnostics.Report(currentFileContext, c.Span,
+								$"Cannot pattern-match '{c.VariantName} {c.VariableName}' by value on a nullable reference option; switch on 'ref'/'refvar' to extract the reference safely.");
+							continue;
+						}
+						else
+						{
+							promotedType = variant.Type;
+						}
+					}
+					else if (GetExpressionType(sw.Expression, scope) is PointerTypeSymbol targetPtr)
+					{
+						promotedType = new PointerTypeSymbol(variant.Type, isMutable: targetPtr.IsMutable);
 					}
 					else
 					{
 						promotedType = variant.Type;
 					}
-				}
-				else if (GetExpressionType(sw.Expression, scope) is PointerTypeSymbol targetPtr)
-				{
-					promotedType = new PointerTypeSymbol(variant.Type, isMutable: targetPtr.IsMutable);
-				}
-				else
-				{
-					promotedType = variant.Type;
+
+					caseScope.Declare(new VariableSymbol(c.VariableName, promotedType, isMutable: false) { IsInitialized = true });
 				}
 
-				caseScope.Declare(new VariableSymbol(c.VariableName, promotedType, isMutable: false) { IsInitialized = true });
+				CheckBlock(new BlockStatementSyntax(c.Span, c.Body), caseScope, currentFunc);
 			}
-
-			CheckBlock(new BlockStatementSyntax(c.Span, c.Body), caseScope, currentFunc);
+		}
+		finally
+		{
+			_switchDepth--;
 		}
 
 		// Exhaustive Switch-Matching check
@@ -3209,32 +3298,40 @@ public sealed class ValidationPass(BindingContext context)
 		var matchedVariants = new HashSet<string>();
 		var hasDefault = false;
 
-		foreach (var c in sw.Cases)
+		_switchDepth++;
+		try
 		{
-			if (c.IsDefault || c.VariantName == "_")
+			foreach (var c in sw.Cases)
 			{
-				hasDefault = true;
+				if (c.IsDefault || c.VariantName == "_")
+				{
+					hasDefault = true;
+					CheckBlock(new BlockStatementSyntax(c.Span, c.Body), new SymbolTable(scope), currentFunc);
+					continue;
+				}
+
+				if (c.VariableName is not null)
+				{
+					var currentFileContext = context.FileContexts[context.CurrentUnit!];
+					context.Diagnostics.Report(currentFileContext, c.Span, "Enum variants cannot carry a promoted variable.");
+					continue;
+				}
+
+				matchedVariants.Add(c.VariantName);
+				var variant = enumType.FindVariant(c.VariantName);
+				if (variant is null)
+				{
+					var currentFileContext = context.FileContexts[context.CurrentUnit!];
+					context.Diagnostics.Report(currentFileContext, c.Span, $"Enum '{enumType.Name}' does not contain variant '{c.VariantName}'");
+					continue;
+				}
+
 				CheckBlock(new BlockStatementSyntax(c.Span, c.Body), new SymbolTable(scope), currentFunc);
-				continue;
 			}
-
-			if (c.VariableName is not null)
-			{
-				var currentFileContext = context.FileContexts[context.CurrentUnit!];
-				context.Diagnostics.Report(currentFileContext, c.Span, "Enum variants cannot carry a promoted variable.");
-				continue;
-			}
-
-			matchedVariants.Add(c.VariantName);
-			var variant = enumType.FindVariant(c.VariantName);
-			if (variant is null)
-			{
-				var currentFileContext = context.FileContexts[context.CurrentUnit!];
-				context.Diagnostics.Report(currentFileContext, c.Span, $"Enum '{enumType.Name}' does not contain variant '{c.VariantName}'");
-				continue;
-			}
-
-			CheckBlock(new BlockStatementSyntax(c.Span, c.Body), new SymbolTable(scope), currentFunc);
+		}
+		finally
+		{
+			_switchDepth--;
 		}
 
 		// (§6.A) 'Exhaustive Switch-Matching check'. [Flags] enums are RELAXED: composite

@@ -116,6 +116,12 @@ public abstract class AstRewriterBase
 			return new ReturnStatementSyntax(ret.Span, rewrittenExpr);
 		}
 
+		if (node is BreakStatementSyntax brk)
+			return brk;
+
+		if (node is ContinueStatementSyntax cont)
+			return cont;
+
 		if (node is IfStatementSyntax ifStmt)
 		{
 			var cond = (ExpressionSyntax)Rewrite(ifStmt.Condition);
@@ -128,7 +134,7 @@ public abstract class AstRewriterBase
 		{
 			var cond = (ExpressionSyntax)Rewrite(whileStmt.Condition);
 			var body = Rewrite(whileStmt.Body);
-			return new WhileStatementSyntax(whileStmt.Span, cond, body);
+			return new WhileStatementSyntax(whileStmt.Span, cond, body, whileStmt.Label);
 		}
 
 		if (node is ForStatementSyntax forStmt)
@@ -137,7 +143,7 @@ public abstract class AstRewriterBase
 			var cond = (ExpressionSyntax)Rewrite(forStmt.Condition);
 			var inc = (ExpressionSyntax)Rewrite(forStmt.Increment);
 			var body = Rewrite(forStmt.Body);
-			return new ForStatementSyntax(forStmt.Span, init, cond, inc, body);
+			return new ForStatementSyntax(forStmt.Span, init, cond, inc, body, forStmt.Label);
 		}
 
 		if (node is VariableDeclarationSyntax varDecl)

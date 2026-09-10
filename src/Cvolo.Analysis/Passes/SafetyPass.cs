@@ -352,6 +352,10 @@ public sealed class SafetyPass(BindingContext context)
 				CheckBlockSafety(unsafeBlock.Body, new SymbolTable(scope), func);
 				_currentTierStack.Pop();
 				break;
+
+			case BreakStatementSyntax:
+			case ContinueStatementSyntax:
+				break;
 		}
 	}
 

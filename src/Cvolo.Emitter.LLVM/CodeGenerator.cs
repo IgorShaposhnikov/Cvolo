@@ -52,6 +52,19 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	private int _typeofCounter;
 	private readonly HashSet<string> _exportedSymbols = [];
 	private readonly bool _checkedFfiBounds;
+	private readonly Stack<LoopContext> _loopContextStack = [];
+
+	// Break targets for switch frames: an unlabeled `break;` inside a switch case exits the
+	// innermost switch (C-style), not any surrounding loop. Each frame is the switch's
+	// after-block, pushed while the switch's case bodies are emitted.
+	private readonly Stack<LLVMBasicBlockRef> _switchBreakStack = [];
+
+	private sealed class LoopContext(string? label, LLVMBasicBlockRef breakBlock, LLVMBasicBlockRef continueBlock)
+	{
+		public string? Label { get; } = label;
+		public LLVMBasicBlockRef BreakBlock { get; } = breakBlock;
+		public LLVMBasicBlockRef ContinueBlock { get; } = continueBlock;
+	}
 
 	public CodeGenerator(string moduleName, ILLVMOptimizer? optimizer = null, IRVerifier? irVerifier = null, bool enableTbaa = true, bool checkedFfiBounds = false)
 	{
@@ -916,6 +929,12 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				_unsafeDepth++;
 				EmitBlock(unsafeBlock.Body);
 				_unsafeDepth--;
+				break;
+			case BreakStatementSyntax brk:
+				EmitBreakStatement(brk);
+				break;
+			case ContinueStatementSyntax cont:
+				EmitContinueStatement(cont);
 				break;
 		}
 	}
@@ -2822,9 +2841,13 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	private void EmitWhileStatement(WhileStatementSyntax whileStmt)
 	{
 		var currentFunc = _builder.InsertBlock.Parent;
-		var condBlock = currentFunc.AppendBasicBlock("whilecond");
-		var bodyBlock = currentFunc.AppendBasicBlock("whilebody");
-		var endBlock = currentFunc.AppendBasicBlock("whileend");
+		var prefix = !string.IsNullOrEmpty(whileStmt.Label) ? whileStmt.Label + "." : "";
+		var condBlock = currentFunc.AppendBasicBlock(prefix + "whilecond");
+		var bodyBlock = currentFunc.AppendBasicBlock(prefix + "whilebody");
+		var endBlock = currentFunc.AppendBasicBlock(prefix + "whileend");
+
+		var ctx = new LoopContext(whileStmt.Label, endBlock, condBlock);
+		_loopContextStack.Push(ctx);
 
 		_builder.BuildBr(condBlock);
 
@@ -2836,6 +2859,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		EmitStatement(whileStmt.Body);
 		_builder.BuildBr(condBlock);
 
+		_loopContextStack.Pop();
 		_builder.PositionAtEnd(endBlock);
 	}
 
@@ -2844,10 +2868,14 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		EmitVariableDeclaration(forStmt.Initializer);
 
 		var currentFunc = _builder.InsertBlock.Parent;
-		var condBlock = currentFunc.AppendBasicBlock("forcond");
-		var bodyBlock = currentFunc.AppendBasicBlock("forbody");
-		var incBlock = currentFunc.AppendBasicBlock("forinc");
-		var endBlock = currentFunc.AppendBasicBlock("forend");
+		var prefix = !string.IsNullOrEmpty(forStmt.Label) ? forStmt.Label + "." : "";
+		var condBlock = currentFunc.AppendBasicBlock(prefix + "forcond");
+		var bodyBlock = currentFunc.AppendBasicBlock(prefix + "forbody");
+		var incBlock = currentFunc.AppendBasicBlock(prefix + "forinc");
+		var endBlock = currentFunc.AppendBasicBlock(prefix + "forend");
+
+		var ctx = new LoopContext(forStmt.Label, endBlock, incBlock);
+		_loopContextStack.Push(ctx);
 
 		_builder.BuildBr(condBlock);
 
@@ -2859,11 +2887,61 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		EmitStatement(forStmt.Body);
 		_builder.BuildBr(incBlock);
 
+		_loopContextStack.Pop();
+
 		_builder.PositionAtEnd(incBlock);
 		EmitExpression(forStmt.Increment);
 		_builder.BuildBr(condBlock);
 
 		_builder.PositionAtEnd(endBlock);
+	}
+
+	private void EmitBreakStatement(BreakStatementSyntax brk)
+	{
+		// A labeled break targets the matching loop in the ancestor chain.
+		if (brk.Label is not null)
+		{
+			foreach (var ctx in _loopContextStack)
+			{
+				if (ctx.Label == brk.Label)
+				{
+					_builder.BuildBr(ctx.BreakBlock);
+					return;
+				}
+			}
+		}
+
+		// An unlabeled break exits the innermost switch frame first (C-style); otherwise the
+		// nearest loop. With no frame at all the statement was rejected by validation
+		// (CVL1070), so there is nothing meaningful to lower.
+		if (_switchBreakStack.Count > 0)
+		{
+			_builder.BuildBr(_switchBreakStack.Peek());
+			return;
+		}
+
+		if (_loopContextStack.Count > 0)
+			_builder.BuildBr(_loopContextStack.Peek().BreakBlock);
+	}
+
+	private void EmitContinueStatement(ContinueStatementSyntax cont)
+	{
+		if (_loopContextStack.Count == 0)
+			return;
+
+		if (cont.Label is not null)
+		{
+			foreach (var ctx in _loopContextStack)
+			{
+				if (ctx.Label == cont.Label)
+				{
+					_builder.BuildBr(ctx.ContinueBlock);
+					return;
+				}
+			}
+		}
+
+		_builder.BuildBr(_loopContextStack.Peek().ContinueBlock);
 	}
 
 	// Coerces an expression value that is a `ref T` into the pointed-to value when it
@@ -4728,53 +4806,61 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		var currentFunc = _builder.InsertBlock.Parent;
 		var endBlock = currentFunc.AppendBasicBlock("sw_end");
 		var nextCheckBlock = _builder.InsertBlock;
+		_switchBreakStack.Push(endBlock);
 
-		for (int i = 0; i < sw.Cases.Count; i++)
+		try
 		{
-			var c = sw.Cases[i];
-			_builder.PositionAtEnd(nextCheckBlock);
-
-			if (c.IsDefault || c.VariantName == "_")
+			for (int i = 0; i < sw.Cases.Count; i++)
 			{
-				var bodyBlock = currentFunc.AppendBasicBlock("default_body");
-				_builder.BuildBr(bodyBlock);
+				var c = sw.Cases[i];
+				_builder.PositionAtEnd(nextCheckBlock);
 
-				_builder.PositionAtEnd(bodyBlock);
-				EmitSwitchCaseBody(c, targetVal, unionType, "", isDefault: true, isRefTarget, isMutableRef);
-				if (_builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
-					_builder.BuildBr(endBlock);
-
-				break;
-			}
-			else
-			{
-				var unionTypeSym = unionType as UnionTypeSymbol;
-				var fieldIndex = GetFieldIndex(unionTypeSym!, c.VariantName);
-
-				var caseBodyBlock = currentFunc.AppendBasicBlock($"case_{c.VariantName}_body");
-				nextCheckBlock = currentFunc.AppendBasicBlock($"case_{c.VariantName}_next");
-
-				LLVMValueRef cond;
-				if (isNpo)
+				if (c.IsDefault || c.VariantName == "_")
 				{
-					// NPO: Some (payload) matches non-null; None (void) matches null.
-					var isNone = unionTypeSym!.Fields[fieldIndex].IsVoidVariant;
-					var nullConst = LLVMValueRef.CreateConstPointerNull(unionLayout);
-					cond = isNone
-						? _builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, discriminator, nullConst, "npo_is_none")
-						: _builder.BuildICmp(LLVMIntPredicate.LLVMIntNE, discriminator, nullConst, "npo_is_some");
+					var bodyBlock = currentFunc.AppendBasicBlock("default_body");
+					_builder.BuildBr(bodyBlock);
+
+					_builder.PositionAtEnd(bodyBlock);
+					EmitSwitchCaseBody(c, targetVal, unionType, "", isDefault: true, isRefTarget, isMutableRef);
+					if (_builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
+						_builder.BuildBr(endBlock);
+
+					break;
 				}
 				else
 				{
-					cond = _builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, discriminator, LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, (ulong)fieldIndex), "tag_match");
-				}
-				_builder.BuildCondBr(cond, caseBodyBlock, nextCheckBlock);
+					var unionTypeSym = unionType as UnionTypeSymbol;
+					var fieldIndex = GetFieldIndex(unionTypeSym!, c.VariantName);
 
-				_builder.PositionAtEnd(caseBodyBlock);
-				EmitSwitchCaseBody(c, targetVal, unionType, c.VariantName, isDefault: false, isRefTarget, isMutableRef);
-				if (_builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
-					_builder.BuildBr(endBlock);
+					var caseBodyBlock = currentFunc.AppendBasicBlock($"case_{c.VariantName}_body");
+					nextCheckBlock = currentFunc.AppendBasicBlock($"case_{c.VariantName}_next");
+
+					LLVMValueRef cond;
+					if (isNpo)
+					{
+						// NPO: Some (payload) matches non-null; None (void) matches null.
+						var isNone = unionTypeSym!.Fields[fieldIndex].IsVoidVariant;
+						var nullConst = LLVMValueRef.CreateConstPointerNull(unionLayout);
+						cond = isNone
+							? _builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, discriminator, nullConst, "npo_is_none")
+							: _builder.BuildICmp(LLVMIntPredicate.LLVMIntNE, discriminator, nullConst, "npo_is_some");
+					}
+					else
+					{
+						cond = _builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, discriminator, LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, (ulong)fieldIndex), "tag_match");
+					}
+					_builder.BuildCondBr(cond, caseBodyBlock, nextCheckBlock);
+
+					_builder.PositionAtEnd(caseBodyBlock);
+					EmitSwitchCaseBody(c, targetVal, unionType, c.VariantName, isDefault: false, isRefTarget, isMutableRef);
+					if (_builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
+						_builder.BuildBr(endBlock);
+				}
 			}
+		}
+		finally
+		{
+			_switchBreakStack.Pop();
 		}
 
 		_builder.PositionAtEnd(nextCheckBlock);
@@ -4791,41 +4877,49 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		var endBlock = currentFunc.AppendBasicBlock("sw_end");
 		var nextCheckBlock = _builder.InsertBlock;
 		var hasDefault = false;
+		_switchBreakStack.Push(endBlock);
 
-		for (int i = 0; i < sw.Cases.Count; i++)
+		try
 		{
-			var c = sw.Cases[i];
-			_builder.PositionAtEnd(nextCheckBlock);
-
-			if (c.IsDefault || c.VariantName == "_")
+			for (int i = 0; i < sw.Cases.Count; i++)
 			{
-				hasDefault = true;
-				var bodyBlock = currentFunc.AppendBasicBlock("default_body");
-				_builder.BuildBr(bodyBlock);
+				var c = sw.Cases[i];
+				_builder.PositionAtEnd(nextCheckBlock);
 
-				_builder.PositionAtEnd(bodyBlock);
-				EmitBlock(new BlockStatementSyntax(c.Span, c.Body));
-				if (_builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
-					_builder.BuildBr(endBlock);
+				if (c.IsDefault || c.VariantName == "_")
+				{
+					hasDefault = true;
+					var bodyBlock = currentFunc.AppendBasicBlock("default_body");
+					_builder.BuildBr(bodyBlock);
 
-				break;
+					_builder.PositionAtEnd(bodyBlock);
+					EmitBlock(new BlockStatementSyntax(c.Span, c.Body));
+					if (_builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
+						_builder.BuildBr(endBlock);
+
+					break;
+				}
+				else
+				{
+					var variant = enumTarget.FindVariant(c.VariantName) ?? enumTarget.Variants[0];
+
+					var caseBodyBlock = currentFunc.AppendBasicBlock($"enum_case_{c.VariantName}_body");
+					nextCheckBlock = currentFunc.AppendBasicBlock($"enum_case_{c.VariantName}_next");
+
+					var cond = _builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, value,
+						LLVMValueRef.CreateConstInt(storageTy, unchecked((ulong)variant.Value)), "enum_switch_match");
+					_builder.BuildCondBr(cond, caseBodyBlock, nextCheckBlock);
+
+					_builder.PositionAtEnd(caseBodyBlock);
+					EmitBlock(new BlockStatementSyntax(c.Span, c.Body));
+					if (_builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
+						_builder.BuildBr(endBlock);
+				}
 			}
-			else
-			{
-				var variant = enumTarget.FindVariant(c.VariantName) ?? enumTarget.Variants[0];
-
-				var caseBodyBlock = currentFunc.AppendBasicBlock($"enum_case_{c.VariantName}_body");
-				nextCheckBlock = currentFunc.AppendBasicBlock($"enum_case_{c.VariantName}_next");
-
-				var cond = _builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, value,
-					LLVMValueRef.CreateConstInt(storageTy, unchecked((ulong)variant.Value)), "enum_switch_match");
-				_builder.BuildCondBr(cond, caseBodyBlock, nextCheckBlock);
-
-				_builder.PositionAtEnd(caseBodyBlock);
-				EmitBlock(new BlockStatementSyntax(c.Span, c.Body));
-				if (_builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
-					_builder.BuildBr(endBlock);
-			}
+		}
+		finally
+		{
+			_switchBreakStack.Pop();
 		}
 
 		_builder.PositionAtEnd(nextCheckBlock);

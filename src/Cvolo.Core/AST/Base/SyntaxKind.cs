@@ -60,6 +60,8 @@ public enum SyntaxKind
 	IsPatternExpression,
 	TypeAliasDeclaration,
 	DeferStatement,
+	BreakStatement,
+	ContinueStatement,
 	ExternBlock,
 	ExternBlockFunction,
 	ExposeExternBlock,

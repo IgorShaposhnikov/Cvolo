@@ -123,6 +123,21 @@ public static class DiagnosticIds
 	/// <summary>'expose using' targets a namespace that cannot be resolved.</summary>
 	public const string ExposeUsingNamespaceNotFound = "CVL1061";
 
+	/// <summary>Labeled branch target could not be resolved inside the active iteration scope ancestry chain.</summary>
+	public const string LabeledBranchTargetNotFound = "CVL1063";
+
+	/// <summary>Loop iteration label identifier is redeclared within the same enclosing scope block.</summary>
+	public const string DuplicateLoopLabel = "CVL1062";
+
+	/// <summary>Targeted defer expression is missing the required trailing colon after its label.</summary>
+	public const string TargetedDeferMissingColon = "CVL1067";
+
+	/// <summary>The unstructured iteration statement 'break' or 'continue' can only be executed inside an active loop body context.</summary>
+	public const string LoopControlOutsideLoop = "CVL1070";
+
+	/// <summary>Targeted defer expression violates the cross-iteration loop barrier.</summary>
+	public const string CrossIterationDeferBarrier = "CVL1071";
+
 	/// <summary>A type alias references an underlying type that does not exist.</summary>
 	public const string UnknownTypeAlias = "CVL1200";
 

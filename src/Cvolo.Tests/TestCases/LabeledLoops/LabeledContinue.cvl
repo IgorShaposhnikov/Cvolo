@@ -1,0 +1,16 @@
+using System;
+
+int main()
+{
+outer: for (var i = 0; i < 3; i++) {
+		for (var j = 0; j < 3; j++) {
+			if (j == 2) {
+				continue outer;
+			}
+			Console.Write(i);
+			Console.Write(j);
+		}
+		Console.Write("X");
+	}
+	return 0;
+}

@@ -1,0 +1,13 @@
+using System;
+
+int main()
+{
+	for (var i = 0; i < 5; i++) {
+		if (i == 3) {
+			break;
+		}
+		Console.Write(i);
+	}
+	Console.Write("!");
+	return 0;
+}

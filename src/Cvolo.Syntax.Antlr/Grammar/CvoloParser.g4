@@ -233,10 +233,11 @@ statement
 	| switchStatement
 	| blockStatement
 	| deferStatement
+	| controlExitStatement
 	;
 
 deferStatement
-	: DEFER (expressionStatement | blockStatement)
+	: DEFER (Identifier COLON)? (expressionStatement | blockStatement)
 	;
 
 unsafeBlockStatement
@@ -267,11 +268,16 @@ ifStatement
 	;
 
 whileStatement
-	: WHILE LPAREN expression RPAREN statement
+	: (Identifier COLON)? WHILE LPAREN expression RPAREN statement
 	;
 
 forStatement
-	: FOR LPAREN variableDeclaration expression SEMI expression RPAREN statement
+	: (Identifier COLON)? FOR LPAREN variableDeclaration expression SEMI expression RPAREN statement
+	;
+
+controlExitStatement
+	: BREAK Identifier? SEMI
+	| CONTINUE Identifier? SEMI
 	;
 
 expression

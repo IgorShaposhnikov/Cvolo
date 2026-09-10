@@ -1,0 +1,40 @@
+/// <summary>
+/// Feature: break/continue inside switch cases (C-style).
+/// - `break;` in a switch case exits the switch, not a surrounding loop; a case-local
+///   defer fires on that break.
+/// - `continue;` in a switch case targets the enclosing loop (skips the rest of the loop
+///   body for that iteration), never the switch.
+/// </summary>
+using System;
+
+enum Status : byte {
+    Active = 1,
+    Pending = 2
+}
+
+int main() {
+    for (int i = 0; i < 4; i++) {
+        switch ((Status)i) {
+            case Some s:
+                Console.Write("S");
+                break;
+            case None:
+                defer Console.Write("X");
+                break;
+        }
+        Console.Write(".");
+    }
+
+    for (int j = 0; j < 4; j++) {
+        switch ((Status)j) {
+            case None:
+                continue;
+            case Some v:
+                Console.Write("C");
+        }
+        Console.Write(".");
+    }
+
+    Console.Write("done");
+    return 0;
+}

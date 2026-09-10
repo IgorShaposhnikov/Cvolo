@@ -1,0 +1,11 @@
+using System;
+
+int main()
+{
+outer: for (var i = 0; i < 2; i++) {
+		for (var j = 0; j < 2; j++) {
+			defer outer: Console.Write("x");
+		}
+	}
+	return 0;
+}

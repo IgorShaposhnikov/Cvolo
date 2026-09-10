@@ -63,6 +63,8 @@ ALIGNSTACK: 'alignstack';
 INTEL: 'intel';
 NAMEOF: 'nameof';
 TYPEOF: 'typeof';
+BREAK: 'break';
+CONTINUE: 'continue';
 
 // Punctuation
 LPAREN: '(';

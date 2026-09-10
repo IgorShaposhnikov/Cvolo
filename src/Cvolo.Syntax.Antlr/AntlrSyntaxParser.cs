@@ -42,10 +42,50 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			}
 		}
 
+		// The spec mandates a colon after a targeted-defer label (`defer label: body;`); a flat
+		// `defer label body;` is a grammar error. Detect the tell-tale DEFER → Identifier →
+		// Identifier token run (a label marker immediately followed by a body that starts with an
+		// identifier) and surface it as CVL1067 so the missing-colon case is actionable.
+		var allTokens = tokenStream.GetTokens();
+		for (var i = 0; i < allTokens.Count; i++)
+		{
+			if (allTokens[i].Type != CvoloLexer.DEFER)
+				continue;
+
+			var labelIndex = NextVisibleIndex(allTokens, i);
+			if (labelIndex < 0 || allTokens[labelIndex].Type != CvoloLexer.Identifier)
+				continue;
+
+			var afterIndex = NextVisibleIndex(allTokens, labelIndex);
+			if (afterIndex < 0)
+				continue;
+
+			var afterToken = allTokens[afterIndex];
+			if (afterToken.Type != CvoloLexer.Identifier)
+				continue;
+
+			_diagnostics.Report(_compilationContext, SpanOf(allTokens[labelIndex]),
+				$"Targeted defer expression requires a trailing colon identifier after label '{allTokens[labelIndex].Text}'.",
+				DiagnosticIds.TargetedDeferMissingColon);
+		}
+
 		if (_diagnostics.HasErrors)
 			return null;
 
 		return BuildCompilationUnit(tree, context);
+	}
+
+	// First index after <paramref name="startIndex"/> whose token is on the default channel
+	// (whitespace is skipped by the lexer; comments live on the COMMENTS channel).
+	private static int NextVisibleIndex(IList<IToken> tokens, int startIndex)
+	{
+		for (var i = startIndex + 1; i < tokens.Count; i++)
+		{
+			if (tokens[i].Channel == TokenConstants.DefaultChannel)
+				return i;
+		}
+
+		return -1;
 	}
 
 	private CompilationUnitSyntax BuildCompilationUnit(CvoloParser.CompilationUnitContext context, CompilationContext compilationContext)
@@ -495,6 +535,8 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			return new UnsafeBlockStatementSyntax(SpanOf(unsafeBlock), BuildBlockStatement(unsafeBlock.blockStatement()));
 		if (context.deferStatement() is { } defer)
 			return BuildDeferStatement(defer);
+		if (context.controlExitStatement() is { } ctrlExit)
+			return BuildControlExitStatement(ctrlExit);
 		return null;
 	}
 
@@ -514,15 +556,16 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 
 	private DeferStatementSyntax BuildDeferStatement(CvoloParser.DeferStatementContext context)
 	{
+		var label = context.Identifier()?.GetText();
 		if (context.expressionStatement() is { } exprStmt)
 		{
 			var body = BuildExpressionStatement(exprStmt);
-			return new DeferStatementSyntax(SpanOf(context), body);
+			return new DeferStatementSyntax(SpanOf(context), body, label);
 		}
 		if (context.blockStatement() is { } block)
 		{
 			var body = BuildBlockStatement(block);
-			return new DeferStatementSyntax(SpanOf(context), body);
+			return new DeferStatementSyntax(SpanOf(context), body, label);
 		}
 		throw new InvalidOperationException("Defer statement has no valid body (expression or block).");
 	}
@@ -1125,18 +1168,29 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 
 	private WhileStatementSyntax BuildWhileStatement(CvoloParser.WhileStatementContext context)
 	{
+		var label = context.Identifier()?.GetText();
 		var condition = BuildExpression(context.expression());
 		var body = BuildStatement(context.statement())!;
-		return new WhileStatementSyntax(SpanOf(context), condition, body);
+		return new WhileStatementSyntax(SpanOf(context), condition, body, label);
 	}
 
 	private ForStatementSyntax BuildForStatement(CvoloParser.ForStatementContext context)
 	{
+		var label = context.Identifier()?.GetText();
 		var init = BuildVariableDeclaration(context.variableDeclaration());
 		var condition = BuildExpression(context.expression(0));
 		var increment = BuildExpression(context.expression(1));
 		var body = BuildStatement(context.statement())!;
-		return new ForStatementSyntax(SpanOf(context), init, condition, increment, body);
+		return new ForStatementSyntax(SpanOf(context), init, condition, increment, body, label);
+	}
+
+	private SyntaxNode BuildControlExitStatement(CvoloParser.ControlExitStatementContext context)
+	{
+		var isBreak = context.BREAK() is not null;
+		var label = context.Identifier()?.GetText();
+		return isBreak
+			? new BreakStatementSyntax(SpanOf(context), label)
+			: new ContinueStatementSyntax(SpanOf(context), label);
 	}
 
 	private static TextSpan SpanOf(Antlr4.Runtime.ParserRuleContext context)
