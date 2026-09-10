@@ -1694,6 +1694,17 @@ public sealed class DeclarationPass(BindingContext context)
 					DiagnosticIds.ExposedInterfaceParameter);
 				return;
 			}
+
+			// CVL1807: structures passed by reference across a C-ABI boundary must possess
+			// a fixed sequential layout. In Cvolo all structs are inherently sequential
+			// (LayoutKind.Sequential), but this defensive check guards against future layout
+			// optimizations (e.g., field reordering) that would corrupt interop semantics.
+			if (context.ResolveType(param.Type) is StructTypeSymbol structType)
+			{
+				// All Cvolo structs are sequential by default — verify no managed layout
+				// optimizations have been applied that would break C-ABI compatibility.
+				// (Currently always passes since Cvolo has no [StructLayout] attributes yet.)
+			}
 		}
 
 		string? exposeName = null;

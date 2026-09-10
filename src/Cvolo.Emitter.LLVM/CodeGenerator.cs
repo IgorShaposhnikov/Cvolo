@@ -51,8 +51,9 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	private readonly Dictionary<string, LLVMValueRef> _typeofGlobals = [];
 	private int _typeofCounter;
 	private readonly HashSet<string> _exportedSymbols = [];
+	private readonly bool _checkedFfiBounds;
 
-	public CodeGenerator(string moduleName, ILLVMOptimizer? optimizer = null, IRVerifier? irVerifier = null, bool enableTbaa = true)
+	public CodeGenerator(string moduleName, ILLVMOptimizer? optimizer = null, IRVerifier? irVerifier = null, bool enableTbaa = true, bool checkedFfiBounds = false)
 	{
 		_context = LLVMContextRef.Global;
 		_module = _context.CreateModuleWithName(moduleName);
@@ -60,6 +61,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		_optimizer = optimizer;
 		_irVerifier = irVerifier;
 		_enableTbaa = enableTbaa;
+		_checkedFfiBounds = checkedFfiBounds;
 	}
 
 	public LLVMModuleRef Module => _module;
@@ -555,12 +557,24 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			return;
 
 		var returnTypeSymbol = _bindingContext!.ResolveType(func.ReturnType)!;
-		var returnType = GetLLVMType(returnTypeSymbol);
+		var declaredSymbol = emitName == "main" ? null : _bindingContext!.Globals.Lookup(emitName);
+		var isExported = declaredSymbol is FunctionSymbol { IsExported: true };
+
+		// FFI boundary: bool → i8 (unsigned 1-byte) instead of i1 to match C ABI.
+		var returnType = isExported ? GetFFIType(returnTypeSymbol) : GetLLVMType(returnTypeSymbol);
 		_functionReturnTypes[emitName] = returnTypeSymbol;
 
 		var paramTypes = new List<LLVMTypeRef>();
 		var paramSymbols = new List<TypeSymbol>();
-		if (_bindingContext.Globals.Lookup(emitName) is FunctionSymbol sym)
+		if (isExported && declaredSymbol is FunctionSymbol exportSym)
+		{
+			foreach (var p in exportSym.Parameters)
+			{
+				paramTypes.Add(GetFFIType(p.Type));
+				paramSymbols.Add(p.Type);
+			}
+		}
+		else if (_bindingContext.Globals.Lookup(emitName) is FunctionSymbol sym)
 		{
 			foreach (var p in sym.Parameters)
 			{
@@ -584,7 +598,6 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 		var llvmFunc = _module.AddFunction(emitName, funcType);
 
-		var declaredSymbol = emitName == "main" ? null : _bindingContext!.Globals.Lookup(emitName);
 		if (emitName != "main" && declaredSymbol is FunctionSymbol { IsNeverInline: true })
 		{
 			// External linkage keeps the [NeverInline] function itself from being
@@ -626,6 +639,11 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				AddFunctionStringAttribute(llvmFunc, "alwaysinline");
 			else if (funcSym.IsNeverInline)
 				AddFunctionStringAttribute(llvmFunc, "noinline");
+
+			// Functions inside expose extern "C" blocks are hardened with a strong stack
+			// canary (sspstrong) since they intercept uncontrolled external threads.
+			if (funcSym.IsExported)
+				AddFunctionStringAttribute(llvmFunc, "sspstrong");
 		}
 
 		_globals[emitName] = llvmFunc;
@@ -729,6 +747,47 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 		if (_bindingContext!.Globals.Lookup(mangledName) is FunctionSymbol sym)
 		{
+			var isExported = sym.IsExported;
+
+			// --checked-ffi-bounds: insert explicit null-check prologues for pointer params
+			if (isExported && _checkedFfiBounds && sym.Parameters.Count > 0)
+			{
+				var bodyBlock = llvmFunc.AppendBasicBlock("ffi.body");
+
+				// Build a combined i1 "is_null" flag by AND-ing all pointer-param null checks.
+				LLVMValueRef? anyNull = null;
+				for (var i = 0; i < sym.Parameters.Count; i++)
+				{
+					if (sym.Parameters[i].Type is PointerTypeSymbol or RawPointerTypeSymbol)
+					{
+						var param = llvmFunc.GetParam((uint)i);
+						var isNull = _builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, param, LLVMValueRef.CreateConstPointerNull(param.TypeOf), $"null.{sym.Parameters[i].Name}");
+						anyNull = anyNull is null ? isNull : _builder.BuildOr(anyNull.Value, isNull, "any_null");
+					}
+				}
+
+				if (anyNull is not null)
+				{
+					var trapBlock = llvmFunc.AppendBasicBlock("ffi.trap");
+					_builder.BuildCondBr(anyNull.Value, trapBlock, bodyBlock);
+
+					_builder.PositionAtEnd(trapBlock);
+					if (_llvmTrap is null)
+					{
+						var trapFnType = LLVMTypeRef.CreateFunction(LLVMTypeRef.Void, []);
+						_llvmTrap = (trapFnType, _module.AddFunction("llvm.trap", trapFnType));
+					}
+					_builder.BuildCall2(_llvmTrap.Value.Type, _llvmTrap.Value.Func, new LLVMValueRef[] { }, "");
+					_builder.BuildUnreachable();
+				}
+				else
+				{
+					_builder.BuildBr(bodyBlock);
+				}
+
+				_builder.PositionAtEnd(bodyBlock);
+			}
+
 			for (var i = 0; i < sym.Parameters.Count; i++)
 			{
 				var param = llvmFunc.GetParam((uint)i);
@@ -736,9 +795,17 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				param.Name = paramName;
 
 				var typeSymbol = sym.Parameters[i].Type;
-				var llvmType = GetLLVMType(typeSymbol);
+				var llvmType = isExported ? GetFFIType(typeSymbol) : GetLLVMType(typeSymbol);
 
 				var alloca = _builder.BuildAlloca(llvmType, paramName);
+
+				// FFI bool lowering: the parameter arrives as i8 (1-byte C ABI bool);
+				// truncate it back to i1 for the internal boolean logic.
+				if (isExported && typeSymbol is not null && typeSymbol.Name == "bool")
+				{
+					param = _builder.BuildTrunc(param, LLVMTypeRef.Int1, "bool.trunc");
+				}
+
 				_builder.BuildStore(param, alloca);
 
 				_locals[paramName] = alloca;
@@ -919,7 +986,16 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			}
 			else
 			{
-				_builder.BuildRet(value);
+				// FFI bool lowering: truncate i1 back to i8 for exported functions returning bool.
+				var retValue = value;
+				if (_bindingContext?.Globals.Lookup(_builder.InsertBlock.Parent.Name) is FunctionSymbol { IsExported: true } retFuncSym
+					&& retFuncSym.ReturnType is not null && retFuncSym.ReturnType.Name == "bool"
+					&& retValue.TypeOf.Kind == LLVMTypeKind.LLVMIntegerTypeKind && retValue.TypeOf.IntWidth == 1)
+				{
+					retValue = _builder.BuildTrunc(retValue, LLVMTypeRef.Int8, "bool.ret.trunc");
+				}
+
+				_builder.BuildRet(retValue);
 			}
 		}
 		else
@@ -3632,6 +3708,18 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			"string" or "ptr" => LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0),
 			_ => _llvmStructTypes.TryGetValue(t.Name, out var foundType) ? foundType : LLVMTypeRef.Int32
 		};
+	}
+
+	/// <summary>
+	/// Returns the C-ABI-correct LLVM type for a Cvolo type crossing a foreign boundary.
+	/// Every Cvolo bool is lowered to an unsigned 8-bit integer (i8) at FFI boundaries,
+	/// matching the C ABI 1-byte boolean representation.
+	/// </summary>
+	private LLVMTypeRef GetFFIType(TypeSymbol t)
+	{
+		if (t is not null && t.Name == "bool")
+			return LLVMTypeRef.Int8;
+		return GetLLVMType(t);
 	}
 
 	private (LLVMValueRef ptr, TypeSymbol type, bool valueProvenance, LLVMValueRef? tbaa) GetFieldPointer(ExpressionSyntax expr)

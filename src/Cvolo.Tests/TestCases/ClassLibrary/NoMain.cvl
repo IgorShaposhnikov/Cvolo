@@ -1,0 +1,10 @@
+namespace TestLibrary;
+
+public struct Config {
+    public int Width;
+    public int Height;
+}
+
+public int CalculateArea(ref Config cfg) {
+    return cfg.Width * cfg.Height;
+}

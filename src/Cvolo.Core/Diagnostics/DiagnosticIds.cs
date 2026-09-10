@@ -160,6 +160,17 @@ public static class DiagnosticIds
 	/// <summary>[ExposeName] applied to a function outside an `expose extern` scope.</summary>
 	public const string ExposeNameOutsideExport = "CVL1803";
 
+	/// <summary>Modifier 'extern' applied to a function with a body outside an 'expose extern' block.</summary>
+	public const string ExternWithBodyOutsideExposeBlock = "CVL1806";
+
+	/// <summary>Structure used in C-ABI boundary must have a fixed sequential layout.</summary>
+	public const string CAbiStructLayoutInvalid = "CVL1807";
+
+	// ── Compilation Target (CVL50xx) ──
+
+	/// <summary>Program does not contain a static 'main' method suitable for an entry point.</summary>
+	public const string MissingEntryPoint = "CVL5001";
+
 	// ── Literals / Lexer (CVL19xx) ──
 
 	/// <summary>A literal `double` is assigned to a `float` target; a `f` suffix is required.</summary>

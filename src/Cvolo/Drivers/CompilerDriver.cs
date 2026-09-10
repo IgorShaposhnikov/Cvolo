@@ -20,7 +20,7 @@ internal sealed class CompilerDriver : ICompilerDriver
 {
 	private static readonly string[] _linkerCandidates = ["clang", "gcc", "g++"];
 
-	public int Compile(string path, bool llvmOnly, bool isShared, bool emitIr, string optLevel, bool checkOnly = false, bool runAfterCompile = false, bool verbose = false, bool emitLowered = false, string? noWarn = null, bool suppressWarnings = false, bool legacyVisibility = false, bool strictOption = false, bool noTbaa = false, string? targetOs = null)
+	public int Compile(string path, bool llvmOnly, bool isShared, bool emitIr, string optLevel, bool checkOnly = false, bool runAfterCompile = false, bool verbose = false, bool emitLowered = false, string? noWarn = null, bool suppressWarnings = false, bool legacyVisibility = false, bool strictOption = false, bool noTbaa = false, string? targetOs = null, bool checkedFfiBounds = false)
 	{
 		// Diagnostics whose ids appear here are dropped from the warning stream entirely.
 		var noWarnIds = noWarn?
@@ -180,7 +180,7 @@ internal sealed class CompilerDriver : ICompilerDriver
 		// Enforce executable entry-point rules
 		if (!project.IsShared && binder.Context.Globals.Lookup("main") is null && binder.Context.Globals.Lookup("Main") is null)
 		{
-			Console.Error.WriteLine("Error CS5001: Program does not contain a static 'main' method suitable for an entry point");
+			Console.Error.WriteLine($"Error {DiagnosticIds.MissingEntryPoint}: Program does not contain a static 'main' method suitable for an entry point");
 			return 1;
 		}
 
@@ -204,7 +204,7 @@ internal sealed class CompilerDriver : ICompilerDriver
 		// 6. Programmatic LLVM Code Generation pass (Triggers optimization passes internally)
 		var optimizer = new IrOptimizer(parsedLevel);
 		var irVerifier = new IRVerifier(compilationFailuresDirectory);
-		IEmitter emitter = new CodeGenerator("cvolo_module", optimizer, irVerifier, enableTbaa: !noTbaa);
+		IEmitter emitter = new CodeGenerator("cvolo_module", optimizer, irVerifier, enableTbaa: !noTbaa, checkedFfiBounds: checkedFfiBounds);
 		var ir = emitter.Emit(asts, firstContext!, binder.Context);
 
 		File.WriteAllText(llPath, ir);

@@ -1,0 +1,25 @@
+using System;
+
+expose extern "C" {
+    [ExposeName("native_check_flag")]
+    public bool CheckFlag(bool flag, int value) {
+        if (flag && value > 0) {
+            return true;
+        }
+        return false;
+    }
+
+    [ExposeName("native_process")]
+    public int Process(void* handle, bool enabled) {
+        if (enabled) {
+            return 42;
+        }
+        return 0;
+    }
+}
+
+int main() {
+    Console.WriteLine(CheckFlag(true, 5));
+    Console.WriteLine(Process((void*)0, true));
+    return 0;
+}

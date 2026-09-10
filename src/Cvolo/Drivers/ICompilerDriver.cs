@@ -23,6 +23,7 @@ public interface ICompilerDriver
 	/// <param name="strictOption">If set to <c>true</c>, disables the '?' optional type syntax and requires explicit `Option&lt;T&gt;` types.</param>
 	/// <param name="noTbaa">If set to <c>true</c>, disables generation of `!tbaa` alias-analysis metadata nodes.</param>
 	/// <param name="targetOs">Target OS for native library resolution (host, windows, linux, macos). Controls which win:/linux:/mac: [LibraryImport] path is forwarded to the linker.</param>
+	/// <param name="checkedFfiBounds">If set to <c>true</c>, generates explicit null-check prologues in expose extern functions for debug builds.</param>
 	/// <returns>The exit status code of the compilation pass (0 for success, non-zero for failures).</returns>
-	int Compile(string path, bool llvmOnly, bool isShared, bool emitIr, string optLevel, bool checkOnly = false, bool runAfterCompile = false, bool verbose = false, bool emitLowered = false, string? noWarn = null, bool suppressWarnings = false, bool legacyVisibility = false, bool strictOption = false, bool noTbaa = false, string? targetOs = null);
+	int Compile(string path, bool llvmOnly, bool isShared, bool emitIr, string optLevel, bool checkOnly = false, bool runAfterCompile = false, bool verbose = false, bool emitLowered = false, string? noWarn = null, bool suppressWarnings = false, bool legacyVisibility = false, bool strictOption = false, bool noTbaa = false, string? targetOs = null, bool checkedFfiBounds = false);
 }

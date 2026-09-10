@@ -21,6 +21,9 @@ internal sealed class LinkStrategy(string binDirectory) : ICompilationStrategy
 		var binaryPath = Path.Combine(binDirectory, project.OutputName + binaryExt);
 
 		var typeFlag = project.IsShared ? " -shared" : "";
+		var visibilityFlag = project.IsShared
+			? (OperatingSystem.IsWindows() ? " -fvisibility=hidden" : " -fvisibility=hidden -fPIC")
+			: "";
 
 		// The IR is already optimized in-process via IrOptimizer; passing the same
 		// -O level to the backend linker keeps instruction selection, scheduling,
@@ -87,7 +90,7 @@ internal sealed class LinkStrategy(string binDirectory) : ICompilationStrategy
 		var psi = new ProcessStartInfo
 		{
 			FileName = linkerPath,
-			Arguments = $"-o \"{binaryPath}\" \"{llPath}\"{typeFlag}{optFlag}{libraryFlags}{subsystemFlag}",
+			Arguments = $"-o \"{binaryPath}\" \"{llPath}\"{typeFlag}{visibilityFlag}{optFlag}{libraryFlags}{subsystemFlag}",
 			RedirectStandardOutput = !verbose,
 			RedirectStandardError = !verbose,
 			UseShellExecute = false,
