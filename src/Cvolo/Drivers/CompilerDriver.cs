@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Cvolo.Analysis;
+using Cvolo.Analysis.Symbols.FFI;
 using Cvolo.Core.AST;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.Diagnostics;
@@ -254,6 +255,9 @@ internal sealed class CompilerDriver : ICompilerDriver
 			return linkResult;
 		}
 
+		// 8b. Copy referenced native libraries to the output directory so the binary can find them at runtime
+		CopyNativeLibrariesToOutput(binder.Context.NativeLibraries.Values, project, binDirectory, targetOs, verbose);
+
 		// 9. Execute immediate runtime execution if requested
 		if (runAfterCompile)
 		{
@@ -278,6 +282,92 @@ internal sealed class CompilerDriver : ICompilerDriver
 		}
 
 		return 0;
+	}
+
+	private static void CopyNativeLibrariesToOutput(IEnumerable<NativeLibraryInfo> nativeLibraries, CompilationProject project, string binDirectory, string? targetOs, bool verbose)
+	{
+		var effectiveOs = ResolveTargetOs(targetOs);
+
+		foreach (var lib in nativeLibraries)
+		{
+			var targetPath = effectiveOs switch
+			{
+				"windows" => lib.WinPath,
+				"linux" => lib.LinuxPath,
+				"macos" => lib.MacPath,
+				_ => null
+			};
+
+			if (string.IsNullOrEmpty(targetPath) || (!targetPath.Contains('/') && !targetPath.Contains('\\')))
+				continue;
+
+			var fullPath = Path.GetFullPath(targetPath, project.ProjectDirectory);
+			if (!File.Exists(fullPath))
+				continue;
+
+			var destPath = Path.Combine(binDirectory, Path.GetFileName(fullPath));
+			try
+			{
+				File.Copy(fullPath, destPath, overwrite: true);
+				if (verbose)
+					Console.WriteLine($"Copied native library: {Path.GetFileName(fullPath)} -> {binDirectory}");
+			}
+			catch (Exception ex)
+			{
+				if (verbose)
+					Console.Error.WriteLine($"Warning: Failed to copy {fullPath}: {ex.Message}");
+			}
+
+			// On Windows, import libraries (.lib) need their matching DLL at runtime.
+			// The DLL may have a different base name (e.g. glfw3dll.lib -> glfw3.dll),
+			// so scan the same directory for DLL files to copy alongside the import library.
+			if (effectiveOs == "windows" && fullPath.EndsWith(".lib", StringComparison.OrdinalIgnoreCase))
+			{
+				var dir = Path.GetDirectoryName(fullPath)!;
+				try
+				{
+					foreach (var dllFile in Directory.GetFiles(dir, "*.dll"))
+					{
+						var dllDest = Path.Combine(binDirectory, Path.GetFileName(dllFile));
+						try
+						{
+							File.Copy(dllFile, dllDest, overwrite: true);
+							if (verbose)
+								Console.WriteLine($"Copied native DLL: {Path.GetFileName(dllFile)} -> {binDirectory}");
+						}
+						catch (Exception ex)
+						{
+							if (verbose)
+								Console.Error.WriteLine($"Warning: Failed to copy {dllFile}: {ex.Message}");
+						}
+					}
+				}
+				catch (Exception ex)
+				{
+					if (verbose)
+						Console.Error.WriteLine($"Warning: Failed to scan for DLLs in {dir}: {ex.Message}");
+				}
+			}
+		}
+	}
+
+	private static string ResolveTargetOs(string? targetOs)
+	{
+		if (string.IsNullOrWhiteSpace(targetOs) || targetOs.Equals("host", StringComparison.OrdinalIgnoreCase))
+		{
+			if (OperatingSystem.IsWindows()) return "windows";
+			if (OperatingSystem.IsLinux()) return "linux";
+			if (OperatingSystem.IsMacOS()) return "macos";
+			return "windows";
+		}
+
+		return targetOs.ToLowerInvariant() switch
+		{
+			"windows" or "win" or "win32" => "windows",
+			"linux" => "linux",
+			"macos" or "mac" or "osx" or "darwin" => "macos",
+			_ => "windows"
+		};
 	}
 
 	private static string? FindTool(string name)
