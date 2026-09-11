@@ -1,0 +1,7 @@
+using System;
+
+int Main()
+{
+	Console.WriteLine((ulong)1);
+	return 0;
+}

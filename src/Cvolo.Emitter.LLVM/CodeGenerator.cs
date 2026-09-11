@@ -1,4 +1,3 @@
-using System.Runtime.InteropServices;
 using System.Text;
 using Cvolo.Analysis;
 using Cvolo.Analysis.Symbols;
@@ -66,7 +65,16 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		public LLVMBasicBlockRef ContinueBlock { get; } = continueBlock;
 	}
 
-	public CodeGenerator(string moduleName, ILLVMOptimizer? optimizer = null, IRVerifier? irVerifier = null, bool enableTbaa = true, bool checkedFfiBounds = false)
+	static CodeGenerator()
+	{
+		LLVMSharp.Interop.LLVM.InitializeAllTargetInfos();
+		LLVMSharp.Interop.LLVM.InitializeAllTargets();
+		LLVMSharp.Interop.LLVM.InitializeAllTargetMCs();
+		LLVMSharp.Interop.LLVM.InitializeAllAsmParsers();
+		LLVMSharp.Interop.LLVM.InitializeAllAsmPrinters();
+	}
+
+	public CodeGenerator(string moduleName, TargetLayout targetLayout, ILLVMOptimizer? optimizer = null, IRVerifier? irVerifier = null, bool enableTbaa = true, bool checkedFfiBounds = false)
 	{
 		_context = LLVMContextRef.Global;
 		_module = _context.CreateModuleWithName(moduleName);
@@ -75,6 +83,8 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		_irVerifier = irVerifier;
 		_enableTbaa = enableTbaa;
 		_checkedFfiBounds = checkedFfiBounds;
+
+		targetLayout.Apply(_module, LLVMTargetRef.DefaultTriple);
 	}
 
 	public LLVMModuleRef Module => _module;

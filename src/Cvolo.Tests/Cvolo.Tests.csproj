@@ -35,6 +35,4 @@
 	<ItemGroup>
 	  <None Include="UnionsTests.cs" />
 	</ItemGroup>
-
-
 </Project>
