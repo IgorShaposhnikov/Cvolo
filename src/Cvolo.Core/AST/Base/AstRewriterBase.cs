@@ -146,6 +146,13 @@ public abstract class AstRewriterBase
 			return new ForStatementSyntax(forStmt.Span, init, cond, inc, body, forStmt.Label);
 		}
 
+		if (node is ForEachStatementSyntax forEach)
+		{
+			var collection = (ExpressionSyntax)Rewrite(forEach.Collection);
+			var body = (BlockStatementSyntax)Rewrite(forEach.Body);
+			return new ForEachStatementSyntax(forEach.Span, forEach.BindingKind, forEach.ExplicitItemType, forEach.ItemName, collection, body, forEach.Label);
+		}
+
 		if (node is VariableDeclarationSyntax varDecl)
 		{
 			var init = varDecl.Initializer != null ? (ExpressionSyntax)Rewrite(varDecl.Initializer) : null;

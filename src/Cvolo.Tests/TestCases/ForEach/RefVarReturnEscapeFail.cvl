@@ -1,0 +1,14 @@
+using System;
+
+ref int Keep() {
+	int[3] arr = { 1, 2, 3 };
+	foreach (refvar item in arr) {
+		return ref item;
+	}
+	return ref arr[0];
+}
+
+int Main() {
+	Keep();
+	return 0;
+}

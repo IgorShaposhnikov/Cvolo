@@ -1,0 +1,37 @@
+using System;
+
+struct NonBoolRange {
+    int Start;
+    int End;
+}
+
+extension NonBoolRange {
+    NonBoolEnumerator GetEnumerator() {
+        return NonBoolEnumerator { Value: Start - 1, End: End };
+    }
+}
+
+struct NonBoolEnumerator {
+    int Value;
+    int End;
+}
+
+extension NonBoolEnumerator {
+    int MoveNext() {
+        Value = Value + 1;
+        return Value;
+    }
+
+    int Current() {
+        return Value;
+    }
+}
+
+int Main()
+{
+    var NonBoolRange r(Start: 0, End: 3);
+    foreach (val item in r) {
+        Console.Write(item);
+    }
+    return 0;
+}

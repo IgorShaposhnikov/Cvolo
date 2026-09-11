@@ -147,6 +147,41 @@ public static class DiagnosticIds
 	/// <summary>A type alias is used as a generic parameter constraint in a `where` clause.</summary>
 	public const string AliasAsConstraint = "CVL1202";
 
+	// ── foreach iteration (CVL108x-CVL109x) ──
+
+	/// <summary>Type cannot be traversed via foreach: GetEnumerator method is missing.</summary>
+	public const string ForeachNoGetEnumerator = "CVL1080";
+
+	/// <summary>Iterator type returned by GetEnumerator is invalid: missing a bool MoveNext method signature.</summary>
+	public const string ForeachMissingMoveNext = "CVL1081";
+
+	/// <summary>Iterator type returned by GetEnumerator is invalid: missing a Current property or method getter.</summary>
+	public const string ForeachMissingCurrent = "CVL1082";
+
+	/// <summary>Iterator type returned by GetEnumerator is invalid: MoveNext must return a logical bool type scalar.</summary>
+	public const string ForeachMoveNextNotBool = "CVL1083";
+
+	/// <summary>The loop variable is read-only and cannot be reassigned inside the execution block.</summary>
+	public const string ForeachReadOnlyAssignment = "CVL1084";
+
+	/// <summary>Explicit loop item type does not match the iterator's underlying Current yield type.</summary>
+	public const string ForeachItemTypeMismatch = "CVL1085";
+
+	/// <summary>Cannot bind mutable reference refvar: the iterator's Current property returns by value.</summary>
+	public const string ForeachRefVarByValue = "CVL1086";
+
+	/// <summary>Cannot bind mutable reference refvar: the iterator's Current property returns a read-only ref T.</summary>
+	public const string ForeachRefVarReadOnlyRef = "CVL1087";
+
+	/// <summary>Escape boundary violation: a reference loop variable cannot cross the lexical boundary of the loop block.</summary>
+	public const string ForeachEscapeBoundary = "CVL1088";
+
+	/// <summary>Ambiguous iteration routing: the type exposes multiple conflicting overloads for GetEnumerator.</summary>
+	public const string ForeachAmbiguousGetEnumerator = "CVL1089";
+
+	/// <summary>Type cannot be traversed via foreach: GetEnumerator method is inaccessible due to its protection level.</summary>
+	public const string ForeachInaccessibleGetEnumerator = "CVL1090";
+
 	// ── FFI / C-ABI interop (CVLFxxxx) ──
 
 	/// <summary>Unknown calling convention string. Expected "C" or "system".</summary>

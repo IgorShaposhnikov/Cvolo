@@ -1,0 +1,53 @@
+using System;
+
+extern void* malloc(int size);
+extern void free(void* ptr);
+
+struct RefBox {
+    int* Ptr;
+    int End;
+}
+
+extension RefBox {
+    RefIter GetEnumerator() {
+        return RefIter { Ptr: Ptr, Index: 0, End: End };
+    }
+}
+
+struct RefIter {
+    int* Ptr;
+    int Index;
+    int End;
+}
+
+extension RefIter {
+    bool MoveNext(refvar this) {
+        Index = Index + 1;
+        return Index <= End;
+    }
+
+    [UnsafeBody]
+    refvar int Current(refvar this) {
+        return refvar *(Ptr + Index - 1);
+    }
+}
+
+[UnsafeBody]
+int Main()
+{
+    var int* mem = (int*)malloc(sizeof<int>() * 3);
+    *mem = 10;
+    *(mem + 1) = 20;
+    *(mem + 2) = 30;
+    var RefBox b(Ptr: mem, End: 3);
+    foreach (refvar item in b) {
+        item = item * 10;
+    }
+    Console.Write(*mem);
+    Console.Write(",");
+    Console.Write(*(mem + 1));
+    Console.Write(",");
+    Console.Write(*(mem + 2));
+    free((void*)mem);
+    return 0;
+}

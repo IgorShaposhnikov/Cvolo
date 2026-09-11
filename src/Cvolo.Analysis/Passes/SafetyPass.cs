@@ -220,6 +220,9 @@ public sealed class SafetyPass(BindingContext context)
 				NodeContainsRefUse(forStmt.Condition, refName) ||
 				NodeContainsRefUse(forStmt.Increment, refName) ||
 				NodeContainsRefUse(forStmt.Body, refName),
+			ForEachStatementSyntax forEach =>
+				NodeContainsRefUse(forEach.Collection, refName) ||
+				NodeContainsRefUse(forEach.Body, refName),
 			ReturnStatementSyntax ret => ret.Expression != null && ExprContainsRefUse(ret.Expression, refName),
 			ExpressionStatementSyntax exprStmt => ExprContainsRefUse(exprStmt.Expression, refName),
 			VariableDeclarationSyntax varDecl => varDecl.Initializer != null && ExprContainsRefUse(varDecl.Initializer, refName),
@@ -347,6 +350,17 @@ public sealed class SafetyPass(BindingContext context)
 					CheckStatementSafety(f.Body, scope, func);
 				break;
 
+			case ForEachStatementSyntax fe:
+				CheckExpressionSafety(fe.Collection, scope);
+				if (fe.Body is BlockStatementSyntax feBlock)
+				{
+					CheckForEachContractViolations(fe, feBlock);
+					CheckBlockSafety(feBlock, new SymbolTable(scope), func);
+				}
+				else
+					CheckStatementSafety(fe.Body, scope, func);
+				break;
+
 			case UnsafeBlockStatementSyntax unsafeBlock:
 				_currentTierStack.Push(SafetyTier.Unsafe);
 				CheckBlockSafety(unsafeBlock.Body, new SymbolTable(scope), func);
@@ -357,6 +371,110 @@ public sealed class SafetyPass(BindingContext context)
 			case ContinueStatementSyntax:
 				break;
 		}
+	}
+
+	/// <summary>
+	/// Structural pre-pass over a foreach body enforcing the Hardened Iteration contract:
+	/// - §2.B / CVL1088: a reference loop variable (refvar binding, or val over a ref-returning
+	///   Current) may not cross the lexical boundary of the loop block.
+	/// - §4.D: the collection identifier is under an immutable borrow contract for the whole loop;
+	///   structural topology mutation (array reallocation, mutator calls, field writes on the
+	///   collection) is blocked. Only element slot data via the loop variable may change.
+	/// </summary>
+	private void CheckForEachContractViolations(ForEachStatementSyntax fe, BlockStatementSyntax body)
+	{
+		var itemName = fe.ItemName;
+		var collectionBase = GetBaseIdentifierName(fe.Collection);
+
+		// Targets that outlive nothing beyond the body are safe: the loop variable itself (write-through
+		// to the current element slot) and any variable declared anywhere within the body subtree.
+		var safeTargets = new HashSet<string> { itemName };
+		CollectLocalDeclNames(body, safeTargets);
+
+		if (fe.IsReferenceBinding)
+		{
+			// CVL1088: returning the item (or a borrow of it) leaks the synthesized reference past the body.
+			foreach (var ret in EnumerateNodes<ReturnStatementSyntax>(body))
+			{
+				if (ret.Expression is not null && ExprContainsRefUse(ret.Expression, itemName))
+				{
+					context.Diagnostics.Report(context.CurrentUnit!.Context, ret.Span,
+						$"Escape Boundary Violation: reference loop variable '{itemName}' uses an internal stack provenance exception and cannot cross the lexical boundary of the loop block.",
+						DiagnosticIds.ForeachEscapeBoundary);
+				}
+			}
+
+			// CVL1088: storing the item into any location that outlives the loop block.
+			foreach (var assign in EnumerateNodes<BinaryExpressionSyntax>(body))
+			{
+				if (assign.Operator != "=")
+					continue;
+				var lhsBase = GetBaseIdentifierName(assign.Left);
+				if (lhsBase is not null && !safeTargets.Contains(lhsBase) && ExprContainsRefUse(assign.Right, itemName))
+				{
+					context.Diagnostics.Report(context.CurrentUnit!.Context, assign.Span,
+						$"Escape Boundary Violation: reference loop variable '{itemName}' uses an internal stack provenance exception and cannot cross the lexical boundary of the loop block.",
+						DiagnosticIds.ForeachEscapeBoundary);
+				}
+			}
+
+			// CVL1088: passing the item into a reference parameter leaks it to the callee's frame,
+			// which is only conditionally allowed and cannot be proved safe here.
+			foreach (var call in EnumerateNodes<CallExpressionSyntax>(body))
+			{
+				if (!context.ResolvedCalls.TryGetValue(call, out var callee))
+					continue;
+				for (var i = 0; i < call.Arguments.Count && i < callee.Parameters.Count; i++)
+				{
+					if (callee.Parameters[i].Type is PointerTypeSymbol && ExprContainsRefUse(call.Arguments[i], itemName))
+					{
+						context.Diagnostics.Report(context.CurrentUnit!.Context, call.Arguments[i].Span,
+							$"Escape Boundary Violation: reference loop variable '{itemName}' uses an internal stack provenance exception and cannot cross the lexical boundary of the loop block.",
+							DiagnosticIds.ForeachEscapeBoundary);
+					}
+				}
+			}
+		}
+
+		// §4.D immutable borrow contract on the collection identifier.
+		if (collectionBase is not null)
+		{
+			foreach (var assign in EnumerateNodes<BinaryExpressionSyntax>(body))
+			{
+				if (assign.Operator == "=" && GetBaseIdentifierName(assign.Left) == collectionBase)
+				{
+					context.Diagnostics.Report(context.CurrentUnit!.Context, assign.Span,
+						$"'{collectionBase}' is under an immutable borrow contract while it is being iterated: structural mutation is not allowed inside the 'foreach' body.");
+				}
+			}
+
+			foreach (var call in EnumerateNodes<CallExpressionSyntax>(body))
+			{
+				var dot = call.FunctionName.IndexOf('.');
+				if (dot > 0 && call.FunctionName.AsSpan(0, dot).SequenceEqual(collectionBase))
+				{
+					context.Diagnostics.Report(context.CurrentUnit!.Context, call.Span,
+						$"'{collectionBase}' is under an immutable borrow contract while it is being iterated: mutating method calls are not allowed inside the 'foreach' body.");
+				}
+			}
+		}
+	}
+
+	private static void CollectLocalDeclNames(SyntaxNode root, HashSet<string> into)
+	{
+		if (root is VariableDeclarationSyntax vd)
+			into.Add(vd.Name);
+		foreach (var child in root.GetChildren())
+			CollectLocalDeclNames(child, into);
+	}
+
+	private static IEnumerable<TSyntax> EnumerateNodes<TSyntax>(SyntaxNode root) where TSyntax : SyntaxNode
+	{
+		if (root is TSyntax match)
+			yield return match;
+		foreach (var child in root.GetChildren())
+			foreach (var nested in EnumerateNodes<TSyntax>(child))
+				yield return nested;
 	}
 
 	private void CheckExpressionSafety(ExpressionSyntax expr, SymbolTable scope)

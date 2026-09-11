@@ -1,0 +1,11 @@
+using System;
+
+global var int G = 0;
+
+int Main() {
+	int[3] arr = { 1, 2, 3 };
+	foreach (refvar item in arr) {
+		G = item;
+	}
+	return 0;
+}

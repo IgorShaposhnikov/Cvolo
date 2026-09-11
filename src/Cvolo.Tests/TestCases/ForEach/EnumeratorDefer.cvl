@@ -1,0 +1,47 @@
+using System;
+
+struct Range {
+    int Start;
+    int End;
+}
+
+extension Range {
+    RangeEnumerator GetEnumerator() {
+        Console.Write("get-enum;");
+        return RangeEnumerator { Value: Start - 1, End: End };
+    }
+}
+
+struct RangeEnumerator {
+    int Value;
+    int End;
+}
+
+extension RangeEnumerator {
+    ~RangeEnumerator() {
+        Console.Write("dtor;");
+    }
+
+    bool MoveNext() {
+        Value = Value + 1;
+        return Value <= End;
+    }
+
+    int Current() {
+        return Value;
+    }
+}
+
+int Main()
+{
+    var Range r(Start: 1, End: 2);
+    foreach (val item in r) {
+        if (item == 2) {
+            break;
+        }
+        Console.Write(item);
+        Console.Write(",");
+    }
+    Console.Write("done");
+    return 0;
+}

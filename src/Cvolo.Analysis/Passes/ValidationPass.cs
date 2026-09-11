@@ -25,6 +25,10 @@ public sealed class ValidationPass(BindingContext context)
 	private readonly Stack<HashSet<string>> _labelScopes = new();
 	private readonly Stack<string?> _loopLabels = [];
 
+	// Read-only `foreach` item names (val/explicit-type) in the current body chain,
+	// used to report the dedicated CVL1082 diagnostic on assignment.
+	private readonly Stack<HashSet<string>> _readOnlyForeachItems = new();
+
 	// Depth of switch frames whose CASE BODIES are being validated. An unlabeled `break;` is
 	// legal inside a switch case (C-style exit) even when no loop encloses it; `continue;` is
 	// still loop-only.
@@ -559,6 +563,14 @@ public sealed class ValidationPass(BindingContext context)
 					ExitLoop();
 					break;
 				}
+			case ForEachStatementSyntax forEach:
+				{
+					var forEachScope = new SymbolTable(scope);
+					EnterLoop(forEach.Label, forEach.Span);
+					CheckForEachStatement(forEach, forEachScope, currentFunc);
+					ExitLoop();
+					break;
+				}
 			case UnsafeBlockStatementSyntax unsafeBlock:
 				_unsafeDepth++;
 				CheckBlock(unsafeBlock.Body, new SymbolTable(scope), currentFunc);
@@ -597,6 +609,253 @@ public sealed class ValidationPass(BindingContext context)
 	{
 		if (_loopLabels.Count > 0)
 			_loopLabels.Pop();
+	}
+
+	private void ReportDiagnostics(TextSpan span, string message, string diagnosticId)
+	{
+		var currentFileContext = context.FileContexts[context.CurrentUnit!];
+		context.Diagnostics.Report(currentFileContext, span, message, diagnosticId);
+	}
+
+	private void CheckForEachStatement(ForEachStatementSyntax forEach, SymbolTable scope, FunctionDeclarationSyntax currentFunc)
+	{
+		CheckExpression(forEach.Collection, scope);
+		var collectionType = GetExpressionType(forEach.Collection, scope);
+
+		if (collectionType is null)
+			return;
+
+		var underlyingType = collectionType;
+		if (underlyingType is PointerTypeSymbol ptr)
+			underlyingType = ptr.ReferencedType;
+
+		TypeSymbol? itemType = null;
+		bool currentReturnsRef = false;
+
+		if (underlyingType is ArrayTypeSymbol arrayType)
+		{
+			itemType = arrayType.ElementType;
+			forEach.ItemTypeName = itemType.Name;
+		}
+		else if (underlyingType is SliceTypeSymbol sliceType)
+		{
+			itemType = sliceType.ElementType;
+			forEach.ItemTypeName = itemType.Name;
+		}
+		else
+		{
+			var typeName = underlyingType.Name;
+			var getEnumeratorFunc = ResolveForEachGetEnumerator(typeName, underlyingType, scope, forEach.Span);
+
+			if (getEnumeratorFunc is null)
+				return;
+
+			var enumeratorType = getEnumeratorFunc.ReturnType;
+			var enumeratorName = enumeratorType.Name;
+
+			var moveNextName = $"{enumeratorName}.MoveNext";
+			var moveNextFunc = ResolveOverloadedFunction(moveNextName, [new PointerTypeSymbol(enumeratorType, isMutable: true)], scope);
+
+			var currentName = $"{enumeratorName}.Current";
+			var currentFunc2 = ResolveOverloadedFunction(currentName, [new PointerTypeSymbol(enumeratorType, isMutable: true)], scope);
+
+			if (moveNextFunc is null)
+			{
+				ReportDiagnostics(forEach.Span, $"Iterator type '{enumeratorName}' returned by '{typeName}.GetEnumerator()' is invalid: missing a 'bool MoveNext()' method signature.", DiagnosticIds.ForeachMissingMoveNext);
+				return;
+			}
+
+			if (!moveNextFunc.ReturnType.Equals(TypeSymbol.Bool))
+			{
+				ReportDiagnostics(forEach.Span, $"Iterator type '{enumeratorName}' returned by '{typeName}.GetEnumerator()' is invalid: 'MoveNext()' must return a logical 'bool' type scalar.", DiagnosticIds.ForeachMoveNextNotBool);
+				return;
+			}
+
+			if (currentFunc2 is null)
+			{
+				ReportDiagnostics(forEach.Span, $"Iterator type '{enumeratorName}' returned by '{typeName}.GetEnumerator()' is invalid: missing a 'Current' property or method getter.", DiagnosticIds.ForeachMissingCurrent);
+				return;
+			}
+
+			itemType = currentFunc2.ReturnType;
+			forEach.ItemTypeName = itemType is PointerTypeSymbol currentPtr ? currentPtr.ReferencedType.Name : itemType.Name;
+			forEach.CurrentReturnsReference = itemType is PointerTypeSymbol;
+			currentReturnsRef = itemType is PointerTypeSymbol;
+			forEach.GetEnumeratorFunctionName = getEnumeratorFunc.Name;
+			forEach.MoveNextFunctionName = moveNextFunc.Name;
+			forEach.CurrentFunctionName = currentFunc2.Name;
+			forEach.EnumeratorTypeName = enumeratorName;
+		}
+
+		if (itemType is null)
+			return;
+
+		if (forEach.BindingKind == ForEachVariableKind.RefVar && !(underlyingType is ArrayTypeSymbol || underlyingType is SliceTypeSymbol))
+		{
+			var resolvedCurrentType = itemType is PointerTypeSymbol p ? p.ReferencedType.Name : itemType.Name;
+			if (itemType is PointerTypeSymbol { IsMutable: false })
+				ReportDiagnostics(forEach.Span, $"Cannot bind mutable reference 'refvar {resolvedCurrentType}': the iterator's 'Current' property returns a read-only 'ref T'.", DiagnosticIds.ForeachRefVarReadOnlyRef);
+			else if (itemType is not PointerTypeSymbol)
+				ReportDiagnostics(forEach.Span, $"Cannot bind mutable reference 'refvar {resolvedCurrentType}': the iterator's 'Current' property returns by value, yielding no reference address.", DiagnosticIds.ForeachRefVarByValue);
+			else
+				currentReturnsRef = true;
+		}
+
+		if (forEach.ExplicitItemType is not null)
+		{
+			var declaredType = context.ResolveType(forEach.ExplicitItemType);
+			if (declaredType is not null)
+			{
+				var actualItemType = itemType is PointerTypeSymbol pt ? pt.ReferencedType : itemType;
+				if (!declaredType.Equals(actualItemType))
+				{
+					var currentFileContext = context.FileContexts[context.CurrentUnit!];
+					context.Diagnostics.Report(currentFileContext, forEach.Span, $"Explicit loop item type '{declaredType.Name}' does not match the iterator's underlying 'Current' yield type '{actualItemType.Name}'.", DiagnosticIds.ForeachItemTypeMismatch);
+				}
+			}
+		}
+
+		bool isRefBinding;
+		TypeSymbol symbolType;
+
+		if (underlyingType is ArrayTypeSymbol || underlyingType is SliceTypeSymbol)
+		{
+			isRefBinding = forEach.BindingKind == ForEachVariableKind.RefVar;
+			symbolType = isRefBinding ? new PointerTypeSymbol(itemType, isMutable: true) : itemType;
+			forEach.IsReferenceBinding = isRefBinding;
+			forEach.ItemBindingTypeName = isRefBinding ? $"refvar {itemType.Name}" : itemType.Name;
+		}
+		else
+		{
+			bool isVar = forEach.BindingKind == ForEachVariableKind.Var;
+			bool isRefVar = forEach.BindingKind == ForEachVariableKind.RefVar;
+
+			if (isVar)
+			{
+				isRefBinding = false;
+				symbolType = currentReturnsRef ? (itemType is PointerTypeSymbol p ? p.ReferencedType : itemType) : itemType;
+				forEach.IsReferenceBinding = false;
+				forEach.ItemBindingTypeName = symbolType.Name;
+			}
+			else if (isRefVar)
+			{
+				isRefBinding = true;
+				symbolType = new PointerTypeSymbol(itemType is PointerTypeSymbol p ? p.ReferencedType : itemType, isMutable: true);
+				forEach.IsReferenceBinding = true;
+				var bindingName = symbolType is PointerTypeSymbol sp2 ? sp2.ReferencedType.Name : symbolType.Name;
+				forEach.ItemBindingTypeName = $"refvar {bindingName}";
+			}
+			else if (currentReturnsRef)
+			{
+				isRefBinding = true;
+				symbolType = new PointerTypeSymbol(itemType is PointerTypeSymbol p ? p.ReferencedType : itemType, isMutable: false);
+				forEach.IsReferenceBinding = true;
+				var bindingName = symbolType is PointerTypeSymbol sp3 ? sp3.ReferencedType.Name : symbolType.Name;
+				forEach.ItemBindingTypeName = $"refvar {bindingName}";
+			}
+			else
+			{
+				isRefBinding = false;
+				symbolType = itemType;
+				forEach.IsReferenceBinding = false;
+				forEach.ItemBindingTypeName = itemType.Name;
+			}
+		}
+
+		var existing = scope.Lookup(forEach.ItemName);
+		if (existing is not null)
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, forEach.Span, $"Variable '{forEach.ItemName}' is already declared in this scope");
+		}
+
+		bool isMutable = forEach.BindingKind == ForEachVariableKind.Var || forEach.BindingKind == ForEachVariableKind.RefVar;
+		var itemSymbol = new VariableSymbol(forEach.ItemName, symbolType, isMutable);
+		scope.Declare(itemSymbol);
+		context.VariableSymbols[new VariableDeclarationSyntax(forEach.Span, isMutable, forEach.ItemBindingTypeName, forEach.ItemName, null)] = itemSymbol;
+
+		_readOnlyForeachItems.Push(forEach.BindingKind == ForEachVariableKind.Var ? [] : new HashSet<string> { forEach.ItemName });
+		try
+		{
+			CheckStatement(forEach.Body, scope, currentFunc);
+		}
+		finally
+		{
+			_readOnlyForeachItems.Pop();
+		}
+	}
+
+	private FunctionSymbol? ResolveForEachGetEnumerator(string typeName, TypeSymbol collectionType, SymbolTable scope, TextSpan span)
+	{
+		var name = $"{typeName}.GetEnumerator";
+		var receiverTypes = new[] { new PointerTypeSymbol(collectionType, isMutable: true) };
+
+		var candidates = new List<FunctionSymbol>();
+		GatherOverloadCandidates(name, candidates);
+
+		// GatherOverloadCandidates can surface the same physical symbol more than once
+		// (exact-name, current-namespace, and active-using lookups may all hit the same
+		// entry). Deduplicate by identity so a single candidate is never scored as a tie.
+		candidates = candidates.Distinct().ToList();
+
+		if (candidates.Count == 0)
+		{
+			ReportDiagnostics(span, $"Type '{typeName}' cannot be traversed via foreach: 'GetEnumerator()' method is missing.", DiagnosticIds.ForeachNoGetEnumerator);
+			return null;
+		}
+
+		// §4.B Visibility matrix: a present-but-inaccessible structural method is a distinct failure
+		// (CVL1090) reported instead of the terminal CVL1080. Internal methods are always reachable
+		// inside a single module; private methods require the identical source file (unit).
+		if (!context.LegacyVisibility)
+		{
+			var visible = candidates
+				.Where(c => c.DeclaringUnit is null || c.DeclaringUnit == context.CurrentUnit ||
+							VisibilityChecker.IsAccessible(c.Visibility, context.CurrentUnit, c.DeclaringUnit))
+				.ToList();
+			if (visible.Count == 0)
+			{
+				ReportDiagnostics(span, $"Type '{typeName}' cannot be traversed via foreach: 'GetEnumerator()' method is inaccessible due to its protection level.", DiagnosticIds.ForeachInaccessibleGetEnumerator);
+				return null;
+			}
+			candidates = visible;
+		}
+
+		// Score every overload against the structural no-arg receiver shape. A tie between distinct
+		// candidates is the ambiguous-routing failure (CVL1089).
+		FunctionSymbol? best = null;
+		var bestScore = -1;
+		var tieCount = 0;
+
+		foreach (var candidate in candidates)
+		{
+			var paramTypes = candidate.Parameters.Select(p => p.Type).ToList();
+			var score = CompareSignature(paramTypes, receiverTypes, candidate.IsVariadic);
+			if (score > bestScore)
+			{
+				bestScore = score;
+				best = candidate;
+				tieCount = 1;
+			}
+			else if (score == bestScore && score >= 0)
+			{
+				tieCount++;
+			}
+		}
+
+		if (bestScore < 0 || best is null)
+		{
+			ReportDiagnostics(span, $"Type '{typeName}' cannot be traversed via foreach: 'GetEnumerator()' method is missing.", DiagnosticIds.ForeachNoGetEnumerator);
+			return null;
+		}
+
+		if (tieCount > 1)
+		{
+			ReportDiagnostics(span, $"Ambiguous iteration routing: type '{typeName}' exposes multiple conflicting overloads for 'GetEnumerator()'.", DiagnosticIds.ForeachAmbiguousGetEnumerator);
+			return null;
+		}
+
+		return best;
 	}
 
 	private void CheckControlExit(string? label, TextSpan span, bool isBreak)
@@ -1004,7 +1263,16 @@ public sealed class ValidationPass(BindingContext context)
 								if (!isMutable)
 								{
 									var currentFileContext = context.FileContexts[context.CurrentUnit!];
-									context.Diagnostics.Report(currentFileContext, id.Span, $"Cannot assign to immutable variable '{id.Name}'");
+									if (_readOnlyForeachItems.Count > 0 && _readOnlyForeachItems.Peek().Contains(id.Name))
+									{
+										context.Diagnostics.Report(currentFileContext, id.Span,
+																				$"The loop variable '{id.Name}' is read-only and cannot be reassigned inside the execution block.",
+																				DiagnosticIds.ForeachReadOnlyAssignment);
+									}
+									else
+									{
+										context.Diagnostics.Report(currentFileContext, id.Span, $"Cannot assign to immutable variable '{id.Name}'");
+									}
 								}
 
 								CheckEnumIntMismatch(varSymbol.Type, GetExpressionType(bin.Right, scope), bin.Span);
@@ -2540,6 +2808,17 @@ public sealed class ValidationPass(BindingContext context)
 
 			case ForStatementSyntax f:
 				return new ForStatementSyntax(f.Span, SubstituteStatementGenerics(f.Initializer, substitutionMap) as VariableDeclarationSyntax ?? f.Initializer, SubstituteExpressionGenerics(f.Condition, substitutionMap), SubstituteExpressionGenerics(f.Increment, substitutionMap), SubstituteStatementGenerics(f.Body, substitutionMap), f.Label);
+
+			case ForEachStatementSyntax forEach:
+				{
+					var newExplicitType = forEach.ExplicitItemType;
+					if (newExplicitType != null)
+					{
+						foreach (var kv in substitutionMap)
+							newExplicitType = SubstituteTypeToken(newExplicitType, kv.Key, kv.Value.Name);
+					}
+					return new ForEachStatementSyntax(forEach.Span, forEach.BindingKind, newExplicitType, forEach.ItemName, SubstituteExpressionGenerics(forEach.Collection, substitutionMap), SubstituteStatementGenerics(forEach.Body, substitutionMap) as BlockStatementSyntax ?? forEach.Body, forEach.Label);
+				}
 
 			case ReturnStatementSyntax r:
 				return new ReturnStatementSyntax(r.Span, r.Expression != null ? SubstituteExpressionGenerics(r.Expression, substitutionMap) : null);

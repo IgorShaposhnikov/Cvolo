@@ -1,0 +1,11 @@
+using System;
+
+int Main()
+{
+	int[5] arr = { 10, 20, 30, 40, 50 };
+	foreach (val item in arr) {
+		Console.Write(item);
+		Console.Write(",");
+	}
+	return 0;
+}

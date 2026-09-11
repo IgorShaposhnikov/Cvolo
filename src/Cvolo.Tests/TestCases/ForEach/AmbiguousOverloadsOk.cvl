@@ -1,0 +1,34 @@
+using System;
+
+struct Range {
+	int Start;
+	int End;
+}
+struct RangeEnumerator {
+	int Value;
+	int End;
+}
+extension Range {
+	RangeEnumerator GetEnumerator(ref this) {
+		return RangeEnumerator { Value: Start - 1, End: End };
+	}
+	RangeEnumerator GetEnumerator(Range other) {
+		return RangeEnumerator { Value: other.Start - 1, End: other.End };
+	}
+}
+extension RangeEnumerator {
+	bool MoveNext(refvar this) {
+		Value = Value + 1;
+		return Value <= End;
+	}
+	int Current() {
+		return Value;
+	}
+}
+int Main() {
+	Range r(Start: 0, End: 3);
+	foreach (val item in r) {
+		Console.Write(item);
+	}
+	return 0;
+}

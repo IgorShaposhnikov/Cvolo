@@ -1,0 +1,22 @@
+public struct Range {
+	public int Start;
+	public int End;
+}
+public struct RangeEnumerator {
+	int Value;
+	int End;
+}
+extension Range {
+	private RangeEnumerator GetEnumerator() {
+		return RangeEnumerator { Value: Start - 1, End: End };
+	}
+}
+extension RangeEnumerator {
+	bool MoveNext(refvar this) {
+		Value = Value + 1;
+		return Value <= End;
+	}
+	int Current() {
+		return Value;
+	}
+}

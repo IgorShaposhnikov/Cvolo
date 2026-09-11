@@ -1,0 +1,33 @@
+using System;
+
+struct NoCurrentRange {
+    int Start;
+    int End;
+}
+
+extension NoCurrentRange {
+    NoCurrentEnumerator GetEnumerator() {
+        return NoCurrentEnumerator { Value: Start - 1, End: End };
+    }
+}
+
+struct NoCurrentEnumerator {
+    int Value;
+    int End;
+}
+
+extension NoCurrentEnumerator {
+    bool MoveNext() {
+        Value = Value + 1;
+        return Value <= End;
+    }
+}
+
+int Main()
+{
+    var NoCurrentRange r(Start: 0, End: 3);
+    foreach (val item in r) {
+        Console.Write(item);
+    }
+    return 0;
+}

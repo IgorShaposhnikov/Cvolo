@@ -229,6 +229,7 @@ statement
 	| ifStatement
 	| whileStatement
 	| forStatement
+	| forEachStatement
 	| unsafeBlockStatement
 	| switchStatement
 	| blockStatement
@@ -273,6 +274,16 @@ whileStatement
 
 forStatement
 	: (Identifier COLON)? FOR LPAREN variableDeclaration expression SEMI expression RPAREN statement
+	;
+
+forEachStatement
+	: (Identifier COLON)? FOREACH LPAREN forEachBinding IN expression RPAREN blockStatement
+	;
+
+forEachBinding
+	: (VAL | VAR) type? Identifier
+	| type Identifier
+	| REFVAR Identifier
 	;
 
 controlExitStatement

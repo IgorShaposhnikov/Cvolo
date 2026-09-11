@@ -1,0 +1,14 @@
+using System;
+
+int Main()
+{
+    int[2] a = { 1, 2 };
+    int[2] b = { 3, 4 };
+    foreach (val x in a) {
+        foreach (val y in b) {
+            Console.Write(x * 10 + y);
+            Console.Write(",");
+        }
+    }
+    return 0;
+}

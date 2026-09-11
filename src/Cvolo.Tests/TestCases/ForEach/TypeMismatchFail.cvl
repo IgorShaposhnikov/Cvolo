@@ -1,0 +1,10 @@
+using System;
+
+int Main()
+{
+    int[3] arr = { 1, 2, 3 };
+    foreach (double item in arr) {
+        Console.Write(item);
+    }
+    return 0;
+}

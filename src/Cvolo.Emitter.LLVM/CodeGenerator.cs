@@ -925,6 +925,9 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			case ForStatementSyntax forStmt:
 				EmitForStatement(forStmt);
 				break;
+			case ForEachStatementSyntax fe:
+				EmitForEachStatement(fe);
+				break;
 			case UnsafeBlockStatementSyntax unsafeBlock:
 				_unsafeDepth++;
 				EmitBlock(unsafeBlock.Body);
@@ -2894,6 +2897,250 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		_builder.BuildBr(condBlock);
 
 		_builder.PositionAtEnd(endBlock);
+	}
+
+	private void EmitForEachStatement(ForEachStatementSyntax fe)
+	{
+		var rawCollectionType = GetExprType(fe.Collection);
+		var underlyingCollectionType = rawCollectionType;
+		if (underlyingCollectionType is PointerTypeSymbol colPtr)
+			underlyingCollectionType = colPtr.ReferencedType;
+
+		var itemTypeName = fe.ItemTypeName;
+		var itemType = itemTypeName is not null ? _bindingContext!.ResolveType(itemTypeName) ?? TypeSymbol.Int : TypeSymbol.Int;
+
+		var currentFunc = _builder.InsertBlock.Parent;
+		var prefix = !string.IsNullOrEmpty(fe.Label) ? fe.Label + "." : "";
+
+		if (underlyingCollectionType is ArrayTypeSymbol arrayType)
+		{
+			EmitForEachArray(fe, arrayType, itemType, currentFunc, prefix);
+		}
+		else if (underlyingCollectionType is SliceTypeSymbol sliceType)
+		{
+			EmitForEachSlice(fe, sliceType, itemType, currentFunc, prefix);
+		}
+		else
+		{
+			EmitForEachEnumerator(fe, underlyingCollectionType, itemType, currentFunc, prefix);
+		}
+	}
+
+	private void EmitForEachArray(ForEachStatementSyntax fe, ArrayTypeSymbol arrayType, TypeSymbol itemType, LLVMValueRef currentFunc, string prefix)
+	{
+		var (collectionAlloca, _, _, _) = GetFieldPointer(fe.Collection);
+
+		var counterAlloca = BuildEntryAlloca(LLVMTypeRef.Int32, "__fe_i");
+		_builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0), counterAlloca);
+
+		var itemSlotTy = fe.IsReferenceBinding ? LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0) : GetLLVMType(itemType);
+		var itemAlloca = BuildEntryAlloca(itemSlotTy, fe.ItemName);
+		_locals[fe.ItemName] = itemAlloca;
+		_variableTypes[fe.ItemName] = fe.IsReferenceBinding ? new PointerTypeSymbol(itemType, isMutable: fe.BindingKind == ForEachVariableKind.RefVar) : itemType;
+
+		var condBlock = currentFunc.AppendBasicBlock(prefix + "fecond");
+		var bodyBlock = currentFunc.AppendBasicBlock(prefix + "febody");
+		var incBlock = currentFunc.AppendBasicBlock(prefix + "feinc");
+		var endBlock = currentFunc.AppendBasicBlock(prefix + "feend");
+
+		var ctx = new LoopContext(fe.Label, endBlock, incBlock);
+		_loopContextStack.Push(ctx);
+
+		_builder.BuildBr(condBlock);
+
+		_builder.PositionAtEnd(condBlock);
+		var iVal = _builder.BuildLoad2(LLVMTypeRef.Int32, counterAlloca, "__fe_i_val");
+		var length = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (ulong)arrayType.Size);
+		var cmp = _builder.BuildICmp(LLVMIntPredicate.LLVMIntSLT, iVal, length, "__fe_cmp");
+		_builder.BuildCondBr(cmp, bodyBlock, endBlock);
+
+		_builder.PositionAtEnd(bodyBlock);
+		var arrayLayout = GetLLVMType(arrayType);
+		var elemPtr = _builder.BuildGEP2(arrayLayout, collectionAlloca, new LLVMValueRef[] {
+			LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0), iVal
+		}, "__fe_elem_ptr");
+		if (fe.IsReferenceBinding)
+		{
+			_builder.BuildStore(elemPtr, itemAlloca);
+		}
+		else
+		{
+			var elemVal = _builder.BuildLoad2(GetLLVMType(itemType), elemPtr, "__fe_elem");
+			_builder.BuildStore(elemVal, itemAlloca);
+		}
+
+		EmitStatement(fe.Body);
+		_builder.BuildBr(incBlock);
+
+		_loopContextStack.Pop();
+
+		_builder.PositionAtEnd(incBlock);
+		var newI = _builder.BuildAdd(iVal, LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1), "__fe_new_i");
+		_builder.BuildStore(newI, counterAlloca);
+		_builder.BuildBr(condBlock);
+
+		_builder.PositionAtEnd(endBlock);
+	}
+
+	private void EmitForEachSlice(ForEachStatementSyntax fe, SliceTypeSymbol sliceType, TypeSymbol itemType, LLVMValueRef currentFunc, string prefix)
+	{
+		var (collectionAlloca, _, _, _) = GetFieldPointer(fe.Collection);
+		var sliceLayout = GetLLVMType(sliceType);
+
+		var lenPtrField = _builder.BuildGEP2(sliceLayout, collectionAlloca, new LLVMValueRef[] {
+			LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
+			LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1)
+		}, "__fe_len_field");
+		var length = _builder.BuildLoad2(LLVMTypeRef.Int32, lenPtrField, "__fe_len");
+
+		var counterAlloca = BuildEntryAlloca(LLVMTypeRef.Int32, "__fe_i");
+		_builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0), counterAlloca);
+
+		var itemSlotTy = fe.IsReferenceBinding ? LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0) : GetLLVMType(itemType);
+		var itemAlloca = BuildEntryAlloca(itemSlotTy, fe.ItemName);
+		_locals[fe.ItemName] = itemAlloca;
+		_variableTypes[fe.ItemName] = fe.IsReferenceBinding ? new PointerTypeSymbol(itemType, isMutable: fe.BindingKind == ForEachVariableKind.RefVar) : itemType;
+
+		var condBlock = currentFunc.AppendBasicBlock(prefix + "fecond");
+		var bodyBlock = currentFunc.AppendBasicBlock(prefix + "febody");
+		var incBlock = currentFunc.AppendBasicBlock(prefix + "feinc");
+		var endBlock = currentFunc.AppendBasicBlock(prefix + "feend");
+
+		var ctx = new LoopContext(fe.Label, endBlock, incBlock);
+		_loopContextStack.Push(ctx);
+
+		_builder.BuildBr(condBlock);
+
+		_builder.PositionAtEnd(condBlock);
+		var iVal = _builder.BuildLoad2(LLVMTypeRef.Int32, counterAlloca, "__fe_i_val");
+		var cmp = _builder.BuildICmp(LLVMIntPredicate.LLVMIntSLT, iVal, length, "__fe_cmp");
+		_builder.BuildCondBr(cmp, bodyBlock, endBlock);
+
+		_builder.PositionAtEnd(bodyBlock);
+		var arrPtrField = _builder.BuildGEP2(sliceLayout, collectionAlloca, new LLVMValueRef[] {
+			LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
+			LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0)
+		}, "__fe_arr_field");
+		var dataPtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), arrPtrField, "__fe_data_ptr");
+		var elemLlvmTy = GetLLVMType(itemType);
+		var elemPtr = _builder.BuildGEP2(elemLlvmTy, dataPtr, new LLVMValueRef[] { iVal }, "__fe_elem_ptr");
+		if (fe.IsReferenceBinding)
+		{
+			_builder.BuildStore(elemPtr, itemAlloca);
+		}
+		else
+		{
+			var elemVal = _builder.BuildLoad2(elemLlvmTy, elemPtr, "__fe_elem");
+			_builder.BuildStore(elemVal, itemAlloca);
+		}
+
+		EmitStatement(fe.Body);
+		_builder.BuildBr(incBlock);
+
+		_loopContextStack.Pop();
+
+		_builder.PositionAtEnd(incBlock);
+		var newI = _builder.BuildAdd(iVal, LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1), "__fe_new_i");
+		_builder.BuildStore(newI, counterAlloca);
+		_builder.BuildBr(condBlock);
+
+		_builder.PositionAtEnd(endBlock);
+	}
+
+	private void EmitForEachEnumerator(ForEachStatementSyntax fe, TypeSymbol collectionType, TypeSymbol itemType, LLVMValueRef currentFunc, string prefix)
+	{
+		var (collectionAlloca, _, _, _) = GetFieldPointer(fe.Collection);
+
+		var enumeratorTypeName = fe.EnumeratorTypeName;
+		var enumeratorType = enumeratorTypeName is not null ? _bindingContext!.ResolveType(enumeratorTypeName) : null;
+		if (enumeratorType is null)
+			return;
+		var enumeratorLlvmType = GetLLVMType(enumeratorType);
+
+		var getEnumeratorName = fe.GetEnumeratorFunctionName;
+		var moveNextName = fe.MoveNextFunctionName;
+		var currentName = fe.CurrentFunctionName;
+		if (getEnumeratorName is null || moveNextName is null || currentName is null)
+			return;
+
+		var getEnumeratorCallee = _globals[getEnumeratorName];
+		var getEnumeratorFuncType = _functionTypes[getEnumeratorName];
+		var receiverType = LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0);
+		var getEnumeratorResult = _builder.BuildCall2(getEnumeratorFuncType, getEnumeratorCallee, new LLVMValueRef[] { collectionAlloca }, "__fe_enum");
+
+		var enumeratorAlloca = BuildEntryAlloca(enumeratorLlvmType, "__fe_enumerator");
+		_builder.BuildStore(getEnumeratorResult, enumeratorAlloca);
+
+		var itemSlotTy = fe.IsReferenceBinding ? LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0) : GetLLVMType(itemType);
+		var itemAlloca = BuildEntryAlloca(itemSlotTy, fe.ItemName);
+		_locals[fe.ItemName] = itemAlloca;
+		_variableTypes[fe.ItemName] = fe.IsReferenceBinding ? new PointerTypeSymbol(itemType, isMutable: fe.BindingKind == ForEachVariableKind.RefVar) : itemType;
+
+		var condBlock = currentFunc.AppendBasicBlock(prefix + "fecond");
+		var bodyBlock = currentFunc.AppendBasicBlock(prefix + "febody");
+		var endBlock = currentFunc.AppendBasicBlock(prefix + "feend");
+
+		var ctx = new LoopContext(fe.Label, endBlock, condBlock);
+		_loopContextStack.Push(ctx);
+
+		_builder.BuildBr(condBlock);
+
+		_builder.PositionAtEnd(condBlock);
+		var moveNextCallee = _globals[moveNextName];
+		var moveNextFuncType = _functionTypes[moveNextName];
+		var hasMore = _builder.BuildCall2(moveNextFuncType, moveNextCallee, new LLVMValueRef[] { enumeratorAlloca }, "__fe_has_more");
+		_builder.BuildCondBr(hasMore, bodyBlock, endBlock);
+
+		_builder.PositionAtEnd(bodyBlock);
+		var currentCallee = _globals[currentName];
+		var currentFuncType = _functionTypes[currentName];
+		var currentVal = _builder.BuildCall2(currentFuncType, currentCallee, new LLVMValueRef[] { enumeratorAlloca }, "__fe_current");
+		if (fe.IsReferenceBinding)
+		{
+			_builder.BuildStore(currentVal, itemAlloca);
+		}
+		else if (fe.CurrentReturnsReference)
+		{
+			var derefVal = _builder.BuildLoad2(GetLLVMType(itemType), currentVal, "__fe_current_val");
+			_builder.BuildStore(derefVal, itemAlloca);
+		}
+		else
+		{
+			_builder.BuildStore(currentVal, itemAlloca);
+		}
+
+		EmitStatement(fe.Body);
+		_builder.BuildBr(condBlock);
+
+		_loopContextStack.Pop();
+		_builder.PositionAtEnd(endBlock);
+
+		EmitForEachEnumeratorCleanup(enumeratorAlloca, enumeratorType);
+	}
+
+	/// <summary>
+	/// Deferred destruction of the hidden enumerator after the foreach loop completes
+	/// (normal exit, break, or continue-to-exit). Mirrors the owned-struct path of
+	/// <see cref="EmitCleanup"/>: calls the registered <c>~T()</c> when present, otherwise
+	/// drops any resource-move fields the enumerator transitively owns.
+	/// </summary>
+	private void EmitForEachEnumeratorCleanup(LLVMValueRef enumeratorAlloca, TypeSymbol enumeratorType)
+	{
+		if (enumeratorType is not StructTypeSymbol structType)
+			return;
+
+		var disposeBaseName = $"{structType.Name}.~{structType.Name}";
+		if (_bindingContext!.OverloadedFunctions.TryGetValue(disposeBaseName, out var candidates) && candidates.Count > 0)
+		{
+			var disposeSymbol = candidates[0];
+			var callee = _globals[disposeSymbol.Name];
+			var funcType = _functionTypes[disposeSymbol.Name];
+			_builder.BuildCall2(funcType, callee, new LLVMValueRef[] { enumeratorAlloca }, "");
+		}
+		else
+		{
+			EmitNestedFieldDestruction(enumeratorAlloca, structType, "__fe_enumerator");
+		}
 	}
 
 	private void EmitBreakStatement(BreakStatementSyntax brk)

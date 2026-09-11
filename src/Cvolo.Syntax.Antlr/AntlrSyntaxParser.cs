@@ -531,6 +531,8 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			return BuildWhileStatement(whileStmt);
 		if (context.forStatement() is { } forStmt)
 			return BuildForStatement(forStmt);
+		if (context.forEachStatement() is { } forEachStmt)
+			return BuildForEachStatement(forEachStmt);
 		if (context.unsafeBlockStatement() is { } unsafeBlock)
 			return new UnsafeBlockStatementSyntax(SpanOf(unsafeBlock), BuildBlockStatement(unsafeBlock.blockStatement()));
 		if (context.deferStatement() is { } defer)
@@ -1182,6 +1184,51 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		var increment = BuildExpression(context.expression(1));
 		var body = BuildStatement(context.statement())!;
 		return new ForStatementSyntax(SpanOf(context), init, condition, increment, body, label);
+	}
+
+	private ForEachStatementSyntax BuildForEachStatement(CvoloParser.ForEachStatementContext context)
+	{
+		var hasLabel = context.COLON() is not null;
+		var label = hasLabel ? context.Identifier().GetText() : null;
+		var binding = context.forEachBinding();
+
+		var hasVar = binding.VAR() is not null;
+		var hasRefVar = binding.REFVAR() is not null;
+		var typeCtx = binding.type();
+
+		var itemName = binding.Identifier().GetText();
+
+		// 'refvar' cannot be combined with an explicit item type (spec §1). The grammar parses
+		// 'refvar int item' through the 'type Identifier' alternative (type = refVarType / readOnlyRef),
+		// so a ref-typed type context signals the invalid combination.
+		if (typeCtx is CvoloParser.RefVarTypeContext refVarTypeCtx)
+		{
+			var refTarget = GetTypeName(refVarTypeCtx.type());
+			_diagnostics.Report(_compilationContext, SpanOf(context),
+				$"The mutable reference binding form 'refvar' cannot be combined with an explicit item type: 'foreach (refvar {refTarget} {itemName} ...)' is not allowed.");
+			return new ForEachStatementSyntax(SpanOf(context), ForEachVariableKind.RefVar, null, itemName,
+				BuildExpression(context.expression()), BuildBlockStatement(context.blockStatement()), label);
+		}
+		if (typeCtx is CvoloParser.ReadOnlyRefTypeContext readOnlyRefCtx)
+		{
+			var refTarget = GetTypeName(readOnlyRefCtx.type());
+			_diagnostics.Report(_compilationContext, SpanOf(context),
+				$"The mutable reference binding form 'refvar' cannot be combined with an explicit item type: 'foreach (refvar {refTarget} {itemName} ...)' is not allowed.");
+			return new ForEachStatementSyntax(SpanOf(context), ForEachVariableKind.RefVar, null, itemName,
+				BuildExpression(context.expression()), BuildBlockStatement(context.blockStatement()), label);
+		}
+
+		var kind = hasRefVar
+			? ForEachVariableKind.RefVar
+			: hasVar
+				? ForEachVariableKind.Var
+				: ForEachVariableKind.Val;
+
+		var explicitItemType = typeCtx is not null ? GetTypeName(typeCtx) : null;
+
+		var collection = BuildExpression(context.expression());
+		var body = BuildBlockStatement(context.blockStatement());
+		return new ForEachStatementSyntax(SpanOf(context), kind, explicitItemType, itemName, collection, body, label);
 	}
 
 	private SyntaxNode BuildControlExitStatement(CvoloParser.ControlExitStatementContext context)

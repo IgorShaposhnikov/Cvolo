@@ -1,0 +1,9 @@
+using System;
+
+int Main() {
+	Range r(Start: 0, End: 3);
+	foreach (val item in r) {
+		Console.Write(item);
+	}
+	return 0;
+}

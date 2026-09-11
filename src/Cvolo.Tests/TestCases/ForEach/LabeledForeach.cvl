@@ -1,0 +1,18 @@
+using System;
+
+int Main()
+{
+    int[4] arr = { 10, 20, 30, 40 };
+    outer: foreach (val item in arr) {
+        Console.Write(item);
+        Console.Write(":");
+        foreach (val sub in arr) {
+            if (sub == 30) {
+                continue outer;
+            }
+            Console.Write(sub);
+        }
+        Console.Write(";");
+    }
+    return 0;
+}

@@ -22,6 +22,7 @@ public enum SyntaxKind
 	IfStatement,
 	WhileStatement,
 	ForStatement,
+	ForEachStatement,
 	StructDeclaration,
 	ExtensionDeclaration,
 	DestructorDeclaration,

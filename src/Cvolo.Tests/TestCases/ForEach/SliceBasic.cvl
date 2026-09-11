@@ -1,0 +1,15 @@
+using System;
+
+void PrintSlice(int[] s) {
+	foreach (val item in s) {
+		Console.Write(item);
+		Console.Write(",");
+	}
+}
+
+int Main()
+{
+	int[4] arr = { 7, 8, 9, 10 };
+	PrintSlice(arr);
+	return 0;
+}

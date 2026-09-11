@@ -1,0 +1,32 @@
+using System;
+
+struct Range {
+	int Start;
+	int End;
+}
+struct RangeEnumerator {
+	int Value;
+	int End;
+}
+extension Range {
+	RangeEnumerator GetEnumerator() {
+		return RangeEnumerator { Value: Start - 1, End: End };
+	}
+}
+extension RangeEnumerator {
+	bool MoveNext(refvar this) {
+		Value = Value + 1;
+		return Value <= End;
+	}
+	int Current() {
+		return Value;
+	}
+}
+int Main() {
+	Range r(Start: 0, End: 3);
+	Range other(Start: 0, End: 5);
+	foreach (val item in r) {
+		r = other;
+	}
+	return 0;
+}

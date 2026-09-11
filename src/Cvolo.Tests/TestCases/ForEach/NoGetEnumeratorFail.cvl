@@ -1,0 +1,14 @@
+using System;
+
+struct NotIterable {
+    int X;
+}
+
+int Main()
+{
+    var NotIterable o(X: 1);
+    foreach (val item in o) {
+        Console.Write(item);
+    }
+    return 0;
+}

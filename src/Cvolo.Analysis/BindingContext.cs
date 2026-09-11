@@ -1116,6 +1116,9 @@ public sealed class BindingContext
 				case ForStatementSyntax f:
 					return new ForStatementSyntax(f.Span, SubstituteStatementGenerics(f.Initializer) as VariableDeclarationSyntax ?? f.Initializer, SubstituteExpressionGenerics(f.Condition), SubstituteExpressionGenerics(f.Increment), SubstituteStatementGenerics(f.Body));
 
+				case ForEachStatementSyntax forEach:
+					return new ForEachStatementSyntax(forEach.Span, forEach.BindingKind, forEach.ExplicitItemType, forEach.ItemName, SubstituteExpressionGenerics(forEach.Collection), (BlockStatementSyntax)SubstituteStatementGenerics(forEach.Body), forEach.Label);
+
 				case ReturnStatementSyntax r:
 					return new ReturnStatementSyntax(r.Span, r.Expression != null ? SubstituteExpressionGenerics(r.Expression) : null);
 

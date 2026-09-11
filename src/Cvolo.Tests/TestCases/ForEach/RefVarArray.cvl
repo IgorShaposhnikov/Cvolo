@@ -1,0 +1,14 @@
+using System;
+
+int Main()
+{
+	int[5] arr = { 1, 2, 3, 4, 5 };
+	foreach (refvar item in arr) {
+		item = item * 10;
+	}
+	foreach (val item in arr) {
+		Console.Write(item);
+		Console.Write(",");
+	}
+	return 0;
+}

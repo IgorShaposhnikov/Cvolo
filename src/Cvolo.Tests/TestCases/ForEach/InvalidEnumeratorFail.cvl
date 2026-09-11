@@ -1,0 +1,32 @@
+using System;
+
+struct BadRange {
+    int Start;
+    int End;
+}
+
+extension BadRange {
+    BadEnumerator GetEnumerator() {
+        return BadEnumerator { Value: Start - 1, End: End };
+    }
+}
+
+struct BadEnumerator {
+    int Value;
+    int End;
+}
+
+extension BadEnumerator {
+    int Current() {
+        return Value;
+    }
+}
+
+int Main()
+{
+    var BadRange r(Start: 0, End: 3);
+    foreach (val item in r) {
+        Console.Write(item);
+    }
+    return 0;
+}

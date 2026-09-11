@@ -65,6 +65,8 @@ NAMEOF: 'nameof';
 TYPEOF: 'typeof';
 BREAK: 'break';
 CONTINUE: 'continue';
+FOREACH: 'foreach';
+IN: 'in';
 
 // Punctuation
 LPAREN: '(';

@@ -85,6 +85,18 @@ public sealed class DeferRewriter(DiagnosticBag diagnostics, CompilationContext 
 			return new WhileStatementSyntax(whileStmt.Span, cond, body, whileStmt.Label);
 		}
 
+		if (node is ForEachStatementSyntax forEach)
+		{
+			var ctx = new LoopContext(forEach.Label, _registryStack.Count);
+			_loopStack.Push(ctx);
+			var body = RewriteBranch(forEach.Body);
+			_loopStack.Pop();
+			var collection = (ExpressionSyntax)Rewrite(forEach.Collection);
+			return new ForEachStatementSyntax(forEach.Span, forEach.BindingKind,
+				forEach.ExplicitItemType, forEach.ItemName, collection,
+				(BlockStatementSyntax)body, forEach.Label);
+		}
+
 		if (node is IfStatementSyntax ifStmt)
 		{
 			var cond = (ExpressionSyntax)Rewrite(ifStmt.Condition);
@@ -324,6 +336,7 @@ public sealed class DeferRewriter(DiagnosticBag diagnostics, CompilationContext 
 			IfStatementSyntax ifStmt => CloneIf(ifStmt),
 			WhileStatementSyntax whileStmt => new WhileStatementSyntax(whileStmt.Span, CloneExpression(whileStmt.Condition), CloneNode(whileStmt.Body), whileStmt.Label),
 			ForStatementSyntax forStmt => new ForStatementSyntax(forStmt.Span, CloneVarDecl(forStmt.Initializer), CloneExpression(forStmt.Condition), CloneExpression(forStmt.Increment), CloneNode(forStmt.Body), forStmt.Label),
+			ForEachStatementSyntax forEach => new ForEachStatementSyntax(forEach.Span, forEach.BindingKind, forEach.ExplicitItemType, forEach.ItemName, CloneExpression(forEach.Collection), (BlockStatementSyntax)CloneNode(forEach.Body), forEach.Label),
 			UnsafeBlockStatementSyntax unsafeBlock => new UnsafeBlockStatementSyntax(unsafeBlock.Span, (BlockStatementSyntax)CloneNode(unsafeBlock.Body)),
 			SwitchStatementSyntax sw => CloneSwitch(sw),
 			VariableDeclarationSyntax varDecl => CloneVarDecl(varDecl),

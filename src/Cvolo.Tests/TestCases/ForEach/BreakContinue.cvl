@@ -1,0 +1,17 @@
+using System;
+
+int Main()
+{
+    int[5] arr = { 1, 2, 3, 4, 5 };
+    foreach (val item in arr) {
+        if (item == 3) {
+            continue;
+        }
+        if (item == 5) {
+            break;
+        }
+        Console.Write(item);
+        Console.Write(",");
+    }
+    return 0;
+}
