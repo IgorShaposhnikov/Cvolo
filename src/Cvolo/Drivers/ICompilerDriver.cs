@@ -25,5 +25,10 @@ public interface ICompilerDriver
 	/// <param name="targetOs">Target OS for native library resolution (host, windows, linux, macos). Controls which win:/linux:/mac: [LibraryImport] path is forwarded to the linker.</param>
 	/// <param name="checkedFfiBounds">If set to <c>true</c>, generates explicit null-check prologues in expose extern functions for debug builds.</param>
 	/// <returns>The exit status code of the compilation pass (0 for success, non-zero for failures).</returns>
-	int Compile(string path, bool llvmOnly, bool isShared, bool emitIr, string optLevel, bool checkOnly = false, bool runAfterCompile = false, bool verbose = false, bool emitLowered = false, string? noWarn = null, bool suppressWarnings = false, bool legacyVisibility = false, bool strictOption = false, bool noTbaa = false, string? targetOs = null, bool checkedFfiBounds = false);
+	/// /// <param name="format">
+	/// Selects the diagnostic output transport.
+	/// <c>"text"</c> (default) emits human-readable ANSI-colored diagnostics on stderr,
+	/// preserving the interactive compiler UX. Unknown values fall back to <c>"text"</c>.
+	/// </param>
+	int Compile(string path, bool llvmOnly, bool isShared, bool emitIr, string optLevel, bool checkOnly = false, bool runAfterCompile = false, bool verbose = false, bool emitLowered = false, string? noWarn = null, bool suppressWarnings = false, bool legacyVisibility = false, bool strictOption = false, bool noTbaa = false, string? targetOs = null, bool checkedFfiBounds = false, string format = "text");
 }

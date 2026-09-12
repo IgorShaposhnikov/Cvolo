@@ -4,6 +4,7 @@ using Cvolo.Analysis.Symbols.FFI;
 using Cvolo.Core.AST;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.Diagnostics;
+using Cvolo.Core.Diagnostics.Reporters;
 using Cvolo.Emitter.LLVM;
 using Cvolo.Projects;
 using Cvolo.Strategies;
@@ -20,13 +21,19 @@ internal sealed class CompilerDriver : ICompilerDriver
 {
 	private static readonly string[] _linkerCandidates = ["clang", "gcc", "g++"];
 
-	public int Compile(string path, bool llvmOnly, bool isShared, bool emitIr, string optLevel, bool checkOnly = false, bool runAfterCompile = false, bool verbose = false, bool emitLowered = false, string? noWarn = null, bool suppressWarnings = false, bool legacyVisibility = false, bool strictOption = false, bool noTbaa = false, string? targetOs = null, bool checkedFfiBounds = false)
+	public int Compile(string path, bool llvmOnly, bool isShared, bool emitIr, string optLevel, bool checkOnly = false, bool runAfterCompile = false, bool verbose = false, bool emitLowered = false, string? noWarn = null, bool suppressWarnings = false, bool legacyVisibility = false, bool strictOption = false, bool noTbaa = false, string? targetOs = null, bool checkedFfiBounds = false, string format = "text")
 	{
+		// The driver itself is format-agnostic: it hands diagnostics to a
+		// reporter and, for verbose chatter, asks whether the reporter owns
+		// stdout exclusively. Concrete formats live in IDiagnosticReporter.
+		var reporter = CreateReporter(format, suppressWarnings);
+
 		// Diagnostics whose ids appear here are dropped from the warning stream entirely.
 		var noWarnIds = noWarn?
 			.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
 			.Select(id => id.ToUpperInvariant())
 			.ToHashSet();
+
 		// 1. Load the project configuration (automatically walks up directory tree to locate standard libraries)
 		CompilationProject project;
 		try
@@ -35,12 +42,13 @@ internal sealed class CompilerDriver : ICompilerDriver
 		}
 		catch (Exception ex)
 		{
-			Console.Error.WriteLine($"Error: {ex.Message}");
+			reporter.ReportSynthetic(null, "error", ex.Message, path);
 			return 1;
 		}
 
-		// 2. Instrument compiled files list only under verbose logging rules
-		if (verbose && !checkOnly)
+		// 2. Instrument compiled files list only under verbose logging rules.
+		// Machine reporters claim stdout, so verbose chatter is gated on !Exclusive.
+		if (verbose && !checkOnly && !reporter.Exclusive)
 		{
 			Console.WriteLine("Files selected for compilation:");
 			foreach (var file in project.SourceFiles)
@@ -66,16 +74,7 @@ internal sealed class CompilerDriver : ICompilerDriver
 			var ast = parser.Parse(context);
 			if (parser.Diagnostics.HasErrors)
 			{
-				foreach (var diag in parser.Diagnostics.Diagnostics)
-				{
-					var label = diag.Id is null ? "Parse Error" : $"Compile Error {diag.Id}";
-					var lines = diag.Context.FormatDiagnostic(label, diag.Message, diag.Span);
-					foreach (var line in lines)
-					{
-						Console.Error.WriteLine(line);
-					}
-				}
-
+				reporter.ReportErrors(parser.Diagnostics.Diagnostics, "Parse Error");
 				return 1;
 			}
 
@@ -122,7 +121,7 @@ internal sealed class CompilerDriver : ICompilerDriver
 		}
 		catch (InvalidOperationException ex)
 		{
-			Console.Error.WriteLine($"[Interp Error]: {ex.Message}");
+			reporter.ReportSynthetic(null, "error", ex.Message, path);
 			return 1;
 		}
 
@@ -145,47 +144,33 @@ internal sealed class CompilerDriver : ICompilerDriver
 
 		if (binder.Diagnostics.HasErrors)
 		{
-			foreach (var diag in binder.Diagnostics.Diagnostics)
-			{
-				var label = diag.Id is null ? "Analysis Error" : $"Compile Error {diag.Id}";
-				var lines = diag.Context.FormatDiagnostic(label, diag.Message, diag.Span);
-				foreach (var line in lines)
-				{
-					Console.Error.WriteLine(line);
-				}
-			}
-
+			// Preserve the original behaviour: the whole bag (errors + warnings)
+			// goes through the error channel when there is at least one error.
+			reporter.ReportErrors(binder.Diagnostics.Diagnostics, "Analysis Error");
 			return 1;
 		}
 
 		// Warnings never fail compilation; they are printed and the pipeline continues.
-		if (!suppressWarnings)
-		{
-			foreach (var diag in binder.Diagnostics.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Warning))
-			{
-				if (diag.Id is not null && noWarnIds?.Contains(diag.Id) == true)
-					continue;
-
-				var label = diag.Id is null ? "Analysis Warning" : $"Analysis Warning {diag.Id}";
-				var warningLines = diag.Context.FormatDiagnostic(label, diag.Message, diag.Span, compact: true);
-				foreach (var line in warningLines)
-				{
-					Console.Error.WriteLine(line);
-				}
-			}
-		}
+		var warnings = binder.Diagnostics.Diagnostics
+			.Where(d => d.Severity == DiagnosticSeverity.Warning)
+			.ToList();
+		reporter.ReportWarnings(warnings, noWarnIds);
 
 		// 5. Short-circuit immediately if in rapid syntax/semantic check mode
 		if (checkOnly)
 		{
-			Console.WriteLine("Check completed. Code is semantically correct.");
+			reporter.ReportCheckSuccess();
 			return 0;
 		}
 
 		// Enforce executable entry-point rules
 		if (!project.IsShared && binder.Context.Globals.Lookup("main") is null && binder.Context.Globals.Lookup("Main") is null)
 		{
-			Console.Error.WriteLine($"Error {DiagnosticIds.MissingEntryPoint}: Program does not contain a static 'main' method suitable for an entry point");
+			reporter.ReportSynthetic(
+				DiagnosticIds.MissingEntryPoint,
+				"error",
+				"Program does not contain a static 'main' method suitable for an entry point",
+				path);
 			return 1;
 		}
 
@@ -245,7 +230,7 @@ internal sealed class CompilerDriver : ICompilerDriver
 			}
 		}
 
-		if (verbose && linkerPath is not null)
+		if (verbose && linkerPath is not null && !reporter.Exclusive)
 		{
 			Console.WriteLine($"Linking using: {linkerName}...");
 		}
@@ -272,7 +257,7 @@ internal sealed class CompilerDriver : ICompilerDriver
 				: (OperatingSystem.IsWindows() ? ".exe" : "");
 			var binaryPath = Path.Combine(binDirectory, project.OutputName + binaryExt);
 
-			if (verbose)
+			if (verbose && !reporter.Exclusive)
 			{
 				Console.WriteLine($"Running: {binaryPath}... \n\n");
 			}
@@ -288,6 +273,19 @@ internal sealed class CompilerDriver : ICompilerDriver
 		}
 
 		return 0;
+	}
+
+	// The single point where a format string becomes a reporting strategy.
+	// Adding a new format (e.g. a future JSON envelope for cvolo lsp) means
+	// adding one implementation and one case here — the pipeline stays put.
+	private static IDiagnosticReporter CreateReporter(string format, bool suppressWarnings)
+	{
+		return format.ToLowerInvariant() switch
+		{
+			"machine" => new MachineDiagnosticReporter(),
+			"json" => new JsonDiagnosticReporter(),
+			_ => new TextDiagnosticReporter(suppressWarnings)
+		};
 	}
 
 	private static void CopyNativeLibrariesToOutput(IEnumerable<NativeLibraryInfo> nativeLibraries, CompilationProject project, string binDirectory, string? targetOs, bool verbose)
