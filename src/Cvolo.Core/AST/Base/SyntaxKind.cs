@@ -63,6 +63,7 @@ public enum SyntaxKind
 	DeferStatement,
 	BreakStatement,
 	ContinueStatement,
+	LabeledBlockStatement,
 	ExternBlock,
 	ExternBlockFunction,
 	ExposeExternBlock,

@@ -7,9 +7,10 @@ public sealed class DeferStatementSyntax(TextSpan span, SyntaxNode body, string?
 {
 	public override SyntaxKind Kind => SyntaxKind.DeferStatement;
 
-	// Non-null for a targeted defer (`defer label: body;`): the body is anchored to the
-	// labeled loop's body scope rather than the immediately enclosing block.
-	public string? Label { get; } = label;
+// Non-null for a targeted defer (`defer label { ... };`): the body is anchored to the
+	// nearest enclosing block labeled `label` rather than the immediately enclosing block.
+	// Null anchors to the immediately enclosing block.
+	public string? TargetLabel { get; } = label;
 
 	public SyntaxNode Body { get; } = body;
 

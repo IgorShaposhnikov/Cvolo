@@ -1,0 +1,7 @@
+using System;
+
+int main()
+{
+	defer;
+	return 0;
+}

@@ -103,6 +103,10 @@ public sealed class FlowAnalysisPass(BindingContext context)
 			case BlockStatementSyntax b:
 				AnalyzeBlock(b, new SymbolTable(scope));
 				break;
+
+			case LabeledBlockStatementSyntax lb:
+				AnalyzeBlock(lb.Body, new SymbolTable(scope));
+				break;
 		}
 	}
 

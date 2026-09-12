@@ -104,6 +104,12 @@ public abstract class AstRewriterBase
 			return new BlockStatementSyntax(block.Span, rewrittenStatements);
 		}
 
+		if (node is LabeledBlockStatementSyntax labeledBlock)
+		{
+			var rewrittenBody = (BlockStatementSyntax)Rewrite(labeledBlock.Body);
+			return new LabeledBlockStatementSyntax(labeledBlock.Span, labeledBlock.Label, rewrittenBody);
+		}
+
 		if (node is ExpressionStatementSyntax exprStmt)
 		{
 			var rewrittenExpr = (ExpressionSyntax)Rewrite(exprStmt.Expression);

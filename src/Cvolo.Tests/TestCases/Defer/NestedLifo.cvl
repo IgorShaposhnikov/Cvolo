@@ -1,0 +1,14 @@
+using System;
+
+int main()
+{
+	A: {
+		defer A { Console.Write("X"); }
+		{
+			defer Console.Write("Y");
+			defer A { Console.Write("Z"); }
+		}
+	}
+	Console.Write("W");
+	return 0;
+}

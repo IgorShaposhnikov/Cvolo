@@ -1,0 +1,13 @@
+using System;
+
+int main()
+{
+	L: {
+		M: {
+			break L;
+		}
+		Console.Write("X");
+	}
+	Console.Write("Y");
+	return 0;
+}

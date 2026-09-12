@@ -1,0 +1,12 @@
+using System;
+
+int main()
+{
+	L: {
+		Console.Write("A");
+	}
+	L: {
+		Console.Write("B");
+	}
+	return 0;
+}

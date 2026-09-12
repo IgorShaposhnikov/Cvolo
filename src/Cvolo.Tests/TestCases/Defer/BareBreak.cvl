@@ -1,0 +1,7 @@
+using System;
+
+int main()
+{
+	break;
+	return 0;
+}

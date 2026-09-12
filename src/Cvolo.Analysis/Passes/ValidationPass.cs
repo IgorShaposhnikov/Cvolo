@@ -19,11 +19,13 @@ public sealed class ValidationPass(BindingContext context)
 	private bool _inUnbound;
 	private IReadOnlyList<CompilationUnitSyntax> _units = [];
 
-	// Loop-label validation state: _labelScopes mirrors the enclosing-scope-block
+// Label validation state: _labelScopes mirrors the enclosing-scope-block
 	// chain for CVL1062 duplicate detection; _loopLabels mirrors the active loop
-	// ancestry for CVL1063 resolution and CVL1070 in-loop enforcement.
+	// ancestry for CVL1063 resolution and CVL1070 in-loop enforcement; _blockLabels
+	// mirrors the active labeled-block ancestry (break-targetable only).
 	private readonly Stack<HashSet<string>> _labelScopes = new();
 	private readonly Stack<string?> _loopLabels = [];
+	private readonly Stack<string?> _blockLabels = [];
 
 	// Read-only `foreach` item names (val/explicit-type) in the current body chain,
 	// used to report the dedicated CVL1082 diagnostic on assignment.
@@ -540,6 +542,22 @@ public sealed class ValidationPass(BindingContext context)
 			case BlockStatementSyntax block:
 				CheckBlock(block, new SymbolTable(scope), currentFunc);
 				break;
+			case LabeledBlockStatementSyntax labeledBlock:
+				{
+					var currentScope = _labelScopes.Count > 0 ? _labelScopes.Peek() : null;
+					if (currentScope is not null && !currentScope.Add(labeledBlock.Label))
+					{
+						var currentFileContext = context.FileContexts[context.CurrentUnit!];
+						context.Diagnostics.Report(currentFileContext, labeledBlock.Span,
+							$"Label '{labeledBlock.Label}' redeclared in the same enclosing scope.",
+							DiagnosticIds.DuplicateLabel);
+					}
+
+					_blockLabels.Push(labeledBlock.Label);
+					CheckBlock(labeledBlock.Body, new SymbolTable(scope), currentFunc);
+					_blockLabels.Pop();
+					break;
+				}
 			case IfStatementSyntax ifStmt:
 				CheckExpression(ifStmt.Condition, scope);
 				CheckStatement(ifStmt.ThenStatement, scope, currentFunc);
@@ -580,7 +598,7 @@ public sealed class ValidationPass(BindingContext context)
 				CheckSwitchStatement(sw, scope, currentFunc);
 				break;
 			case BreakStatementSyntax brk:
-				CheckControlExit(brk.Label, brk.Span, isBreak: true);
+				CheckControlExit(brk.TargetLabel, brk.Span, isBreak: true);
 				break;
 			case ContinueStatementSyntax cont:
 				CheckControlExit(cont.Label, cont.Span, isBreak: false);
@@ -597,8 +615,8 @@ public sealed class ValidationPass(BindingContext context)
 			{
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
 				context.Diagnostics.Report(currentFileContext, span,
-					$"Loop iteration label identifier '{label}' is redeclared within the same enclosing scope block.",
-					DiagnosticIds.DuplicateLoopLabel);
+					$"Label '{label}' redeclared in the same enclosing scope.",
+					DiagnosticIds.DuplicateLabel);
 			}
 		}
 
@@ -858,7 +876,7 @@ public sealed class ValidationPass(BindingContext context)
 		return best;
 	}
 
-	private void CheckControlExit(string? label, TextSpan span, bool isBreak)
+private void CheckControlExit(string? label, TextSpan span, bool isBreak)
 	{
 		if (label is null)
 		{
@@ -866,24 +884,40 @@ public sealed class ValidationPass(BindingContext context)
 			var inSwitch = _switchDepth > 0;
 
 			// An unlabeled break is legal inside a switch case (C-style switch exit) even with
-			// no enclosing loop; continue is strictly a loop construct.
+			// no enclosing loop; continue is strictly a loop construct. This version requires a
+			// label for any other break target, so a bare break outside a loop/switch is CVL1066.
 			if (!inLoop && !(isBreak && inSwitch))
 			{
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
 				context.Diagnostics.Report(currentFileContext, span,
-					"The unstructured iteration statement 'break' or 'continue' can only be executed inside an active loop or switch-case body context.",
-					DiagnosticIds.LoopControlOutsideLoop);
+					isBreak
+						? "`break` requires a label in this version."
+						: "The unstructured iteration statement 'break' or 'continue' can only be executed inside an active loop or switch-case body context.",
+					isBreak ? DiagnosticIds.BreakRequiresLabel : DiagnosticIds.LoopControlOutsideLoop);
 			}
 
 			return;
 		}
 
-		if (!_loopLabels.Contains(label))
+		var foundLoop = _loopLabels.Contains(label);
+		if (foundLoop)
+			return;
+
+		if (isBreak && _blockLabels.Contains(label))
+			return;
+
+		var reportContext = context.FileContexts[context.CurrentUnit!];
+		if (isBreak)
 		{
-			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.Report(currentFileContext, span,
-				$"Labeled branch target '{label}' could not be resolved inside the active iteration scope ancestry chain.",
-				DiagnosticIds.LabeledBranchTargetNotFound);
+			context.Diagnostics.Report(reportContext, span,
+				$"`break {label};` refers to a label `{label}` not in scope.",
+				DiagnosticIds.LabelNotFoundInScope);
+		}
+		else
+		{
+			context.Diagnostics.Report(reportContext, span,
+				$"`continue {label};` refers to a label `{label}` that is not an enclosing loop.",
+				DiagnosticIds.LabelNotFoundInScope);
 		}
 	}
 
@@ -2835,6 +2869,9 @@ public sealed class ValidationPass(BindingContext context)
 				return new SwitchCaseSyntax(c.Span, c.VariantName, c.VariableName, c.IsDefault,
 					c.Body.Select(st => SubstituteStatementGenerics(st, substitutionMap)).ToList());
 
+			case LabeledBlockStatementSyntax lb:
+				return new LabeledBlockStatementSyntax(lb.Span, lb.Label, SubstituteBlockGenerics(lb.Body, substitutionMap));
+
 			default:
 				return stmt;
 		}
@@ -2924,6 +2961,7 @@ public sealed class ValidationPass(BindingContext context)
 	private static bool EndsWithReturn(SyntaxNode s) => s switch
 	{
 		BlockStatementSyntax b => b.Statements.Count > 0 && b.Statements[^1] is ReturnStatementSyntax,
+		LabeledBlockStatementSyntax lb => lb.Body.Statements.Count > 0 && lb.Body.Statements[^1] is ReturnStatementSyntax,
 		ReturnStatementSyntax => true,
 		_ => false,
 	};

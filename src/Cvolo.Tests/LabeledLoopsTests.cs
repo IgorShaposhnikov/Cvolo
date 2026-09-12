@@ -24,13 +24,11 @@ public sealed class LabeledLoopsTests : CompilerTestBase
 	}
 
 	[Theory]
-	[InlineData("BreakOutsideLoop", "CVL1070", "can only be executed inside an active loop or switch-case body context")]
+	[InlineData("BreakOutsideLoop", "CVL1066", "`break` requires a label in this version")]
 	[InlineData("ContinueOutsideLoop", "CVL1070", "can only be executed inside an active loop or switch-case body context")]
 	[InlineData("ContinueInSwitchFail", "CVL1070", "can only be executed inside an active loop or switch-case body context")]
-	[InlineData("UnresolvedLabel", "CVL1063", "Labeled branch target 'outer' could not be resolved")]
-	[InlineData("DuplicateLabel", "CVL1062", "Loop iteration label identifier 'outer' is redeclared")]
-	[InlineData("DeferBarrierFail", "CVL1071", "violates the cross-iteration loop barrier")]
-	[InlineData("DeferFlatLabelFail", "CVL1067", "requires a trailing colon identifier after label 'outer'")]
+	[InlineData("UnresolvedLabel", "CVL1061", "`break outer;` refers to a label `outer` not in scope")]
+	[InlineData("DuplicateLabel", "CVL1062", "Label 'outer' redeclared in the same enclosing scope")]
 	public void LabeledLoopRejections(string caseName, string expectedId, string expectedMessage)
 	{
 		var (exitCode, _, stderr) = RunCompiler($"LabeledLoops/{caseName}.cvl");

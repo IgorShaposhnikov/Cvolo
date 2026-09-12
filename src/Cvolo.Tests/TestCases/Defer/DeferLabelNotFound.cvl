@@ -1,0 +1,7 @@
+using System;
+
+int main()
+{
+	defer Nope { Console.Write("x"); }
+	return 0;
+}

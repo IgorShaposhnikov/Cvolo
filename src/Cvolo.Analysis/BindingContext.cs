@@ -1134,6 +1134,9 @@ public sealed class BindingContext
 					return new SwitchCaseSyntax(c.Span, c.VariantName, c.VariableName, c.IsDefault,
 						c.Body.Select(SubstituteStatementGenerics).ToList());
 
+				case LabeledBlockStatementSyntax lb:
+					return new LabeledBlockStatementSyntax(lb.Span, lb.Label, SubstituteBlockGenerics(lb.Body));
+
 				default:
 
 					return stmt;

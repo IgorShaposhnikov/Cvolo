@@ -4,7 +4,7 @@ int main()
 {
 outer: for (var i = 0; i < 2; i++) {
 		{
-			defer outer: Console.Write("O");
+			defer outer { Console.Write("O"); }
 		}
 		Console.Write(i);
 	}

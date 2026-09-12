@@ -1,0 +1,14 @@
+using System;
+
+int read()
+{
+	Console.Write("R");
+	return 7;
+}
+
+int main()
+{
+	defer Console.Write("D");
+	var result = read();
+	return result == 7 ? 0 : 1;
+}

@@ -117,26 +117,32 @@ public static class DiagnosticIds
 	/// <summary>`null` is assigned/initialized on a `T?`-declared variable in safe code.</summary>
 	public const string NullForOptionalType = "CVL1104";
 
-	/// <summary>'expose using' directive used outside a namespace declaration.</summary>
+/// <summary>'expose using' directive used outside a namespace declaration.</summary>
 	public const string ExposeUsingOutsideNamespace = "CVL1060";
 
 	/// <summary>'expose using' targets a namespace that cannot be resolved.</summary>
-	public const string ExposeUsingNamespaceNotFound = "CVL1061";
+	public const string ExposeUsingNamespaceNotFound = "CVL1050";
 
-	/// <summary>Labeled branch target could not be resolved inside the active iteration scope ancestry chain.</summary>
-	public const string LabeledBranchTargetNotFound = "CVL1063";
+	/// <summary>`defer {0} { ... }` / `break {0};` refers to a label `{0}` not in scope.</summary>
+	public const string LabelNotFoundInScope = "CVL1061";
 
-	/// <summary>Loop iteration label identifier is redeclared within the same enclosing scope block.</summary>
-	public const string DuplicateLoopLabel = "CVL1062";
+	/// <summary>Label `{0}` redeclared in the same enclosing scope.</summary>
+	public const string DuplicateLabel = "CVL1062";
 
-	/// <summary>Targeted defer expression is missing the required trailing colon after its label.</summary>
-	public const string TargetedDeferMissingColon = "CVL1067";
+	/// <summary>Control flow cannot leave a `defer` body (return/break/continue inside `defer`).</summary>
+	public const string DeferControlFlowLeak = "CVL1063";
+
+	/// <summary>`defer` cannot be nested inside another `defer`.</summary>
+	public const string NestedDefer = "CVL1064";
+
+	/// <summary>`defer` requires a statement or block body.</summary>
+	public const string DeferRequiresBody = "CVL1065";
+
+	/// <summary>`break` requires a label in this version.</summary>
+	public const string BreakRequiresLabel = "CVL1066";
 
 	/// <summary>The unstructured iteration statement 'break' or 'continue' can only be executed inside an active loop body context.</summary>
 	public const string LoopControlOutsideLoop = "CVL1070";
-
-	/// <summary>Targeted defer expression violates the cross-iteration loop barrier.</summary>
-	public const string CrossIterationDeferBarrier = "CVL1071";
 
 	/// <summary>A type alias references an underlying type that does not exist.</summary>
 	public const string UnknownTypeAlias = "CVL1200";

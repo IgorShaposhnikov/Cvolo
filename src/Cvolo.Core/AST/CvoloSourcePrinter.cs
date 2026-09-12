@@ -41,6 +41,9 @@ public sealed class CvoloSourcePrinter
 				var stmts = string.Join("", b.Statements.Select(s => Print(s, indent + 1)));
 				return $"{{\n{stmts}{ind}}}\n";
 
+			case LabeledBlockStatementSyntax lb:
+				return $"{ind}{lb.Label}: {Print(lb.Body, indent)}";
+
 			case ExpressionStatementSyntax e:
 				return $"{ind}{Print(e.Expression)};\n";
 
@@ -137,11 +140,11 @@ public sealed class CvoloSourcePrinter
 				}));
 				return $"{ind}switch ({Print(sw.Expression)}) {{\n{casesStr}{ind}}}\n";
 
-			case BreakStatementSyntax brk:
-				return brk.Label is not null ? $"{ind}break({brk.Label});\n" : $"{ind}break;\n";
+case BreakStatementSyntax brk:
+				return brk.TargetLabel is not null ? $"{ind}break {brk.TargetLabel};\n" : $"{ind}break;\n";
 
 			case ContinueStatementSyntax cont:
-				return cont.Label is not null ? $"{ind}continue({cont.Label});\n" : $"{ind}continue;\n";
+				return cont.Label is not null ? $"{ind}continue {cont.Label};\n" : $"{ind}continue;\n";
 
 			default:
 				return node.ToString() ?? "";

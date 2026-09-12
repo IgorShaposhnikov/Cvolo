@@ -42,31 +42,38 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			}
 		}
 
-		// The spec mandates a colon after a targeted-defer label (`defer label: body;`); a flat
-		// `defer label body;` is a grammar error. Detect the tell-tale DEFER → Identifier →
-		// Identifier token run (a label marker immediately followed by a body that starts with an
-		// identifier) and surface it as CVL1067 so the missing-colon case is actionable.
+// `defer` requires a statement or block body. A `defer;` or a `defer if (...)` (any token that
+		// cannot begin a body) is a grammar error; surface it as CVL1065 so the missing-body case is actionable.
 		var allTokens = tokenStream.GetTokens();
 		for (var i = 0; i < allTokens.Count; i++)
 		{
 			if (allTokens[i].Type != CvoloLexer.DEFER)
 				continue;
 
-			var labelIndex = NextVisibleIndex(allTokens, i);
-			if (labelIndex < 0 || allTokens[labelIndex].Type != CvoloLexer.Identifier)
+			var bodyIndex = NextVisibleIndex(allTokens, i);
+			if (bodyIndex < 0)
 				continue;
 
-			var afterIndex = NextVisibleIndex(allTokens, labelIndex);
-			if (afterIndex < 0)
+			var bodyToken = allTokens[bodyIndex].Type;
+			var cannotBeginBody =
+				bodyToken == CvoloLexer.SEMI ||
+				bodyToken == CvoloLexer.IF ||
+				bodyToken == CvoloLexer.WHILE ||
+				bodyToken == CvoloLexer.FOR ||
+				bodyToken == CvoloLexer.FOREACH ||
+				bodyToken == CvoloLexer.RETURN ||
+				bodyToken == CvoloLexer.SWITCH ||
+				bodyToken == CvoloLexer.UNSAFE ||
+				bodyToken == CvoloLexer.DEFER ||
+				bodyToken == CvoloLexer.BREAK ||
+				bodyToken == CvoloLexer.CONTINUE;
+
+			if (!cannotBeginBody)
 				continue;
 
-			var afterToken = allTokens[afterIndex];
-			if (afterToken.Type != CvoloLexer.Identifier)
-				continue;
-
-			_diagnostics.Report(_compilationContext, SpanOf(allTokens[labelIndex]),
-				$"Targeted defer expression requires a trailing colon identifier after label '{allTokens[labelIndex].Text}'.",
-				DiagnosticIds.TargetedDeferMissingColon);
+			_diagnostics.Report(_compilationContext, SpanOf(allTokens[i]),
+				"`defer` requires a statement or block body.",
+				DiagnosticIds.DeferRequiresBody);
 		}
 
 		if (_diagnostics.HasErrors)
@@ -533,6 +540,8 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			return BuildForStatement(forStmt);
 		if (context.forEachStatement() is { } forEachStmt)
 			return BuildForEachStatement(forEachStmt);
+		if (context.labeledBlockStatement() is { } labeledBlock)
+			return BuildLabeledBlockStatement(labeledBlock);
 		if (context.unsafeBlockStatement() is { } unsafeBlock)
 			return new UnsafeBlockStatementSyntax(SpanOf(unsafeBlock), BuildBlockStatement(unsafeBlock.blockStatement()));
 		if (context.deferStatement() is { } defer)
@@ -559,17 +568,22 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 	private DeferStatementSyntax BuildDeferStatement(CvoloParser.DeferStatementContext context)
 	{
 		var label = context.Identifier()?.GetText();
-		if (context.expressionStatement() is { } exprStmt)
-		{
-			var body = BuildExpressionStatement(exprStmt);
-			return new DeferStatementSyntax(SpanOf(context), body, label);
-		}
 		if (context.blockStatement() is { } block)
 		{
 			var body = BuildBlockStatement(block);
 			return new DeferStatementSyntax(SpanOf(context), body, label);
 		}
+		if (context.expressionStatement() is { } exprStmt)
+		{
+			var body = BuildExpressionStatement(exprStmt);
+			return new DeferStatementSyntax(SpanOf(context), body);
+		}
 		throw new InvalidOperationException("Defer statement has no valid body (expression or block).");
+	}
+
+	private LabeledBlockStatementSyntax BuildLabeledBlockStatement(CvoloParser.LabeledBlockStatementContext context)
+	{
+		return new LabeledBlockStatementSyntax(SpanOf(context), context.Identifier().GetText(), BuildBlockStatement(context.blockStatement()));
 	}
 
 	private ExpressionSyntax BuildExpression(CvoloParser.ExpressionContext context)

@@ -1,0 +1,16 @@
+using System;
+
+int main()
+{
+	var int i = 0;
+	session: {
+		defer session { Console.Write("A"); }
+		while (i < 3) {
+			i++;
+			if (i == 2) break session;
+			Console.Write("!");
+		}
+	}
+	Console.Write("E");
+	return 0;
+}

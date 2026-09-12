@@ -22,7 +22,7 @@ public sealed class NamespacesTests : CompilerTestBase
 
 	[Theory]
 	[InlineData("ExposeUsingOutsideNamespaceFail.cvl", "CVL1060", "'expose using' can only be used inside a namespace")]
-	[InlineData("ExposeUsingNotFoundFail.cvl", "CVL1061", "Target namespace 'NonExistent.SubModule' of 'expose using' does not exist")]
+	[InlineData("ExposeUsingNotFoundFail.cvl", "CVL1050", "Target namespace 'NonExistent.SubModule' of 'expose using' does not exist")]
 	public void ExposeUsing_Rejections(string caseName, string expectedCode, string expectedError)
 	{
 		var (exitCode, stdout, stderr) = RunCompiler($"{Category}/{caseName}");

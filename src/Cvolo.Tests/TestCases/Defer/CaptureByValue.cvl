@@ -1,0 +1,11 @@
+using System;
+
+int main()
+{
+	var int x = 5;
+	defer Console.Write(x);
+	x = 10;
+	Console.Write('m');
+	Console.Write(x);
+	return 0;
+}

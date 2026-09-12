@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using Cvolo.Analysis;
 using Cvolo.Analysis.Symbols;
 using Cvolo.Analysis.Symbols.Base;
@@ -57,6 +57,18 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	// innermost switch (C-style), not any surrounding loop. Each frame is the switch's
 	// after-block, pushed while the switch's case bodies are emitted.
 	private readonly Stack<LLVMBasicBlockRef> _switchBreakStack = [];
+
+	// Break targets for labeled blocks: `break L;` may target a labeled block OR a labeled
+	// loop. Both are pushed here in lexical descent order so a labeled break resolves to the
+	// innermost matching construct first. Labeled loops also remain on _loopContextStack for
+	// their continue/break-block bookkeeping.
+	private readonly Stack<LabeledBreakContext> _labeledBreakStack = [];
+
+	private sealed class LabeledBreakContext(string label, LLVMBasicBlockRef breakBlock)
+	{
+		public string Label { get; } = label;
+		public LLVMBasicBlockRef BreakBlock { get; } = breakBlock;
+	}
 
 	private sealed class LoopContext(string? label, LLVMBasicBlockRef breakBlock, LLVMBasicBlockRef continueBlock)
 	{
@@ -126,7 +138,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		_functionParameterTypes["exit"] = [TypeSymbol.Int];
 		_functionParameterTypes["memset"] = [TypeSymbol.String, TypeSymbol.Int, TypeSymbol.ULong];
 
-		// memset(void* dest, int value, size_t count) -> void* — used for `{}` zero-init arrays
+		// memset(void* dest, int value, size_t count) -> void* â€” used for `{}` zero-init arrays
 		var memsetType = LLVMTypeRef.CreateFunction(
 			LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0),
 			[LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), LLVMTypeRef.Int32, LLVMTypeRef.Int64]);
@@ -583,7 +595,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		var declaredSymbol = emitName == "main" ? null : _bindingContext!.Globals.Lookup(emitName);
 		var isExported = declaredSymbol is FunctionSymbol { IsExported: true };
 
-		// FFI boundary: bool → i8 (unsigned 1-byte) instead of i1 to match C ABI.
+		// FFI boundary: bool â†’ i8 (unsigned 1-byte) instead of i1 to match C ABI.
 		var returnType = isExported ? GetFFIType(returnTypeSymbol) : GetLLVMType(returnTypeSymbol);
 		_functionReturnTypes[emitName] = returnTypeSymbol;
 
@@ -898,13 +910,37 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				blockVars.Add(v.Name);
 			}
 
-			EmitStatement(stmt);
+			// Skip statements after a terminator (e.g. a `break L;` that already branched).
+			if (_builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
+			{
+				EmitStatement(stmt);
+			}
 		}
 
 		if (!EndsWithReturn(block))
 		{
 			EmitCleanup(blockVars, skipHeapFree: _ownershipTransferFunction);
 		}
+	}
+
+	private void EmitLabeledBlockStatement(LabeledBlockStatementSyntax labeledBlock)
+	{
+		var currentFunc = _builder.InsertBlock.Parent;
+		var bodyBlock = currentFunc.AppendBasicBlock(labeledBlock.Label + ".blkbody");
+		var endBlock = currentFunc.AppendBasicBlock(labeledBlock.Label + ".blkend");
+
+		_builder.BuildBr(bodyBlock);
+
+		_labeledBreakStack.Push(new LabeledBreakContext(labeledBlock.Label, endBlock));
+		_builder.PositionAtEnd(bodyBlock);
+		EmitBlock(labeledBlock.Body);
+		if (_builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
+		{
+			_builder.BuildBr(endBlock);
+		}
+		_labeledBreakStack.Pop();
+
+		_builder.PositionAtEnd(endBlock);
 	}
 
 	private void EmitStatement(SyntaxNode stmt)
@@ -922,6 +958,9 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				break;
 			case BlockStatementSyntax block:
 				EmitBlock(block);
+				break;
+			case LabeledBlockStatementSyntax labeledBlock:
+				EmitLabeledBlockStatement(labeledBlock);
 				break;
 			case IfStatementSyntax ifStmt:
 				EmitIfStatement(ifStmt);
@@ -1273,7 +1312,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 						return LLVMValueRef.CreateConstInt(GetLLVMType(enumConstType), unchecked((ulong)enumConstVariant.Value));
 					}
 
-					// Enum metaprogramming surface (spec §5): Values is a read-only slice
+					// Enum metaprogramming surface (spec Â§5): Values is a read-only slice
 					// materialized from a .rodata global; Min/Max/Count are compile-time ints.
 					if (TryResolveEnumVariantReceiver(m) is { } enumMetaType)
 					{
@@ -1575,7 +1614,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			return EmitIntrinsicCall(call, intrinsicFunc);
 		}
 
-		// (§5.A) Name() is synthesized on every enum and returns the declared variant
+		// (Â§5.A) Name() is synthesized on every enum and returns the declared variant
 		// name as an O(1) .rodata string constant.
 		if (_bindingContext!.ResolvedCalls.TryGetValue(call, out var nameFunc)
 			&& nameFunc.Name.StartsWith("$Name$", StringComparison.Ordinal))
@@ -1610,7 +1649,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			return nameResult;
 		}
 
-		// (§3.C) HasFlag is synthesized on [Flags] enums and lowered inline to (p & f) == f.
+		// (Â§3.C) HasFlag is synthesized on [Flags] enums and lowered inline to (p & f) == f.
 		if (_bindingContext!.ResolvedCalls.TryGetValue(call, out var hasFlagFunc)
 			&& hasFlagFunc.Name.StartsWith("$HasFlag$", StringComparison.Ordinal))
 		{
@@ -1773,7 +1812,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 			// Ownership transfer: passing a ResourceMove-style union by value transfers the
 			// resource to the callee. Exclude the source from caller cleanup so the callee's
-			// tag-checked destructor (and not a second drop here) releases it — no double free.
+			// tag-checked destructor (and not a second drop here) releases it â€” no double free.
 			if (paramTy is not null && argExpr is IdentifierExpressionSyntax moveArg
 				&& !_disposedVars.Contains(moveArg.Name)
 				&& _variableTypes.TryGetValue(moveArg.Name, out var srcTy)
@@ -2432,7 +2471,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			var operandType = GetExprType(unary.Operand);
 			var operandLlvmType = GetLLVMType(operandType);
 
-			// Safe/unbound zone: (Enum)integer yields Option<Enum> — a checked conversion
+			// Safe/unbound zone: (Enum)integer yields Option<Enum> â€” a checked conversion
 			// comparing against every declared variant value (None when no match). The raw
 			// enum scalar is only produced by this cast inside unsafe code.
 			if (targetTypeSymbol is EnumTypeSymbol safeCastEnum && _unsafeDepth == 0 &&
@@ -2477,7 +2516,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			if (targetType.Handle == operandLlvmType.Handle)
 				return operand;
 
-			// Enums are flat scalar integers (§1): reduce to their underlying storage
+			// Enums are flat scalar integers (Â§1): reduce to their underlying storage
 			// type so the width-adjustment branches below can operate on them directly.
 			var effectiveTarget = targetTypeSymbol is EnumTypeSymbol targetEnum ? targetEnum.StorageType : targetTypeSymbol;
 			var effectiveOperand = operandType is EnumTypeSymbol operandEnum ? operandEnum.StorageType : operandType;
@@ -2562,7 +2601,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				return _builder.BuildNot(operand);
 			case "~":
 				{
-					// (§3.B) On a [Flags] enum, '~' is the masked bitwise complement:
+					// (Â§3.B) On a [Flags] enum, '~' is the masked bitwise complement:
 					// (~value) & CombinedAtomicMask, truncated/width-locked to storage width.
 					if (GetExprType(unary.Operand) is EnumTypeSymbol { IsFlags: true } flagsEnum)
 					{
@@ -2861,6 +2900,8 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 		var ctx = new LoopContext(whileStmt.Label, endBlock, condBlock);
 		_loopContextStack.Push(ctx);
+		if (!string.IsNullOrEmpty(whileStmt.Label))
+			_labeledBreakStack.Push(new LabeledBreakContext(whileStmt.Label!, endBlock));
 
 		_builder.BuildBr(condBlock);
 
@@ -2870,9 +2911,14 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 		_builder.PositionAtEnd(bodyBlock);
 		EmitStatement(whileStmt.Body);
-		_builder.BuildBr(condBlock);
+		if (_builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
+		{
+			_builder.BuildBr(condBlock);
+		}
 
 		_loopContextStack.Pop();
+		if (!string.IsNullOrEmpty(whileStmt.Label))
+			_labeledBreakStack.Pop();
 		_builder.PositionAtEnd(endBlock);
 	}
 
@@ -2889,6 +2935,8 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 		var ctx = new LoopContext(forStmt.Label, endBlock, incBlock);
 		_loopContextStack.Push(ctx);
+		if (!string.IsNullOrEmpty(forStmt.Label))
+			_labeledBreakStack.Push(new LabeledBreakContext(forStmt.Label!, endBlock));
 
 		_builder.BuildBr(condBlock);
 
@@ -2898,9 +2946,14 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 		_builder.PositionAtEnd(bodyBlock);
 		EmitStatement(forStmt.Body);
-		_builder.BuildBr(incBlock);
+		if (_builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
+		{
+			_builder.BuildBr(incBlock);
+		}
 
 		_loopContextStack.Pop();
+		if (!string.IsNullOrEmpty(forStmt.Label))
+			_labeledBreakStack.Pop();
 
 		_builder.PositionAtEnd(incBlock);
 		EmitExpression(forStmt.Increment);
@@ -2955,6 +3008,8 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 		var ctx = new LoopContext(fe.Label, endBlock, incBlock);
 		_loopContextStack.Push(ctx);
+		if (!string.IsNullOrEmpty(fe.Label))
+			_labeledBreakStack.Push(new LabeledBreakContext(fe.Label!, endBlock));
 
 		_builder.BuildBr(condBlock);
 
@@ -2980,9 +3035,14 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		}
 
 		EmitStatement(fe.Body);
-		_builder.BuildBr(incBlock);
+		if (_builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
+		{
+			_builder.BuildBr(incBlock);
+		}
 
 		_loopContextStack.Pop();
+		if (!string.IsNullOrEmpty(fe.Label))
+			_labeledBreakStack.Pop();
 
 		_builder.PositionAtEnd(incBlock);
 		var newI = _builder.BuildAdd(iVal, LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1), "__fe_new_i");
@@ -3018,6 +3078,8 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 		var ctx = new LoopContext(fe.Label, endBlock, incBlock);
 		_loopContextStack.Push(ctx);
+		if (!string.IsNullOrEmpty(fe.Label))
+			_labeledBreakStack.Push(new LabeledBreakContext(fe.Label!, endBlock));
 
 		_builder.BuildBr(condBlock);
 
@@ -3045,9 +3107,14 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		}
 
 		EmitStatement(fe.Body);
-		_builder.BuildBr(incBlock);
+		if (_builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
+		{
+			_builder.BuildBr(incBlock);
+		}
 
 		_loopContextStack.Pop();
+		if (!string.IsNullOrEmpty(fe.Label))
+			_labeledBreakStack.Pop();
 
 		_builder.PositionAtEnd(incBlock);
 		var newI = _builder.BuildAdd(iVal, LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1), "__fe_new_i");
@@ -3092,6 +3159,8 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 		var ctx = new LoopContext(fe.Label, endBlock, condBlock);
 		_loopContextStack.Push(ctx);
+		if (!string.IsNullOrEmpty(fe.Label))
+			_labeledBreakStack.Push(new LabeledBreakContext(fe.Label!, endBlock));
 
 		_builder.BuildBr(condBlock);
 
@@ -3120,9 +3189,14 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		}
 
 		EmitStatement(fe.Body);
-		_builder.BuildBr(condBlock);
+		if (_builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
+		{
+			_builder.BuildBr(condBlock);
+		}
 
 		_loopContextStack.Pop();
+		if (!string.IsNullOrEmpty(fe.Label))
+			_labeledBreakStack.Pop();
 		_builder.PositionAtEnd(endBlock);
 
 		EmitForEachEnumeratorCleanup(enumeratorAlloca, enumeratorType);
@@ -3155,14 +3229,15 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 	private void EmitBreakStatement(BreakStatementSyntax brk)
 	{
-		// A labeled break targets the matching loop in the ancestor chain.
-		if (brk.Label is not null)
+		// A labeled break targets the innermost matching labeled construct (labeled block or
+		// labeled loop) in lexical descent order; both kinds are tracked on _labeledBreakStack.
+		if (brk.TargetLabel is not null)
 		{
-			foreach (var ctx in _loopContextStack)
+			foreach (var target in _labeledBreakStack)
 			{
-				if (ctx.Label == brk.Label)
+				if (target.Label == brk.TargetLabel)
 				{
-					_builder.BuildBr(ctx.BreakBlock);
+					_builder.BuildBr(target.BreakBlock);
 					return;
 				}
 			}
@@ -3170,7 +3245,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 		// An unlabeled break exits the innermost switch frame first (C-style); otherwise the
 		// nearest loop. With no frame at all the statement was rejected by validation
-		// (CVL1070), so there is nothing meaningful to lower.
+		// (CVL1070/CVL1066), so there is nothing meaningful to lower.
 		if (_switchBreakStack.Count > 0)
 		{
 			_builder.BuildBr(_switchBreakStack.Peek());
@@ -3649,7 +3724,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 			// 1. Call the type's '~T()' destructor ONLY for owned StructTypeSymbol variables. When the
 			//    struct has no destructor of its own, still drop any resource-move fields it
-			//    transitively owns on scope exit (Memory & Safety spec §2).
+			//    transitively owns on scope exit (Memory & Safety spec Â§2).
 			if (type is StructTypeSymbol structType)
 			{
 				var disposeBaseName = $"{structType.Name}.~{structType.Name}";
@@ -3687,7 +3762,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			}
 
 			// 1c. Reverse loop destructor for static arrays of resource-move element types.
-			//     The Memory & Safety spec (§2) requires that every element be destroyed in
+			//     The Memory & Safety spec (Â§2) requires that every element be destroyed in
 			//     decreasing index order (Length-1 .. 0) before the frame pops. Empty/trivially
 			//     destructible element types emit nothing.
 			if (type is ArrayTypeSymbol arrayType)
@@ -3796,7 +3871,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 	/// <summary>
 	/// Emits the reverse-index Array Destructor Loop for a static array of a resource-move
-	/// element type (Memory &amp; Safety spec §2). Iterates from Size-1 down to 0, destroying
+	/// element type (Memory &amp; Safety spec Â§2). Iterates from Size-1 down to 0, destroying
 	/// each element in place before re-joining the fall-through. Emits nothing when the
 	/// element type carries no destructor obligation.
 	/// </summary>
@@ -3878,7 +3953,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	/// <summary>
 	/// Drops every resource-move field of a struct that lacks its own destructor, in declaration
 	/// order, so a struct-without-a-dtor still releases the runtime resources it transitively owns
-	/// on scope exit (Memory & Safety spec §2). Fields that need no destruction are skipped.
+	/// on scope exit (Memory & Safety spec Â§2). Fields that need no destruction are skipped.
 	/// </summary>
 	private void EmitNestedFieldDestruction(LLVMValueRef valuePtr, StructTypeSymbol structType, string name)
 	{
@@ -3905,7 +3980,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	private bool TypeNeedsDestruction(TypeSymbol type) => type switch
 	{
 		// A struct needs destruction if it has its own destructor, or (lacking one) it transitively
-		// embeds a resource-move field that must be dropped on scope exit (Memory & Safety spec §2).
+		// embeds a resource-move field that must be dropped on scope exit (Memory & Safety spec Â§2).
 		StructTypeSymbol structType =>
 			_bindingContext!.OverloadedFunctions.ContainsKey($"{structType.Name}.~{structType.Name}")
 			|| structType.Fields.Any(f => TypeNeedsDestruction(f.Type)),
@@ -4390,7 +4465,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	}
 
 	/// <summary>
-	/// (§5.B) Materializes EnumName.Values as a read-only slice backed by a single
+	/// (Â§5.B) Materializes EnumName.Values as a read-only slice backed by a single
 	/// .rodata global. Returns the address of a stack temp holding the slice.
 	/// </summary>
 	private (LLVMValueRef ptr, TypeSymbol type) EmitEnumValuesSlicePointer(EnumTypeSymbol enumType)
@@ -4607,7 +4682,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			}
 		}
 
-		// Deferred Reference Initialization (spec §5 Rule 10): reference fields (`ref`/`refvar`) that were
+		// Deferred Reference Initialization (spec Â§5 Rule 10): reference fields (`ref`/`refvar`) that were
 		// omitted from the initializer (permitted inside unbound for self-referential structures) are seeded
 		// with a null marker. The compile-time dataflow pass guarantees they are overwritten with a valid
 		// reference before the unbound boundary is crossed, so this null is never dereferenced at runtime.
@@ -4688,7 +4763,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 	private void EmitArrayInitializationInPlace(ArrayInitializationExpressionSyntax expr, LLVMValueRef destPtr, ArrayTypeSymbol arrayType)
 	{
-		// `{}` empty initializer on an explicitly-sized array: zero-initialize per Memory spec §5.
+		// `{}` empty initializer on an explicitly-sized array: zero-initialize per Memory spec Â§5.
 		if (expr.Elements.Count == 0 && arrayType.Size > 0)
 		{
 			EmitZeroInitArray(destPtr, arrayType);
@@ -4751,7 +4826,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		if (t is ArrayTypeSymbol arr) return TypeIsZeroInitSafe(arr.ElementType);
 		if (t is UnionTypeSymbol us)
 		{
-			// Null-Pointer-Optimized option: None is the flat zero pointer — memset is safe.
+			// Null-Pointer-Optimized option: None is the flat zero pointer â€” memset is safe.
 			if (us.IsNpoEligible) return true;
 			return false; // tagged union: None requires an explicit tag store, never raw zeroing
 		}
@@ -4767,7 +4842,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	{
 		var elementType = arrayType.ElementType;
 
-		// Fast path: Trivial/Large-Copy element (incl. NPO option fields) → single memset.
+		// Fast path: Trivial/Large-Copy element (incl. NPO option fields) â†’ single memset.
 		// Byte count comes from LLVM's real storage size to account for struct padding.
 		if (TypeIsZeroInitSafe(elementType))
 		{
@@ -4775,7 +4850,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			return;
 		}
 
-		// Linear restriction (Memory spec §5): no raw whole-array memset for
+		// Linear restriction (Memory spec Â§5): no raw whole-array memset for
 		// tagged unions or types with custom destructors. Initialize per element.
 		var arrayLayout = GetLLVMType(arrayType);
 		for (var i = 0; i < arrayType.Size; i++)
@@ -4824,6 +4899,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	private static bool EndsWithReturn(SyntaxNode s) => s switch
 	{
 		BlockStatementSyntax b => b.Statements.Count > 0 && b.Statements[^1] is ReturnStatementSyntax,
+		LabeledBlockStatementSyntax lb => lb.Body.Statements.Count > 0 && lb.Body.Statements[^1] is ReturnStatementSyntax,
 		ReturnStatementSyntax => true,
 		_ => false,
 	};

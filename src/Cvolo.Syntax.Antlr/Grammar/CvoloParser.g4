@@ -230,6 +230,7 @@ statement
 	| whileStatement
 	| forStatement
 	| forEachStatement
+	| labeledBlockStatement
 	| unsafeBlockStatement
 	| switchStatement
 	| blockStatement
@@ -237,8 +238,12 @@ statement
 	| controlExitStatement
 	;
 
+labeledBlockStatement
+	: Identifier COLON blockStatement
+	;
+
 deferStatement
-	: DEFER (Identifier COLON)? (expressionStatement | blockStatement)
+	: DEFER (blockStatement | Identifier blockStatement | expressionStatement)
 	;
 
 unsafeBlockStatement

@@ -1,0 +1,11 @@
+using System;
+
+int main()
+{
+	var int i = 0;
+	while (i < 3) {
+		defer { continue; }
+		i++;
+	}
+	return 0;
+}

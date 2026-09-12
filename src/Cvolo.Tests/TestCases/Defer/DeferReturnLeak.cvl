@@ -1,0 +1,8 @@
+using System;
+
+int main()
+{
+	defer { return; }
+	Console.Write("x");
+	return 0;
+}

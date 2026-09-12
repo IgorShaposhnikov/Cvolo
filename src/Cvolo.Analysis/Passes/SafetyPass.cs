@@ -332,6 +332,10 @@ public sealed class SafetyPass(BindingContext context)
 				CheckBlockSafety(b, new SymbolTable(scope), func);
 				break;
 
+			case LabeledBlockStatementSyntax lb:
+				CheckBlockSafety(lb.Body, new SymbolTable(scope), func);
+				break;
+
 			case WhileStatementSyntax w:
 				CheckExpressionSafety(w.Condition, scope);
 				if (w.Body is BlockStatementSyntax wBlock)

@@ -1,0 +1,9 @@
+using System;
+
+int main()
+{
+	L: {
+		defer { break L; }
+	}
+	return 0;
+}
