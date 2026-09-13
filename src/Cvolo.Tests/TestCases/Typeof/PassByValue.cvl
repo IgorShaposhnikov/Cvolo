@@ -1,0 +1,12 @@
+using System;
+
+struct Point {}
+
+void Inspect(System.Type t) {
+    Console.WriteLine(t.name);
+}
+
+int main() {
+    Inspect(typeof(Point));
+    return 0;
+}

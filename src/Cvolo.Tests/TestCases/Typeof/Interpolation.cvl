@@ -1,0 +1,11 @@
+using System;
+
+struct Point {}
+
+int Main()
+{
+    var point = typeof(Point);
+    Console.WriteLine($"type: {point.name} with id [{point.id}]");
+
+    return 0;
+}

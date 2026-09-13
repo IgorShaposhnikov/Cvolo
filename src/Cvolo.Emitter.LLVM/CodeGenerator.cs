@@ -2853,7 +2853,21 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			else if (valTy is StructTypeSymbol || valTy is ArrayTypeSymbol)
 			{
 				var val = EmitExpression(varDecl.Initializer!);
-				_locals[varDecl.Name] = val;
+				if (val.TypeOf.Kind == LLVMTypeKind.LLVMPointerTypeKind)
+				{
+					// Struct-init/ctor/sret-style expressions already return an alloca pointer:
+					// forward it straight into _locals so later GEPs/loads hit storage.
+					_locals[varDecl.Name] = val;
+				}
+				else
+				{
+					// Value-returning aggregates (e.g. typeof -> const System.Type value):
+					// materialize into private storage; field access must GEP off a pointer.
+					var llvmType = GetLLVMType(valTy);
+					var alloca = BuildEntryAlloca(llvmType, varDecl.Name);
+					_locals[varDecl.Name] = alloca;
+					_builder.BuildStore(val, alloca);
+				}
 			}
 			else
 			{

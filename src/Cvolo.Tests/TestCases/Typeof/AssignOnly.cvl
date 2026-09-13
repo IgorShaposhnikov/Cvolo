@@ -1,0 +1,8 @@
+using System;
+
+struct Point {}
+
+int main() {
+    var p = typeof(Point);
+    return 0;
+}

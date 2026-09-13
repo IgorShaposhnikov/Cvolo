@@ -1,0 +1,11 @@
+namespace System;
+
+/// <summary>
+/// Intrinsic type metadata produced by the `typeof(T)` compile-time operator.
+/// The compiler synthesizes constant values of this type; `id` is a deterministic
+/// 32-bit hash of the type name, and `name` is the un-mangled type name.
+/// </summary>
+struct Type {
+    public uint id;
+    public string name;
+}
