@@ -19,7 +19,7 @@ public sealed class ValidationPass(BindingContext context)
 	private bool _inUnbound;
 	private IReadOnlyList<CompilationUnitSyntax> _units = [];
 
-// Label validation state: _labelScopes mirrors the enclosing-scope-block
+	// Label validation state: _labelScopes mirrors the enclosing-scope-block
 	// chain for CVL1062 duplicate detection; _loopLabels mirrors the active loop
 	// ancestry for CVL1063 resolution and CVL1070 in-loop enforcement; _blockLabels
 	// mirrors the active labeled-block ancestry (break-targetable only).
@@ -654,6 +654,7 @@ public sealed class ValidationPass(BindingContext context)
 		{
 			itemType = arrayType.ElementType;
 			forEach.ItemTypeName = itemType.Name;
+			forEach.ArraySize = arrayType.Size;
 		}
 		else if (underlyingType is SliceTypeSymbol sliceType)
 		{
@@ -876,7 +877,7 @@ public sealed class ValidationPass(BindingContext context)
 		return best;
 	}
 
-private void CheckControlExit(string? label, TextSpan span, bool isBreak)
+	private void CheckControlExit(string? label, TextSpan span, bool isBreak)
 	{
 		if (label is null)
 		{

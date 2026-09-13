@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using Cvolo.Tests.Core;
 
 namespace Cvolo.Tests;
@@ -65,5 +66,44 @@ public sealed class ForEachTests : CompilerTestBase
 		var (exitCode, _, stderr) = RunCompiler($"ForEach/{caseName}.cvl");
 		Assert.Equal(1, exitCode);
 		Assert.Contains(expectedMessage, stderr);
+	}
+}
+
+public class NoGenericList
+{
+	public object[] arr;
+
+	public void Add(object item)
+	{
+		arr[0] = item;
+	}
+
+	public object Get(int i)
+	{
+		return arr[i];
+	}
+}
+
+public class Num
+{
+	public Num(NoGenericList list)
+	{
+		//list.Add(1);
+		//list.Add(2);
+		//list.Add(3);
+
+		var sum = 0;
+		for (var i = 0; i < 10; i++)
+		{
+			sum += (int)list.Get(i);
+		}
+	}
+
+	public int CompareTo(Num? obj)
+	{
+		if (obj.GetType() != typeof(Num))
+			return -1;
+				
+		throw new NotImplementedException();
 	}
 }

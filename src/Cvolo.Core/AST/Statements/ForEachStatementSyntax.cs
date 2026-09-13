@@ -22,20 +22,35 @@ public sealed class ForEachStatementSyntax(
 	public string? Label { get; } = label;
 
 	// Populated by the binder (ValidationPass) for emitter consumption.
-	/// <summary>The value-level item type (the element type for arrays/slices; the
-	/// unwrapped <c>T</c> of <c>Current</c> for enumerators).</summary>
+	/// <summary>
+	/// The value-level item type (the element type for arrays/slices; the
+	/// unwrapped <c>T</c> of <c>Current</c> for enumerators).
+	/// </summary>
 	public string? ItemTypeName { get; set; }
 
-	/// <summary>The declared item binding type as a string. For reference bindings this is
-	/// <c>refvar T</c>/<c>ref T</c>; for value bindings it equals <see cref="ItemTypeName"/>.</summary>
+	/// <summary>
+	/// For static arrays: the compile-time element count (constant of the array
+	/// type). <c>null</c> for slices/heap arrays (length read via <c>collection.Length</c>)
+	/// and enumerator-based loops.
+	/// </summary>
+	public int? ArraySize { get; set; }
+
+	/// <summary>
+	/// The declared item binding type as a string. For reference bindings this is
+	/// <c>refvar T</c>/<c>ref T</c>; for value bindings it equals <see cref="ItemTypeName"/>.
+	/// </summary>
 	public string? ItemBindingTypeName { get; set; }
 
-	/// <summary>True when the loop variable is a reference binding (pointer slot) rather
-	/// than a detached value copy.</summary>
+	/// <summary>
+	/// True when the loop variable is a reference binding (pointer slot) rather
+	/// than a detached value copy.
+	/// </summary>
 	public bool IsReferenceBinding { get; set; }
 
-	/// <summary>True when 'Current' returns a reference (<c>ref T</c> or <c>refvar T</c>)
-	/// rather than a value; false for arrays/slices and by-value enumerators.</summary>
+	/// <summary>
+	/// True when 'Current' returns a reference (<c>ref T</c> or <c>refvar T</c>)
+	/// rather than a value; false for arrays/slices and by-value enumerators.
+	/// </summary>
 	public bool CurrentReturnsReference { get; set; }
 
 	public string? GetEnumeratorFunctionName { get; set; }

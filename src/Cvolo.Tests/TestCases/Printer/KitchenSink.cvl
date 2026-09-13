@@ -1,0 +1,158 @@
+using System;
+
+alias ID = int;
+
+[Error]
+enum ErrorCodes : int {
+	NotFound = 1,
+	NetworkTimeout = 2
+}
+
+enum Status : byte {
+	Active = 1,
+	Pending = 2,
+	Inactive = 3
+}
+
+union Opt<T> {
+	T Some;
+	void None;
+}
+
+struct Point {
+	int X;
+	int Y;
+}
+
+extension Point {
+	Point(int x, int y) {
+		X = x;
+		Y = y;
+	}
+
+	int Sum() {
+		return X + Y;
+	}
+}
+
+protocol IPrintable {
+	void Describe();
+}
+
+interface IRunnable {
+	int Run();
+}
+
+struct Runner {
+	int Speed;
+}
+
+extension Runner {
+	void Describe() {
+		Console.WriteLine("runner");
+	}
+}
+
+extension Runner : IRunnable {
+	int Run() {
+		return Speed;
+	}
+}
+
+global var int Calls = 0;
+
+extern void printf(string format, ...);
+
+Result<int, ErrorCodes> Divide(int a, int b) {
+	if (b == 0) {
+		return Result<int, ErrorCodes> { Err: ErrorCodes.NotFound };
+	}
+	return Result<int, ErrorCodes> { Ok: a / b };
+}
+
+int main() {
+	int[5] nums = { 10, 20, 30, 40, 50 };
+	var int total = 0;
+
+	for (int i = 0; i < 5; i++) {
+		total += nums[i];
+	}
+
+	foreach (val item in nums) {
+		total += item;
+	}
+
+	foreach (refvar item in nums) {
+		item += 1;
+	}
+
+	var int q = 0;
+	while (q < 3) {
+		q += 1;
+	}
+
+	for (int j = 0; j < 4; j++) {
+		if (j == 2) {
+			continue;
+		}
+		if (j == 3) {
+			break;
+		}
+		total += j;
+	}
+
+	var int[] buffer = heap int[3];
+	buffer[0] = 7;
+	buffer[1] = 8;
+	buffer[2] = 9;
+
+	var Point p = Point(3, 4);
+	total += p.Sum();
+	printf("%d\n", total);
+
+	var Status s = Status.Inactive;
+	switch (s) {
+		case Active:
+			total += 1;
+		case Pending:
+			total += 2;
+		case Inactive:
+			total += 3;
+	}
+
+	var Opt<int> opt = Opt<int> { Some: 42 };
+	if (opt is Some seen) {
+		total += seen;
+	}
+	if (ref opt is None) {
+		total += 100;
+	}
+
+	var int tern = total > 0 ? 1 : 2;
+	total += tern;
+
+	var int x;
+	try {
+		var int r = Divide(10, 2);
+		x = r;
+	}
+	catch (ErrorCodes.NotFound) {
+		x = 333;
+	}
+	catch (ErrorCodes.NetworkTimeout) {
+		x = 444;
+	}
+
+	Calls += 1;
+	printf("done %d %d %s\n", x, Calls, nameof(total));
+
+	var System.Type tp = typeof(Point);
+	printf("%s\n", tp.name);
+
+	var Runner rn = Runner { Speed: 5 };
+	int sp = rn.Run();
+	total += sp;
+
+	Console.WriteLine($"final {total} {q} {p.Sum()}");
+	return 0;
+}

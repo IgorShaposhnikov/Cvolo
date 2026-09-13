@@ -132,17 +132,7 @@ internal sealed class CompilerDriver : ICompilerDriver
 			return 1;
 		}
 
-		asts = loweredAsts;
-
-		if (emitLowered)
-		{
-			foreach (var ast in asts)
-			{
-				Console.WriteLine(CvoloSourcePrinter.Print(ast));
-			}
-
-			return 0; // Terminate successfully before binder, codegen, or linking!
-		}
+asts = loweredAsts;
 
 		// 4. Semantic analysis passes (Name resolution, types, moves, borrows, and lifetimes validation)
 		binder.Context.LegacyVisibility = legacyVisibility;
@@ -163,11 +153,42 @@ internal sealed class CompilerDriver : ICompilerDriver
 			.ToList();
 		reporter.ReportWarnings(warnings, noWarnIds);
 
-		// 5. Short-circuit immediately if in rapid syntax/semantic check mode
+// 5. Short-circuit immediately if in rapid syntax/semantic check mode
 		if (checkOnly)
 		{
 			reporter.ReportCheckSuccess();
 			return 0;
+		}
+
+		// 6. Source-level foreach expansion (arrays/slices → cached-length index loops).
+		// Runs after binding so the binder-stamped fields on ForEachStatementSyntax are
+		// populated; enumerator-based foreach is left for the emitter to expand.
+		var foreachLoweringRewriter = new ForeachLoweringRewriter();
+		{
+			var expandedAsts = new List<CompilationUnitSyntax>();
+			foreach (var ast in asts)
+			{
+				var expanded = (CompilationUnitSyntax)foreachLoweringRewriter.Rewrite(ast);
+				if (binder.Context.FileContexts.TryGetValue(ast, out var expandedContext))
+				{
+					binder.Context.FileContexts[expanded] = expandedContext;
+					binder.Context.FileContexts.Remove(ast);
+				}
+
+				expandedAsts.Add(expanded);
+			}
+
+			asts = expandedAsts;
+		}
+
+		if (emitLowered)
+		{
+			foreach (var ast in asts)
+			{
+				Console.WriteLine(CvoloSourcePrinter.Print(ast));
+			}
+
+			return 0; // Terminate successfully before codegen or linking (post-binding dump)
 		}
 
 		// Enforce executable entry-point rules
