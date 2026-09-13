@@ -110,6 +110,23 @@ public abstract class AstRewriterBase
 			return new LabeledBlockStatementSyntax(labeledBlock.Span, labeledBlock.Label, rewrittenBody);
 		}
 
+		if (node is TryStatementSyntax tryStmt)
+		{
+			var rewrittenBody = (BlockStatementSyntax)Rewrite(tryStmt.Body);
+			var rewrittenClauses = tryStmt.CatchClauses.Select(c => new CatchClauseSyntax(c.Span, c.ErrorTypeName, c.VariantName, c.BindingName, c.IsBare, (BlockStatementSyntax)Rewrite(c.Body))).ToList();
+			return new TryStatementSyntax(tryStmt.Span, rewrittenBody, rewrittenClauses);
+		}
+
+		if (node is CatchExpressionSyntax catchExpr)
+		{
+			var operand = (ExpressionSyntax)Rewrite(catchExpr.Operand);
+			var fallback = catchExpr.Fallback != null ? (ExpressionSyntax)Rewrite(catchExpr.Fallback) : null;
+			var lambda = catchExpr.Lambda != null
+				? new CatchLambdaExpressionSyntax(catchExpr.Lambda.Span, catchExpr.Lambda.ErrorName, (BlockStatementSyntax)Rewrite(catchExpr.Lambda.Body))
+				: null;
+			return new CatchExpressionSyntax(catchExpr.Span, operand, fallback, lambda);
+		}
+
 		if (node is ExpressionStatementSyntax exprStmt)
 		{
 			var rewrittenExpr = (ExpressionSyntax)Rewrite(exprStmt.Expression);

@@ -117,11 +117,32 @@ public static class DiagnosticIds
 	/// <summary>`null` is assigned/initialized on a `T?`-declared variable in safe code.</summary>
 	public const string NullForOptionalType = "CVL1104";
 
-/// <summary>'expose using' directive used outside a namespace declaration.</summary>
+	/// <summary>'expose using' directive used outside a namespace declaration.</summary>
 	public const string ExposeUsingOutsideNamespace = "CVL1060";
 
 	/// <summary>'expose using' targets a namespace that cannot be resolved.</summary>
 	public const string ExposeUsingNamespaceNotFound = "CVL1050";
+
+	/// <summary>The `catch` operator requires a valid left-hand expression or a `try` block yielding a `Result` shape.</summary>
+	public const string CatchRequiresResult = "CVL1051";
+
+	/// <summary>Duplicate `catch` block clause detected for error type `{0}` within this try statement scope.</summary>
+	public const string DuplicateCatchClause = "CVL1053";
+
+	/// <summary>`catch` clause `{0}` is unreachable: an earlier clause `{1}` already covers it.</summary>
+	public const string CatchUnreachableClause = "CVL1054";
+
+	/// <summary>Error type `{0}` emitted inside this `try` block has no matching `catch` clause.</summary>
+	public const string CatchUnhandledErrorType = "CVL1057";
+
+	/// <summary>Lambda catch body must end with a `return` statement.</summary>
+	public const string CatchLambdaMissingReturn = "CVL1058";
+
+	/// <summary>`catch` pattern references type `{0}` which is not marked `[Error]`.</summary>
+	public const string CatchPatternNotErrorAttribute = "CVL1059";
+
+	/// <summary>Value-pattern `catch ({0}.{1})` requires `{0}` to be an `enum`; `{0}` is a `{kind}`.</summary>
+	public const string CatchValuePatternOnNonEnum = "CVL1067";
 
 	/// <summary>`defer {0} { ... }` / `break {0};` refers to a label `{0}` not in scope.</summary>
 	public const string LabelNotFoundInScope = "CVL1061";

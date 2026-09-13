@@ -67,6 +67,8 @@ BREAK: 'break';
 CONTINUE: 'continue';
 FOREACH: 'foreach';
 IN: 'in';
+TRY: 'try';
+CATCH: 'catch';
 
 // Punctuation
 LPAREN: '(';
@@ -106,6 +108,7 @@ MINUS_ASSIGN: '-=';
 STAR_ASSIGN: '*=';
 DIV_ASSIGN: '/=';
 ARROW: '->';
+FAT_ARROW: '=>';
 ELLIPSIS: '...';
 INC: '++';
 DEC: '--';

@@ -1,4 +1,4 @@
-﻿using System.Text;
+using System.Text;
 using Cvolo.Analysis;
 using Cvolo.Analysis.Symbols;
 using Cvolo.Analysis.Symbols.Base;
@@ -1162,9 +1162,10 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				}
 			case IsPatternExpressionSyntax isPat:
 				{
-					// Operand is an Option-shaped union. NPO options store the payload pointer
-					// flat (Some = non-zero, None = zero); tagged options store an i8 discriminator
-					// plus the payload, so the match test compares the tag against the variant index.
+					// Operand may be any tagged or NPO union. NPO options store the payload pointer
+					// flat (Some = non-zero, None = zero); tagged unions (Option<T> and general unions
+					// such as Result<T, E>) store an i8 discriminator plus the payload, so the match
+					// test compares the tag against the variant index (0-based union field order).
 					var isNoneVariant = isPat.VariantName is "None";
 
 					// Locate the option's storage: a borrow operand ('ref x') or a refvar-typed
@@ -1192,7 +1193,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 					var unionType = operandType is PointerTypeSymbol pt ? pt.ReferencedType : operandType;
 					var unionTypeSym = unionType as UnionTypeSymbol;
-					var isTagged = unionTypeSym is not null && unionTypeSym.IsOption && !unionTypeSym.IsNpoEligible;
+					var isTagged = unionTypeSym is not null && !unionTypeSym.IsNpoEligible;
 
 					LLVMValueRef isSome;
 					LLVMValueRef? tagPayloadPtr = null;
@@ -1220,7 +1221,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 						}, "is_tag_ptr");
 						var tagValue = _builder.BuildLoad2(LLVMTypeRef.Int8, tagPtr, "is_tag_val2");
 
-						var matchVariant = isNoneVariant ? "None" : "Some";
+						var matchVariant = isPat.VariantName;
 						var matchIndex = GetFieldIndex(unionTypeSym!, matchVariant);
 						isSome = _builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, tagValue,
 							LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, (ulong)matchIndex),

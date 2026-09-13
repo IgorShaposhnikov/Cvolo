@@ -1,0 +1,51 @@
+namespace System;
+
+/// <summary>
+/// Represents a value that is either a success (Ok) or a failure (Err).
+/// This is Cvolo's safe, zero-cost alternative to throwing runtime exceptions 
+/// and handling raw, ambiguous error codes.
+/// </summary>
+union Result<T, E> {
+    /// <summary>
+    /// Contains the successful, active value of type T.
+    /// </summary>
+    T Ok;
+
+    /// <summary>
+    /// Contains the error or failure value of type E.
+    /// </summary>
+    E Err;
+}
+
+extension Result<T, E> {
+    /// <summary>
+    /// Static factory or constructor layout to safely initialize the Result in an Ok state.
+    /// Note: Depending on your compiler's constructor overloading semantics for unions,
+    /// this targets the 'Ok' active field.
+    /// </summary>
+    Result(T successValue) {
+        Ok = successValue;
+    }
+
+    Result(E errorValue) {
+        Err = errorValue;
+    }
+
+    /// <summary>
+    /// Returns true if the result is an Ok variant; otherwise, false.
+    /// Note: This is currently a temporary bootstrap stub that will be fully implemented 
+    /// using the pattern-matching switch statement in Phase 5.
+    /// </summary>
+    bool IsOk() {
+        return true;
+    }
+
+    /// <summary>
+    /// Returns true if the result is an Err variant; otherwise, false.
+    /// Note: This is currently a temporary bootstrap stub that will be fully implemented 
+    /// using the pattern-matching switch statement in Phase 5.
+    /// </summary>
+    bool IsErr() {
+        return !IsOk();
+    }
+}

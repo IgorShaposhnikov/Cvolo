@@ -42,7 +42,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			}
 		}
 
-// `defer` requires a statement or block body. A `defer;` or a `defer if (...)` (any token that
+		// `defer` requires a statement or block body. A `defer;` or a `defer if (...)` (any token that
 		// cannot begin a body) is a grammar error; surface it as CVL1065 so the missing-body case is actionable.
 		var allTokens = tokenStream.GetTokens();
 		for (var i = 0; i < allTokens.Count; i++)
@@ -546,6 +546,8 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			return new UnsafeBlockStatementSyntax(SpanOf(unsafeBlock), BuildBlockStatement(unsafeBlock.blockStatement()));
 		if (context.deferStatement() is { } defer)
 			return BuildDeferStatement(defer);
+		if (context.tryStatement() is { } tryStmt)
+			return BuildTryStatement(tryStmt);
 		if (context.controlExitStatement() is { } ctrlExit)
 			return BuildControlExitStatement(ctrlExit);
 		return null;
@@ -584,6 +586,34 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 	private LabeledBlockStatementSyntax BuildLabeledBlockStatement(CvoloParser.LabeledBlockStatementContext context)
 	{
 		return new LabeledBlockStatementSyntax(SpanOf(context), context.Identifier().GetText(), BuildBlockStatement(context.blockStatement()));
+	}
+
+	private TryStatementSyntax BuildTryStatement(CvoloParser.TryStatementContext context)
+	{
+		var body = BuildBlockStatement(context.blockStatement());
+		var clauses = new List<CatchClauseSyntax>();
+		foreach (var clause in context.catchClause())
+		{
+			switch (clause)
+			{
+				case CvoloParser.CatchBareClauseContext bare:
+					clauses.Add(new CatchClauseSyntax(SpanOf(bare), null, null, null, isBare: true,
+						BuildBlockStatement(bare.blockStatement())));
+					break;
+				case CvoloParser.CatchTypedClauseContext typed:
+					clauses.Add(new CatchClauseSyntax(SpanOf(typed), typed.qualifiedName().GetText(), null,
+						typed.Identifier().GetText(), isBare: false, BuildBlockStatement(typed.blockStatement())));
+					break;
+				case CvoloParser.CatchValueOrTypeClauseContext valueOrType:
+					// Ambiguous between a value-pattern `catch (EnumType.Variant)` and a type-pattern
+					// `catch (Qualified.Type)`. The raw qualified name is kept whole; TryCatchRewriter
+					// classifies it against the declaration index (known enum receivers are value patterns).
+					clauses.Add(new CatchClauseSyntax(SpanOf(valueOrType), valueOrType.qualifiedName().GetText(),
+						null, null, isBare: false, BuildBlockStatement(valueOrType.blockStatement())));
+					break;
+			}
+		}
+		return new TryStatementSyntax(SpanOf(context), body, clauses);
 	}
 
 	private ExpressionSyntax BuildExpression(CvoloParser.ExpressionContext context)
@@ -895,6 +925,17 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 
 					return new ArrayInitializationExpressionSyntax(SpanOf(arrInitCtx), elements);
 				}
+			case CvoloParser.CatchExpressionContext catchCtx:
+				return new CatchExpressionSyntax(SpanOf(catchCtx), BuildExpression(catchCtx.expression(0)), BuildExpression(catchCtx.expression(1)));
+			case CvoloParser.CatchLambdaExpressionContext catchLambdaCtx:
+				return new CatchExpressionSyntax(
+					SpanOf(catchLambdaCtx),
+					BuildExpression(catchLambdaCtx.expression()),
+					null,
+					new CatchLambdaExpressionSyntax(
+						SpanOf(catchLambdaCtx),
+						catchLambdaCtx.Identifier().GetText(),
+						BuildBlockStatement(catchLambdaCtx.blockStatement())));
 			case CvoloParser.TernaryExpressionContext ternaryCtx:
 				{
 					var cond = BuildExpression(ternaryCtx.expression(0));

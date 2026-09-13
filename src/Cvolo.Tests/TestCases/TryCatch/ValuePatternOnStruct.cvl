@@ -1,0 +1,39 @@
+using System;
+
+[Error]
+struct FileError
+{
+	public int Code;
+}
+
+[Error]
+enum ErrorCodes : int
+{
+	NotFound = 1,
+	NetworkTimeout = 2
+}
+
+Result<int, ErrorCodes> Divide(int a, int b)
+{
+	if (b == 0)
+		return Result<int, ErrorCodes> { Err: ErrorCodes.NotFound };
+	return Result<int, ErrorCodes> { Ok: a / b };
+}
+
+int main()
+{
+	var int x = 0;
+
+	try
+	{
+		var int r = Divide(10, 0);
+		x = r;
+	}
+	catch (FileError.Bad)
+	{
+		x = 1;
+	}
+
+	Console.WriteLine(x);
+	return 0;
+}

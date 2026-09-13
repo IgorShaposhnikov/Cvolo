@@ -4037,18 +4037,10 @@ private void CheckControlExit(string? label, TextSpan span, bool isBreak)
 			return;
 		}
 
-		// The 'is' pattern is defined for Option-shaped unions. NPO options (Option<ref T>)
-		// carry the stored reference flat, so the match test is a single null-check and the
-		// bound value is the payload pointer; tagged options (Option<T>) compare the tag and
-		// bind the payload value (or a reference to it when the operand is a borrow).
-		if (!unionType.IsOption)
-		{
-			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.Report(currentFileContext, isPat.Span,
-				$"The 'is' pattern requires an Option-shaped union (e.g. Option<T> or Option<ref T>); '{unionType.Name}' is not eligible.");
-			return;
-		}
-
+		// NPO options (Option<ref T>) carry the stored reference flat, so the match test is a
+		// single null-check and the bound value is the payload pointer; tagged unions (Option<T>
+		// and general unions such as Result<T, E>) compare the tag and bind the payload value (or
+		// a reference to it when the operand is a borrow).
 		if (isPat.BoundName is not null)
 		{
 			if (variant.IsVoidVariant)

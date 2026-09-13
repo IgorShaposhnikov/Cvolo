@@ -1,0 +1,49 @@
+using System;
+
+[Error]
+enum ErrorCodes : int
+{
+	NotFound = 1,
+	NetworkTimeout = 2
+}
+
+[Error]
+enum OtherErrors : int
+{
+	Bad = 1
+}
+
+Result<int, ErrorCodes> Divide(int a, int b)
+{
+	if (b == 0)
+		return Result<int, ErrorCodes> { Err: ErrorCodes.NotFound };
+	return Result<int, ErrorCodes> { Ok: a / b };
+}
+
+Result<int, OtherErrors> Frob(int a)
+{
+	return Result<int, OtherErrors> { Ok: a };
+}
+
+int main()
+{
+	var int x;
+
+	try
+	{
+		var int a = Divide(1, 0);
+		var int b = Frob(2);
+		x = a;
+	}
+	catch (ErrorCodes.NotFound)
+	{
+		x = 1;
+	}
+	catch (OtherErrors.Bad)
+	{
+		x = 2;
+	}
+
+	Console.WriteLine(x);
+	return 0;
+}

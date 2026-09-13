@@ -1,0 +1,31 @@
+using System;
+
+union Choice {
+	int A;
+	int B;
+}
+
+int main() {
+	var Choice c = Choice { A: 1 };
+
+	if (c is A)
+	{
+		Console.WriteLine(1);
+	} else
+	{
+		Console.WriteLine(0);
+	}
+
+	var Choice d = Choice { B: 2 };
+
+	if (d is A)
+	{
+		Console.WriteLine(1);
+	}
+	else
+	{
+		Console.WriteLine(0);
+	}
+
+	return 0;
+}

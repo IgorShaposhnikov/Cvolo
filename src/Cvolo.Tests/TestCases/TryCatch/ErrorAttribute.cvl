@@ -1,0 +1,48 @@
+using System;
+
+[Error]
+enum ErrorCodes : int
+{
+	NotFound = 1,
+	NetworkTimeout = 2
+}
+
+[Error]
+union Failure
+{
+	int Code;
+	int Detail;
+}
+
+Result<int, ErrorCodes> Divide(int a, int b)
+{
+	if (b == 0)
+		return Result<int, ErrorCodes> { Err: ErrorCodes.NotFound };
+	return Result<int, ErrorCodes> { Ok: a / b };
+}
+
+Result<int, Failure> ReadStuff(int a)
+{
+	return Result<int, Failure> { Err: Failure { Code: 7 } };
+}
+
+int main()
+{
+	var int x = Divide(20, 4) catch 0;
+	Console.WriteLine(x);
+
+	var int y = 0;
+
+	try
+	{
+		var int r = ReadStuff(1);
+		y = r;
+	}
+	catch (Failure f)
+	{
+		y = f.Code;
+	}
+
+	Console.WriteLine(y);
+	return 0;
+}

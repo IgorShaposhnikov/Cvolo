@@ -235,6 +235,7 @@ statement
 	| switchStatement
 	| blockStatement
 	| deferStatement
+	| tryStatement
 	| controlExitStatement
 	;
 
@@ -244,6 +245,16 @@ labeledBlockStatement
 
 deferStatement
 	: DEFER (blockStatement | Identifier blockStatement | expressionStatement)
+	;
+
+tryStatement
+	: TRY blockStatement catchClause+
+	;
+
+catchClause
+	: CATCH LPAREN qualifiedName RPAREN blockStatement                # catchValueOrTypeClause
+	| CATCH LPAREN qualifiedName Identifier RPAREN blockStatement     # catchTypedClause
+	| CATCH blockStatement                                           # catchBareClause
 	;
 
 unsafeBlockStatement
@@ -324,6 +335,8 @@ expression
 	| expression PIPE expression														# bitwiseOrExpression
 	| expression AND expression															# logicalAndExpression
 	| expression OR expression															# logicalOrExpression
+	| expression CATCH expression # catchExpression
+	| expression CATCH LPAREN Identifier RPAREN FAT_ARROW blockStatement # catchLambdaExpression
 	| expression QMARK expression COLON expression										# ternaryExpression
 	| expression ASSIGN expression														# assignmentExpression
 	| expression (PLUS_ASSIGN | MINUS_ASSIGN | STAR_ASSIGN | DIV_ASSIGN | AND_ASSIGN | OR_ASSIGN | XOR_ASSIGN | LSHIFT_ASSIGN | RSHIFT_ASSIGN | URSHIFT_ASSIGN) expression		# compoundAssignmentExpression

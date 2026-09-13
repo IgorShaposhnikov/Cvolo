@@ -82,6 +82,10 @@ internal sealed class CompilerDriver : ICompilerDriver
 			binder.Context.FileContexts[ast!] = context;
 		}
 
+		// Cross-file declaration index feeding the try/catch lowering (function
+		// Result error types, [Error] marks, declared type kinds).
+		var declarationIndex = DeclarationIndex.Build(asts);
+
 		var rewriters = new List<AstRewriterBase> {
 			new StringInterpolationRewriter(parser)
 		};
@@ -95,6 +99,9 @@ internal sealed class CompilerDriver : ICompilerDriver
 				var currentAst = ast;
 				if (binder.Context.FileContexts.TryGetValue(ast, out var deferContext))
 				{
+					var tryCatchRewriter = new TryCatchRewriter(binder.Diagnostics, deferContext, declarationIndex);
+					currentAst = (CompilationUnitSyntax)tryCatchRewriter.Rewrite(currentAst);
+
 					var deferRewriter = new DeferRewriter(binder.Diagnostics, deferContext);
 					currentAst = (CompilationUnitSyntax)deferRewriter.Rewrite(currentAst);
 				}

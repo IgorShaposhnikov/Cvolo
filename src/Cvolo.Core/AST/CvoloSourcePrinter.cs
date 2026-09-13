@@ -140,7 +140,26 @@ public sealed class CvoloSourcePrinter
 				}));
 				return $"{ind}switch ({Print(sw.Expression)}) {{\n{casesStr}{ind}}}\n";
 
-case BreakStatementSyntax brk:
+			case TryStatementSyntax t:
+				var catchStr = string.Join("", t.CatchClauses.Select(c =>
+				{
+					var clausesBodyStr = string.Join("", c.Body.Statements.Select(s => Print(s, indent + 2)));
+					var patternStr = c.IsBare
+						? " {"
+						: c.VariantName != null
+							? c.ErrorTypeName + "." + c.VariantName + ") {"
+							: c.BindingName != null
+								? $"{c.ErrorTypeName} {c.BindingName}) {{"
+								: $"{c.ErrorTypeName}) {{";
+					return $"{ind}    catch ({patternStr}\n{clausesBodyStr}{ind}    }}\n";
+				}));
+				var tryBodyStr = string.Join("", t.Body.Statements.Select(s => Print(s, indent + 1)));
+				return $"{ind}try {{\n{tryBodyStr}{ind}}} {catchStr}\n";
+
+			case CatchExpressionSyntax cExpr:
+				return $"{Print(cExpr.Operand)} catch {(cExpr.Lambda != null ? $"({cExpr.Lambda.ErrorName}) => {Print(cExpr.Lambda.Body, indent)}" : Print(cExpr.Fallback!))}";
+
+			case BreakStatementSyntax brk:
 				return brk.TargetLabel is not null ? $"{ind}break {brk.TargetLabel};\n" : $"{ind}break;\n";
 
 			case ContinueStatementSyntax cont:

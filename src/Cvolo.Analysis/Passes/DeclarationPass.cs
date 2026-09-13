@@ -29,6 +29,7 @@ public sealed class DeclarationPass(BindingContext context)
 		["StrictMutability"] = (["Struct"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
 		["Intrinsic"] = (["Function", "Method"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
 		["MustUse"] = (["Function", "Method", "Constructor", "Struct", "Union", "Enum"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
+		["Error"] = (["Struct", "Union", "Enum"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
 		["Inline"] = (["Function", "Method", "Constructor"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
 		["NeverInline"] = (["Function", "Method", "Constructor"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
 		// FFI attributes are handled specially in native code declarations: they never go through

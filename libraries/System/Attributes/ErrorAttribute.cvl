@@ -1,0 +1,11 @@
+namespace System.Attributes;
+
+/// <summary>
+/// Marker contract for explicit error types.
+///
+/// Types annotated with `[Error]` are declared error payloads: functions may
+/// return them (typically wrapped in a `Result` union) and `try`/`catch`
+/// routing may match on their variants. The attribute is erased before
+/// emission and never reaches LLVM IR.
+/// </summary>
+public struct ErrorAttribute {}
