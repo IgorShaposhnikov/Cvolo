@@ -1,0 +1,6 @@
+using System;
+int main() {
+    Console.WriteLine($"Root: {Value}");
+    Console.WriteLine($"Qualified: {Ns.Value}");
+    return 0;
+}

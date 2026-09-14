@@ -37,6 +37,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	private readonly Dictionary<string, TypeSymbol> _functionReturnTypes = [];
 	private readonly Dictionary<string, LLVMValueRef> _globalVariables = [];
 	private readonly Dictionary<string, TypeSymbol> _globalVariableTypes = [];
+	private readonly Dictionary<string, List<string>> _globalShortNames = [];
 	private BindingContext? _bindingContext;
 	private CompilationContext? _compilationContext; // Renamed to avoid LLVM _context conflict
 	private CompilationUnitSyntax? _currentUnit;
@@ -183,19 +184,24 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			llvmUnion.StructSetBody([LLVMTypeRef.Int8, LLVMTypeRef.CreateArray(LLVMTypeRef.Int8, (uint)maxPayloadSize)], false);
 		}
 
-		// Pass B2: Emit data-segment globals ('global T name = <const>;')
+// Pass B2: Emit data-segment globals ('global T name = <const>;')
 		foreach (var (globalNode, globalSymbol) in bindingContext.GlobalVariables)
 		{
-			if (_globalVariables.ContainsKey(globalNode.Name))
+			var qualifiedName = globalSymbol.QualifiedGlobalName;
+			if (_globalVariables.ContainsKey(qualifiedName))
 				continue;
 
 			var llvmType = GetLLVMType(globalSymbol.Type);
-			var globalRef = _module.AddGlobal(llvmType, globalNode.Name);
+			var globalRef = _module.AddGlobal(llvmType, qualifiedName);
 			globalRef.IsGlobalConstant = !globalSymbol.IsMutable;
 			globalRef.Linkage = LLVMLinkage.LLVMInternalLinkage;
 			globalRef.Initializer = BuildGlobalInitializer(globalSymbol.Type, globalNode.Initializer, llvmType);
-			_globalVariables[globalNode.Name] = globalRef;
-			_globalVariableTypes[globalNode.Name] = globalSymbol.Type;
+			_globalVariables[qualifiedName] = globalRef;
+			_globalVariableTypes[qualifiedName] = globalSymbol.Type;
+
+			if (!_globalShortNames.TryGetValue(globalSymbol.Name, out var shortCandidates))
+				_globalShortNames[globalSymbol.Name] = shortCandidates = [];
+			shortCandidates.Add(qualifiedName);
 		}
 
 		// Pass C: Declare Extern functions and custom user-defined function signatures
@@ -766,7 +772,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			&& _functionReturnTypes.TryGetValue(mangledName, out var retType)
 			&& TypeEscapesHeap(retType);
 
-		// Seed data-segment globals into the local symbol table: a GlobalVariable IS a pointer,
+// Seed data-segment globals into the local symbol table: a GlobalVariable IS a pointer,
 		// so loads/stores/field GEPs work through the ordinary machinery (locals shadow on redeclare).
 		foreach (var (globalName, globalRef) in _globalVariables)
 		{
@@ -778,6 +784,22 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		{
 			if (!_variableTypes.ContainsKey(globalName))
 				_variableTypes[globalName] = globalType;
+		}
+
+		// Also seed the bare short name for unqualified references, resolved against the
+		// current namespace context (mirrors the binder's ambiguity rules; ambiguous
+		// references never reach codegen because the binder reports CVL1077 first).
+		foreach (var (shortName, _) in _globalShortNames)
+		{
+			if (_locals.ContainsKey(shortName))
+				continue;
+
+			var resolvedKey = ResolveGlobalKey(shortName);
+			if (resolvedKey is null)
+				continue;
+
+			_locals[shortName] = _globalVariables[resolvedKey];
+			_variableTypes[shortName] = _globalVariableTypes[resolvedKey];
 		}
 
 		if (_bindingContext!.Globals.Lookup(mangledName) is FunctionSymbol sym)
@@ -1304,8 +1326,16 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				}
 			case IdentifierExpressionSyntax id:
 				return Load(id.Name);
-			case MemberAccessExpressionSyntax m:
+case MemberAccessExpressionSyntax m:
 				{
+					// Namespace-qualified global (e.g. 'System.Math.UInt.MaxValue'): the member
+					// access is the whole global slot, so load it directly instead of GEPing.
+					if (TryExtractQualifiedGlobalKey(m) is { } globalMemberKey
+						&& _globalVariables.TryGetValue(globalMemberKey, out var globalMemberPtr))
+					{
+						return _builder.BuildLoad2(GetLLVMType(_globalVariableTypes[globalMemberKey]), globalMemberPtr, "global_member_val");
+					}
+
 					// Enum scoped-variant access: EnumName.Variant is a compile-time constant.
 					if (TryResolveEnumVariantReceiver(m) is { } enumConstType
 						&& enumConstType.FindVariant(m.MemberName) is { } enumConstVariant)
@@ -1712,10 +1742,11 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				receiverType = _variableTypes[receiverName];
 				found = true;
 			}
-			else if (_globalVariables.TryGetValue(receiverName, out var globalPtr))
+			else if ((_globalVariables.ContainsKey(receiverName) ? receiverName : ResolveGlobalKey(receiverName)) is { } recvKey
+				&& _globalVariables.TryGetValue(recvKey, out var globalPtr))
 			{
 				receiverPtr = globalPtr;
-				receiverType = _globalVariableTypes[receiverName];
+				receiverType = _globalVariableTypes[recvKey];
 				found = true;
 			}
 			else if (_locals.TryGetValue("this", out var thisPtr))
@@ -2133,10 +2164,10 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 					EmitCallExpression(ctorCall, ptr);
 					return ptr;
 				}
-				else if (_globalVariables.TryGetValue(ctorId.Name, out var globalPtr))
+				else if (ResolveGlobalKey(ctorId.Name) is { } ctorGlobalKey && _globalVariables.TryGetValue(ctorGlobalKey, out var ctorGlobalPtr))
 				{
-					EmitCallExpression(ctorCall, globalPtr);
-					return globalPtr;
+					EmitCallExpression(ctorCall, ctorGlobalPtr);
+					return ctorGlobalPtr;
 				}
 				else if (_locals.TryGetValue("this", out var thisPtr))
 				{
@@ -2269,9 +2300,9 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 				return right;
 			}
-			else if (_globalVariables.TryGetValue(id.Name, out var globalPtr))
+			else if (ResolveGlobalKey(id.Name) is { } globalKey && _globalVariables.TryGetValue(globalKey, out var globalPtr))
 			{
-				var globalType = _globalVariableTypes[id.Name];
+				var globalType = _globalVariableTypes[globalKey];
 				if (globalType is UnionTypeSymbol && bin.Right is StructInitializationExpressionSyntax globalReinit)
 					EmitStructInitializationInPlace(globalReinit, globalPtr);
 				else
@@ -3307,6 +3338,56 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		return value;
 	}
 
+	private string? ResolveGlobalKey(string shortName)
+	{
+		if (!_globalShortNames.TryGetValue(shortName, out var candidates))
+			return null;
+
+		if (candidates.Count == 1)
+			return candidates[0];
+
+		var currentNs = _bindingContext?.CurrentNamespace;
+		if (!string.IsNullOrEmpty(currentNs))
+		{
+			var own = $"{currentNs}.{shortName}";
+			if (candidates.Contains(own))
+				return own;
+		}
+
+		foreach (var ns in _bindingContext?.GetActiveUsings(_bindingContext.CurrentUnit) ?? [])
+		{
+			var viaKey = $"{ns}.{shortName}";
+			if (candidates.Contains(viaKey))
+				return viaKey;
+		}
+
+		return null;
+	}
+
+	private static string? TryExtractQualifiedGlobalKey(ExpressionSyntax expr)
+	{
+		if (expr is not MemberAccessExpressionSyntax outer)
+			return null;
+
+		var segments = new List<string> { outer.MemberName };
+		var current = outer.Expression;
+		while (current is MemberAccessExpressionSyntax nested)
+		{
+			if (nested.Expression is not IdentifierExpressionSyntax && nested.Expression is not MemberAccessExpressionSyntax)
+				return null;
+
+			segments.Add(nested.MemberName);
+			current = nested.Expression;
+		}
+
+		if (current is not IdentifierExpressionSyntax leaf)
+			return null;
+
+		segments.Add(leaf.Name);
+		segments.Reverse();
+		return string.Join(".", segments);
+	}
+
 	private LLVMValueRef Load(string name)
 	{
 		if (!_locals.TryGetValue(name, out var ptr))
@@ -4078,6 +4159,16 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 					return LLVMValueRef.CreateConstNamedStruct(namedStruct, [.. fieldValues]);
 				}
+			case BinaryExpressionSyntax bin when bin.Operator is "+" or "-" or "*" or "/":
+				if (TryEvaluateConstBinary(bin, out var isDoubleResult, out var dblResult, out var intResult))
+				{
+					var isFloatType = llvmType.Kind is LLVMTypeKind.LLVMDoubleTypeKind or LLVMTypeKind.LLVMFloatTypeKind;
+					return isFloatType
+						? LLVMValueRef.CreateConstReal(llvmType, isDoubleResult ? dblResult : intResult)
+						: LLVMValueRef.CreateConstInt(llvmType, unchecked((ulong)intResult));
+				}
+
+				return LLVMValueRef.CreateConstNull(llvmType);
 			default:
 				return LLVMValueRef.CreateConstNull(llvmType);
 		}
@@ -4085,6 +4176,94 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 	private static bool IsSimpleConstant(ExpressionSyntax expr) =>
 		expr is IntegerLiteralExpressionSyntax or DoubleLiteralExpressionSyntax or BooleanLiteralExpressionSyntax or CharacterLiteralExpressionSyntax;
+
+	/// <summary>
+	/// Recursively evaluates a global constant initializer expression tree down to a single
+	/// value. Supports integer/double literals, unary minus and binary +, -, *, / (IEEE semantics).
+	/// Returns false on unrecognised nodes or integer division by zero.
+	/// </summary>
+	private static bool TryEvaluateConstBinary(ExpressionSyntax expr, out bool isDouble, out double dbl, out long integer)
+	{
+		switch (expr)
+		{
+			case IntegerLiteralExpressionSyntax intLit:
+				isDouble = false;
+				dbl = intLit.Value;
+				integer = unchecked((long)intLit.Value);
+				return true;
+			case DoubleLiteralExpressionSyntax dblLit:
+				isDouble = true;
+				dbl = dblLit.Value;
+				integer = 0;
+				return true;
+			case BooleanLiteralExpressionSyntax boolLit:
+				isDouble = false;
+				dbl = boolLit.Value ? 1.0 : 0.0;
+				integer = boolLit.Value ? 1 : 0;
+				return true;
+			case CharacterLiteralExpressionSyntax charLit:
+				isDouble = false;
+				dbl = charLit.Value;
+				integer = charLit.Value;
+				return true;
+			case UnaryExpressionSyntax { Operator: "-" } unary:
+				if (!TryEvaluateConstBinary(unary.Operand, out isDouble, out dbl, out integer))
+					return false;
+				dbl = -dbl;
+				integer = -integer;
+				return true;
+			case BinaryExpressionSyntax bin:
+				if (!TryEvaluateConstBinary(bin.Left, out var lIsDouble, out var lDbl, out var lInt) ||
+					!TryEvaluateConstBinary(bin.Right, out var rIsDouble, out var rDbl, out var rInt))
+				{
+					isDouble = false;
+					dbl = 0;
+					integer = 0;
+					return false;
+				}
+
+				isDouble = lIsDouble || rIsDouble;
+				if (isDouble)
+				{
+					var left = lIsDouble ? lDbl : lInt;
+					var right = rIsDouble ? rDbl : rInt;
+					dbl = bin.Operator switch
+					{
+						"+" => left + right,
+						"-" => left - right,
+						"*" => left * right,
+						"/" => left / right, // IEEE: 0.0/0.0=NaN (no division-by-zero trap)
+						_ => 0,
+					};
+					integer = 0;
+				}
+				else
+				{
+					switch (bin.Operator)
+					{
+						case "+": integer = lInt + rInt; break;
+						case "-": integer = lInt - rInt; break;
+						case "*": integer = lInt * rInt; break;
+						case "/":
+							if (rInt == 0) { isDouble = false; dbl = 0; integer = 0; return false; }
+							integer = lInt / rInt;
+							break;
+						case "%":
+							if (rInt == 0) { isDouble = false; dbl = 0; integer = 0; return false; }
+							integer = lInt % rInt;
+							break;
+						default: isDouble = false; dbl = 0; integer = 0; return false;
+					}
+					dbl = integer;
+				}
+				return true;
+			default:
+				isDouble = false;
+				dbl = 0;
+				integer = 0;
+				return false;
+		}
+	}
 
 	private LLVMTypeRef GetLLVMType(TypeSymbol t)
 	{
@@ -4222,8 +4401,16 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 			return (structPtr, type, true, null);
 		}
-		else if (expr is MemberAccessExpressionSyntax m)
+else if (expr is MemberAccessExpressionSyntax m)
 		{
+			// Namespace-qualified global receiver: 'NS.Point.X' addresses the global slot
+			// directly (the GlobalVariable IS a pointer), so chained member reads/writes work.
+			if (TryExtractQualifiedGlobalKey(m) is { } globalBaseKey
+				&& _globalVariables.TryGetValue(globalBaseKey, out var globalBasePtr))
+			{
+				return (globalBasePtr, _globalVariableTypes[globalBaseKey], true, null);
+			}
+
 			// Enum metaprogramming: EnumName.Values is a slice backed by a .rodata global.
 			// The receiver is a type name (not a value), so it must be handled before the
 			// parent lookup below.
@@ -5372,10 +5559,60 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	/// Dynamically resolves and emits an LLVM intrinsic call based on the [Intrinsic("...")] attribute.
 	/// Automatically appends type suffixes (e.g. "sqrt" + double -> "llvm.sqrt.f64").
 	/// </summary>
-	private LLVMValueRef EmitIntrinsicCall(CallExpressionSyntax call, FunctionSymbol func)
+private LLVMValueRef EmitIntrinsicCall(CallExpressionSyntax call, FunctionSymbol func)
 	{
-		var args = call.Arguments.Select(EmitExpression).ToArray();
+		var args = call.Arguments.Select(EmitExpression).ToList();
 		var baseName = func.IntrinsicName!;
+
+		// Some intrinsics need extra operands a Cvolo source signature cannot express
+		// (see libraries/System/Math). They are injected here, keyed off the [Intrinsic] base name.
+		var injected = new List<LLVMValueRef>();
+		switch (baseName)
+		{
+			case "abs":
+				// llvm.abs.iN(x, false): INT_MIN must wrap, not become poison.
+				injected.Add(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int1, 0));
+				break;
+			case "ctlz":
+			case "cttz":
+				// llvm.ctlz/cttz.iN(x, false): input 0 is defined (yields the bit width).
+				injected.Add(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int1, 0));
+				break;
+			case "rotl":
+			case "rotr":
+				// llvm.fshl/fshr.iN(x, x, amt): the funnel shift carries the value in both slots.
+				{
+					var rotateAmount = args[^1];
+					var valueType = args[0].TypeOf;
+					var shiftType = rotateAmount.TypeOf;
+					if (shiftType.Kind != LLVMTypeKind.LLVMIntegerTypeKind || shiftType.IntWidth != valueType.IntWidth)
+					{
+						rotateAmount = valueType.IntWidth > shiftType.IntWidth
+							? _builder.BuildZExt(rotateAmount, valueType, "rot_zext")
+							: _builder.BuildTrunc(rotateAmount, valueType, "rot_trunc");
+					}
+
+					// Rotate amounts are masked by the bit width (spec: C#/LLVM rotate semantics).
+					var widthMask = LLVMValueRef.CreateConstInt(valueType, (ulong)valueType.IntWidth - 1);
+					rotateAmount = _builder.BuildAnd(rotateAmount, widthMask, "rot_mask");
+
+					args = new List<LLVMValueRef> { args[0], args[0], rotateAmount };
+					baseName = baseName == "rotl" ? "fshl" : "fshr";
+					break;
+				}
+			case "fpc.nan":
+			case "fpc.inf":
+			case "fpc.finite":
+			case "fpc.normal":
+			case "fpc.subnormal":
+			case "fpc.zero":
+			case "fpc.negzero":
+			case "fpc.neg":
+				// llvm.is.fpclass.<suffix>(x, mask) — FPClassTest bitmask (see LLVM FPClassTest).
+				injected.Add(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, FpClassMask(baseName)));
+				baseName = "is.fpclass";
+				break;
+		}
 
 		// If full name specified (e.g. "llvm.trap"), use directly; otherwise build "llvm.<name>.<typeSuffix>"
 		string targetName;
@@ -5385,19 +5622,38 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		}
 		else
 		{
-			var typeSuffix = args.Length > 0 ? GetTypeSuffix(args[0].TypeOf) : "";
+			var typeSuffix = args.Count > 0 ? GetTypeSuffix(args[0].TypeOf) : "";
 			targetName = string.IsNullOrEmpty(typeSuffix)
 				? $"llvm.{baseName}"
 				: $"llvm.{baseName}.{typeSuffix}";
 		}
 
+		var emittedArgs = args.Concat(injected).ToArray();
 		var retTy = GetLLVMType(func.ReturnType);
-		var callee = GetOrDeclareIntrinsic(targetName, args, retTy);
+		var callee = GetOrDeclareIntrinsic(targetName, emittedArgs, retTy);
 		var funcType = _functionTypes[targetName];
 
 		var callName = retTy.Kind == LLVMTypeKind.LLVMVoidTypeKind ? "" : "intrinsic_call";
-		return _builder.BuildCall2(funcType, callee, args, callName);
+		return _builder.BuildCall2(funcType, callee, emittedArgs, callName);
 	}
+
+	/// <summary>
+	/// Bitmask for LLVM's <c>llvm.is.fpclass</c> intrinsic, matching LLVM's FPClassTest enum:
+	/// SNan=1, QNan=2, NegInf=4, PosInf=8, NegNormal=16, PosNormal=32,
+	/// NegSubnormal=64, PosSubnormal=128, NegZero=256, PosZero=512.
+	/// </summary>
+	private static ulong FpClassMask(string baseName) => baseName switch
+	{
+		"fpc.nan" => 1 | 2,                        // fcNan (any NaN)
+		"fpc.inf" => 4 | 8,                        // fcInf (either infinity)
+		"fpc.finite" => 0xFFFF & ~(1 | 2 | 4 | 8), // everything except NaN/Inf
+		"fpc.normal" => 16 | 32,                   // fcNormal
+		"fpc.subnormal" => 64 | 128,               // fcSubnormal
+		"fpc.zero" => 256 | 512,                   // fcZero (±0)
+		"fpc.negzero" => 256,                      // fcNegZero only
+		"fpc.neg" => 4 | 16 | 64 | 256,            // any negative class incl. -0 and -Inf
+		_ => 0,
+	};
 
 	private static string GetTypeSuffix(LLVMTypeRef type) => type.Kind switch
 	{

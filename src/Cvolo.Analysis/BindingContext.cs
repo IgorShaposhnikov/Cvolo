@@ -44,8 +44,12 @@ public sealed class BindingContext
 	public Dictionary<string, FunctionSymbol> ConstructorDelegationTargets { get; } = [];
 	// Destructors registered via '~T()' extension members, keyed by the extended type name
 	public Dictionary<string, FunctionSymbol> Destructors { get; } = [];
-	// Data-segment globals in declaration order
+// Data-segment globals in declaration order
 	public List<(GlobalVariableDeclarationSyntax Node, VariableSymbol Symbol)> GlobalVariables { get; } = [];
+	// Globals keyed by fully-qualified name ("Ns.Sub.Name"); the declaration-time collision check.
+	public Dictionary<string, VariableSymbol> GlobalsByQualifiedName { get; } = new(StringComparer.Ordinal);
+	// Globals keyed by short name, for unqualified-reference resolution and ambiguity reporting.
+	public Dictionary<string, List<VariableSymbol>> GlobalsByShortName { get; } = new(StringComparer.Ordinal);
 	// Constructors registered via 'T(...)' extension members, keyed by the struct type name
 	public Dictionary<string, List<FunctionSymbol>> Constructors { get; } = [];
 	// Store generic extension templates, keyed by the extended template struct name (mangled)
@@ -689,6 +693,103 @@ public sealed class BindingContext
 		if (string.IsNullOrEmpty(namespaceName))
 			return name;
 		return $"{namespaceName}.{name}";
+	}
+
+	/// <summary>
+	/// Resolves an unqualified reference to a global variable using the same namespace-priority
+	/// rules as overload lookup: the current namespace shadows; otherwise the root namespace and
+	/// every active <c>using</c> contribute candidates. A reference that matches more than one
+	/// distinct qualified name is reported via <paramref name="ambiguousCandidates"/> (null when
+	/// unique or not found).
+	/// </summary>
+	public VariableSymbol? ResolveGlobalReference(string shortName, out List<string>? ambiguousCandidates)
+	{
+		ambiguousCandidates = null;
+		if (!GlobalsByShortName.TryGetValue(shortName, out var candidates))
+			return null;
+
+		// Own-namespace symbol shadows everything (C# nearer-scope rule).
+		if (!string.IsNullOrEmpty(CurrentNamespace))
+		{
+			var own = GetMangledName(shortName, CurrentNamespace);
+			foreach (var candidate in candidates)
+			{
+				if (candidate.QualifiedGlobalName == own)
+					return candidate;
+			}
+		}
+
+		var distinct = new List<string>();
+		VariableSymbol? single = null;
+
+		// Root-namespace global.
+		foreach (var candidate in candidates)
+		{
+			if (candidate.QualifiedGlobalName == shortName)
+			{
+				single = candidate;
+				distinct.Add(shortName);
+				break;
+			}
+		}
+
+		// Imported namespaces (expanded with 'expose using').
+		if (CurrentUnit is not null)
+		{
+			foreach (var ns in GetActiveUsings(CurrentUnit))
+			{
+				var qualified = GetMangledName(shortName, ns);
+				foreach (var candidate in candidates)
+				{
+					if (candidate.QualifiedGlobalName == qualified && !distinct.Contains(qualified))
+					{
+						single = candidate;
+						distinct.Add(qualified);
+						break;
+					}
+				}
+			}
+		}
+
+		if (distinct.Count == 0)
+			return null;
+		if (distinct.Count == 1)
+			return single;
+		ambiguousCandidates = distinct;
+		return null;
+	}
+
+	/// <summary>
+	/// Resolves a namespace-qualified global reference <c>Ns.Sub.Member</c>. The namespace path
+	/// is tried as-is, then prefixed with the current namespace, then each active <c>using</c>.
+	/// Returns null when the path does not name a namespace or the member does not exist.
+	/// </summary>
+	public VariableSymbol? ResolveQualifiedGlobal(string namespacePath, string memberName)
+	{
+		VariableSymbol? single = null;
+		var count = 0;
+
+		void TryPath(string ns)
+		{
+			if (count > 1)
+				return;
+			if (GlobalsByQualifiedName.TryGetValue(GetMangledName(memberName, ns), out var symbol))
+			{
+				single = symbol;
+				count++;
+			}
+		}
+
+		TryPath(namespacePath);
+		if (!string.IsNullOrEmpty(CurrentNamespace))
+			TryPath(GetMangledName(namespacePath, CurrentNamespace));
+		if (CurrentUnit is not null)
+		{
+			foreach (var ns in GetActiveUsings(CurrentUnit))
+				TryPath(GetMangledName(namespacePath, ns));
+		}
+
+		return count == 1 ? single : null;
 	}
 
 	// CVL1038: a generic instantiation must not be visibly 'wider' than any of its type

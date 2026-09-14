@@ -2297,7 +2297,8 @@ public sealed class DeclarationPass(BindingContext context)
 			return;
 		}
 
-		if (context.Globals.Lookup(globalDecl.Name) is not null)
+		var qualifiedName = context.GetMangledName(globalDecl.Name, context.CurrentNamespace);
+		if (context.GlobalsByQualifiedName.ContainsKey(qualifiedName))
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
 			context.Diagnostics.Report(currentFileContext, globalDecl.Span, $"Duplicate definition of global variable '{globalDecl.Name}'.");
@@ -2330,9 +2331,16 @@ public sealed class DeclarationPass(BindingContext context)
 			IsGlobal = true,
 			Origin = OriginKind.Global,
 			Visibility = globalDecl.Visibility,
-			DeclaringUnit = context.CurrentUnit
+			DeclaringUnit = context.CurrentUnit,
+			DeclaringNamespace = context.CurrentNamespace
 		};
-		context.Globals.Declare(symbol);
+		context.GlobalsByQualifiedName[qualifiedName] = symbol;
+		if (!context.GlobalsByShortName.TryGetValue(globalDecl.Name, out var shortNameList))
+		{
+			shortNameList = [];
+			context.GlobalsByShortName[globalDecl.Name] = shortNameList;
+		}
+		shortNameList.Add(symbol);
 		context.GlobalVariables.Add((globalDecl, symbol));
 	}
 
@@ -2394,6 +2402,8 @@ public sealed class DeclarationPass(BindingContext context)
 		{
 			IntegerLiteralExpressionSyntax or DoubleLiteralExpressionSyntax or BooleanLiteralExpressionSyntax or CharacterLiteralExpressionSyntax or NullLiteralExpressionSyntax => true,
 			UnaryExpressionSyntax { Operator: "-" } unary => IsCompileTimeConstant(unary.Operand),
+			BinaryExpressionSyntax { Operator: "+" or "-" or "*" or "/" or "%" } bin
+				=> IsCompileTimeConstant(bin.Left) && IsCompileTimeConstant(bin.Right),
 			StructInitializationExpressionSyntax structInit => structInit.Initializers.All(static m => IsCompileTimeConstant(m.Expression)),
 			_ => false
 		};

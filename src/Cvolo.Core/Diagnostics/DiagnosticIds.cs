@@ -165,6 +165,9 @@ public static class DiagnosticIds
 	/// <summary>The unstructured iteration statement 'break' or 'continue' can only be executed inside an active loop body context.</summary>
 	public const string LoopControlOutsideLoop = "CVL1070";
 
+	/// <summary>An unqualified reference to a global variable name is ambiguous between two or more imported namespaces.</summary>
+	public const string AmbiguousGlobalReference = "CVL1077";
+
 	/// <summary>A type alias references an underlying type that does not exist.</summary>
 	public const string UnknownTypeAlias = "CVL1200";
 

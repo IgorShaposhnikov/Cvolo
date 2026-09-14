@@ -1,0 +1,2 @@
+namespace Alpha;
+global var int Value = 1;

@@ -486,7 +486,7 @@ public sealed class SafetyPass(BindingContext context)
 		switch (expr)
 		{
 			case IdentifierExpressionSyntax id:
-				if (scope.Lookup(id.Name) is VariableSymbol symbol && symbol.IsMoved)
+				if ((scope.Lookup(id.Name) as VariableSymbol ?? context.ResolveGlobalReference(id.Name, out _)) is { IsMoved: true })
 					context.Diagnostics.Report(context.CurrentUnit!.Context, id.Span, $"Use of moved variable '{id.Name}'");
 				break;
 
@@ -546,7 +546,9 @@ public sealed class SafetyPass(BindingContext context)
 				CheckExpressionSafety(bin.Right, scope);
 				if (bin.Operator == "=" && bin.Left is IdentifierExpressionSyntax leftId)
 				{
-					if (scope.Lookup(leftId.Name) is VariableSymbol leftSymbol)
+					var leftSymbol = scope.Lookup(leftId.Name) as VariableSymbol
+						?? context.ResolveGlobalReference(leftId.Name, out _);
+if (leftSymbol is not null)
 					{
 						VerifyBorrowLock(bin.Left, scope, "reassign");
 						leftSymbol.IsMoved = false;

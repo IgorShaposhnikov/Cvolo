@@ -1,0 +1,8 @@
+using System;
+using Alpha;
+using Beta;
+int main() {
+    Console.WriteLine($"Alpha: {Alpha.Value}");
+    Console.WriteLine($"Beta: {Beta.Value}");
+    return 0;
+}

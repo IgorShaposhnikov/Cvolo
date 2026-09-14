@@ -1,0 +1,11 @@
+using System;
+
+namespace Demo;
+
+global var int Value = 42;
+
+int main() {
+    Console.WriteLine($"Bare: {Value}");
+    Console.WriteLine($"Qualified: {Demo.Value}");
+    return 0;
+}

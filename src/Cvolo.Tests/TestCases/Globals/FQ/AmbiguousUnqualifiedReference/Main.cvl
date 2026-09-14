@@ -1,0 +1,8 @@
+using System;
+using Alpha;
+using Beta;
+int main() {
+    var int x = Value;
+    Console.WriteLine($"{x}");
+    return 0;
+}

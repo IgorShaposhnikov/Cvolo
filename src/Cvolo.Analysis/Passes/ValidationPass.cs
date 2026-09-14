@@ -1081,8 +1081,19 @@ public sealed class ValidationPass(BindingContext context)
 					var symbol = scope.Lookup(id.Name);
 					if (symbol is null)
 					{
-						var currentFileContext = context.FileContexts[context.CurrentUnit!];
-						context.Diagnostics.Report(currentFileContext, id.Span, $"Undefined variable '{id.Name}'");
+						var resolvedGlobal = context.ResolveGlobalReference(id.Name, out var ambiguousCandidates);
+						if (ambiguousCandidates is not null)
+						{
+							var currentFileContext2 = context.FileContexts[context.CurrentUnit!];
+							context.Diagnostics.Report(currentFileContext2, id.Span,
+								$"Reference to '{id.Name}' is ambiguous between '{string.Join("' and '", ambiguousCandidates)}'.",
+								DiagnosticIds.AmbiguousGlobalReference);
+						}
+						else if (resolvedGlobal is null)
+						{
+							var currentFileContext = context.FileContexts[context.CurrentUnit!];
+							context.Diagnostics.Report(currentFileContext, id.Span, $"Undefined variable '{id.Name}'");
+						}
 					}
 
 					break;
@@ -1291,7 +1302,8 @@ public sealed class ValidationPass(BindingContext context)
 						// 2. Evaluate the left-hand side second (re-initialization happens here)
 						if (bin.Left is IdentifierExpressionSyntax id)
 						{
-							var varSymbol = scope.Lookup(id.Name) as VariableSymbol;
+							var varSymbol = scope.Lookup(id.Name) as VariableSymbol
+								?? context.ResolveGlobalReference(id.Name, out _);
 							if (varSymbol is not null)
 							{
 								var isMutable = varSymbol.IsMutable || (varSymbol.Type is PointerTypeSymbol ptr && ptr.IsMutable);
@@ -1403,6 +1415,13 @@ public sealed class ValidationPass(BindingContext context)
 
 	private TypeSymbol? CheckMemberAccessExpression(MemberAccessExpressionSyntax expr, SymbolTable scope)
 	{
+		// Namespace-qualified global access: Ns.Sub.Member. Resolved before the receiver is
+		// checked as an expression so 'Math' is not reported as an undefined variable.
+		if (TryResolveNamespaceGlobal(expr, out var globalSymbol))
+		{
+			return globalSymbol.Type;
+		}
+
 		// Enum scoped-variant access: EnumName.Variant (optionally namespaced). The
 		// receiver is a *type name*, not a value expression — resolve it before the
 		// scope lookup so the receiver is not reported as an undefined variable.
@@ -1496,6 +1515,36 @@ public sealed class ValidationPass(BindingContext context)
 		}
 
 		return field.Type;
+	}
+
+	/// <summary>
+	/// True when the member access is a namespace-qualified reference to a global variable
+	/// (<c>Ns.Sub.Member</c>); returns the resolved symbol. Only identifier chains are treated
+	/// as namespace paths — value receivers (struct fields, unions, etc.) fall through.
+	/// </summary>
+	private bool TryResolveNamespaceGlobal(MemberAccessExpressionSyntax expr, out VariableSymbol? globalSymbol)
+	{
+		globalSymbol = null;
+		if (expr.Expression is not (IdentifierExpressionSyntax or MemberAccessExpressionSyntax))
+			return false;
+
+		var segments = new List<string>();
+		var current = expr.Expression;
+		while (current is MemberAccessExpressionSyntax memberAccess)
+		{
+			if (memberAccess.Expression is not (IdentifierExpressionSyntax or MemberAccessExpressionSyntax))
+				return false;
+			segments.Add(memberAccess.MemberName);
+			current = memberAccess.Expression;
+		}
+
+		if (current is not IdentifierExpressionSyntax leaf)
+			return false;
+		segments.Add(leaf.Name);
+		segments.Reverse();
+
+		globalSymbol = context.ResolveQualifiedGlobal(string.Join(".", segments), expr.MemberName);
+		return globalSymbol is not null;
 	}
 
 	private CompilationUnitSyntax? GetDeclaringUnit(TypeSymbol type)
@@ -1748,7 +1797,9 @@ public sealed class ValidationPass(BindingContext context)
 
 		if (expr is IdentifierExpressionSyntax id)
 		{
-			if (scope.Lookup(id.Name) is VariableSymbol symbol)
+			var symbol = scope.Lookup(id.Name) as VariableSymbol
+				?? context.ResolveGlobalReference(id.Name, out _);
+			if (symbol is not null)
 			{
 				return symbol.IsMutable || (symbol.Type is PointerTypeSymbol ptr && ptr.IsMutable);
 			}
@@ -1861,7 +1912,7 @@ public sealed class ValidationPass(BindingContext context)
 	{
 		return expr switch
 		{
-			IdentifierExpressionSyntax id => (scope.Lookup(id.Name) as VariableSymbol)?.Type,
+			IdentifierExpressionSyntax id => (scope.Lookup(id.Name) as VariableSymbol)?.Type ?? context.ResolveGlobalReference(id.Name, out _)?.Type,
 			IntegerLiteralExpressionSyntax intLit => intLit.LiteralType switch
 			{
 				"uint" => TypeSymbol.UInt,
@@ -3060,7 +3111,9 @@ public sealed class ValidationPass(BindingContext context)
 			var receiverName = parts[0];
 			var methodName = parts[1];
 
-			if (scope.Lookup(receiverName) is VariableSymbol receiverSymbol)
+			var receiverSymbol = scope.Lookup(receiverName) as VariableSymbol
+				?? context.ResolveGlobalReference(receiverName, out _);
+			if (receiverSymbol is not null)
 			{
 				var receiverType = receiverSymbol.Type;
 				if (receiverType is PointerTypeSymbol ptr)
@@ -3903,12 +3956,13 @@ public sealed class ValidationPass(BindingContext context)
 		}
 	}
 
-	private static bool IsAssignableLValue(ExpressionSyntax expr, SymbolTable scope)
+	private bool IsAssignableLValue(ExpressionSyntax expr, SymbolTable scope)
 	{
 		switch (expr)
 		{
 			case IdentifierExpressionSyntax id:
-				return scope.Lookup(id.Name) is VariableSymbol;
+				return scope.Lookup(id.Name) is VariableSymbol
+					|| context.ResolveGlobalReference(id.Name, out _) is not null;
 			case MemberAccessExpressionSyntax or IndexExpressionSyntax:
 				return true;
 			case UnaryExpressionSyntax { Operator: "*" }:
