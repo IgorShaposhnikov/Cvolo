@@ -330,4 +330,10 @@ public static class DiagnosticIds
 
 	/// <summary>`nameof` was applied to an expression with no valid identifier.</summary>
 	public const string NameofExpressionInvalid = "CVL2102";
+
+	/// <summary>A global initializer divides or takes the modulo of an integer constant by zero.</summary>
+	public const string ConstantIntegerDivisionByZero = "CVL2404";
+
+	/// <summary>A global variable initializer is not a compile-time constant expression.</summary>
+	public const string GlobalInitializerNotConstant = "CVL2405";
 }

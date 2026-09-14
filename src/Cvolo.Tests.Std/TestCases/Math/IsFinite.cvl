@@ -1,0 +1,10 @@
+using System;
+
+int main() {
+	Console.WriteLine($"NaN={System.Math.Double.IsFinite(System.Math.Constants.NaN)}");
+	Console.WriteLine($"PINf={System.Math.Double.IsFinite(System.Math.Constants.PositiveInfinity)}");
+	Console.WriteLine($"Zero={System.Math.Double.IsFinite(0.0)}");
+	Console.WriteLine($"Sub={System.Math.Double.IsFinite(1e-310)}");
+	Console.WriteLine($"Norm={System.Math.Double.IsFinite(1.0)}");
+	return 0;
+}

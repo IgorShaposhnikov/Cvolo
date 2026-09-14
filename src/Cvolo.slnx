@@ -9,13 +9,15 @@
     <File Path="../docs/COMPILATION.md" />
     <File Path="../docs/GRAMMAR.md" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="Cvolo.Tests.Std/Cvolo.Tests.Std.csproj" />
+    <Project Path="Cvolo.Tests/Cvolo.Tests.csproj" Id="40873693-d69b-43fe-8615-aa2341c4fd06" />
+  </Folder>
   <Project Path="Cvolo.Analysis/Cvolo.Analysis.csproj" />
   <Project Path="Cvolo.Core/Cvolo.Core.csproj" />
   <Project Path="Cvolo.Emitter.LLVM/Cvolo.Emitter.LLVM.csproj" />
   <Project Path="Cvolo.Syntax/Cvolo.Syntax.csproj" />
   <Project Path="Cvolo.Syntax.Antlr/Cvolo.Syntax.Antlr.csproj" />
-  <Project Path="Cvolo.Tests/Cvolo.Tests.csproj" Id="40873693-d69b-43fe-8615-aa2341c4fd06" />
-  <Project Path="Cvolo.Tests.Std/Cvolo.Tests.Std.csproj" />
   <Project Path="Cvolo/Cvolo.csproj" />
   <Project Path="Cvolo.Benchmarks/Cvolo.Benchmarks.csproj" />
 </Solution>

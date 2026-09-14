@@ -1,0 +1,10 @@
+using System;
+
+int main() {
+	Console.WriteLine($"NaN={System.Math.Double.IsSubnormal(System.Math.Constants.NaN)}");
+	Console.WriteLine($"PINf={System.Math.Double.IsSubnormal(System.Math.Constants.PositiveInfinity)}");
+	Console.WriteLine($"Zero={System.Math.Double.IsSubnormal(0.0)}");
+	Console.WriteLine($"Sub={System.Math.Double.IsSubnormal(1e-310)}");
+	Console.WriteLine($"Norm={System.Math.Double.IsSubnormal(1.0)}");
+	return 0;
+}

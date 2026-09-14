@@ -20,7 +20,8 @@ public global long MinValue = -9223372036854775807 - 1;
 /// Returns the absolute value of <paramref name="value"/>.
 /// </summary>
 /// <remarks>
-/// Long.MinValue maps to itself: -(-9223372036854775808) overflows and wraps by design (see Abs(INT_MIN) == INT_MIN).
+/// Long.MinValue maps to itself: Abs(Long.MinValue) == Long.MinValue. Unlike C/C++ (where
+/// negating the signed minimum is undefined behavior), the language requires the wrap.
 /// </remarks>
 [Intrinsic("abs")]
 public long Abs(long value);

@@ -5567,7 +5567,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		// heuristics below run. A literal argument is emitted at its inferred type (an
 		// int, say), so without this a RotateLeft(byte, uint) call would funnel-shift the
 		// value at i32 width instead of i8, silently producing wrong results.
-if (args.Count == func.Parameters.Count)
+		if (args.Count == func.Parameters.Count)
 		{
 			for (var i = 0; i < args.Count; i++)
 			{
@@ -5661,21 +5661,25 @@ if (args.Count == func.Parameters.Count)
 		return _builder.BuildCall2(funcType, callee, emittedArgs, callName);
 	}
 
-/// <summary>
+	/// <summary>
 	/// Bitmask for LLVM's <c>llvm.is.fpclass</c> intrinsic, matching LLVM's FPClassTest enum:
 	/// SNan=1, QNan=2, NegInf=4, NegNormal=8, NegSubnormal=16, NegZero=32,
 	/// PosZero=64, PosSubnormal=128, PosNormal=256, PosInf=512.
+	///
+	/// Every mask MUST be a subset of fcAllFlags (0x7FF, the 11 class bits); any set bit
+	/// above that range makes the LLVM verifier reject the module ("invalid floating-point
+	/// class mask"). Prefer composing masks from the bits above over ~/0xFFFF arithmetic.
 	/// </summary>
 	private static ulong FpClassMask(string baseName) => baseName switch
 	{
-		"fpc.nan" => 1 | 2,                             // fcNan (any NaN)
-		"fpc.inf" => 4 | 512,                           // fcInf (either infinity)
-		"fpc.finite" => 0xFFFF & ~(1 | 2 | 4 | 512),    // everything except NaN/Inf
-		"fpc.normal" => 8 | 256,                        // fcNormal (±normal)
-		"fpc.subnormal" => 16 | 128,                    // fcSubnormal (±subnormal)
-		"fpc.zero" => 32 | 64,                          // fcZero (±0)
-		"fpc.negzero" => 32,                            // fcNegZero only
-		"fpc.neg" => 4 | 8 | 16 | 32,              // any negative class incl. -0 and -Inf
+		"fpc.nan" => 1 | 2,                       // fcNan (any NaN)
+		"fpc.inf" => 4 | 512,                     // fcInf (either infinity)
+		"fpc.finite" => 32 | 64 | 16 | 128 | 8 | 256,  // fcZero | fcSubnormal | fcNormal == 504
+		"fpc.normal" => 8 | 256,                  // fcNormal (±normal)
+		"fpc.subnormal" => 16 | 128,              // fcSubnormal (±subnormal)
+		"fpc.zero" => 32 | 64,                    // fcZero (±0)
+		"fpc.negzero" => 32,                      // fcNegZero only
+		"fpc.neg" => 4 | 8 | 16 | 32,        // any negative class incl. -0 and -Inf
 		_ => 0,
 	};
 

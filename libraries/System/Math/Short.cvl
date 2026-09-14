@@ -20,7 +20,8 @@ public global short MinValue = -32767 - 1;
 /// Returns the absolute value of <paramref name="value"/>.
 /// </summary>
 /// <remarks>
-/// Short.MinValue maps to itself: -(-32768) overflows and wraps by design (see Abs(INT_MIN) == INT_MIN).
+/// Short.MinValue maps to itself: Abs(Short.MinValue) == Short.MinValue. Unlike C/C++ (where
+/// negating the signed minimum is undefined behavior), the language requires the wrap.
 /// </remarks>
 [Intrinsic("abs")]
 public short Abs(short value);

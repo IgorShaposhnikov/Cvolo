@@ -19,7 +19,8 @@ public global sbyte MinValue = -127 - 1;
 /// Returns the absolute value of <paramref name="value"/>.
 /// </summary>
 /// <remarks>
-/// SByte.MinValue maps to itself: -(-128) overflows and wraps by design (see Abs(INT_MIN) == INT_MIN).
+/// SByte.MinValue maps to itself: Abs(SByte.MinValue) == SByte.MinValue. Unlike C/C++ (where
+/// negating the signed minimum is undefined behavior), the language requires the wrap.
 /// </remarks>
 [Intrinsic("abs")]
 public sbyte Abs(sbyte value);

@@ -5,6 +5,12 @@
 	</PropertyGroup>
 
 	<ItemGroup>
+		<!-- Shared with the compiler test project; the namespace stays Cvolo.Tests.Core. -->
+		<Compile Include="..\Cvolo.Tests\Core\CompilerTestBase.cs" Link="Core\CompilerTestBase.cs" />
+		<Compile Include="..\Cvolo.Tests\Core\Constants.cs" Link="Core\Constants.cs" />
+	</ItemGroup>
+
+	<ItemGroup>
 		<PackageReference Include="coverlet.collector" />
 		<PackageReference Include="Microsoft.NET.Test.Sdk" />
 		<PackageReference Include="xunit.runner.visualstudio">

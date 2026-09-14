@@ -70,6 +70,18 @@ public sealed class GlobalsTests : CompilerTestBase
 		Assert.Contains("Reference to 'Value' is ambiguous between 'Alpha.Value' and 'Beta.Value'.", stderr);
 	}
 
+	[Theory]
+	[InlineData("Folding/RejectsIntegerDivZero", "Division by zero in constant initializer", "CVL2404")]
+	[InlineData("GlobalNonConstFail", "must be initialized with a compile-time constant", "CVL2405")]
+	public void ConstantInitializer_Rejections(string casePath, string message, string id)
+	{
+		var (exitCode, stdout, stderr) = RunCompiler($"Globals/{casePath}.cvl");
+
+		Assert.Equal(1, exitCode);
+		Assert.Contains(message, stderr);
+		Assert.Contains(id, stderr);
+	}
+
 	[Fact]
 	public void BindingContext_TracksSameShortNameAcrossNamespaces()
 	{

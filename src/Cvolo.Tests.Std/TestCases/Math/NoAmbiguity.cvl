@@ -9,5 +9,6 @@ int main() {
 	Math m = Math { value: 10 };
 	Console.WriteLine($"User={m.value}");
 	Console.WriteLine($"PopCount={PopCount(3)}");
+	Console.WriteLine($"D.Sqrt={System.Math.Double.Sqrt(4.0)}");
 	return 0;
 }

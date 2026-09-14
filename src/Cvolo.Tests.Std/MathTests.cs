@@ -7,7 +7,7 @@ public sealed class MathTests : CompilerTestBase
 {
 	[Theory]
 	[InlineData("FacadeResolution", "PopCount=3\nAbs=42\nD.Sqrt=2.000000\nPI=3.141593\nF.Sqrt=5.000000")]
-	[InlineData("NoAmbiguity", "User=10\nPopCount=2")]
+	[InlineData("NoAmbiguity", "User=10\nPopCount=2\nD.Sqrt=2.000000")]
 	public void Facade(string caseName, string expected)
 	{
 		var fileName = $"Math/{caseName}.cvl";
@@ -119,7 +119,7 @@ public sealed class MathTests : CompilerTestBase
 
 		Assert.Contains("@llvm.fshl.i8(i8", ir);
 		Assert.Contains("@llvm.fshr.i8(i8", ir);
-		Assert.DoesNotContain("@llvm.fshl.i32(i32 -127", ir);
+		Assert.DoesNotContain("@llvm.fshl.i32(i32 129", ir);
 	}
 
 	[Fact]
@@ -166,6 +166,21 @@ public sealed class MathTests : CompilerTestBase
 			"IsInf_F_LogZero=1",
 			"SignBit_F_NegZero=1");
 		Assert.Equal(expected, actual);
+	}
+
+	[Theory]
+	[InlineData("IsFinite", "NaN=0\nPINf=0\nZero=1\nSub=1\nNorm=1")]
+	[InlineData("IsNormal", "NaN=0\nPINf=0\nZero=0\nSub=0\nNorm=1")]
+	[InlineData("IsSubnormal", "NaN=0\nPINf=0\nZero=0\nSub=1\nNorm=0")]
+	public void Classification(string caseName, string expected)
+	{
+		var fileName = $"Math/{caseName}.cvl";
+		var (exitCode, stdout, stderr) = RunCompiler(fileName);
+		AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
+
+		var (runCode, runStdout) = ExecuteBinary(caseName, "Math");
+		Assert.Equal(0, runCode);
+		Assert.Equal(expected.Replace("\r\n", "\n").Trim(), runStdout.Replace("\r\n", "\n").Trim());
 	}
 
 	[Fact]

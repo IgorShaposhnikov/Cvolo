@@ -2305,10 +2305,17 @@ public sealed class DeclarationPass(BindingContext context)
 			return;
 		}
 
+		if (ContainsConstantIntegerDivisionByZero(globalDecl.Initializer))
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, globalDecl.Span, $"Division by zero in constant initializer for global variable '{globalDecl.Name}'.", DiagnosticIds.ConstantIntegerDivisionByZero);
+			return;
+		}
+
 		if (!IsCompileTimeConstant(globalDecl.Initializer))
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.Report(currentFileContext, globalDecl.Span, $"Global variable '{globalDecl.Name}' must be initialized with a compile-time constant.");
+			context.Diagnostics.Report(currentFileContext, globalDecl.Span, $"Global variable '{globalDecl.Name}' must be initialized with a compile-time constant.", DiagnosticIds.GlobalInitializerNotConstant);
 			return;
 		}
 
@@ -2407,6 +2414,58 @@ public sealed class DeclarationPass(BindingContext context)
 			StructInitializationExpressionSyntax structInit => structInit.Initializers.All(static m => IsCompileTimeConstant(m.Expression)),
 			_ => false
 		};
+	}
+
+	/// <summary>
+	/// True when the initializer divides or takes the remainder of a PURE-INTEGER constant by zero.
+	/// Float literals switch the expression into IEEE context (1.0 / 0.0 yields +Inf and is legal),
+	/// so the fold bails the moment it meets a non-integer node. Mirrors the wrapping arithmetic that
+	/// CodeGenerator.BuildGlobalInitializer uses when it folds the same tree.
+	/// </summary>
+	private static bool ContainsConstantIntegerDivisionByZero(ExpressionSyntax? expr)
+	{
+		return expr switch
+		{
+			BinaryExpressionSyntax { Operator: "/" or "%" } bin
+				=> (TryFoldIntegerConstant(bin.Right, out var divisor) && divisor == 0)
+					|| ContainsConstantIntegerDivisionByZero(bin.Left)
+					|| ContainsConstantIntegerDivisionByZero(bin.Right),
+			BinaryExpressionSyntax { Operator: "+" or "-" or "*" } bin
+				=> ContainsConstantIntegerDivisionByZero(bin.Left) || ContainsConstantIntegerDivisionByZero(bin.Right),
+			UnaryExpressionSyntax { Operator: "-" } unary => ContainsConstantIntegerDivisionByZero(unary.Operand),
+			StructInitializationExpressionSyntax structInit => structInit.Initializers.Any(static m => ContainsConstantIntegerDivisionByZero(m.Expression)),
+			_ => false
+		};
+	}
+
+	/// <summary>Folds a subtree of integer literals (wrapping) to a single value; false when the subtree
+	/// contains any non-integer node (float literal, call, identifier, ...).</summary>
+	private static bool TryFoldIntegerConstant(ExpressionSyntax expr, out long value)
+	{
+		switch (expr)
+		{
+			case IntegerLiteralExpressionSyntax lit:
+				value = unchecked((long)lit.Value);
+				return true;
+			case UnaryExpressionSyntax { Operator: "-" } unary when TryFoldIntegerConstant(unary.Operand, out var inner):
+				value = unchecked(-inner);
+				return true;
+			case BinaryExpressionSyntax bin when bin.Operator is "+" or "-" or "*" or "/" or "%"
+				&& TryFoldIntegerConstant(bin.Left, out var l) && TryFoldIntegerConstant(bin.Right, out var r):
+				value = bin.Operator switch
+				{
+					"+" => unchecked(l + r),
+					"-" => unchecked(l - r),
+					"*" => unchecked(l * r),
+					"/" => unchecked(l / r),
+					"%" => r == 0 ? 0 : unchecked(l % r),
+					_ => 0
+				};
+				return true;
+			default:
+				value = 0;
+				return false;
+		}
 	}
 
 	private void DeclareUnion(UnionDeclarationSyntax unionDecl)

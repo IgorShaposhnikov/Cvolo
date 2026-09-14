@@ -20,7 +20,8 @@ public global int MinValue = -2147483647 - 1;
 /// Returns the absolute value of <paramref name="value"/>.
 /// </summary>
 /// <remarks>
-/// Int.MinValue maps to itself: -(-2147483648) overflows and wraps by design (see Abs(INT_MIN) == INT_MIN).
+/// Int.MinValue maps to itself: Abs(Int.MinValue) == Int.MinValue. Unlike C/C++ (where
+/// negating the signed minimum is undefined behavior), the language requires the wrap.
 /// </remarks>
 [Intrinsic("abs")]
 public int Abs(int value);
