@@ -1,0 +1,26 @@
+using System;
+
+int main() {
+	Console.WriteLine($"PI={System.Math.Constants.PI}");
+	Console.WriteLine($"E={System.Math.Constants.E}");
+	Console.WriteLine($"Tau={System.Math.Constants.Tau}");
+	Console.WriteLine($"IsNaN={System.Math.Double.IsNaN(System.Math.Constants.NaN)}");
+	Console.WriteLine($"IsInfPos={System.Math.Double.IsInf(System.Math.Constants.PositiveInfinity)}");
+	Console.WriteLine($"IsInfNeg={System.Math.Double.IsInf(System.Math.Constants.NegativeInfinity)}");
+	Console.WriteLine($"SignBitNegInf={System.Math.Double.SignBit(System.Math.Constants.NegativeInfinity)}");
+
+	Console.WriteLine($"ByteMax={System.Math.Byte.MaxValue}");
+	Console.WriteLine($"ByteMin={System.Math.Byte.MinValue}");
+	Console.WriteLine($"SByteMax={System.Math.SByte.MaxValue}");
+	Console.WriteLine($"SByteMin={System.Math.SByte.MinValue}");
+	Console.WriteLine($"ShortMax={System.Math.Short.MaxValue}");
+	Console.WriteLine($"ShortMin={System.Math.Short.MinValue}");
+	Console.WriteLine($"UShortMax={System.Math.UShort.MaxValue}");
+	Console.WriteLine($"IntMax={System.Math.Int.MaxValue}");
+	Console.WriteLine($"IntMin={System.Math.Int.MinValue}");
+	Console.WriteLine($"UIntMax={System.Math.UInt.MaxValue}");
+	Console.WriteLine($"LongMax={System.Math.Long.MaxValue}");
+	Console.WriteLine($"LongMin={System.Math.Long.MinValue}");
+	Console.WriteLine($"ULongMax={System.Math.ULong.MaxValue}");
+	return 0;
+}

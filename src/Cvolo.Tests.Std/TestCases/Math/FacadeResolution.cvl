@@ -1,0 +1,10 @@
+using System;
+
+int main() {
+	Console.WriteLine($"PopCount={System.Math.Int.PopCount(7)}");
+	Console.WriteLine($"Abs={System.Math.Long.Abs(-42L)}");
+	Console.WriteLine($"D.Sqrt={System.Math.Double.Sqrt(4.0)}");
+	Console.WriteLine($"PI={System.Math.Constants.PI}");
+	Console.WriteLine($"F.Sqrt={System.Math.Float.Sqrt(25.0f)}");
+	return 0;
+}

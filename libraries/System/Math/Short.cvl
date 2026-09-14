@@ -1,0 +1,109 @@
+/// <summary>
+/// Signed 16-bit integer math helpers backing System.Math.
+/// </summary>
+namespace System.Math.Short;
+
+/// <summary>
+/// Largest representable signed short value.
+/// </summary>
+public global short MaxValue = 32767;
+
+/// <summary>
+/// Smallest representable signed short value.
+/// </summary>
+/// <remarks>
+/// Written as -32767 - 1 so the literal `-32768` never needs a 16-bit signed literal type.
+/// </remarks>
+public global short MinValue = -32767 - 1;
+
+/// <summary>
+/// Returns the absolute value of <paramref name="value"/>.
+/// </summary>
+/// <remarks>
+/// Short.MinValue maps to itself: -(-32768) overflows and wraps by design (see Abs(INT_MIN) == INT_MIN).
+/// </remarks>
+[Intrinsic("abs")]
+public short Abs(short value);
+
+/// <summary>
+/// Returns the smaller of two signed shorts.
+/// </summary>
+[Intrinsic("smin")]
+public short Min(short x, short y);
+
+/// <summary>
+/// Returns the larger of two signed shorts.
+/// </summary>
+[Intrinsic("smax")]
+public short Max(short x, short y);
+
+/// <summary>
+/// Clamps <paramref name="value"/> to the inclusive range [lo, hi].
+/// </summary>
+/// <remarks>
+/// No clamping when lo &gt; hi; the result degenerates in that case, so lo/hi must be ordered by the caller.
+/// </remarks>
+public short Clamp(short value, short lo, short hi) 
+{
+	return Max(lo, Min(hi, value));
+}
+
+/// <summary>
+/// Returns 1 for positive, -1 for negative, and 0 for zero.
+/// </summary>
+public short Sign(short value)
+{
+	if (value > 0)
+	{
+		return (short)1;
+	}
+
+	if (value < 0)
+	{
+		return (short)-1;
+	}
+
+	return value;
+}
+
+/// <summary>
+/// Number of leading zero bits of <paramref name="x"/> (0..16); x == 0 yields 16.
+/// </summary>
+[Intrinsic("ctlz")]
+public short LeadingZeros(short x);
+
+/// <summary>
+/// Number of trailing zero bits of <paramref name="x"/> (0..16); x == 0 yields 16.
+/// </summary>
+[Intrinsic("cttz")]
+public short TrailingZeros(short x);
+
+/// <summary>
+/// Number of 1 bits set in <paramref name="x"/> (0..16).
+/// </summary>
+[Intrinsic("ctpop")]
+public short PopCount(short x);
+
+/// <summary>
+/// Reverses the byte order of <paramref name="x"/> (byte swap for a 16-bit value).
+/// </summary>
+[Intrinsic("bswap")]
+public short ByteSwap(short x);
+
+/// <summary>
+/// Rotates <paramref name="x"/> left by <paramref name="amount"/> bits.
+/// </summary>
+/// <remarks>
+/// The amount is masked to the 4 low bits (0..15), matching LLVM funnel-shift semantics.
+/// </remarks>
+[Intrinsic("rotl")]
+public short RotateLeft(short x, uint amount);
+
+/// <summary>
+/// Rotates <paramref name="x"/> right by <paramref name="amount"/> bits.
+/// </summary>
+/// <remarks>
+/// The amount is masked to the 4 low bits (0..15), matching LLVM funnel-shift semantics.
+/// </remarks>
+[Intrinsic("rotr")]
+public short RotateRight(short x, uint amount);

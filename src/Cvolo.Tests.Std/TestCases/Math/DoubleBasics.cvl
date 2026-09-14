@@ -1,0 +1,53 @@
+using System;
+
+int main() {
+	// Sqrt / Cbrt / Pow
+	Console.WriteLine($"Sqrt(4.0)={System.Math.Double.Sqrt(4.0)}");
+	Console.WriteLine($"Sqrt(2.0)={System.Math.Double.Sqrt(2.0)}");
+	Console.WriteLine($"Cbrt(27.0)={System.Math.Double.Cbrt(27.0)}");
+	Console.WriteLine($"Pow(2.0,10.0)={System.Math.Double.Pow(2.0, 10.0)}");
+	Console.WriteLine($"FMA(2.0,3.0,4.0)={System.Math.Double.FMA(2.0, 3.0, 4.0)}");
+
+	// Trig
+	Console.WriteLine($"Sin(0.0)={System.Math.Double.Sin(0.0)}");
+	Console.WriteLine($"Cos(0.0)={System.Math.Double.Cos(0.0)}");
+	Console.WriteLine($"Tan(0.0)={System.Math.Double.Tan(0.0)}");
+	Console.WriteLine($"Hypot(3.0,4.0)={System.Math.Double.Hypot(3.0, 4.0)}");
+
+	// Exp / Log
+	Console.WriteLine($"Exp(0.0)={System.Math.Double.Exp(0.0)}");
+	Console.WriteLine($"Exp2(1.0)={System.Math.Double.Exp2(1.0)}");
+	Console.WriteLine($"Expm1(0.0)={System.Math.Double.Expm1(0.0)}");
+	Console.WriteLine($"Log(1.0)={System.Math.Double.Log(1.0)}");
+	Console.WriteLine($"Log2(2.0)={System.Math.Double.Log2(2.0)}");
+	Console.WriteLine($"Log10(100.0)={System.Math.Double.Log10(100.0)}");
+	Console.WriteLine($"Log1p(0.0)={System.Math.Double.Log1p(0.0)}");
+
+	// Rounding
+	Console.WriteLine($"Floor(1.5)={System.Math.Double.Floor(1.5)}");
+	Console.WriteLine($"Ceil(1.5)={System.Math.Double.Ceil(1.5)}");
+	Console.WriteLine($"Trunc(-1.5)={System.Math.Double.Trunc(-1.5)}");
+	Console.WriteLine($"Round(2.5)={System.Math.Double.Round(2.5)}");
+	Console.WriteLine($"Round(-2.5)={System.Math.Double.Round(-2.5)}");
+
+	// Helpers
+	Console.WriteLine($"Min(1.0,2.0)={System.Math.Double.Min(1.0, 2.0)}");
+	Console.WriteLine($"Max(1.0,2.0)={System.Math.Double.Max(1.0, 2.0)}");
+	Console.WriteLine($"CopySign(1.0,-2.0)={System.Math.Double.CopySign(1.0, -2.0)}");
+	Console.WriteLine($"Abs(-3.5)={System.Math.Double.Abs(-3.5)}");
+	Console.WriteLine($"Clamp(5.0,0.0,10.0)={System.Math.Double.Clamp(5.0, 0.0, 10.0)}");
+	Console.WriteLine($"Clamp(-1.0,0.0,10.0)={System.Math.Double.Clamp(-1.0, 0.0, 10.0)}");
+	Console.WriteLine($"Clamp(11.0,0.0,10.0)={System.Math.Double.Clamp(11.0, 0.0, 10.0)}");
+	Console.WriteLine($"Lerp(0.0,10.0,0.5)={System.Math.Double.Lerp(0.0, 10.0, 0.5)}");
+	Console.WriteLine($"Sign(5.0)={System.Math.Double.Sign(5.0)}");
+	Console.WriteLine($"Sign(0.0)={System.Math.Double.Sign(0.0)}");
+	Console.WriteLine($"Sign(-5.0)={System.Math.Double.Sign(-5.0)}");
+	Console.WriteLine($"ToRadians(180.0)={System.Math.Double.ToRadians(180.0)}");
+	Console.WriteLine($"ToDegrees(3.14159265358979)={System.Math.Double.ToDegrees(3.14159265358979)}");
+
+	// Type preservation
+	Console.WriteLine($"Sqrt(9.0f)={System.Math.Float.Sqrt(9.0f)}");
+	Console.WriteLine($"ToRadians(90.0f)={System.Math.Float.ToRadians(90.0f)}");
+
+	return 0;
+}

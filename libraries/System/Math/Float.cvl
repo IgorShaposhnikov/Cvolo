@@ -1,0 +1,385 @@
+/// <summary>
+/// IEEE 754 single-precision (float) math functions backed by LLVM intrinsics and libm.
+/// </summary>
+namespace System.Math.Float;
+
+// Intrinsic-backed transcendentals
+
+/// <summary>
+/// Returns the square root of <paramref name="x"/>; NaN for x &lt; 0.
+/// </summary>
+[Intrinsic("sqrt")]
+public float Sqrt(float x);
+
+/// <summary>
+/// Returns the sine of <paramref name="x"/> (radians).
+/// </summary>
+[Intrinsic("sin")]
+public float Sin(float x);
+
+/// <summary>
+/// Returns the cosine of <paramref name="x"/> (radians).
+/// </summary>
+[Intrinsic("cos")]
+public float Cos(float x);
+
+/// <summary>
+/// Returns e raised to the power of <paramref name="x"/>.
+/// </summary>
+[Intrinsic("exp")]
+public float Exp(float x);
+
+/// <summary>
+/// Returns 2 raised to the power of <paramref name="x"/>.
+/// </summary>
+[Intrinsic("exp2")]
+public float Exp2(float x);
+
+/// <summary>
+/// Returns the natural logarithm of <paramref name="x"/>; NaN for x &lt;= 0.
+/// </summary>
+[Intrinsic("log")]
+public float Log(float x);
+
+/// <summary>
+/// Returns the base-2 logarithm of <paramref name="x"/>; NaN for x &lt;= 0.
+/// </summary>
+[Intrinsic("log2")]
+public float Log2(float x);
+
+/// <summary>
+/// Returns the base-10 logarithm of <paramref name="x"/>; NaN for x &lt;= 0.
+/// </summary>
+[Intrinsic("log10")]
+public float Log10(float x);
+
+/// <summary>
+/// Returns <paramref name="x"/> raised to <paramref name="y"/>.
+/// </summary>
+[Intrinsic("pow")]
+public float Pow(float x, float y);
+
+/// <summary>
+/// Returns (x * y) + z, rounded only once (fused multiply-add).
+/// </summary>
+[Intrinsic("fma")]
+public float FMA(float x, float y, float z);
+
+/// <summary>
+/// Returns the absolute value of <paramref name="x"/>.
+/// </summary>
+[Intrinsic("fabs")]
+public float Abs(float x);
+
+/// <summary>
+/// Returns the smaller of two floats, propagating NaN.
+/// </summary>
+[Intrinsic("minnum")]
+public float Min(float x, float y);
+
+/// <summary>
+/// Returns the larger of two floats, propagating NaN.
+/// </summary>
+[Intrinsic("maxnum")]
+public float Max(float x, float y);
+
+/// <summary>
+/// Returns <paramref name="x"/> with the sign of <paramref name="y"/>.
+/// </summary>
+[Intrinsic("copysign")]
+public float CopySign(float x, float y);
+
+/// <summary>
+/// Rounds <paramref name="x"/> down to the nearest integer (truncation toward -infinity).
+/// </summary>
+[Intrinsic("floor")]
+public float Floor(float x);
+
+/// <summary>
+/// Rounds <paramref name="x"/> up to the nearest integer (truncation toward +infinity).
+/// </summary>
+[Intrinsic("ceil")]
+public float Ceil(float x);
+
+/// <summary>
+/// Rounds <paramref name="x"/> toward zero to the nearest integer.
+/// </summary>
+[Intrinsic("trunc")]
+public float Trunc(float x);
+
+/// <summary>
+/// Rounds <paramref name="x"/> to the nearest integer; ties away from zero.
+/// </summary>
+[Intrinsic("round")]
+public float Round(float x);
+
+// FP classification (compiler-mapped fpc.* → llvm.is.fpclass)
+// fpc.* names are rewritten to llvm.is.fpclass.<f32|f64> by EmitIntrinsicCall;
+// the i32 FPClassTest bitmask operand is injected by the compiler (FpClassMask
+// in CodeGenerator.cs), never written in source.
+
+/// <summary>
+/// Returns true if <paramref name="x"/> is NaN (quiet or signaling).</summary>
+[Intrinsic("fpc.nan")]
+public bool IsNaN(float x);
+
+/// <summary>
+/// Returns true if <paramref name="x"/> is positive or negative infinity.
+/// </summary>
+[Intrinsic("fpc.inf")]
+public bool IsInf(float x);
+
+/// <summary>
+/// Returns true if <paramref name="x"/> is finite (not NaN, not ±Inf).
+/// </summary>
+[Intrinsic("fpc.finite")]
+public bool IsFinite(float x);
+
+/// <summary>
+/// Returns true if <paramref name="x"/> is a normal (non-zero, non-subnormal, non-Inf, non-NaN) number.
+/// </summary>
+[Intrinsic("fpc.normal")]
+public bool IsNormal(float x);
+
+/// <summary>
+/// Returns true if <paramref name="x"/> is a subnormal (denormalized) number.
+/// </summary>
+[Intrinsic("fpc.subnormal")]
+public bool IsSubnormal(float x);
+
+/// <summary>
+/// Returns true if the sign bit of <paramref name="x"/> is set, including -0.0.
+/// </summary>
+[Intrinsic("fpc.neg")]
+public bool SignBit(float x);
+
+// libm second-tier functions
+
+[LibraryImport("m", win: "libucrt.lib", linux: "m", mac: "System")]
+extern "C" {
+	[ImportName("tanf")] 
+	float __libm_tanf(float x);
+	[ImportName("asinf")] 
+	float __libm_asinf(float x);
+	[ImportName("acosf")]
+	float __libm_acosf(float x);
+	[ImportName("atanf")]
+	float __libm_atanf(float x);
+	[ImportName("atan2f")]
+	float __libm_atan2f(float y, float x);
+	[ImportName("sinhf")]
+	float __libm_sinhf(float x);
+	[ImportName("coshf")]
+	float __libm_coshf(float x);
+	[ImportName("tanhf")]
+	float __libm_tanhf(float x);
+	[ImportName("asinhf")]
+	float __libm_asinhf(float x);
+	[ImportName("acoshf")]
+	float __libm_acoshf(float x);
+	[ImportName("atanhf")]
+	float __libm_atanhf(float x);
+	[ImportName("expm1f")]
+	float __libm_expm1f(float x);
+	[ImportName("log1pf")]
+	float __libm_log1pf(float x);
+	[ImportName("cbrtf")]
+	float __libm_cbrtf(float x);
+	[ImportName("hypotf")]
+	float __libm_hypotf(float x, float y);
+}
+
+/// <summary>
+/// Tangent of <paramref name="x"/> (radians). Backed by libm tanf.
+/// </summary>
+[Inline]
+public float Tan(float x) 
+{
+	return __libm_tanf(x);
+}
+
+/// <summary>
+/// Arc sine of <paramref name="x"/>; NaN for |x| &gt; 1. Backed by libm asinf.
+/// </summary>
+[Inline]
+public float Asin(float x) 
+{
+	return __libm_asinf(x);
+}
+
+/// <summary>
+/// Arc cosine of <paramref name="x"/>; NaN for |x| &gt; 1. Backed by libm acosf.
+/// </summary>
+[Inline]
+public float Acos(float x) 
+{
+	return __libm_acosf(x);
+}
+
+/// <summary>
+/// Arc tangent of <paramref name="x"/>. Backed by libm atanf.
+/// </summary>
+[Inline]
+public float Atan(float x)
+{
+	return __libm_atanf(x);
+}
+
+/// <summary>
+/// Angle whose tangent is <paramref name="y"/>/<paramref name="x"/>. Backed by libm atan2f.
+/// </summary>
+[Inline]
+public float Atan2(float y, float x)
+{
+	return __libm_atan2f(y, x);
+}
+
+/// <summary>
+/// Hyperbolic sine of <paramref name="x"/>. Backed by libm sinhf.
+/// </summary>
+[Inline]
+public float Sinh(float x)
+{
+	return __libm_sinhf(x);
+}
+
+/// <summary>
+/// Hyperbolic cosine of <paramref name="x"/>. Backed by libm coshf.
+/// </summary>
+[Inline]
+public float Cosh(float x)
+{
+	return __libm_coshf(x);
+}
+
+/// <summary>
+/// Hyperbolic tangent of <paramref name="x"/>. Backed by libm tanhf.
+/// </summary>
+[Inline]
+public float Tanh(float x)
+{
+	return __libm_tanhf(x);
+}
+
+/// <summary>
+/// Inverse hyperbolic sine of <paramref name="x"/>. Backed by libm asinhf.
+/// </summary>
+[Inline]
+public float Asinh(float x)
+{
+	return __libm_asinhf(x);
+}
+
+/// <summary>
+/// Inverse hyperbolic cosine of <paramref name="x"/>; x &gt;= 1. Backed by libm acoshf.
+/// </summary>
+[Inline]
+public float Acosh(float x)
+{
+	return __libm_acoshf(x);
+}
+
+/// <summary>
+/// Inverse hyperbolic tangent of <paramref name="x"/>; |x| &lt; 1. Backed by libm atanhf.
+/// </summary>
+[Inline]
+public float Atanh(float x)
+{
+	return __libm_atanhf(x);
+}
+
+/// <summary>
+/// Returns e^x - 1, accurate near x == 0. Backed by libm expm1f.
+/// </summary>
+[Inline]
+public float Expm1(float x)
+{
+	return __libm_expm1f(x);
+}
+
+/// <summary>
+/// Returns ln(1 + x), accurate near x == 0. Backed by libm log1pf.
+/// </summary>
+[Inline]
+public float Log1p(float x)
+{
+	return __libm_log1pf(x);
+}
+
+/// <summary>
+/// Returns the cube root of <paramref name="x"/>. Backed by libm cbrtf.
+/// </summary>
+[Inline]
+public float Cbrt(float x)
+{
+	return __libm_cbrtf(x);
+}
+
+/// <summary>
+/// Returns sqrt(x^2 + y^2), avoiding intermediate overflow/underflow. Backed by libm hypotf.
+/// </summary>
+[Inline]
+public float Hypot(float x, float y)
+{
+	return __libm_hypotf(x, y);
+}
+
+// Helpers
+
+/// <summary>
+/// Clamps <paramref name="value"/> to the inclusive range [lo, hi].
+/// </summary>
+/// <remarks>
+/// No clamping when lo &gt; hi; the result degenerates in that case, so lo/hi must be ordered by the caller.
+/// </remarks>
+public float Clamp(float value, float lo, float hi)
+{
+	return Max(lo, Min(hi, value));
+}
+
+/// <summary>
+/// Linearly interpolates between <paramref name="a"/> and <paramref name="b"/> by <paramref name="t"/>.
+/// </summary>
+public float Lerp(float a, float b, float t)
+{
+	return a + t * (b - a);
+}
+
+/// <summary>
+/// Returns 1.0f for positive, -1.0f for negative, and 0.0f for zero.
+/// </summary>
+public float Sign(float value)
+{
+	if (value > 0) 
+	{
+		return 1.0f;
+	}
+
+	if (value < 0)
+	{
+		return -1.0f;
+	}
+
+	return value;
+}
+
+/// <summary>
+/// Pi as a single-precision constant (3.14159274f).
+/// </summary>
+public global float PI = 3.14159274f;
+
+/// <summary>
+/// Converts degrees to radians.
+/// </summary>
+public float ToRadians(float degrees)
+{
+	return degrees * PI / 180.0f;
+}
+
+/// <summary>
+/// Converts radians to degrees.
+/// </summary>
+public float ToDegrees(float radians) 
+{
+	return radians * 180.0f / PI;
+}

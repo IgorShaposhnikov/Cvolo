@@ -1,0 +1,8 @@
+using System;
+
+int main() {
+    Console.WriteLine($"IntMax: {System.Math.Int.MaxValue}");
+    Console.WriteLine($"UIntMax: {System.Math.UInt.MaxValue}");
+    Console.WriteLine($"LongMin: {System.Math.Long.MinValue}");
+    return 0;
+}

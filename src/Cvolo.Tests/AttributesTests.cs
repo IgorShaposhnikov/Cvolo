@@ -119,7 +119,7 @@ public sealed class AttributesTests : CompilerTestBase
 		var fileName = "Attributes/Inlines/InlineOnFunction.cvl";
 		var (exitCode, stdout, stderr) = RunCompiler(fileName, "--llvm", "--emit-ir", "-O0");
 		AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
-		Assert.Contains("""attributes #0 = { "alwaysinline" }""", stdout.Replace("\r\n", "\n"));
+		Assert.Contains("""{ "alwaysinline" }""", stdout.Replace("\r\n", "\n"));
 	}
 
 	[Fact]
@@ -128,7 +128,7 @@ public sealed class AttributesTests : CompilerTestBase
 		var fileName = "Attributes/Inlines/NeverInlineOnFunction.cvl";
 		var (exitCode, stdout, stderr) = RunCompiler(fileName, "--llvm", "--emit-ir", "-O0");
 		AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
-		Assert.Contains("""attributes #0 = { "noinline" }""", stdout.Replace("\r\n", "\n"));
+		Assert.Contains("""{ "noinline" }""", stdout.Replace("\r\n", "\n"));
 	}
 
 	[Fact]

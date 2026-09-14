@@ -1,0 +1,101 @@
+/// <summary>
+/// Signed 64-bit integer math helpers backing System.Math.
+/// </summary>
+namespace System.Math.Long;
+
+/// <summary>
+/// Largest representable signed long value.
+/// </summary>
+public global long MaxValue = 9223372036854775807;
+
+/// <summary>
+/// Smallest representable signed long value.
+/// </summary>
+/// <remarks>
+/// Written as -9223372036854775807 - 1 so the literal never exceeds long.MaxValue.
+/// </remarks>
+public global long MinValue = -9223372036854775807 - 1;
+
+/// <summary>
+/// Returns the absolute value of <paramref name="value"/>.
+/// </summary>
+/// <remarks>
+/// Long.MinValue maps to itself: -(-9223372036854775808) overflows and wraps by design (see Abs(INT_MIN) == INT_MIN).
+/// </remarks>
+[Intrinsic("abs")]
+public long Abs(long value);
+
+/// <summary>
+/// Returns the smaller of two signed longs.
+/// </summary>
+[Intrinsic("smin")]
+public long Min(long x, long y);
+
+/// <summary>
+/// Returns the larger of two signed longs.
+/// </summary>
+[Intrinsic("smax")]
+public long Max(long x, long y);
+
+/// <summary>
+/// Clamps <paramref name="value"/> to the inclusive range [lo, hi].
+/// </summary>
+/// <remarks>
+/// No clamping when lo &gt; hi; the result degenerates in that case, so lo/hi must be ordered by the caller.
+/// </remarks>
+public long Clamp(long value, long lo, long hi) { return Max(lo, Min(hi, value)); }
+
+/// <summary>
+/// Returns 1 for positive, -1 for negative, and 0 for zero.
+/// </summary>
+public long Sign(long value) {
+    if (value > 0) {
+        return 1L;
+    }
+    if (value < 0) {
+        return -1L;
+    }
+    return value;
+}
+
+/// <summary>
+/// Number of leading zero bits of <paramref name="x"/> (0..64); x == 0 yields 64.
+/// </summary>
+[Intrinsic("ctlz")]
+public long LeadingZeros(long x);
+
+/// <summary>
+/// Number of trailing zero bits of <paramref name="x"/> (0..64); x == 0 yields 64.
+/// </summary>
+[Intrinsic("cttz")]
+public long TrailingZeros(long x);
+
+/// <summary>
+/// Number of 1 bits set in <paramref name="x"/> (0..64).
+/// </summary>
+[Intrinsic("ctpop")]
+public long PopCount(long x);
+
+/// <summary>
+/// Reverses the byte order of <paramref name="x"/> (byte swap for a 64-bit value).
+/// </summary>
+[Intrinsic("bswap")]
+public long ByteSwap(long x);
+
+/// <summary>
+/// Rotates <paramref name="x"/> left by <paramref name="amount"/> bits.
+/// </summary>
+/// <remarks>
+/// The amount is masked to the 6 low bits (0..63), matching LLVM funnel-shift semantics.
+/// </remarks>
+[Intrinsic("rotl")]
+public long RotateLeft(long x, uint amount);
+
+/// <summary>
+/// Rotates <paramref name="x"/> right by <paramref name="amount"/> bits.
+/// </summary>
+/// <remarks>
+/// The amount is masked to the 6 low bits (0..63), matching LLVM funnel-shift semantics.
+/// </remarks>
+[Intrinsic("rotr")]
+public long RotateRight(long x, uint amount);

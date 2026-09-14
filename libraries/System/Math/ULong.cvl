@@ -1,0 +1,76 @@
+/// <summary>
+/// Unsigned 64-bit integer math helpers backing System.Math.
+/// </summary>
+namespace System.Math.ULong;
+
+/// <summary>
+/// Largest representable unsigned long value.
+/// </summary>
+public global ulong MaxValue = 18446744073709551615UL;
+
+/// <summary>
+/// Smallest representable unsigned long value.
+/// </summary>
+public global ulong MinValue = 0;
+
+/// <summary>
+/// Returns the smaller of two unsigned longs.
+/// </summary>
+[Intrinsic("umin")]
+public ulong Min(ulong x, ulong y);
+
+/// <summary>
+/// Returns the larger of two unsigned longs.
+/// </summary>
+[Intrinsic("umax")]
+public ulong Max(ulong x, ulong y);
+
+/// <summary>
+/// Clamps <paramref name="value"/> to the inclusive range [lo, hi].
+/// </summary>
+/// <remarks>
+/// No clamping when lo &gt; hi; the result degenerates in that case, so lo/hi must be ordered by the caller.
+/// </remarks>
+public ulong Clamp(ulong value, ulong lo, ulong hi) { return Max(lo, Min(hi, value)); }
+
+/// <summary>
+/// Number of leading zero bits of <paramref name="x"/> (0..64); x == 0 yields 64.
+/// </summary>
+[Intrinsic("ctlz")]
+public ulong LeadingZeros(ulong x);
+
+/// <summary>
+/// Number of trailing zero bits of <paramref name="x"/> (0..64); x == 0 yields 64.
+/// </summary>
+[Intrinsic("cttz")]
+public ulong TrailingZeros(ulong x);
+
+/// <summary>
+/// Number of 1 bits set in <paramref name="x"/> (0..64).
+/// </summary>
+[Intrinsic("ctpop")]
+public ulong PopCount(ulong x);
+
+/// <summary>
+/// Reverses the byte order of <paramref name="x"/> (byte swap for a 64-bit value).
+/// </summary>
+[Intrinsic("bswap")]
+public ulong ByteSwap(ulong x);
+
+/// <summary>
+/// Rotates <paramref name="x"/> left by <paramref name="amount"/> bits.
+/// </summary>
+/// <remarks>
+/// The amount is masked to the 6 low bits (0..63), matching LLVM funnel-shift semantics.
+/// </remarks>
+[Intrinsic("rotl")]
+public ulong RotateLeft(ulong x, uint amount);
+
+/// <summary>
+/// Rotates <paramref name="x"/> right by <paramref name="amount"/> bits.
+/// </summary>
+/// <remarks>
+/// The amount is masked to the 6 low bits (0..63), matching LLVM funnel-shift semantics.
+/// </remarks>
+[Intrinsic("rotr")]
+public ulong RotateRight(ulong x, uint amount);

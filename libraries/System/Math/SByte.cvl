@@ -1,0 +1,99 @@
+/// <summary>
+/// Signed 8-bit integer math helpers backing System.Math.
+/// </summary>
+namespace System.Math.SByte;
+
+/// <summary>
+/// Largest representable signed byte value.
+/// </summary>
+public global sbyte MaxValue = 127;
+
+/// <summary>
+/// Smallest representable signed byte value.</summary>
+/// <remarks>
+/// Written as -127 - 1 so the literal `-128` never needs an 8-bit signed literal type.
+/// </remarks>
+public global sbyte MinValue = -127 - 1;
+
+/// <summary>
+/// Returns the absolute value of <paramref name="value"/>.
+/// </summary>
+/// <remarks>
+/// SByte.MinValue maps to itself: -(-128) overflows and wraps by design (see Abs(INT_MIN) == INT_MIN).
+/// </remarks>
+[Intrinsic("abs")]
+public sbyte Abs(sbyte value);
+
+/// <summary>
+/// Returns the smaller of two signed bytes.
+/// </summary>
+[Intrinsic("smin")]
+public sbyte Min(sbyte x, sbyte y);
+
+/// <summary>
+/// Returns the larger of two signed bytes.
+/// </summary>
+[Intrinsic("smax")]
+public sbyte Max(sbyte x, sbyte y);
+
+/// <summary>
+/// Clamps <paramref name="value"/> to the inclusive range [lo, hi].
+/// </summary>
+/// <remarks>
+/// No clamping when lo &gt; hi; the result degenerates in that case, so lo/hi must be ordered by the caller.
+/// </remarks>
+public sbyte Clamp(sbyte value, sbyte lo, sbyte hi) { return Max(lo, Min(hi, value)); }
+
+/// <summary>
+/// Returns 1 for positive, -1 for negative, and 0 for zero.
+/// </summary>
+public sbyte Sign(sbyte value)
+{
+	if (value > 0)
+	{
+		return (sbyte)1;
+	}
+
+	if (value < 0)
+	{
+		return (sbyte)-1;
+	}
+
+	return value;
+}
+
+/// <summary>
+/// Number of leading zero bits of <paramref name="x"/> (0..8); x == 0 yields 8.
+/// </summary>
+[Intrinsic("ctlz")]
+public sbyte LeadingZeros(sbyte x);
+
+/// <summary>
+/// Number of trailing zero bits of <paramref name="x"/> (0..8); x == 0 yields 8.
+/// </summary>
+[Intrinsic("cttz")]
+public sbyte TrailingZeros(sbyte x);
+
+/// <summary>
+/// Number of 1 bits set in <paramref name="x"/> (0..8).
+/// </summary>
+[Intrinsic("ctpop")]
+public sbyte PopCount(sbyte x);
+
+/// <summary>
+/// Rotates <paramref name="x"/> left by <paramref name="amount"/> bits.
+/// </summary>
+/// <remarks>
+/// The amount is masked to the 3 low bits (0..7), matching LLVM funnel-shift semantics.
+/// </remarks>
+[Intrinsic("rotl")]
+public sbyte RotateLeft(sbyte x, uint amount);
+
+/// <summary>
+/// Rotates <paramref name="x"/> right by <paramref name="amount"/> bits.
+/// </summary>
+/// <remarks>
+/// The amount is masked to the 3 low bits (0..7), matching LLVM funnel-shift semantics.
+/// </remarks>
+[Intrinsic("rotr")]
+public sbyte RotateRight(sbyte x, uint amount);

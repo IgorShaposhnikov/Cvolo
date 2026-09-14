@@ -1,0 +1,18 @@
+using System;
+
+int main() {
+	Console.WriteLine($"IsNaN_SqrtNeg={System.Math.Double.IsNaN(System.Math.Double.Sqrt(-1.0))}");
+	Console.WriteLine($"IsInf_LogZero={System.Math.Double.IsInf(System.Math.Double.Log(0.0))}");
+	Console.WriteLine($"IsNaN_LogNeg={System.Math.Double.IsNaN(System.Math.Double.Log(-1.0))}");
+	Console.WriteLine($"IsNaN_Asin2={System.Math.Double.IsNaN(System.Math.Double.Asin(2.0))}");
+	Console.WriteLine($"IsInf_Atanh1={System.Math.Double.IsInf(System.Math.Double.Atanh(1.0))}");
+	Console.WriteLine($"SignBit_NegZero={System.Math.Double.SignBit(-0.0)}");
+	Console.WriteLine($"SignBit_Zero={System.Math.Double.SignBit(0.0)}");
+	Console.WriteLine($"MinNaN={System.Math.Double.Min(System.Math.Constants.NaN, 1.0)}");
+	Console.WriteLine($"MaxNaN={System.Math.Double.Max(System.Math.Constants.NaN, 1.0)}");
+	Console.WriteLine($"AbsIntMin={System.Math.Int.Abs(System.Math.Int.MinValue)}");
+	Console.WriteLine($"IsNaN_F_SqrtNeg={System.Math.Float.IsNaN(System.Math.Float.Sqrt(-1.0f))}");
+	Console.WriteLine($"IsInf_F_LogZero={System.Math.Float.IsInf(System.Math.Float.Log(0.0f))}");
+	Console.WriteLine($"SignBit_F_NegZero={System.Math.Float.SignBit(-0.0f)}");
+	return 0;
+}

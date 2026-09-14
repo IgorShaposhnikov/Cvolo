@@ -1,0 +1,13 @@
+using System;
+using System.Math.Int;
+
+struct Math {
+	int value;
+}
+
+int main() {
+	Math m = Math { value: 10 };
+	Console.WriteLine($"User={m.value}");
+	Console.WriteLine($"PopCount={PopCount(3)}");
+	return 0;
+}

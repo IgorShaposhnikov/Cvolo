@@ -33,6 +33,7 @@ public sealed class GlobalsTests : CompilerTestBase
 
 	[Theory]
 	[InlineData("QualifiedAccess", "Bare: 42\nQualified: 42")]
+	[InlineData("MathQualifiedGlobals", "IntMax: 2147483647\nUIntMax: 4294967295\nLongMin: -9223372036854775808")]
 	public void FullyQualified_Execution(string caseName, string expected)
 	{
 		var fileName = $"Globals/FQ/{caseName}.cvl";

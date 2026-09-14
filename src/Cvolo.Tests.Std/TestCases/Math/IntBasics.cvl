@@ -1,0 +1,38 @@
+using System;
+
+int main() {
+	// Arithmetic
+	Console.WriteLine($"Abs(-42)={System.Math.Int.Abs(-42)}");
+	Console.WriteLine($"Min(3,5)={System.Math.Int.Min(3, 5)}");
+	Console.WriteLine($"Max(3,5)={System.Math.Int.Max(3, 5)}");
+	Console.WriteLine($"Clamp(11,0,10)={System.Math.Int.Clamp(11, 0, 10)}");
+	Console.WriteLine($"Clamp(-1,0,10)={System.Math.Int.Clamp(-1, 0, 10)}");
+	Console.WriteLine($"Clamp(5,0,10)={System.Math.Int.Clamp(5, 0, 10)}");
+	Console.WriteLine($"Sign(-5)={System.Math.Int.Sign(-5)}");
+	Console.WriteLine($"Sign(0)={System.Math.Int.Sign(0)}");
+	Console.WriteLine($"Sign(5)={System.Math.Int.Sign(5)}");
+
+	// Bit operations
+	Console.WriteLine($"LeadingZeros(1)={System.Math.Int.LeadingZeros(1)}");
+	Console.WriteLine($"LeadingZeros(0)={System.Math.Int.LeadingZeros(0)}");
+	Console.WriteLine($"TrailingZeros(1)={System.Math.Int.TrailingZeros(1)}");
+	Console.WriteLine($"TrailingZeros(0)={System.Math.Int.TrailingZeros(0)}");
+	Console.WriteLine($"PopCount(255)={System.Math.Int.PopCount(255)}");
+	Console.WriteLine($"PopCount(0)={System.Math.Int.PopCount(0)}");
+	Console.WriteLine($"ByteSwap(0x01020304)={System.Math.Int.ByteSwap(0x01020304)}");
+
+	// MinValue/MaxValue
+	Console.WriteLine($"MaxValue={System.Math.Int.MaxValue}");
+	Console.WriteLine($"MinValue={System.Math.Int.MinValue}");
+
+	// Long
+	Console.WriteLine($"Long.Abs(-99L)={System.Math.Long.Abs(-99L)}");
+	Console.WriteLine($"Long.MaxValue={System.Math.Long.MaxValue}");
+	Console.WriteLine($"Long.MinValue={System.Math.Long.MinValue}");
+
+	// UInt
+	Console.WriteLine($"UInt.MaxValue={System.Math.UInt.MaxValue}");
+	Console.WriteLine($"UInt.Clamp(5U,0U,10U)={System.Math.UInt.Clamp(5U, 0U, 10U)}");
+
+	return 0;
+}

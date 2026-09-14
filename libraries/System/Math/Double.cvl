@@ -1,0 +1,377 @@
+/// <summary>
+/// IEEE 754 double-precision (double) math functions backed by LLVM intrinsics and libm.
+/// </summary>
+namespace System.Math.Double;
+
+/// <summary>
+/// Returns the square root of <paramref name="x"/>; NaN for x &lt; 0.
+/// </summary>
+[Intrinsic("sqrt")]
+public double Sqrt(double x);
+
+/// <summary>
+/// Returns the sine of <paramref name="x"/> (radians).
+/// </summary>
+[Intrinsic("sin")]
+public double Sin(double x);
+
+/// <summary>
+/// Returns the cosine of <paramref name="x"/> (radians).
+/// </summary>
+[Intrinsic("cos")]
+public double Cos(double x);
+
+/// <summary>
+/// Returns e raised to the power of <paramref name="x"/>.
+/// </summary>
+[Intrinsic("exp")]
+public double Exp(double x);
+
+/// <summary>
+/// Returns 2 raised to the power of <paramref name="x"/>.
+/// </summary>
+[Intrinsic("exp2")]
+public double Exp2(double x);
+
+/// <summary>
+/// Returns the natural logarithm of <paramref name="x"/>; NaN for x &lt;= 0.
+/// </summary>
+[Intrinsic("log")]
+public double Log(double x);
+
+/// <summary>
+/// Returns the base-2 logarithm of <paramref name="x"/>; NaN for x &lt;= 0.
+/// </summary>
+[Intrinsic("log2")]
+public double Log2(double x);
+
+/// <summary>
+/// Returns the base-10 logarithm of <paramref name="x"/>; NaN for x &lt;= 0.
+/// </summary>
+[Intrinsic("log10")]
+public double Log10(double x);
+
+/// <summary>
+/// Returns <paramref name="x"/> raised to <paramref name="y"/>.
+/// </summary>
+[Intrinsic("pow")]
+public double Pow(double x, double y);
+
+/// <summary>
+/// Returns (x * y) + z, rounded only once (fused multiply-add).
+/// </summary>
+[Intrinsic("fma")]
+public double FMA(double x, double y, double z);
+
+/// <summary>
+/// Returns the absolute value of <paramref name="x"/>.
+/// </summary>
+[Intrinsic("fabs")]
+public double Abs(double x);
+
+/// <summary>Returns the smaller of two doubles, propagating NaN.</summary>
+[Intrinsic("minnum")]
+public double Min(double x, double y);
+
+/// <summary>
+/// Returns the larger of two doubles, propagating NaN.
+/// </summary>
+[Intrinsic("maxnum")]
+public double Max(double x, double y);
+
+/// <summary>
+/// Returns <paramref name="x"/> with the sign of <paramref name="y"/>.
+/// </summary>
+[Intrinsic("copysign")]
+public double CopySign(double x, double y);
+
+/// <summary>
+/// Rounds <paramref name="x"/> down to the nearest integer (truncation toward -infinity).
+/// </summary>
+[Intrinsic("floor")]
+public double Floor(double x);
+
+/// <summary>
+/// Rounds <paramref name="x"/> up to the nearest integer (truncation toward +infinity).
+/// </summary>
+[Intrinsic("ceil")]
+public double Ceil(double x);
+
+/// <summary>
+/// Rounds <paramref name="x"/> toward zero to the nearest integer.
+/// </summary>
+[Intrinsic("trunc")]
+public double Trunc(double x);
+
+/// <summary>
+/// Rounds <paramref name="x"/> to the nearest integer; ties away from zero.
+/// </summary>
+[Intrinsic("round")]
+public double Round(double x);
+
+// FP classification (compiler-mapped fpc.* → llvm.is.fpclass)
+// fpc.* names are rewritten to llvm.is.fpclass.<f64|f32> by EmitIntrinsicCall;
+// the i32 FPClassTest bitmask operand is injected by the compiler (FpClassMask
+// in CodeGenerator.cs), never written in source.
+
+/// <summary>
+/// Returns true if <paramref name="x"/> is NaN (quiet or signaling).
+/// </summary>
+[Intrinsic("fpc.nan")]
+public bool IsNaN(double x);
+
+/// <summary>
+/// Returns true if <paramref name="x"/> is positive or negative infinity.
+/// </summary>
+[Intrinsic("fpc.inf")]
+public bool IsInf(double x);
+
+/// <summary>
+/// Returns true if <paramref name="x"/> is finite (not NaN, not ±Inf).
+/// </summary>
+[Intrinsic("fpc.finite")]
+public bool IsFinite(double x);
+
+/// <summary>
+/// Returns true if <paramref name="x"/> is a normal (non-zero, non-subnormal, non-Inf, non-NaN) number.
+/// </summary>
+[Intrinsic("fpc.normal")]
+public bool IsNormal(double x);
+
+/// <summary>
+/// Returns true if <paramref name="x"/> is a subnormal (denormalized) number.
+/// </summary>
+[Intrinsic("fpc.subnormal")]
+public bool IsSubnormal(double x);
+
+/// <summary>
+/// Returns true if the sign bit of <paramref name="x"/> is set, including -0.0.
+/// </summary>
+[Intrinsic("fpc.neg")]
+public bool SignBit(double x);
+
+// libm second-tier functions
+
+[LibraryImport("m", win: "libucrt.lib", linux: "m", mac: "System")]
+extern "C" {
+	[ImportName("tan")]
+	double __libm_tan(double x);
+	[ImportName("asin")]
+	double __libm_asin(double x);
+	[ImportName("acos")]
+	double __libm_acos(double x);
+	[ImportName("atan")]
+	double __libm_atan(double x);
+	[ImportName("atan2")]
+	double __libm_atan2(double y, double x);
+	[ImportName("sinh")]
+	double __libm_sinh(double x);
+	[ImportName("cosh")]
+	double __libm_cosh(double x);
+	[ImportName("tanh")]
+	double __libm_tanh(double x);
+	[ImportName("asinh")]
+	double __libm_asinh(double x);
+	[ImportName("acosh")]
+	double __libm_acosh(double x);
+	[ImportName("atanh")]
+	double __libm_atanh(double x);
+	[ImportName("expm1")]
+	double __libm_expm1(double x);
+	[ImportName("log1p")]
+	double __libm_log1p(double x);
+	[ImportName("cbrt")]
+	double __libm_cbrt(double x);
+	[ImportName("hypot")]
+	double __libm_hypot(double x, double y);
+}
+
+/// <summary>
+/// Tangent of <paramref name="x"/> (radians). Backed by libm tan.
+/// </summary>
+[Inline]
+public double Tan(double x)
+{
+	return __libm_tan(x); 
+}
+
+/// <summary>
+/// Arc sine of <paramref name="x"/>; NaN for |x| &gt; 1. Backed by libm asin.
+/// </summary>
+[Inline]
+public double Asin(double x)
+{
+	return __libm_asin(x); 
+}
+
+/// <summary>
+/// Arc cosine of <paramref name="x"/>; NaN for |x| &gt; 1. Backed by libm acos.
+/// </summary>
+[Inline]
+public double Acos(double x)
+{
+	return __libm_acos(x); 
+}
+
+/// <summary>
+/// Arc tangent of <paramref name="x"/>. Backed by libm atan.
+/// </summary>
+[Inline]
+public double Atan(double x)
+{
+	return __libm_atan(x); 
+}
+
+/// <summary>
+/// Angle whose tangent is <paramref name="y"/>/<paramref name="x"/>. Backed by libm atan2.
+/// </summary>
+[Inline]
+public double Atan2(double y, double x)
+{
+	return __libm_atan2(y, x);
+}
+
+/// <summary>
+/// Hyperbolic sine of <paramref name="x"/>. Backed by libm sinh.
+/// </summary>
+[Inline]
+public double Sinh(double x) 
+{
+	return __libm_sinh(x);
+}
+
+/// <summary>
+/// Hyperbolic cosine of <paramref name="x"/>. Backed by libm cosh.
+/// </summary>
+[Inline]
+public double Cosh(double x)
+{
+	return __libm_cosh(x); 
+}
+
+/// <summary>
+/// Hyperbolic tangent of <paramref name="x"/>. Backed by libm tanh.
+/// </summary>
+[Inline]
+public double Tanh(double x)
+{
+	return __libm_tanh(x); 
+}
+
+/// <summary>
+/// Inverse hyperbolic sine of <paramref name="x"/>. Backed by libm asinh.
+/// </summary>
+[Inline]
+public double Asinh(double x)
+{
+	return __libm_asinh(x);
+}
+
+/// <summary>
+/// Inverse hyperbolic cosine of <paramref name="x"/>; x &gt;= 1. Backed by libm acosh.
+/// </summary>
+[Inline]
+public double Acosh(double x)
+{
+	return __libm_acosh(x);
+}
+
+/// <summary>
+/// Inverse hyperbolic tangent of <paramref name="x"/>; |x| &lt; 1. Backed by libm atanh.
+/// </summary>
+[Inline]
+public double Atanh(double x)
+{
+	return __libm_atanh(x); 
+}
+
+/// <summary>
+/// Returns e^x - 1, accurate near x == 0. Backed by libm expm1.
+/// </summary>
+[Inline]
+public double Expm1(double x)
+{
+	return __libm_expm1(x);
+}
+
+/// <summary>
+/// Returns ln(1 + x), accurate near x == 0. Backed by libm log1p.
+/// </summary>
+[Inline]
+public double Log1p(double x)
+{
+	return __libm_log1p(x);
+}
+
+/// <summary>
+/// Returns the cube root of <paramref name="x"/>. Backed by libm cbrt.
+/// </summary>
+[Inline]
+public double Cbrt(double x)
+{
+	return __libm_cbrt(x);
+}
+
+/// <summary>
+/// Returns sqrt(x^2 + y^2), avoiding intermediate overflow/underflow. Backed by libm hypot.
+/// </summary>
+[Inline]
+public double Hypot(double x, double y)
+{
+	return __libm_hypot(x, y);
+}
+
+// Helpers
+
+/// <summary>
+/// Clamps <paramref name="value"/> to the inclusive range [lo, hi].
+/// </summary>
+/// <remarks>
+/// No clamping when lo &gt; hi; the result degenerates in that case, so lo/hi must be ordered by the caller.
+/// </remarks>
+public double Clamp(double value, double lo, double hi)
+{
+	return Max(lo, Min(hi, value)); 
+}
+
+/// <summary>
+/// Linearly interpolates between <paramref name="a"/> and <paramref name="b"/> by <paramref name="t"/>.
+/// </summary>
+public double Lerp(double a, double b, double t)
+{
+	return a + t * (b - a); 
+}
+
+/// <summary>
+/// Returns 1.0 for positive, -1.0 for negative, and 0.0 for zero.
+/// </summary>
+public double Sign(double value)
+{
+	if (value > 0) 
+	{
+		return 1.0;
+	}
+
+	if (value < 0) 
+	{
+		return -1.0;
+	}
+	
+	return value;
+}
+
+/// <summary>
+/// Converts degrees to radians; the divisor uses System.Math.Constants.PI.
+/// </summary>
+public double ToRadians(double degrees)
+{
+	return degrees * System.Math.Constants.PI / 180.0; 
+}
+
+/// <summary>
+/// Converts radians to degrees; the divisor uses System.Math.Constants.PI.
+/// </summary>
+public double ToDegrees(double radians)
+{
+	return radians * 180.0 / System.Math.Constants.PI;
+}

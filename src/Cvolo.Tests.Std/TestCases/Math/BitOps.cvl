@@ -1,0 +1,12 @@
+using System;
+
+int main() {
+	Console.WriteLine($"Byte.RL={System.Math.Byte.RotateLeft(0x81, 1u)}");
+	Console.WriteLine($"Byte.RR={System.Math.Byte.RotateRight(0x81, 1u)}");
+	Console.WriteLine($"UShort.RL={System.Math.UShort.RotateLeft(0x8001, 1u)}");
+	Console.WriteLine($"UShort.RR={System.Math.UShort.RotateRight(0x8001, 1u)}");
+	Console.WriteLine($"UShort.BS={System.Math.UShort.ByteSwap(0x1234)}");
+	Console.WriteLine($"Int.RL={System.Math.Int.RotateLeft(1, 1u)}");
+	Console.WriteLine($"Int.RR={System.Math.Int.RotateRight(0x40000000, 1u)}");
+	return 0;
+}

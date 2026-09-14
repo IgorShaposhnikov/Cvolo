@@ -1,0 +1,13 @@
+namespace System.Math;
+
+expose using System.Math.Constants;
+expose using System.Math.Byte;
+expose using System.Math.SByte;
+expose using System.Math.Short;
+expose using System.Math.UShort;
+expose using System.Math.Int;
+expose using System.Math.UInt;
+expose using System.Math.Long;
+expose using System.Math.ULong;
+expose using System.Math.Float;
+expose using System.Math.Double;

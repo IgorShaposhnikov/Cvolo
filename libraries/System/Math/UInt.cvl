@@ -1,0 +1,76 @@
+/// <summary>
+/// Unsigned 32-bit integer math helpers backing System.Math.
+/// </summary>
+namespace System.Math.UInt;
+
+/// <summary>
+/// Largest representable unsigned int value.
+/// </summary>
+public global uint MaxValue = 4294967295U;
+
+/// <summary>
+/// Smallest representable unsigned int value.
+/// </summary>
+public global uint MinValue = 0;
+
+/// <summary>
+/// Returns the smaller of two unsigned ints.
+/// </summary>
+[Intrinsic("umin")]
+public uint Min(uint x, uint y);
+
+/// <summary>
+/// Returns the larger of two unsigned ints.
+/// </summary>
+[Intrinsic("umax")]
+public uint Max(uint x, uint y);
+
+/// <summary>
+/// Clamps <paramref name="value"/> to the inclusive range [lo, hi].
+/// </summary>
+/// <remarks>
+/// No clamping when lo &gt; hi; the result degenerates in that case, so lo/hi must be ordered by the caller.
+/// </remarks>
+public uint Clamp(uint value, uint lo, uint hi) { return Max(lo, Min(hi, value)); }
+
+/// <summary>
+/// Number of leading zero bits of <paramref name="x"/> (0..32); x == 0 yields 32.
+/// </summary>
+[Intrinsic("ctlz")]
+public uint LeadingZeros(uint x);
+
+/// <summary>
+/// Number of trailing zero bits of <paramref name="x"/> (0..32); x == 0 yields 32.
+/// </summary>
+[Intrinsic("cttz")]
+public uint TrailingZeros(uint x);
+
+/// <summary>
+/// Number of 1 bits set in <paramref name="x"/> (0..32).
+/// </summary>
+[Intrinsic("ctpop")]
+public uint PopCount(uint x);
+
+/// <summary>
+/// Reverses the byte order of <paramref name="x"/> (byte swap for a 32-bit value).
+/// </summary>
+[Intrinsic("bswap")]
+public uint ByteSwap(uint x);
+
+/// <summary>
+/// Rotates <paramref name="x"/> left by <paramref name="amount"/> bits.
+/// </summary>
+/// <remarks>
+/// The amount is masked to the 5 low bits (0..31), matching LLVM funnel-shift semantics.
+/// </remarks>
+[Intrinsic("rotl")]
+public uint RotateLeft(uint x, uint amount);
+
+/// <summary>
+/// Rotates <paramref name="x"/> right by <paramref name="amount"/> bits.
+/// </summary>
+/// <remarks>
+/// The amount is masked to the 5 low bits (0..31), matching LLVM funnel-shift semantics.
+/// </remarks>
+[Intrinsic("rotr")]
+public uint RotateRight(uint x, uint amount);
