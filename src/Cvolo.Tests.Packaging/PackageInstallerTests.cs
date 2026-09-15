@@ -34,6 +34,17 @@ public sealed class PackageInstallerTests : IDisposable
 	}
 
 	[Fact]
+	public void UnsignedPackage_IsRejectedWhenTrustedKeysConfigured()
+	{
+		var keys = Path.Combine(_cache.RootPath, "keys");
+		Directory.CreateDirectory(keys);
+		File.WriteAllText(Path.Combine(keys, "trusted.json"), "[\"001122\"]");
+
+		var error = Assert.Throws<PackageException>(() => _installer.InstallFromFile(CreateArchive()));
+		Assert.Contains(PackageDiagnosticIds.UnsignedRejected, error.Message);
+	}
+
+	[Fact]
 	public void FatArchive_ThinsRebasesSignsAndPreservesOtherSectors()
 	{
 		var installed = _installer.InstallFromFile(CreateArchive(fat: true));

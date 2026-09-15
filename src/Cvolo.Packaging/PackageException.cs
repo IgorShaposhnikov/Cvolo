@@ -7,6 +7,8 @@ namespace Cvolo.Packaging;
 public sealed class PackageException(string code, string message, string? detail = null)
 	: Exception($"{code}: {message}")
 {
+	private readonly string _message = message;
+
 	/// <summary>The CVLP3xxx diagnostic code identifying the failure.</summary>
 	public string Code { get; } = code;
 
@@ -15,7 +17,7 @@ public sealed class PackageException(string code, string message, string? detail
 
 	public override string ToString()
 	{
-		var baseString = $"[{Code}]: {Message}";
+		var baseString = $"[{Code}]: {_message}";
 		return Detail is not null ? $"{baseString}\nDetail: {Detail}" : baseString;
 	}
 }

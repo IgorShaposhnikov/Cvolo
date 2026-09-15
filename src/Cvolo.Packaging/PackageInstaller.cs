@@ -20,6 +20,8 @@ public sealed class PackageInstaller(PackageCache cache)
 		while ((count = input.Read(buffer)) != 0) hasher.Update(buffer.AsSpan(0, count));
 		var hash = "blake3:" + Convert.ToHexStringLower(hasher.Finalize().AsSpan());
 		using var archive = OpenVerified(source, out var unsigned);
+		if (unsigned && HasTrustedKeysPolicy())
+			throw new PackageException(PackageDiagnosticIds.UnsignedRejected, $"Package '{source}' is unsigned and trusted keys are configured.");
 		var metadata = PackageMetadata.Read(archive);
 		var triple = TargetTriple.HostTriple();
 		if (!archive.Manifest.Slices.Any(s => s.Triple == triple))
@@ -73,6 +75,8 @@ public sealed class PackageInstaller(PackageCache cache)
 			throw new PackageException(PackageDiagnosticIds.PackageIdMismatch, "Cached package identity does not match its directory.");
 		var path = Path.Combine(directory, metadata.PackageId + ".cvlib");
 		using var archive = OpenVerified(path, out var unsigned);
+		if (unsigned && HasTrustedKeysPolicy())
+			throw new PackageException(PackageDiagnosticIds.UnsignedRejected, $"Cached package '{packageId}@{version}' is unsigned and trusted keys are configured.");
 		var identity = PackageMetadata.Read(archive);
 		if (identity.PackageId != metadata.PackageId || identity.Version != version)
 			throw new PackageException(PackageDiagnosticIds.PackageIdMismatch, "Archive identity does not match cache metadata.");
@@ -95,5 +99,16 @@ public sealed class PackageInstaller(PackageCache cache)
 		stream.ReadExactly(signature);
 		unsigned = signature.IndexOfAnyExcept((byte)0) < 0;
 		return CvlArchiveReader.Read(path, verifySignature: !unsigned);
+	}
+
+	private bool HasTrustedKeysPolicy()
+	{
+		var path = Path.Combine(cache.RootPath, "keys", "trusted.json");
+		if (!File.Exists(path))
+			return false;
+
+		var keys = JsonSerializer.Deserialize<string[]>(File.ReadAllText(path))
+			?? throw new InvalidDataException("Invalid trusted keys policy.");
+		return keys.Any(key => !string.IsNullOrWhiteSpace(key));
 	}
 }

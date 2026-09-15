@@ -9,6 +9,8 @@ namespace Cvolo.Core.Packages;
 public sealed class CvlFormatException(string code, long offset, string message, string? detail = null)
 	: IOException($"{code}: {message}")
 {
+	private readonly string _message = message;
+
 	/// <summary>The CVLF19xx diagnostic code identifying the exact format violation.</summary>
 	public string Code { get; } = code;
 
@@ -20,7 +22,7 @@ public sealed class CvlFormatException(string code, long offset, string message,
 
 	public override string ToString()
 	{
-		var baseString = $"[{Code} at offset 0x{Offset:X8}]: {Message}";
+		var baseString = $"[{Code} at offset 0x{Offset:X8}]: {_message}";
 		return Detail is not null ? $"{baseString}\nDetail: {Detail}" : baseString;
 	}
 }

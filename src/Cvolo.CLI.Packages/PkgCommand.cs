@@ -6,16 +6,19 @@ namespace Cvolo.CLI.Packages;
 
 public sealed class PkgCommand : Command
 {
+	private readonly PackageCache _cache;
 	private readonly PackageInstaller _installer;
 
-	public PkgCommand(InstallCommand installCommand, PackageInstaller installer) : base("pkg", "Cvolo package manager.")
+	public PkgCommand(PackageCache cache, PackageInstaller installer) : base("pkg", "Cvolo package manager.")
 	{
+		_cache = cache;
 		_installer = installer;
 		Add(CreateInstallCommand());
 		Add(CreateAddCommand());
 		Add(CreateRemoveCommand());
 		Add(CreateListCommand());
 		Add(CreateUpdateCommand());
+		Add(CreateCacheCommand());
 	}
 
 	private Command CreateInstallCommand()
@@ -98,6 +101,63 @@ public sealed class PkgCommand : Command
 		return command;
 	}
 
+	private Command CreateCacheCommand()
+	{
+		var command = new Command("cache", "Manage the local package cache.");
+		command.Add(CreateCacheListCommand());
+		command.Add(CreateCachePruneCommand());
+		command.Add(CreateCacheClearCommand());
+		return command;
+	}
+
+	private Command CreateCacheListCommand()
+	{
+		var command = new Command("list", "List installed packages in the local cache.");
+		command.SetAction(_ => Run(() =>
+		{
+			foreach (var package in ReadCachedPackages())
+				Console.WriteLine($"{package.Metadata.PackageId} {package.Metadata.Version} {package.Metadata.ContentHash}");
+		}));
+		return command;
+	}
+
+	private Command CreateCachePruneCommand()
+	{
+		var command = new Command("prune", "Remove cached packages.");
+		var unused = new Option<bool>("--unused") { Description = "Only remove packages not referenced by lock files under the current directory." };
+		command.Add(unused);
+		command.SetAction(parseResult => Run(() =>
+		{
+			var keep = parseResult.GetValue(unused) ? ReadLockedPackageKeys(Directory.GetCurrentDirectory()) : [];
+			var removed = 0;
+			foreach (var package in ReadCachedPackages())
+			{
+				var key = PackageKey(package.Metadata.PackageId, package.Metadata.Version);
+				if (keep.Contains(key))
+					continue;
+
+				Directory.Delete(package.Directory, true);
+				removed++;
+			}
+
+			Console.WriteLine($"Removed {removed} cached package(s).");
+		}));
+		return command;
+	}
+
+	private Command CreateCacheClearCommand()
+	{
+		var command = new Command("clear", "Remove all cached packages.");
+		command.SetAction(_ => Run(() =>
+		{
+			var directory = Path.Combine(_cache.RootPath, "pkg");
+			if (Directory.Exists(directory))
+				Directory.Delete(directory, true);
+			Console.WriteLine("Package cache cleared.");
+		}));
+		return command;
+	}
+
 	private void ResolveWriteAndInstall(ProjectManifest manifest)
 	{
 		var graph = ResolveAndWriteLock(manifest);
@@ -146,6 +206,35 @@ public sealed class PkgCommand : Command
 		}
 	}
 
+	private IReadOnlyList<(string Directory, InstalledPackageMetadata Metadata)> ReadCachedPackages()
+	{
+		var root = Path.Combine(_cache.RootPath, "pkg");
+		if (!Directory.Exists(root))
+			return [];
+
+		return Directory.GetFiles(root, ".metadata.json", SearchOption.AllDirectories)
+			.Select(path => (Directory: Path.GetDirectoryName(path)!, Metadata: JsonSerializer.Deserialize<InstalledPackageMetadata>(File.ReadAllText(path))))
+			.Where(package => package.Metadata is not null)
+			.Select(package => (package.Directory, Metadata: package.Metadata!))
+			.OrderBy(package => package.Metadata.PackageId, StringComparer.OrdinalIgnoreCase)
+			.ThenBy(package => SemanticVersion.Parse(package.Metadata.Version))
+			.ToArray();
+	}
+
+	private static HashSet<string> ReadLockedPackageKeys(string root)
+	{
+		var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		foreach (var path in Directory.GetFiles(root, "cvolo.lock.json", SearchOption.AllDirectories))
+		{
+			foreach (var package in LockFile.Read(path).Packages)
+				keys.Add(PackageKey(package.Key, package.Value.Resolved));
+		}
+
+		return keys;
+	}
+
+	private static string PackageKey(string id, string version) => id.ToLowerInvariant() + "@" + version;
+
 	private static int Run(Action action)
 	{
 		try
@@ -155,7 +244,7 @@ public sealed class PkgCommand : Command
 		}
 		catch (PackageException ex)
 		{
-			Console.Error.WriteLine($"error {ex.Code}: {ex.Message}");
+			Console.Error.WriteLine($"error: {ex.Message}");
 			if (ex.Detail is not null) Console.Error.WriteLine(ex.Detail);
 			return 1;
 		}
