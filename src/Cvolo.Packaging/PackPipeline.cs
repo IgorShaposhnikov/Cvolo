@@ -56,12 +56,14 @@ public sealed class PackPipeline
 				Console.WriteLine($"  -> {target}");
 		}
 
-		// 4. Produce per-target object code and shared bitcode.
+		// 4. Produce per-target object code and target-specific bitcode.
 		var objects = new Dictionary<string, byte[]>(StringComparer.Ordinal);
+		var bitcodes = new Dictionary<string, byte[]>(StringComparer.Ordinal);
 		foreach (var target in targets)
+		{
 			objects[target] = compile.ProduceObjectFile(target);
-
-		var bitcode = compile.ProduceBitcode(targets[0]);
+			bitcodes[target] = compile.ProduceBitcode(target);
+		}
 
 		// 5. Assemble Sector 1 (slice manifest), Sector 2 (concatenated objects per triple),
 		//    Sector 3 (bitcode ranges), Sector 5 (LZ4 source buffer unless stripped).
@@ -75,6 +77,7 @@ public sealed class PackPipeline
 			var sector2Offset = (ulong)sector2Stream.Length;
 			sector2Stream.Write(obj);
 
+			var bitcode = bitcodes[target];
 			var sector3Offset = (ulong)sector3Stream.Length;
 			sector3Stream.Write(bitcode);
 

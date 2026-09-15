@@ -8,9 +8,9 @@ public sealed record InstallResult(string PackageId, string Version, string Outp
 public sealed record InstalledPackageMetadata(string PackageId, string Version, string Source, string ContentHash, DateTimeOffset InstalledAt);
 
 /// <summary>
-/// Owns a cache entry whose .cvlib has been structurally, Merkle, and Ed25519 verified.
-/// The archive remains mapped until this object is disposed so callers can consume the
-/// already-verified host slice without reopening or reverifying the package.
+/// Owns a cache entry whose .cvlib has passed structural and Merkle verification and,
+/// when signed, Ed25519 verification. The archive remains mapped until disposal so callers
+/// can consume the already-verified host slice without reopening or reverifying the package.
 /// </summary>
 public sealed class VerifiedCachedPackage(InstallResult result, CvlArchive archive) : IDisposable
 {
@@ -25,24 +25,30 @@ public sealed class PackageInstaller(PackageCache cache)
 	public InstallResult InstallFromFile(string cvlibPath)
 	{
 		var source = Path.GetFullPath(cvlibPath);
-		// Keep the source immutable while hashing, verifying and copying it.
-		using var input = new FileStream(source, FileMode.Open, FileAccess.Read, FileShare.Read);
-		using var hasher = Hasher.New();
-		var buffer = new byte[81920];
-		int count;
-		while ((count = input.Read(buffer)) != 0) hasher.Update(buffer.AsSpan(0, count));
-		var hash = "blake3:" + Convert.ToHexStringLower(hasher.Finalize().AsSpan());
+		// Hash first, then close the source stream before the archive reader maps it.
+		string hash;
+		using (var input = new FileStream(source, FileMode.Open, FileAccess.Read, FileShare.Read))
+		using (var hasher = Hasher.New())
+		{
+			var buffer = new byte[81920];
+			int count;
+			while ((count = input.Read(buffer)) != 0) hasher.Update(buffer.AsSpan(0, count));
+			hash = "blake3:" + Convert.ToHexStringLower(hasher.Finalize().AsSpan());
+		}
 
-		// v0.2.6 trust contract: install consumes only a package whose Ed25519 signature
-		// and Merkle root verify. CvlArchiveReader maps CVLF1902/CVLF1904 as appropriate.
-		using var archive = CvlArchiveReader.Read(source);
+		// The local package-manager increment permits unsigned local packages when no
+		// trusted-key policy is configured. Structural/Merkle verification still runs.
+		using var archive = CvlArchiveReader.Read(source, allowUnsigned: true);
+		var unsigned = archive.IsUnsigned;
+		if (unsigned && HasTrustedKeysPolicy())
+			throw new PackageException(PackageDiagnosticIds.UnsignedRejected, $"Package '{source}' is unsigned and trusted keys are configured.");
 		var metadata = PackageMetadata.Read(archive);
 		var triple = TargetTriple.HostTriple();
 		var hostSlice = archive.Manifest.Slices.SingleOrDefault(s => string.Equals(s.Triple, triple, StringComparison.Ordinal));
 		if (hostSlice is null || (hostSlice.Sector2.Length == 0 && hostSlice.Sector3.Length == 0))
 		{
 			throw new PackageException(
-				CvlFormatDiagnosticIds.MissingTargetSlice,
+				PackageDiagnosticIds.MissingHostSlice,
 				$"No usable slice for host triple '{triple}' in '{source}'.");
 		}
 
@@ -56,7 +62,7 @@ public sealed class PackageInstaller(PackageCache cache)
 			var existing = InstallFromCache(metadata.PackageId, metadata.Version);
 			if (!string.Equals(existing.ContentHash, hash, StringComparison.OrdinalIgnoreCase))
 				throw new PackageException(PackageDiagnosticIds.CachedContentMismatch, $"Package '{metadata.PackageId}@{metadata.Version}' already cached with different content hash.");
-			return existing with { Source = source };
+			return existing with { Source = source, WasUnsigned = unsigned };
 		}
 
 		var temporary = destination + ".tmp_" + Guid.NewGuid().ToString("N");
@@ -74,8 +80,8 @@ public sealed class PackageInstaller(PackageCache cache)
 			}
 			else
 			{
-				// Install-time thinning is mandatory in cvlib v0.2.6. ThinPipeline also
-				// rebases the host ranges and signs the cache-local archive with the machine key.
+				// Install-time thinning is mandatory for fat archives. The rewritten cache
+				// archive is signed with the local machine key because thinning changes the root.
 				using var key = cache.LoadSigningKey();
 				ThinPipeline.Write(archive, triple, output, key);
 
@@ -98,7 +104,7 @@ public sealed class PackageInstaller(PackageCache cache)
 			if (Directory.Exists(temporary)) Directory.Delete(temporary, true);
 		}
 
-		return new(metadata.PackageId, metadata.Version, Path.Combine(destination, name), source, hash, false, false);
+		return new(metadata.PackageId, metadata.Version, Path.Combine(destination, name), source, hash, false, unsigned);
 	}
 
 	/// <summary>
@@ -128,9 +134,12 @@ public sealed class PackageInstaller(PackageCache cache)
 			throw new PackageException(PackageDiagnosticIds.PackageIdMismatch, "Cached package identity does not match its directory.");
 
 		var path = Path.Combine(directory, metadata.PackageId + ".cvlib");
-		var archive = CvlArchiveReader.Read(path);
+		var archive = CvlArchiveReader.Read(path, allowUnsigned: true);
 		try
 		{
+			if (archive.IsUnsigned && HasTrustedKeysPolicy())
+				throw new PackageException(PackageDiagnosticIds.UnsignedRejected, $"Cached package '{packageId}@{version}' is unsigned and trusted keys are configured.");
+
 			var identity = PackageMetadata.Read(archive);
 			if (!string.Equals(identity.PackageId, metadata.PackageId, StringComparison.OrdinalIgnoreCase)
 				|| !string.Equals(identity.Version, version, StringComparison.Ordinal))
@@ -139,7 +148,7 @@ public sealed class PackageInstaller(PackageCache cache)
 			}
 
 			ValidateCacheSliceInvariant(archive, identity.PackageId, version);
-			var result = new InstallResult(identity.PackageId, version, path, metadata.Source, metadata.ContentHash, true, false);
+			var result = new InstallResult(identity.PackageId, version, path, metadata.Source, metadata.ContentHash, true, archive.IsUnsigned);
 			return new VerifiedCachedPackage(result, archive);
 		}
 		catch
@@ -159,6 +168,24 @@ public sealed class PackageInstaller(PackageCache cache)
 	{
 		var directory = cache.GetPackageDirectory(packageId, version);
 		return File.Exists(Path.Combine(directory, ".metadata.json")) && File.Exists(Path.Combine(directory, packageId + ".cvlib"));
+	}
+
+	private bool HasTrustedKeysPolicy()
+	{
+		var path = Path.Combine(cache.RootPath, "keys", "trusted.json");
+		if (!File.Exists(path))
+			return false;
+
+		try
+		{
+			var keys = JsonSerializer.Deserialize<string[]>(File.ReadAllText(path))
+				?? throw new InvalidDataException("Trusted-key policy deserialized to null.");
+			return keys.Any(key => !string.IsNullOrWhiteSpace(key));
+		}
+		catch (Exception ex) when (ex is JsonException or IOException or InvalidDataException)
+		{
+			throw new PackageException(PackageDiagnosticIds.UnsignedRejected, "Trusted-key policy is invalid.", ex.Message);
+		}
 	}
 
 	private static void ValidateCacheSliceInvariant(CvlArchive archive, string packageId, string version)

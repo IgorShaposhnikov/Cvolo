@@ -3,12 +3,13 @@ using System.Diagnostics;
 namespace Cvolo.Packaging;
 
 /// <summary>
-/// Locates a clang (or gcc/g++) driver for compiling the emitted .ll into object code
-/// and bitcode. Prefers a bundled compiler next to the compiler host; falls back to PATH.
+/// Locates clang for compiling emitted .ll into native objects and LLVM bitcode.
+/// Package Sector 3 is LLVM bitcode, so GCC is not a valid packaging fallback.
+/// Prefers a bundled compiler next to the compiler host; falls back to PATH.
 /// </summary>
 internal static class ClangTool
 {
-	private static readonly string[] _candidates = ["clang", "gcc", "g++"];
+	private static readonly string[] _candidates = ["clang"];
 
 	public static string? ResolvePath()
 	{

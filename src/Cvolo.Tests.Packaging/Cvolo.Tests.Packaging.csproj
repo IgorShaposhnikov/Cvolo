@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
 	<PropertyGroup>
 		<IsPackable>false</IsPackable>
@@ -25,6 +25,7 @@
 	<ItemGroup>
 		<ProjectReference Include="..\Cvolo.CLI.Packages\Cvolo.CLI.Packages.csproj" />
 		<ProjectReference Include="..\Cvolo.Packaging\Cvolo.Packaging.csproj" />
+		<ProjectReference Include="..\Cvolo\Cvolo.csproj" />
 	</ItemGroup>
 
 	<ItemGroup Condition="'$(OS)' == 'Windows_NT' And Exists('..\Cvolo\tooling\win-x64\clang.exe')">

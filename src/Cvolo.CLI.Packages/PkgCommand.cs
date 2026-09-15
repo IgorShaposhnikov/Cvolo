@@ -355,5 +355,7 @@ public sealed class PkgCommand : Command
 		_stdout.WriteLine(result.AlreadyInstalled ? "Already installed." : $"Installed {result.PackageId} {result.Version} -> {result.OutputPath}");
 		_stdout.WriteLine($"  Source: {result.Source}");
 		_stdout.WriteLine($"  Hash:   {result.ContentHash}");
+		if (result.WasUnsigned)
+			_stderr.WriteLine($"warning {PackageDiagnosticIds.UnsignedWarning}: Package '{result.PackageId}@{result.Version}' is unsigned; accepted because no trusted-key policy is configured.");
 	}
 }

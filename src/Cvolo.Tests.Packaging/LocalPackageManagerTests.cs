@@ -169,6 +169,24 @@ public sealed class LocalPackageManagerTests : IDisposable
 		Assert.Equal(PackageDiagnosticIds.PackageIdMismatch, ex.Code);
 	}
 
+
+	[Fact]
+	public void PkgInstall_UnsignedWithoutTrustedKeys_WarnsCVLP3050()
+	{
+		var feedDir = Dir("unsigned-feed");
+		var archive = CreateArchive(feedDir, "Foo", "1.0.0", signed: false);
+		var cache = new PackageCache(Path.Combine(_root, "unsigned-cache"));
+		using var output = new StringWriter();
+		using var error = new StringWriter();
+		var command = new PkgCommand(cache, new PackageInstaller(cache), () => _root, output, error);
+
+		var exitCode = command.Parse($"install \"{archive}\"").Invoke();
+
+		Assert.Equal(0, exitCode);
+		Assert.Contains(PackageDiagnosticIds.UnsignedWarning, error.ToString());
+		Assert.True(File.Exists(Path.Combine(cache.GetPackageDirectory("Foo", "1.0.0"), "Foo.cvlib")));
+	}
+
 	[Fact]
 	public void PkgUpdate_UnknownPackageId_ReportsNotReferenced()
 	{
@@ -448,7 +466,7 @@ public sealed class LocalPackageManagerTests : IDisposable
 		return ProjectManifest.Load(dir);
 	}
 
-	private static string CreateArchive(string feedDir, string id, string version, IReadOnlyList<PackageReference>? dependencies = null)
+	private static string CreateArchive(string feedDir, string id, string version, IReadOnlyList<PackageReference>? dependencies = null, bool signed = true)
 	{
 		var path = Path.Combine(feedDir, $"{id}.{version}.cvlib");
 		var slices = new[] { new CvlSliceEntry(TargetTriple.HostTriple(), new(0, 1), new(0, 1)) };
@@ -468,8 +486,15 @@ public sealed class LocalPackageManagerTests : IDisposable
 		writer.SetSector(1, sector);
 		writer.SetSector(2, new byte[] { 1 });
 		writer.SetSector(3, new byte[] { 2 });
-		using var key = Key.Create(SignatureAlgorithm.Ed25519);
-		writer.Write(path, key);
+		if (signed)
+		{
+			using var key = Key.Create(SignatureAlgorithm.Ed25519);
+			writer.Write(path, key);
+		}
+		else
+		{
+			writer.WriteUnsigned(path);
+		}
 		return path;
 	}
 

@@ -34,10 +34,25 @@ public sealed class PackageInstallerTests : IDisposable
 	}
 
 	[Fact]
-	public void UnsignedPackage_IsRejectedByCvlibTrustContract()
+	public void UnsignedPackage_WithoutTrustedKeys_IsAcceptedAndPreservedAsUnsigned()
 	{
-		var error = Assert.Throws<CvlFormatException>(() => _installer.InstallFromFile(CreateArchive(signed: false)));
-		Assert.Equal(CvlFormatDiagnosticIds.BitcodeTampered, error.Code);
+		var installed = _installer.InstallFromFile(CreateArchive(signed: false));
+
+		Assert.True(installed.WasUnsigned);
+		using var cached = CvlArchiveReader.Read(installed.OutputPath, allowUnsigned: true);
+		Assert.True(cached.IsUnsigned);
+	}
+
+	[Fact]
+	public void UnsignedPackage_WithTrustedKeys_IsRejectedWithCVLP3040()
+	{
+		var keysDirectory = Path.Combine(_cache.RootPath, "keys");
+		Directory.CreateDirectory(keysDirectory);
+		File.WriteAllText(Path.Combine(keysDirectory, "trusted.json"), "[\"001122\"]");
+
+		var error = Assert.Throws<PackageException>(() => _installer.InstallFromFile(CreateArchive(signed: false)));
+
+		Assert.Equal(PackageDiagnosticIds.UnsignedRejected, error.Code);
 	}
 
 	[Fact]
@@ -82,10 +97,10 @@ public sealed class PackageInstallerTests : IDisposable
 	}
 
 	[Fact]
-	public void MissingHost_IsRejectedWithCVLF1901WithoutCacheEntry()
+	public void MissingHost_IsRejectedWithCVLP3010WithoutCacheEntry()
 	{
 		var error = Assert.Throws<PackageException>(() => _installer.InstallFromFile(CreateArchive(missingHost: true)));
-		Assert.Equal(CvlFormatDiagnosticIds.MissingTargetSlice, error.Code);
+		Assert.Equal(PackageDiagnosticIds.MissingHostSlice, error.Code);
 		Assert.False(Directory.Exists(_cache.GetPackageDirectory("Foo", "1.0.0")));
 	}
 

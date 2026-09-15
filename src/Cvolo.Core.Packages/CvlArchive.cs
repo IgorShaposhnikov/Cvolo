@@ -18,6 +18,7 @@ public sealed unsafe class CvlArchive : IDisposable
 	public CvlArchiveHeader Header { get; }
 	public IReadOnlyList<CvlSectorIndexEntry> Sectors { get; }
 	public CvlSliceManifest Manifest { get; }
+	public bool IsUnsigned { get; }
 
 	/// <summary>
 	/// Zero-allocation view over the 32-byte Merkle root hash stored in the container header (offset 0x20..0x3F).
@@ -44,7 +45,8 @@ public sealed unsafe class CvlArchive : IDisposable
 		byte* basePointer,
 		CvlArchiveHeader header,
 		IReadOnlyList<CvlSectorIndexEntry> sectors,
-		CvlSliceManifest manifest)
+		CvlSliceManifest manifest,
+		bool isUnsigned)
 	{
 		_mmf = mmf;
 		_accessor = accessor;
@@ -52,6 +54,7 @@ public sealed unsafe class CvlArchive : IDisposable
 		Header = header;
 		Sectors = sectors;
 		Manifest = manifest;
+		IsUnsigned = isUnsigned;
 	}
 
 	/// <summary>

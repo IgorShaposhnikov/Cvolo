@@ -2,12 +2,13 @@ using System.Diagnostics;
 using Cvolo.Analysis.Symbols.FFI;
 using Cvolo.Core.Diagnostics;
 using Cvolo.Projects;
+using Cvolo.Packaging;
 
 namespace Cvolo.Strategies;
 
 internal sealed class LinkStrategy(string binDirectory) : ICompilationStrategy
 {
-	public int Execute(string llPath, CompilationProject project, string? linkerPath, string? linkerName, string optLevel = "Os", bool verbose = false, IEnumerable<NativeLibraryInfo>? nativeLibraries = null, string? targetOs = null, IEnumerable<string>? additionalObjects = null)
+	public int Execute(string llPath, CompilationProject project, string? linkerPath, string? linkerName, string optLevel = "Os", bool verbose = false, IEnumerable<NativeLibraryInfo>? nativeLibraries = null, string? targetOs = null, IEnumerable<string>? additionalInputs = null)
 	{
 		if (linkerPath is null)
 		{
@@ -37,11 +38,18 @@ internal sealed class LinkStrategy(string binDirectory) : ICompilationStrategy
 			? " -Xlinker /subsystem:console"
 			: "";
 
-		// Package dependencies are already compiled native objects extracted from .cvlib.
-		// Preserve the loader-provided deterministic id@version order.
-		var objectFlags = additionalObjects is null
-			? string.Empty
-			: string.Concat(additionalObjects.Select(path => $" \"{Path.GetFullPath(path)}\""));
+		// Local Package Manager Phase 4 links the installed package's Sector 3 LLVM
+		// bitcode directly with the application's IR. Preserve deterministic id@version order.
+		var packageInputs = additionalInputs?
+			.Select(Path.GetFullPath)
+			.ToArray() ?? [];
+		if (packageInputs.Any(path => string.Equals(Path.GetExtension(path), ".bc", StringComparison.OrdinalIgnoreCase)) && !isClang)
+		{
+			Console.Error.WriteLine($"error {PackageDiagnosticIds.BitcodeLinkerUnavailable}: Package Sector 3 bitcode requires clang/LLVM; selected linker is '{linkerName}'.");
+			return 1;
+		}
+
+		var packageInputFlags = string.Concat(packageInputs.Select(path => $" \"{path}\""));
 
 		// FFI native libraries: [LibraryImport] forwards ONLY the path matching the current
 		// compilation target OS (win:/linux:/mac:); a missing target path falls back to the
@@ -96,7 +104,7 @@ internal sealed class LinkStrategy(string binDirectory) : ICompilationStrategy
 		var psi = new ProcessStartInfo
 		{
 			FileName = linkerPath,
-			Arguments = $"-o \"{binaryPath}\" \"{llPath}\"{objectFlags}{typeFlag}{visibilityFlag}{optFlag}{libraryFlags}{subsystemFlag}",
+			Arguments = $"-o \"{binaryPath}\" \"{llPath}\"{packageInputFlags}{typeFlag}{visibilityFlag}{optFlag}{libraryFlags}{subsystemFlag}",
 			RedirectStandardOutput = !verbose,
 			RedirectStandardError = !verbose,
 			UseShellExecute = false,

@@ -42,7 +42,7 @@ public sealed class PackCommand : Command
 		};
 		var noSignOption = new Option<bool>("--no-sign")
 		{
-			Description = "Write an unsigned archive (96 zero signature bytes). Default for cvolo pack."
+			Description = "Write an unsigned archive (96 zero signature bytes)."
 		};
 		var verboseOption = new Option<bool>("--verbose", "-v")
 		{

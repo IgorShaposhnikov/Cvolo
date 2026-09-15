@@ -16,6 +16,9 @@ public static class PackageDiagnosticIds
 	/// <summary>Error: the &lt;Version&gt; value is not valid SemVer 2.0.</summary>
 	public const string InvalidSemVer = "CVLP3002";
 
+	/// <summary>Error: no usable slice exists for the host triple during package installation.</summary>
+	public const string MissingHostSlice = "CVLP3010";
+
 	/// <summary>Error: the package ID does not match the target cache directory.</summary>
 	public const string PackageIdMismatch = "CVLP3011";
 
@@ -28,8 +31,11 @@ public static class PackageDiagnosticIds
 	/// <summary>Error: a cached .cvlib is not thinned to exactly the host target as required by cvlib v0.2.6.</summary>
 	public const string CacheNotThinned = "CVLP3014";
 
-	/// <summary>Error: the selected host slice has no Sector 2 native object for the current non-LTO build path.</summary>
-	public const string NativeObjectUnavailable = "CVLP3015";
+	/// <summary>Error: the selected host slice has no Sector 3 bitcode required by the Phase 4 build path.</summary>
+	public const string BitcodeUnavailable = "CVLP3015";
+
+	/// <summary>Error: package bitcode cannot be linked because clang/LLVM is unavailable.</summary>
+	public const string BitcodeLinkerUnavailable = "CVLP3016";
 
 	/// <summary>Error: two transitive dependencies require incompatible version ranges.</summary>
 	public const string VersionConflict = "CVLP3020";
@@ -42,5 +48,11 @@ public static class PackageDiagnosticIds
 
 	/// <summary>Error: cached package content recorded at install time does not match the lock file during build.</summary>
 	public const string BuildCacheContentMismatch = "CVLP3032";
+
+	/// <summary>Error: trusted-key policy rejects an unsigned package.</summary>
+	public const string UnsignedRejected = "CVLP3040";
+
+	/// <summary>Warning: an unsigned package is accepted because no trusted-key policy is configured.</summary>
+	public const string UnsignedWarning = "CVLP3050";
 
 }

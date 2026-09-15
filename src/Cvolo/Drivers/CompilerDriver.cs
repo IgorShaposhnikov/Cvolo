@@ -65,9 +65,9 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 
 				if (verbose && !reporter.Exclusive)
 				{
-					Console.WriteLine("Package objects selected for linking:");
+					Console.WriteLine("Package bitcode selected for linking:");
 					foreach (var artifact in packageArtifacts)
-						Console.WriteLine($"  -> {artifact.PackageId}@{artifact.Version}: {artifact.NativeObjectPath}");
+						Console.WriteLine($"  -> {artifact.PackageId}@{artifact.Version}: {artifact.BitcodePath}");
 					Console.WriteLine();
 				}
 			}
@@ -305,6 +305,15 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 			? new IrOnlyStrategy()
 			: new LinkStrategy(binDirectory);
 
+		// A [LibraryImport("Foo")] matching an installed PackageId is satisfied by that
+		// package's Sector 3 bitcode, so do not also forward -lFoo to the native linker.
+		var packageIds = packageArtifacts
+			.Select(a => a.PackageId)
+			.ToHashSet(StringComparer.OrdinalIgnoreCase);
+		var nativeLibraries = binder.Context.NativeLibraries.Values
+			.Where(library => !packageIds.Contains(library.LibraryName))
+			.ToArray();
+
 		var linkResult = strategy.Execute(
 			llPath,
 			project,
@@ -312,16 +321,16 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 			linkerName,
 			optLevel,
 			verbose,
-			binder.Context.NativeLibraries.Values,
+			nativeLibraries,
 			targetOs,
-			packageArtifacts.Select(a => a.NativeObjectPath));
+			packageArtifacts.Select(a => a.BitcodePath!));
 		if (linkResult != 0)
 		{
 			return linkResult;
 		}
 
 		// 8b. Copy referenced native libraries to the output directory so the binary can find them at runtime
-		CopyNativeLibrariesToOutput(binder.Context.NativeLibraries.Values, project, binDirectory, targetOs, verbose);
+		CopyNativeLibrariesToOutput(nativeLibraries, project, binDirectory, targetOs, verbose);
 
 		// 9. Execute immediate runtime execution if requested
 		if (runAfterCompile)

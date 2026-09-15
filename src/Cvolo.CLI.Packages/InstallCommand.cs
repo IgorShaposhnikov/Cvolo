@@ -17,6 +17,8 @@ public sealed class InstallCommand : Command
 				Console.WriteLine(result.AlreadyInstalled ? "Already installed." : $"Installed {result.PackageId} {result.Version} → {result.OutputPath}");
 				Console.WriteLine($"  Source: {result.Source}");
 				Console.WriteLine($"  Hash:   {result.ContentHash}");
+				if (result.WasUnsigned)
+					Console.Error.WriteLine($"warning {PackageDiagnosticIds.UnsignedWarning}: Package '{result.PackageId}@{result.Version}' is unsigned; accepted because no trusted-key policy is configured.");
 				return 0;
 			}
 			catch (Exception ex)

@@ -23,9 +23,11 @@ public sealed class CvlArchiveReader
 	/// Opens, structurally validates, and cryptographically verifies a .cvlib archive.
 	/// By default the full Merkle tree is re-verified (install/build time). Pass
 	/// <paramref name="skipMerkleHashVerification"/> to skip the recomputation (plugin/LSP hot paths)
-	/// and <paramref name="verifySignature"/> to skip the Ed25519 check (unsigned dev artifacts).
+	/// and <paramref name="verifySignature"/> to skip the Ed25519 check. When signature
+	/// verification is enabled, <paramref name="allowUnsigned"/> permits an all-zero signature
+	/// block while still enforcing structural and Merkle verification.
 	/// </summary>
-	public static unsafe CvlArchive Read(string path, bool skipMerkleHashVerification = false, bool verifySignature = true)
+	public static unsafe CvlArchive Read(string path, bool skipMerkleHashVerification = false, bool verifySignature = true, bool allowUnsigned = false)
 	{
 		var fileInfo = new FileInfo(path);
 
@@ -179,13 +181,30 @@ public sealed class CvlArchiveReader
 
 		try
 		{
+			var signatureBlock = new ReadOnlySpan<byte>(basePtr + header.SignatureOffset, 96);
+			var isUnsigned = signatureBlock.IndexOfAnyExcept((byte)0) < 0;
+
 			if (verifySignature)
-				VerifySignature(basePtr, header, sectors);
+			{
+				if (isUnsigned)
+				{
+					if (!allowUnsigned)
+					{
+						var isStripSource = sectors.Length >= 5 && sectors[4].Length == 0;
+						var diagnosticId = isStripSource ? CvlFormatDiagnosticIds.FatalStripSource : CvlFormatDiagnosticIds.BitcodeTampered;
+						throw new CvlFormatException(diagnosticId, (long)header.SignatureOffset, "Archive is unsigned.");
+					}
+				}
+				else
+				{
+					VerifySignature(basePtr, header, sectors);
+				}
+			}
 
 			if (!skipMerkleHashVerification)
 				VerifyMerkleTree(basePtr, header, sectors);
 
-			return new CvlArchive(mmf, accessor, basePtr, header, sectors, manifest);
+			return new CvlArchive(mmf, accessor, basePtr, header, sectors, manifest, isUnsigned);
 		}
 		catch
 		{

@@ -165,10 +165,14 @@ public sealed class PackPipelineTests : IDisposable
 		Assert.Equal(0UL, archive.Manifest.Slices[0].Sector2.Offset);
 		Assert.Equal(archive.Manifest.Slices[0].Sector2.Length, archive.Manifest.Slices[1].Sector2.Offset);
 
-		// Sector 3 reuses the same bitcode for every target.
-		Assert.Equal(archive.Manifest.Slices[0].Sector3.Length, archive.Manifest.Slices[1].Sector3.Length);
+		// Sector 3 carries target-specific bitcode ranges in the same deterministic order.
+		Assert.Equal(0UL, archive.Manifest.Slices[0].Sector3.Offset);
+		Assert.Equal(archive.Manifest.Slices[0].Sector3.Length, archive.Manifest.Slices[1].Sector3.Offset);
 		var bitcode = archive.GetSectorPayload(3);
-		Assert.Equal(2UL * archive.Manifest.Slices[0].Sector3.Length, (ulong)bitcode.Length);
+		Assert.Equal(
+			archive.Manifest.Slices[0].Sector3.Length + archive.Manifest.Slices[1].Sector3.Length,
+			(ulong)bitcode.Length);
+		Assert.True(archive.Manifest.Slices.All(slice => slice.Sector3.Length > 0));
 	}
 
 	[Fact]

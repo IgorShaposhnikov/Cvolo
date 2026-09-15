@@ -16,7 +16,7 @@ namespace Cvolo.Packaging;
 /// </summary>
 public sealed class PackCompileResult : IDisposable
 {
-	private byte[]? _bitcode;
+	private readonly Dictionary<string, byte[]> _bitcodeByTarget = new(StringComparer.Ordinal);
 
 	internal PackCompileResult(string llIr, string llFilePath, IReadOnlyList<string> sourceFiles, string workingDirectory)
 	{
@@ -50,19 +50,20 @@ public sealed class PackCompileResult : IDisposable
 	}
 
 	/// <summary>
-	/// Compiles the emitted IR to a bitcode file. The result is produced once,
-	/// cached, and reused across all target slices. Requires clang (gcc cannot emit bitcode).
+	/// Compiles the emitted IR to target-specific bitcode and caches it per target triple.
+	/// Requires clang (gcc cannot emit LLVM bitcode).
 	/// </summary>
 	public byte[] ProduceBitcode(string targetTriple)
 	{
-		if (_bitcode is not null)
-			return _bitcode;
+		if (_bitcodeByTarget.TryGetValue(targetTriple, out var cached))
+			return cached;
 
 		var clang = RequireClang();
-		var output = Path.Combine(WorkingDirectory, "module.bc");
+		var output = Path.Combine(WorkingDirectory, $"module.{Sanitize(targetTriple)}.bc");
 		ProcessRunner.Run(clang, "clang", "-target", targetTriple, "-emit-llvm", "-c", LlFilePath, "-o", output);
-		_bitcode = File.ReadAllBytes(output);
-		return _bitcode;
+		var bitcode = File.ReadAllBytes(output);
+		_bitcodeByTarget[targetTriple] = bitcode;
+		return bitcode;
 	}
 
 	public void Dispose()
@@ -82,7 +83,7 @@ public sealed class PackCompileResult : IDisposable
 	{
 		return ClangTool.ResolvePath()
 			?? throw new InvalidOperationException(
-				"No clang compiler found. Install clang (or gcc/g++) on PATH or place a bundled clang next to the compiler host.");
+				"No clang compiler found. Install clang on PATH or place a bundled clang next to the compiler host.");
 	}
 
 	private static string Sanitize(string targetTriple) => targetTriple.Replace(':', '_').Replace('/', '_');

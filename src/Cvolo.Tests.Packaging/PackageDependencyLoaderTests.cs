@@ -29,11 +29,11 @@ public sealed class PackageDependencyLoaderTests : IDisposable
 		var artifact = Assert.Single(artifacts);
 		Assert.Equal("Foo", artifact.PackageId);
 		Assert.Equal("1.0.0", artifact.Version);
-		Assert.Equal(new byte[] { 0x10, 0x20, 0x30, 0x40 }, File.ReadAllBytes(artifact.NativeObjectPath));
-		Assert.StartsWith(Path.Combine(project.ProjectDirectory, ".cvolo", "build"), artifact.NativeObjectPath, StringComparison.OrdinalIgnoreCase);
-		var extension = OperatingSystem.IsWindows() ? ".obj" : ".o";
-		Assert.EndsWith(Path.Combine("foo", "1.0.0", "Foo" + extension), artifact.NativeObjectPath, StringComparison.OrdinalIgnoreCase);
-		Assert.Null(artifact.BitcodePath);
+		Assert.NotNull(artifact.NativeObjectPath);
+		Assert.Equal(new byte[] { 0x10, 0x20, 0x30, 0x40 }, File.ReadAllBytes(artifact.NativeObjectPath!));
+		Assert.Equal(new byte[] { 0x42 }, File.ReadAllBytes(artifact.BitcodePath!));
+		Assert.StartsWith(Path.Combine(project.ProjectDirectory, ".cvolo", "build"), artifact.BitcodePath!, StringComparison.OrdinalIgnoreCase);
+		Assert.EndsWith(Path.Combine("foo", "1.0.0", "Foo.bc"), artifact.BitcodePath!, StringComparison.OrdinalIgnoreCase);
 	}
 
 	[Fact]
@@ -48,14 +48,19 @@ public sealed class PackageDependencyLoaderTests : IDisposable
 		var loader = new PackageDependencyLoader(cache, installer);
 
 		var first = Assert.Single(loader.Load(project, lockFile));
-		var firstBytes = File.ReadAllBytes(first.NativeObjectPath);
-		var firstPath = first.NativeObjectPath;
+		var firstObjectBytes = File.ReadAllBytes(first.NativeObjectPath!);
+		var firstBitcodeBytes = File.ReadAllBytes(first.BitcodePath!);
+		var firstObjectPath = first.NativeObjectPath;
+		var firstBitcodePath = first.BitcodePath;
 
 		var second = Assert.Single(loader.Load(project, lockFile));
-		var secondBytes = File.ReadAllBytes(second.NativeObjectPath);
+		var secondObjectBytes = File.ReadAllBytes(second.NativeObjectPath!);
+		var secondBitcodeBytes = File.ReadAllBytes(second.BitcodePath!);
 
-		Assert.Equal(firstPath, second.NativeObjectPath);
-		Assert.Equal(firstBytes, secondBytes);
+		Assert.Equal(firstObjectPath, second.NativeObjectPath);
+		Assert.Equal(firstBitcodePath, second.BitcodePath);
+		Assert.Equal(firstObjectBytes, secondObjectBytes);
+		Assert.Equal(firstBitcodeBytes, secondBitcodeBytes);
 	}
 
 	[Fact]
@@ -84,7 +89,7 @@ public sealed class PackageDependencyLoaderTests : IDisposable
 	}
 
 	[Fact]
-	public void Load_BitcodeOnlyHostSlice_IsNotMisreportedAsMissingTarget()
+	public void Load_BitcodeOnlyHostSlice_IsValidForPhase4Build()
 	{
 		var project = CreateProject("bitcode-app", [new PackageReference("Foo", "1.0.0")]);
 		var source = CreateArchive("Foo", "1.0.0", []);
@@ -92,10 +97,24 @@ public sealed class PackageDependencyLoaderTests : IDisposable
 		new PackageInstaller(cache).InstallFromFile(source);
 		var lockFile = WriteLock(project, "Foo", "1.0.0", LocalFeed.ComputeHash(source));
 
+		var artifact = Assert.Single(new PackageDependencyLoader(cache, new PackageInstaller(cache)).Load(project, lockFile));
+
+		Assert.Null(artifact.NativeObjectPath);
+		Assert.Equal(new byte[] { 0x42 }, File.ReadAllBytes(artifact.BitcodePath!));
+	}
+
+	[Fact]
+	public void Load_NativeObjectOnlyHostSlice_ReportsBitcodeUnavailable()
+	{
+		var project = CreateProject("object-only-app", [new PackageReference("Foo", "1.0.0")]);
+		var source = CreateArchive("Foo", "1.0.0", [0x10], bitcodeBytes: []);
+		var cache = new PackageCache(Path.Combine(_root, "cache-object-only"));
+		new PackageInstaller(cache).InstallFromFile(source);
+		var lockFile = WriteLock(project, "Foo", "1.0.0", LocalFeed.ComputeHash(source));
+
 		var ex = Assert.Throws<PackageException>(() => new PackageDependencyLoader(cache, new PackageInstaller(cache)).Load(project, lockFile));
 
-		Assert.Equal(PackageDiagnosticIds.NativeObjectUnavailable, ex.Code);
-		Assert.NotEqual(CvlFormatDiagnosticIds.MissingTargetSlice, ex.Code);
+		Assert.Equal(PackageDiagnosticIds.BitcodeUnavailable, ex.Code);
 	}
 
 	[Fact]
@@ -164,10 +183,11 @@ public sealed class PackageDependencyLoaderTests : IDisposable
 		return ProjectManifest.Load(directory);
 	}
 
-	private string CreateArchive(string id, string version, byte[] objectBytes)
+	private string CreateArchive(string id, string version, byte[] objectBytes, byte[]? bitcodeBytes = null)
 	{
 		var path = Path.Combine(_root, $"{id}.{version}.{Guid.NewGuid():N}.cvlib");
-		var slice = new CvlSliceEntry(TargetTriple.HostTriple(), new(0, (ulong)objectBytes.Length), new(0, 1));
+		bitcodeBytes ??= [0x42];
+		var slice = new CvlSliceEntry(TargetTriple.HostTriple(), new(0, (ulong)objectBytes.Length), new(0, (ulong)bitcodeBytes.Length));
 		var json = JsonSerializer.SerializeToUtf8Bytes(new
 		{
 			Format = "cvlib.slice-manifest.v1",
@@ -183,7 +203,7 @@ public sealed class PackageDependencyLoaderTests : IDisposable
 		var writer = new CvlArchiveWriter();
 		writer.SetSector(1, sector1);
 		writer.SetSector(2, objectBytes);
-		writer.SetSector(3, new byte[] { 0x42 });
+		writer.SetSector(3, bitcodeBytes);
 		using var key = Key.Create(SignatureAlgorithm.Ed25519);
 		writer.Write(path, key);
 		return path;
