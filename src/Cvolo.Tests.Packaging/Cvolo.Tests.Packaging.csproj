@@ -23,6 +23,7 @@
 	</ItemGroup>
 
 	<ItemGroup>
+		<ProjectReference Include="..\Cvolo.CLI.Packages\Cvolo.CLI.Packages.csproj" />
 		<ProjectReference Include="..\Cvolo.Packaging\Cvolo.Packaging.csproj" />
 	</ItemGroup>
 

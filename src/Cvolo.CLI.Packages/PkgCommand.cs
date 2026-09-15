@@ -97,7 +97,17 @@ public sealed class PkgCommand : Command
 	private Command CreateUpdateCommand()
 	{
 		var command = new Command("update", "Re-resolve dependencies and rewrite cvolo.lock.json.");
-		command.SetAction(_ => Run(() => ResolveWriteAndInstall(ProjectManifest.Load(Directory.GetCurrentDirectory()))));
+		var id = new Argument<string?>("id") { Arity = ArgumentArity.ZeroOrOne, Description = "Optional direct package ID to update." };
+		command.Add(id);
+		command.SetAction(parseResult => Run(() =>
+		{
+			var manifest = ProjectManifest.Load(Directory.GetCurrentDirectory());
+			var value = parseResult.GetValue(id);
+			if (!string.IsNullOrWhiteSpace(value) && !manifest.Dependencies.Any(d => string.Equals(d.Id, value, StringComparison.OrdinalIgnoreCase)))
+				throw new PackageException(PackageDiagnosticIds.PackageNotReferenced, $"Project does not reference package '{value}'.");
+
+			ResolveWriteAndInstall(manifest);
+		}));
 		return command;
 	}
 
@@ -123,7 +133,7 @@ public sealed class PkgCommand : Command
 
 	private Command CreateCachePruneCommand()
 	{
-		var command = new Command("prune", "Remove cached packages.");
+		var command = new Command("prune", "Remove cached packages; without --unused, removes all cached packages.");
 		var unused = new Option<bool>("--unused") { Description = "Only remove packages not referenced by lock files under the current directory." };
 		command.Add(unused);
 		command.SetAction(parseResult => Run(() =>

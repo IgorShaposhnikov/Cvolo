@@ -60,8 +60,15 @@ public sealed class LocalFeed
 		return index.Packages.Select(entry =>
 		{
 			var fullPath = Path.GetFullPath(entry.File, root);
+			if (!fullPath.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+				throw new InvalidDataException($"Feed package '{entry.File}' escapes the feed directory.");
 			using var archive = CvlArchiveReader.Read(fullPath, verifySignature: false);
 			var metadata = PackageMetadata.Read(archive);
+			if (!string.Equals(entry.Id, metadata.PackageId, StringComparison.OrdinalIgnoreCase) || entry.Version != metadata.Version)
+				throw new PackageException(PackageDiagnosticIds.PackageIdMismatch, $"Feed index entry '{entry.Id}@{entry.Version}' does not match archive '{metadata.PackageId}@{metadata.Version}'.");
+			var hash = ComputeHash(fullPath);
+			if (!string.Equals(entry.Hash, hash, StringComparison.OrdinalIgnoreCase))
+				throw new PackageException(PackageDiagnosticIds.CachedContentMismatch, $"Feed index hash for '{entry.Id}@{entry.Version}' does not match archive content.");
 			return new LocalFeedPackage(entry.Id, entry.Version, entry.Hash, entry.File, fullPath, metadata.Dependencies);
 		}).ToList();
 	}
@@ -73,7 +80,7 @@ public sealed class LocalFeed
 		return new LocalFeedPackage(metadata.PackageId, metadata.Version, ComputeHash(path), Path.GetFileName(path), path, metadata.Dependencies);
 	}
 
-	internal static string ComputeHash(string path)
+	public static string ComputeHash(string path)
 	{
 		using var stream = File.OpenRead(path);
 		using var hasher = Hasher.New();

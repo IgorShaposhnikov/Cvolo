@@ -1,4 +1,7 @@
 using System.Diagnostics;
+using System.Text.Json;
+using System.Xml;
+using System.Xml.Linq;
 using Cvolo.Analysis;
 using Cvolo.Analysis.Symbols.FFI;
 using Cvolo.Core.AST;
@@ -6,6 +9,7 @@ using Cvolo.Core.AST.Base;
 using Cvolo.Core.Diagnostics;
 using Cvolo.Core.Diagnostics.Reporters;
 using Cvolo.Emitter.LLVM;
+using Cvolo.Packaging;
 using Cvolo.Projects;
 using Cvolo.Strategies;
 using Cvolo.Syntax;
@@ -45,6 +49,9 @@ internal sealed class CompilerDriver : ICompilerDriver
 			reporter.ReportSynthetic(null, "error", ex.Message, path);
 			return 1;
 		}
+
+		if (!ValidatePackageLock(path, reporter))
+			return 1;
 
 		// 2. Instrument compiled files list only under verbose logging rules.
 		// Machine reporters claim stdout, so verbose chatter is gated on !Exclusive.
@@ -132,7 +139,7 @@ internal sealed class CompilerDriver : ICompilerDriver
 			return 1;
 		}
 
-asts = loweredAsts;
+		asts = loweredAsts;
 
 		// 4. Semantic analysis passes (Name resolution, types, moves, borrows, and lifetimes validation)
 		binder.Context.LegacyVisibility = legacyVisibility;
@@ -153,7 +160,7 @@ asts = loweredAsts;
 			.ToList();
 		reporter.ReportWarnings(warnings, noWarnIds);
 
-// 5. Short-circuit immediately if in rapid syntax/semantic check mode
+		// 5. Short-circuit immediately if in rapid syntax/semantic check mode
 		if (checkOnly)
 		{
 			reporter.ReportCheckSuccess();
@@ -314,6 +321,90 @@ asts = loweredAsts;
 			"json" => new JsonDiagnosticReporter(),
 			_ => new TextDiagnosticReporter(suppressWarnings)
 		};
+	}
+
+	private static bool ValidatePackageLock(string path, IDiagnosticReporter reporter)
+	{
+		if (File.Exists(path) && string.Equals(Path.GetExtension(path), ".cvl", StringComparison.OrdinalIgnoreCase))
+			return true;
+
+		var hasRefs = HasPackageReferences(path);
+		ProjectManifest manifest;
+		try
+		{
+			manifest = ProjectManifest.Load(path);
+		}
+		catch (FileNotFoundException)
+		{
+			return true;
+		}
+		catch (PackageException ex) when ((ex.Code is PackageDiagnosticIds.MissingPackageId or PackageDiagnosticIds.MissingVersion) && !hasRefs)
+		{
+			return true;
+		}
+		catch (PackageException ex)
+		{
+			reporter.ReportSynthetic(PackageDiagnosticIds.LockOutOfSync, "error", ex.Message, path);
+			return false;
+		}
+		catch (Exception ex) when (ex is IOException or XmlException or InvalidDataException)
+		{
+			reporter.ReportSynthetic(PackageDiagnosticIds.LockOutOfSync, "error", $"Cannot read project manifest: {ex.Message}", path);
+			return false;
+		}
+
+		if (manifest.Dependencies.Count == 0)
+			return true;
+
+		var lockPath = LockFile.GetPath(manifest);
+		if (!File.Exists(lockPath))
+		{
+			ReportLockOutOfSync(reporter, path, "cvolo.lock.json is missing; run 'cvolo pkg update' or 'cvolo pkg install'.");
+			return false;
+		}
+
+		try
+		{
+			var lockFile = LockFile.Read(lockPath);
+			foreach (var dependency in manifest.Dependencies)
+			{
+				if (!lockFile.Packages.TryGetValue(dependency.Id, out var locked) || !VersionRange.Parse(dependency.Version).Allows(SemanticVersion.Parse(locked.Resolved)))
+				{
+					ReportLockOutOfSync(reporter, path, $"cvolo.lock.json is out of sync for package '{dependency.Id}'; run 'cvolo pkg update'.");
+					return false;
+				}
+			}
+		}
+		catch (Exception ex) when (ex is IOException or InvalidDataException or JsonException or PackageException)
+		{
+			ReportLockOutOfSync(reporter, path, $"cvolo.lock.json is invalid: {ex.Message}");
+			return false;
+		}
+
+		return true;
+	}
+
+	private static bool HasPackageReferences(string path)
+	{
+		var projectPath = Directory.Exists(path)
+			? Directory.GetFiles(Path.GetFullPath(path), "*.cvlproj", SearchOption.TopDirectoryOnly).FirstOrDefault()
+			: string.Equals(Path.GetExtension(path), ".cvlproj", StringComparison.OrdinalIgnoreCase) ? Path.GetFullPath(path) : null;
+		if (projectPath is null || !File.Exists(projectPath))
+			return false;
+
+		try
+		{
+			return XDocument.Load(projectPath).Descendants("PackageReference").Any();
+		}
+		catch (Exception ex) when (ex is IOException or XmlException or InvalidDataException)
+		{
+			return false;
+		}
+	}
+
+	private static void ReportLockOutOfSync(IDiagnosticReporter reporter, string path, string message)
+	{
+		reporter.ReportSynthetic(PackageDiagnosticIds.LockOutOfSync, "error", message, path);
 	}
 
 	private static void CopyNativeLibrariesToOutput(IEnumerable<NativeLibraryInfo> nativeLibraries, CompilationProject project, string binDirectory, string? targetOs, bool verbose)

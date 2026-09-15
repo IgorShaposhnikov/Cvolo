@@ -1,10 +1,12 @@
 using System.Buffers.Binary;
 using System.Text.Json;
+using Cvolo.CLI.Packages;
 using Cvolo.Core.Packages;
 using Cvolo.Packaging;
 
 namespace Cvolo.Tests.Packaging;
 
+[Collection("Sequential")]
 public sealed class LocalPackageManagerTests : IDisposable
 {
 	private readonly string _root = Path.Combine(Path.GetTempPath(), "cvolo-local-pkg-" + Guid.NewGuid().ToString("N"));
@@ -86,6 +88,59 @@ public sealed class LocalPackageManagerTests : IDisposable
 		Assert.Empty(manifest.Dependencies);
 	}
 
+	[Fact]
+	public void LocalFeed_IndexRejectsMismatchedHash()
+	{
+		var feedDir = Dir("indexed-feed");
+		CreateArchive(feedDir, "Foo", "1.0.0");
+		WriteFeedIndex(feedDir, "Foo", "1.0.0", "blake3:bad", "Foo.1.0.0.cvlib");
+
+		var ex = Assert.Throws<PackageException>(() => LocalFeed.Load(feedDir, _root));
+
+		Assert.Equal(PackageDiagnosticIds.CachedContentMismatch, ex.Code);
+	}
+
+	[Fact]
+	public void LocalFeed_IndexRejectsMismatchedIdentity()
+	{
+		var feedDir = Dir("identity-feed");
+		var archive = CreateArchive(feedDir, "Foo", "1.0.0");
+		WriteFeedIndex(feedDir, "Bar", "1.0.0", LocalFeed.ComputeHash(archive), "Foo.1.0.0.cvlib");
+
+		var ex = Assert.Throws<PackageException>(() => LocalFeed.Load(feedDir, _root));
+
+		Assert.Equal(PackageDiagnosticIds.PackageIdMismatch, ex.Code);
+	}
+
+	[Fact]
+	public void PkgUpdate_UnknownPackageId_ReportsNotReferenced()
+	{
+		// TODO: inject working directory and console writers into PkgCommand so CLI tests do not mutate process-wide state.
+		var feedDir = Dir("update-feed");
+		CreateArchive(feedDir, "Foo", "1.0.0");
+		CreateProject("update-app", feedDir, [new PackageReference("Foo", "1.0.0")]);
+		var cache = new PackageCache(Path.Combine(_root, "cache"));
+		var command = new PkgCommand(cache, new PackageInstaller(cache));
+		var previousCurrentDirectory = Directory.GetCurrentDirectory();
+		var previousError = Console.Error;
+		using var error = new StringWriter();
+		try
+		{
+			Directory.SetCurrentDirectory(Path.Combine(_root, "update-app"));
+			Console.SetError(error);
+
+			var exitCode = command.Parse("update Missing").Invoke();
+
+			Assert.Equal(1, exitCode);
+			Assert.Contains(PackageDiagnosticIds.PackageNotReferenced, error.ToString());
+		}
+		finally
+		{
+			Console.SetError(previousError);
+			Directory.SetCurrentDirectory(previousCurrentDirectory);
+		}
+	}
+
 	private string Dir(string name)
 	{
 		var path = Path.Combine(_root, name);
@@ -132,6 +187,15 @@ public sealed class LocalPackageManagerTests : IDisposable
 		writer.SetSector(3, new byte[] { 2 });
 		writer.WriteUnsigned(path);
 		return path;
+	}
+
+	private static void WriteFeedIndex(string feedDir, string id, string version, string hash, string file)
+	{
+		File.WriteAllText(Path.Combine(feedDir, "index.json"), JsonSerializer.Serialize(new
+		{
+			Format = "cvolo.feed.v1",
+			Packages = new[] { new { Id = id, Version = version, Hash = hash, File = file } }
+		}));
 	}
 
 	public void Dispose() => Directory.Delete(_root, true);

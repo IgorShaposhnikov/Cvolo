@@ -28,6 +28,9 @@ public static class PackageDiagnosticIds
 	/// <summary>Error: two transitive dependencies require incompatible version ranges.</summary>
 	public const string VersionConflict = "CVLP3020";
 
+	/// <summary>Error: the project does not reference the requested package.</summary>
+	public const string PackageNotReferenced = "CVLP3021";
+
 	/// <summary>Error: cvolo.lock.json is out of sync with .cvlproj; run 'cvolo pkg install'.</summary>
 	public const string LockOutOfSync = "CVLP3030";
 

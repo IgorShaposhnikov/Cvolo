@@ -1,6 +1,6 @@
 namespace Cvolo.Packaging;
 
-internal sealed class VersionRange
+public sealed class VersionRange
 {
 	private readonly string _text;
 	private readonly SemanticVersion? _lower;
