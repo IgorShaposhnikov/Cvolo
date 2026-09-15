@@ -207,6 +207,38 @@ public sealed class PackPipelineTests : IDisposable
 	}
 
 	[Fact]
+	public void Pack_LibraryProject_StoresPublicCvoloApiMetadata()
+	{
+		RequireClang();
+		var projectDir = CreateProject(Fixture("api-metadata"), "Library");
+		File.WriteAllText(Path.Combine(projectDir, "Api.cvl"), """
+namespace TestLibrary;
+
+public int Add(int a, int b) { return a + b; }
+int Hidden(int value) { return value; }
+""");
+
+		var result = PackPipeline.Execute(projectDir, DefaultOptions(
+			Fixture(Path.Combine("out", "api-metadata.cvlib")),
+			[TargetTriple.HostTriple()],
+			stripSource: true));
+
+		using var archive = CvlArchiveReader.Read(result.OutputPath, verifySignature: false);
+		Assert.Equal(string.Empty, archive.ReadSourceBuffer());
+
+		var api = PackageApiMetadata.Read(archive);
+		var unit = Assert.Single(api.Units);
+		Assert.Equal("TestLibrary", unit.Namespace);
+		var function = Assert.Single(unit.Functions);
+		Assert.Equal("Add", function.Name);
+		Assert.Equal("int", function.ReturnType);
+		Assert.Collection(
+			function.Parameters,
+			parameter => { Assert.Equal("int", parameter.Type); Assert.Equal("a", parameter.Name); },
+			parameter => { Assert.Equal("int", parameter.Type); Assert.Equal("b", parameter.Name); });
+	}
+
+	[Fact]
 	public void Pack_Signed_ArchiveVerifiesWithGivenKey()
 	{
 		RequireClang();

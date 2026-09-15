@@ -55,7 +55,7 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 			return 1;
 
 		IReadOnlyList<ResolvedPackageArtifacts> packageArtifacts = [];
-		if (!checkOnly && !emitLowered && !llvmOnly && packageState is { } validatedPackages)
+		if (!emitLowered && packageState is { } validatedPackages)
 		{
 			try
 			{
@@ -119,6 +119,18 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 			binder.Context.FileContexts[ast!] = context;
 		}
 
+		// Installed packages contribute public Cvolo declarations to semantic analysis.
+		// These synthetic units have no bodies; Sector 3 bitcode remains the sole implementation.
+		foreach (var artifact in packageArtifacts)
+		{
+			foreach (var packageUnit in artifact.ApiMetadata.CreateCompilationUnits(artifact.PackageId, artifact.Version))
+			{
+				asts.Add(packageUnit);
+				binder.Context.FileContexts[packageUnit] = packageUnit.Context;
+				binder.Context.ExternalPackageUnits.Add(packageUnit);
+			}
+		}
+
 		// Cross-file declaration index feeding the try/catch lowering (function
 		// Result error types, [Error] marks, declared type kinds).
 		var declarationIndex = DeclarationIndex.Build(asts);
@@ -133,6 +145,12 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 		{
 			foreach (var ast in asts)
 			{
+				if (binder.Context.ExternalPackageUnits.Contains(ast))
+				{
+					loweredAsts.Add(ast);
+					continue;
+				}
+
 				var currentAst = ast;
 				if (binder.Context.FileContexts.TryGetValue(ast, out var deferContext))
 				{
@@ -205,6 +223,12 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 			var expandedAsts = new List<CompilationUnitSyntax>();
 			foreach (var ast in asts)
 			{
+				if (binder.Context.ExternalPackageUnits.Contains(ast))
+				{
+					expandedAsts.Add(ast);
+					continue;
+				}
+
 				var expanded = (CompilationUnitSyntax)foreachLoweringRewriter.Rewrite(ast);
 				if (binder.Context.FileContexts.TryGetValue(ast, out var expandedContext))
 				{

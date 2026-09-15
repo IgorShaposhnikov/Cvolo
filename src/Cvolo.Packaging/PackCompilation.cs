@@ -18,11 +18,12 @@ public sealed class PackCompileResult : IDisposable
 {
 	private readonly Dictionary<string, byte[]> _bitcodeByTarget = new(StringComparer.Ordinal);
 
-	internal PackCompileResult(string llIr, string llFilePath, IReadOnlyList<string> sourceFiles, string workingDirectory)
+	internal PackCompileResult(string llIr, string llFilePath, IReadOnlyList<string> sourceFiles, IReadOnlyList<CompilationUnitSyntax> projectUnits, string workingDirectory)
 	{
 		LlIr = llIr;
 		LlFilePath = llFilePath;
 		SourceFiles = sourceFiles;
+		ProjectUnits = projectUnits;
 		WorkingDirectory = workingDirectory;
 	}
 
@@ -34,6 +35,9 @@ public sealed class PackCompileResult : IDisposable
 
 	/// <summary>Project .cvl files (sorted by relative path) shipped in Sector 5 unless stripped.</summary>
 	public IReadOnlyList<string> SourceFiles { get; }
+
+	/// <summary>Lowered project compilation units used to derive language-level package API metadata.</summary>
+	public IReadOnlyList<CompilationUnitSyntax> ProjectUnits { get; }
 
 	/// <summary>The scratch workspace directory (cleaned up on Dispose).</summary>
 	public string WorkingDirectory { get; }
@@ -226,12 +230,17 @@ internal static class PackCompilation
 		IEmitter emitter = new CodeGenerator("cvolo_module", targetLayout, optimizer, irVerifier, enableTbaa: true, checkedFfiBounds: false);
 		var ir = emitter.Emit(asts, firstContext!, binder.Context);
 
+		var projectFileSet = projectFiles.ToHashSet(StringComparer.OrdinalIgnoreCase);
+		var projectUnits = asts
+			.Where(ast => binder.Context.FileContexts.TryGetValue(ast, out var context) && projectFileSet.Contains(context.FilePath))
+			.ToArray();
+
 		// 8. Materialize the scratch workspace.
 		var workspace = Directory.CreateTempSubdirectory("cvolopack-").FullName;
 		var llPath = Path.Combine(workspace, "module.ll");
 		File.WriteAllText(llPath, ir, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 
-		return new PackCompileResult(ir, llPath, projectFiles, workspace);
+		return new PackCompileResult(ir, llPath, projectFiles, projectUnits, workspace);
 	}
 
 	private static IReadOnlyList<string> FindStdlibFiles()

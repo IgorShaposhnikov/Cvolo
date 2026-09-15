@@ -15,7 +15,7 @@ public sealed class PackageBuildIntegrationTests : IDisposable
 	}
 
 	[Fact]
-	public void Build_AppUsingPackedLibrary_ConsumesSector3AndRuns()
+	public void Build_AppUsingPackedLibrary_ImportsCvoloModuleWithoutCAbi()
 	{
 		RequireClang();
 
@@ -32,10 +32,10 @@ public sealed class PackageBuildIntegrationTests : IDisposable
 </Project>
 """);
 		File.WriteAllText(Path.Combine(libraryDirectory, "Foo.cvl"), """
-expose extern "C" {
-    public int Add(int a, int b) {
-        return a + b;
-    }
+namespace Foo;
+
+public int Add(int a, int b) {
+    return a + b;
 }
 """);
 
@@ -46,7 +46,8 @@ expose extern "C" {
 		{
 			OutputPath = packagePath,
 			SigningKeyPath = signingKey,
-			Targets = [TargetTriple.HostTriple()]
+			Targets = [TargetTriple.HostTriple()],
+			StripSource = true
 		});
 
 		var cache = new PackageCache(Path.Combine(_root, "cache"));
@@ -69,10 +70,7 @@ expose extern "C" {
 </Project>
 """);
 		File.WriteAllText(Path.Combine(appDirectory, "Main.cvl"), """
-[LibraryImport("Foo")]
-extern "C" {
-    int Add(int a, int b);
-}
+using Foo;
 
 int main() {
     return Add(2, 3) - 5;
@@ -108,7 +106,7 @@ int main() {
 	}
 
 	[Fact]
-	public void LocalWorkflow_PackAddBuildRun_Succeeds()
+	public void LocalWorkflow_PackAddBuildRun_UsesCvoloModuleImport()
 	{
 		RequireClang();
 
@@ -128,10 +126,10 @@ int main() {
 </Project>
 """);
 		File.WriteAllText(Path.Combine(libraryDirectory, "Foo.cvl"), """
-expose extern "C" {
-    public int Add(int a, int b) {
-        return a + b;
-    }
+namespace Foo;
+
+public int Add(int a, int b) {
+    return a + b;
 }
 """);
 
@@ -142,7 +140,7 @@ expose extern "C" {
 		using var packError = new StringWriter();
 		var pack = new PackCommand(packOutput, packError);
 
-		var packExitCode = pack.Parse($"\"{libraryDirectory}\" --output \"{packagePath}\" --sign \"{signingKey}\"").Invoke();
+		var packExitCode = pack.Parse($"\"{libraryDirectory}\" --output \"{packagePath}\" --sign \"{signingKey}\" --strip-source").Invoke();
 
 		Assert.Equal(0, packExitCode);
 		Assert.True(File.Exists(packagePath));
@@ -164,10 +162,7 @@ expose extern "C" {
 </Project>
 """);
 		File.WriteAllText(Path.Combine(appDirectory, "Main.cvl"), """
-[LibraryImport("Foo")]
-extern "C" {
-    int Add(int a, int b);
-}
+using Foo;
 
 int main() {
     return Add(20, 22) - 42;

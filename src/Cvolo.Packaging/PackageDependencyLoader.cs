@@ -11,17 +11,24 @@ public sealed record ResolvedPackageArtifacts(
 	string PackageId,
 	string Version,
 	string? NativeObjectPath,
-	string? BitcodePath);
+	string? BitcodePath,
+	PackageApiMetadata ApiMetadata);
 
 /// <summary>
 /// Resolves every package pinned by cvolo.lock.json from the local package cache,
 /// verifies it at build start, and extracts deterministic host artifacts into a
 /// project-local build directory.
 /// </summary>
-public sealed class PackageDependencyLoader(PackageCache cache, PackageInstaller installer)
+public sealed class PackageDependencyLoader
 {
-	private readonly PackageCache _cache = cache ?? throw new ArgumentNullException(nameof(cache));
-	private readonly PackageInstaller _installer = installer ?? throw new ArgumentNullException(nameof(installer));
+	private readonly PackageCache _cache;
+	private readonly PackageInstaller _installer;
+
+	public PackageDependencyLoader(PackageCache cache, PackageInstaller installer)
+	{
+		_cache = cache ?? throw new ArgumentNullException(nameof(cache));
+		_installer = installer ?? throw new ArgumentNullException(nameof(installer));
+	}
 
 	public IReadOnlyList<ResolvedPackageArtifacts> Load(ProjectManifest manifest, LockFile lockFile)
 	{
@@ -99,6 +106,7 @@ public sealed class PackageDependencyLoader(PackageCache cache, PackageInstaller
 			}
 
 			var archive = cached.Archive;
+			var apiMetadata = PackageApiMetadata.Read(archive);
 			var triple = TargetTriple.HostTriple();
 			var slice = archive.Manifest.Slices.SingleOrDefault(s => string.Equals(s.Triple, triple, StringComparison.Ordinal));
 			if (slice is null || (slice.Sector2.Length == 0 && slice.Sector3.Length == 0))
@@ -131,7 +139,7 @@ public sealed class PackageDependencyLoader(PackageCache cache, PackageInstaller
 				ExtractSlice(archive, sectorIndex: 1, slice.Sector2, objectPath, packageId, locked.Resolved, "Sector 2 native object");
 			}
 
-			return new ResolvedPackageArtifacts(packageId, locked.Resolved, objectPath, bitcodePath);
+			return new ResolvedPackageArtifacts(packageId, locked.Resolved, objectPath, bitcodePath, apiMetadata);
 		}
 		catch (CvlFormatException ex)
 		{

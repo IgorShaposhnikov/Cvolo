@@ -455,6 +455,9 @@ public sealed class ValidationPass(BindingContext context)
 		// 1. Guard for bodyless functions: must have [Intrinsic]
 		if (!func.HasBody)
 		{
+			if (context.CurrentUnit is not null && context.ExternalPackageUnits.Contains(context.CurrentUnit))
+				return;
+
 			var hasIntrinsic = func.Attributes.Any(a => a.Name is "Intrinsic" or "System.Intrinsic" or "IntrinsicAttribute");
 			if (!hasIntrinsic)
 			{

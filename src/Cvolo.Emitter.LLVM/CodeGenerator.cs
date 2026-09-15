@@ -210,6 +210,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			var ns = unit.NamespaceDeclaration?.Name;
 			bindingContext.CurrentUnit = unit;
 			bindingContext.CurrentNamespace = ns;
+			var isExternalPackageUnit = bindingContext.ExternalPackageUnits.Contains(unit);
 			var members = ns != null ? unit.NamespaceDeclaration!.Members : unit.Members;
 
 			foreach (var member in members)
@@ -235,7 +236,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 						var ifaceTemplateName = bindingContext.GetMangledName(func.Name, ns);
 						if (bindingContext.InterfaceFunctionTemplates.ContainsKey(ifaceTemplateName) ||
 							bindingContext.ProtocolFunctionTemplates.ContainsKey(ifaceTemplateName) ||
-							!func.HasBody ||
+							(!func.HasBody && !isExternalPackageUnit) ||
 							func.Attributes.Any(a => a.Name is "Intrinsic" or "System.Intrinsic" or "IntrinsicAttribute"))
 						{
 							continue;
@@ -353,6 +354,9 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 		foreach (var unit in units)
 		{
+			if (bindingContext.ExternalPackageUnits.Contains(unit))
+				continue;
+
 			var ns = unit.NamespaceDeclaration?.Name;
 			bindingContext.CurrentUnit = unit;
 			bindingContext.CurrentNamespace = ns;
@@ -639,10 +643,13 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 		var llvmFunc = _module.AddFunction(emitName, funcType);
 
-		if (emitName != "main" && declaredSymbol is FunctionSymbol { IsNeverInline: true })
+		if (emitName != "main" && declaredSymbol is FunctionSymbol functionSymbol
+			&& (functionSymbol.Visibility == Visibility.Public || functionSymbol.IsNeverInline))
 		{
-			// External linkage keeps the [NeverInline] function itself from being
-			// inlined or stripped by LLVM's optimizers; the symbol export is harmless.
+			// Public Cvolo functions are package/module symbols. They need external LLVM
+			// linkage so a consumer module can bind an ordinary Cvolo call to Sector 3
+			// bitcode without introducing a C ABI wrapper. [NeverInline] retains the same
+			// external-linkage behavior it already required for optimizer stability.
 			llvmFunc.Linkage = LLVMLinkage.LLVMExternalLinkage;
 		}
 		else if (emitName != "main")

@@ -44,7 +44,7 @@ public sealed class BindingContext
 	public Dictionary<string, FunctionSymbol> ConstructorDelegationTargets { get; } = [];
 	// Destructors registered via '~T()' extension members, keyed by the extended type name
 	public Dictionary<string, FunctionSymbol> Destructors { get; } = [];
-// Data-segment globals in declaration order
+	// Data-segment globals in declaration order
 	public List<(GlobalVariableDeclarationSyntax Node, VariableSymbol Symbol)> GlobalVariables { get; } = [];
 	// Globals keyed by fully-qualified name ("Ns.Sub.Name"); the declaration-time collision check.
 	public Dictionary<string, VariableSymbol> GlobalsByQualifiedName { get; } = new(StringComparer.Ordinal);
@@ -128,6 +128,12 @@ public sealed class BindingContext
 
 	public CompilationUnitSyntax? CurrentUnit { get; set; }
 	public string? CurrentNamespace { get; set; }
+
+	/// <summary>
+	/// Synthetic package API units participate in name/type binding but their implementations
+	/// live in linked Sector 3 bitcode, so the emitter must not generate their bodies again.
+	/// </summary>
+	public HashSet<CompilationUnitSyntax> ExternalPackageUnits { get; } = [];
 
 	/// <summary>Current safety tier used during attribute validation in DeclarationPass.</summary>
 	public SafetyTier CurrentSafetyTier { get; set; }
