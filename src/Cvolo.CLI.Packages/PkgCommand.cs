@@ -66,7 +66,9 @@ public sealed class PkgCommand : Command
 		command.SetAction(parseResult => Run(() =>
 		{
 			var manifest = ProjectManifest.Load(Directory.GetCurrentDirectory());
-			ProjectManifestWriter.RemovePackageReference(manifest, parseResult.GetValue(id)!);
+			var value = parseResult.GetValue(id)!;
+			if (!ProjectManifestWriter.RemovePackageReference(manifest, value))
+				throw new PackageException(PackageDiagnosticIds.PackageNotReferenced, $"Project does not reference package '{value}'.");
 			manifest = ProjectManifest.Load(manifest.ProjectPath);
 			ResolveAndWriteLock(manifest);
 		}));
@@ -140,15 +142,20 @@ public sealed class PkgCommand : Command
 		{
 			var keep = parseResult.GetValue(unused) ? ReadLockedPackageKeys(Directory.GetCurrentDirectory()) : [];
 			var removed = 0;
+			var touchedParents = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 			foreach (var package in ReadCachedPackages())
 			{
 				var key = PackageKey(package.Metadata.PackageId, package.Metadata.Version);
 				if (keep.Contains(key))
 					continue;
 
+				touchedParents.Add(Path.GetDirectoryName(package.Directory)!);
 				Directory.Delete(package.Directory, true);
 				removed++;
 			}
+
+			foreach (var parent in touchedParents)
+				RewritePackageIndex(parent);
 
 			Console.WriteLine($"Removed {removed} cached package(s).");
 		}));
@@ -193,7 +200,12 @@ public sealed class PkgCommand : Command
 		foreach (var package in lockFile.Packages.OrderBy(p => p.Key, StringComparer.OrdinalIgnoreCase))
 		{
 			if (_installer.IsInstalled(package.Key, package.Value.Resolved))
+			{
+				var installed = _installer.InstallFromCache(package.Key, package.Value.Resolved);
+				if (!string.Equals(installed.ContentHash, package.Value.ContentHash, StringComparison.OrdinalIgnoreCase))
+					throw new PackageException(PackageDiagnosticIds.CachedContentMismatch, $"Cached package '{package.Key}@{package.Value.Resolved}' does not match the lock file.");
 				continue;
+			}
 
 			var feedPackage = feeds.Select(f => f.FindBest(package.Key, package.Value.Resolved)).FirstOrDefault(p => p is not null)
 				?? throw new PackageException(PackageDiagnosticIds.VersionConflict, $"Package '{package.Key}@{package.Value.Resolved}' was not found in locked feeds.");
@@ -252,6 +264,29 @@ public sealed class PkgCommand : Command
 	}
 
 	private static string PackageKey(string id, string version) => id.ToLowerInvariant() + "@" + version;
+
+	private static void RewritePackageIndex(string packageDirectory)
+	{
+		if (!Directory.Exists(packageDirectory))
+			return;
+
+		var versions = Directory.GetDirectories(packageDirectory)
+			.Where(d => File.Exists(Path.Combine(d, ".metadata.json")))
+			.Select(Path.GetFileName)
+			.Where(version => !string.IsNullOrWhiteSpace(version))
+			.Order(StringComparer.Ordinal)
+			.ToArray();
+		var index = Path.Combine(packageDirectory, "index.json");
+		if (versions.Length == 0)
+		{
+			if (File.Exists(index))
+				File.Delete(index);
+			return;
+		}
+
+		File.WriteAllText(index + ".tmp", JsonSerializer.Serialize(versions));
+		File.Move(index + ".tmp", index, true);
+	}
 
 	private static int Run(Action action)
 	{
