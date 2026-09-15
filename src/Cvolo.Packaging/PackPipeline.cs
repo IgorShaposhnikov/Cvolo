@@ -106,7 +106,6 @@ public sealed class PackPipeline
 		var manifestBytes = Encoding.UTF8.GetBytes(manifestJson);
 		var layoutMetadata = PackageApiMetadata.FromCompilationUnits(compile.ProjectUnits).Serialize();
 		var sector1 = new byte[4 + manifestBytes.Length + layoutMetadata.Length];
-		var sector1 = new byte[4 + manifestBytes.Length + layoutMetadata.Length];
 		BinaryPrimitives.WriteUInt32LittleEndian(sector1, (uint)manifestBytes.Length);
 		manifestBytes.CopyTo(sector1, 4);
 		layoutMetadata.CopyTo(sector1, 4 + manifestBytes.Length);

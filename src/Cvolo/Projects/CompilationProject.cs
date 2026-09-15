@@ -9,14 +9,16 @@ public sealed class CompilationProject
 	public bool IsShared { get; private set; }
 	public bool StrictOption { get; }
 	public string ProjectDirectory { get; }
+	public IReadOnlyList<string> ProjectReferences { get; }
 
-	private CompilationProject(IReadOnlyList<string> sourceFiles, string outputName, bool isShared, string projectDirectory, bool strictOption = false)
+	private CompilationProject(IReadOnlyList<string> sourceFiles, string outputName, bool isShared, string projectDirectory, bool strictOption = false, IReadOnlyList<string>? projectReferences = null)
 	{
 		SourceFiles = sourceFiles;
 		OutputName = outputName;
 		IsShared = isShared;
 		StrictOption = strictOption;
 		ProjectDirectory = projectDirectory;
+		ProjectReferences = projectReferences ?? [];
 	}
 
 	public static CompilationProject Load(string inputPath, string? compilerBaseDir = null, bool forceShared = false)
@@ -25,6 +27,7 @@ public sealed class CompilationProject
 		var outputName = "main";
 		var isShared = forceShared;
 		var strictOption = false;
+		var projectReferences = new List<string>();
 
 		// 1. Automatically locate the "libraries" folder by traversing up the directory tree
 		var searchDir = compilerBaseDir ?? AppContext.BaseDirectory;
@@ -40,24 +43,61 @@ public sealed class CompilationProject
 			}
 		}
 
-		// 2. Add User Project files
-		if (inputPath.EndsWith(".cvlproj") && File.Exists(inputPath))
+		// 2. Add user project files. A directory containing one .cvlproj is treated the
+		// same as passing that project file explicitly, which keeps `cvolo run App`
+		// and `cvolo run App/App.cvlproj` equivalent.
+		string? projectFilePath = null;
+		if (inputPath.EndsWith(".cvlproj", StringComparison.OrdinalIgnoreCase) && File.Exists(inputPath))
 		{
-			var projDir = Path.GetDirectoryName(Path.GetFullPath(inputPath))!;
+			projectFilePath = Path.GetFullPath(inputPath);
+		}
+		else if (Directory.Exists(inputPath))
+		{
+			var candidates = Directory.GetFiles(Path.GetFullPath(inputPath), "*.cvlproj", SearchOption.TopDirectoryOnly);
+			if (candidates.Length > 1)
+				throw new InvalidOperationException($"Multiple .cvlproj files found in '{inputPath}'. Pass the project file explicitly.");
+			projectFilePath = candidates.SingleOrDefault();
+		}
+
+		if (projectFilePath is not null)
+		{
+			var projDir = Path.GetDirectoryName(projectFilePath)!;
+			projectDir = projDir;
 			var files = Directory.GetFiles(projDir, "*.cvl", SearchOption.AllDirectories).ToList();
 			sourceFiles.AddRange(files);
 
 			try
 			{
-				var xml = XDocument.Load(inputPath);
+				var xml = XDocument.Load(projectFilePath);
 				var assemblyName = xml.Root?.Element("PropertyGroup")?.Element("AssemblyName")?.Value;
 				var outputType = xml.Root?.Element("PropertyGroup")?.Element("OutputType")?.Value;
 				var strictOptionValue = xml.Root?.Element("PropertyGroup")?.Element("StrictOption")?.Value;
 
+				foreach (var reference in xml.Root?.Elements("ItemGroup").Elements("ProjectReference") ?? [])
+				{
+					var include = ((string?)reference.Attribute("Include"))?.Trim();
+					if (string.IsNullOrWhiteSpace(include))
+						continue;
+
+					var normalizedInclude = include.Replace('\\', Path.DirectorySeparatorChar).Replace('/', Path.DirectorySeparatorChar);
+					var referencePath = Path.GetFullPath(normalizedInclude, projDir);
+					if (!File.Exists(referencePath) || !string.Equals(Path.GetExtension(referencePath), ".cvlproj", StringComparison.OrdinalIgnoreCase))
+						throw new FileNotFoundException($"ProjectReference '{include}' from '{projectFilePath}' was not found.", referencePath);
+
+					projectReferences.Add(referencePath);
+					var referenceDirectory = Path.GetDirectoryName(referencePath)!;
+					foreach (var sourceFile in Directory.GetFiles(referenceDirectory, "*.cvl", SearchOption.AllDirectories))
+					{
+						var fullSourcePath = Path.GetFullPath(sourceFile);
+						if (!sourceFiles.Contains(fullSourcePath, StringComparer.OrdinalIgnoreCase))
+							sourceFiles.Add(fullSourcePath);
+					}
+				}
+
 				if (!string.IsNullOrEmpty(assemblyName))
 					outputName = assemblyName;
 				else
-					outputName = Path.GetFileNameWithoutExtension(inputPath);
+					outputName = Path.GetFileNameWithoutExtension(projectFilePath);
 
 				if (outputType == "Library")
 					isShared = true;
@@ -65,9 +105,13 @@ public sealed class CompilationProject
 				if (string.Equals(strictOptionValue, "true", StringComparison.OrdinalIgnoreCase))
 					strictOption = true;
 			}
+			catch (FileNotFoundException)
+			{
+				throw;
+			}
 			catch
 			{
-				outputName = Path.GetFileNameWithoutExtension(inputPath);
+				outputName = Path.GetFileNameWithoutExtension(projectFilePath);
 			}
 		}
 		else if (Directory.Exists(inputPath))
@@ -81,7 +125,6 @@ public sealed class CompilationProject
 			outputName = Path.GetFileNameWithoutExtension(inputPath);
 
 			// An explicit .cvl file compiles on its own (plus the standard library).
-			// Only directory / .cvlproj inputs pull in sibling sources recursively.
 			if (string.Equals(Path.GetExtension(inputPath), ".cvl", StringComparison.OrdinalIgnoreCase))
 			{
 				sourceFiles.Add(Path.GetFullPath(inputPath));
@@ -107,7 +150,7 @@ public sealed class CompilationProject
 			throw new InvalidOperationException($"No Cvolo source files found in '{inputPath}'");
 		}
 
-		return new CompilationProject(sourceFiles, outputName, isShared, projectDir, strictOption);
+		return new CompilationProject(sourceFiles, outputName, isShared, projectDir, strictOption, projectReferences);
 	}
 
 	public static void CreateNewProject(string projectName)
