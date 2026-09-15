@@ -79,7 +79,7 @@ public sealed class PkgCommand : Command
 		command.SetAction(_ => Run(() =>
 		{
 			var manifest = ProjectManifest.Load(Directory.GetCurrentDirectory());
-			var lockFile = LockFile.Read(LockFile.GetPath(manifest));
+			var lockFile = ReadValidatedLock(manifest);
 			Console.WriteLine("Direct dependencies:");
 			foreach (var dependency in manifest.Dependencies.OrderBy(d => d.Id, StringComparer.OrdinalIgnoreCase))
 			{
@@ -188,7 +188,7 @@ public sealed class PkgCommand : Command
 
 	private void InstallFromLock(ProjectManifest manifest)
 	{
-		var lockFile = LockFile.Read(LockFile.GetPath(manifest));
+		var lockFile = ReadValidatedLock(manifest);
 		var feeds = lockFile.Sources.Select(source => LocalFeed.Load(source, manifest.ProjectDirectory)).ToList();
 		foreach (var package in lockFile.Packages.OrderBy(p => p.Key, StringComparer.OrdinalIgnoreCase))
 		{
@@ -201,6 +201,14 @@ public sealed class PkgCommand : Command
 				throw new PackageException(PackageDiagnosticIds.CachedContentMismatch, $"Package '{package.Key}@{package.Value.Resolved}' feed hash does not match the lock file.");
 			PrintInstall(_installer.InstallFromFile(feedPackage.FullPath));
 		}
+	}
+
+	private static LockFile ReadValidatedLock(ProjectManifest manifest)
+	{
+		var lockFile = LockFile.Read(LockFile.GetPath(manifest));
+		if (!PackageLockValidator.Validate(manifest, lockFile, out var message))
+			throw new PackageException(PackageDiagnosticIds.LockOutOfSync, message);
+		return lockFile;
 	}
 
 	private static IEnumerable<LocalFeed> LoadFeeds(ProjectManifest manifest)

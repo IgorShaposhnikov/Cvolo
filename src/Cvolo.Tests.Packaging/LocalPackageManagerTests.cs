@@ -181,6 +181,41 @@ public sealed class LocalPackageManagerTests : IDisposable
 	}
 
 	[Fact]
+	public void PkgList_InvalidLock_ReportsLockOutOfSync()
+	{
+		// TODO: inject working directory and console writers into PkgCommand so CLI tests do not mutate process-wide state.
+		var manifest = CreateProject("list-app", Dir("feed"), [new PackageReference("Foo", "1.0.0")]);
+		new LockFile
+		{
+			Sources = [],
+			Packages = new Dictionary<string, LockedPackage>(StringComparer.OrdinalIgnoreCase)
+			{
+				["Foo"] = new("1.0.0", "blake3:not-hex", new Dictionary<string, string>())
+			}
+		}.Write(LockFile.GetPath(manifest));
+		var cache = new PackageCache(Path.Combine(_root, "cache"));
+		var command = new PkgCommand(cache, new PackageInstaller(cache));
+		var previousCurrentDirectory = Directory.GetCurrentDirectory();
+		var previousError = Console.Error;
+		using var error = new StringWriter();
+		try
+		{
+			Directory.SetCurrentDirectory(manifest.ProjectDirectory);
+			Console.SetError(error);
+
+			var exitCode = command.Parse("list").Invoke();
+
+			Assert.Equal(1, exitCode);
+			Assert.Contains(PackageDiagnosticIds.LockOutOfSync, error.ToString());
+		}
+		finally
+		{
+			Console.SetError(previousError);
+			Directory.SetCurrentDirectory(previousCurrentDirectory);
+		}
+	}
+
+	[Fact]
 	public void PackageLockValidator_RejectsUnsatisfiedTransitiveDependency()
 	{
 		var manifest = CreateProject("lock-app", Dir("feed"), [new PackageReference("Foo", "1.0.0")]);
@@ -189,8 +224,8 @@ public sealed class LocalPackageManagerTests : IDisposable
 			Sources = [],
 			Packages = new Dictionary<string, LockedPackage>(StringComparer.OrdinalIgnoreCase)
 			{
-				["Foo"] = new("1.0.0", "blake3:foo", new Dictionary<string, string> { ["Bar"] = "^2.0.0" }),
-				["Bar"] = new("1.5.0", "blake3:bar", new Dictionary<string, string>())
+				["Foo"] = new("1.0.0", ValidHash("foo"), new Dictionary<string, string> { ["Bar"] = "^2.0.0" }),
+				["Bar"] = new("1.5.0", ValidHash("bar"), new Dictionary<string, string>())
 			}
 		};
 
@@ -198,6 +233,44 @@ public sealed class LocalPackageManagerTests : IDisposable
 
 		Assert.False(valid);
 		Assert.Contains("transitive package 'Bar'", message);
+	}
+
+	[Fact]
+	public void PackageLockValidator_RejectsMissingTransitiveDependency()
+	{
+		var manifest = CreateProject("missing-lock-app", Dir("feed"), [new PackageReference("Foo", "1.0.0")]);
+		var lockFile = new LockFile
+		{
+			Sources = [],
+			Packages = new Dictionary<string, LockedPackage>(StringComparer.OrdinalIgnoreCase)
+			{
+				["Foo"] = new("1.0.0", ValidHash("foo"), new Dictionary<string, string> { ["Bar"] = "^1.0.0" })
+			}
+		};
+
+		var valid = PackageLockValidator.Validate(manifest, lockFile, out var message);
+
+		Assert.False(valid);
+		Assert.Contains("missing transitive package 'Bar'", message);
+	}
+
+	[Fact]
+	public void PackageLockValidator_RejectsInvalidContentHash()
+	{
+		var manifest = CreateProject("hash-lock-app", Dir("feed"), [new PackageReference("Foo", "1.0.0")]);
+		var lockFile = new LockFile
+		{
+			Sources = [],
+			Packages = new Dictionary<string, LockedPackage>(StringComparer.OrdinalIgnoreCase)
+			{
+				["Foo"] = new("1.0.0", "sha256:foo", new Dictionary<string, string>())
+			}
+		};
+
+		var valid = PackageLockValidator.Validate(manifest, lockFile, out var message);
+
+		Assert.False(valid);
+		Assert.Contains("invalid content hash", message);
 	}
 
 	private string Dir(string name)
@@ -261,7 +334,12 @@ public sealed class LocalPackageManagerTests : IDisposable
 	{
 		var directory = cache.GetPackageDirectory(id, version);
 		Directory.CreateDirectory(directory);
-		File.WriteAllText(Path.Combine(directory, ".metadata.json"), JsonSerializer.Serialize(new InstalledPackageMetadata(id, version, id + ".cvlib", "blake3:" + id.ToLowerInvariant(), DateTimeOffset.UtcNow)));
+		File.WriteAllText(Path.Combine(directory, ".metadata.json"), JsonSerializer.Serialize(new InstalledPackageMetadata(id, version, id + ".cvlib", ValidHash(id), DateTimeOffset.UtcNow)));
+	}
+
+	private static string ValidHash(string value)
+	{
+		return "blake3:" + Convert.ToHexStringLower(System.Text.Encoding.UTF8.GetBytes(value)).PadRight(64, '0')[..64];
 	}
 
 	public void Dispose() => Directory.Delete(_root, true);
