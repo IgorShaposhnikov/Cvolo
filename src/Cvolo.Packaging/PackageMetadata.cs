@@ -16,7 +16,7 @@ public sealed record PackageMetadata(string PackageId, string Version, IReadOnly
 		return metadata;
 	}
 
-	internal static void ValidateIdentity(string id, string version)
+	public static void ValidateIdentity(string id, string version)
 	{
 		if (string.IsNullOrEmpty(id) || !char.IsAsciiLetterOrDigit(id[0]) ||
 			id.Any(c => !char.IsAsciiLetterOrDigit(c) && c is not '.' and not '-' and not '_') || id.EndsWith('.'))

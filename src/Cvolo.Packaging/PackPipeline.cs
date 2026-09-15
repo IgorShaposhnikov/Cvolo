@@ -116,19 +116,28 @@ public sealed class PackPipeline
 		if (sourceBuffer is not null)
 			writer.SetSourceBuffer(sourceBuffer);
 
-		var signed = !options.NoSign && !string.IsNullOrEmpty(options.SigningKeyPath);
-		if (signed)
+		var signed = !options.NoSign;
+		if (options.NoSign)
 		{
-			var seed = File.ReadAllBytes(options.SigningKeyPath!);
+			writer.WriteUnsigned(outputPath);
+		}
+		else if (!string.IsNullOrEmpty(options.SigningKeyPath))
+		{
+			var seed = File.ReadAllBytes(options.SigningKeyPath);
 			if (seed.Length != 32)
 				throw new InvalidOperationException($"Signing key '{options.SigningKeyPath}' must contain exactly 32 raw Ed25519 seed bytes.");
 
-			var key = Key.Import(SignatureAlgorithm.Ed25519, seed, KeyBlobFormat.RawPrivateKey);
+			using var key = Key.Import(SignatureAlgorithm.Ed25519, seed, KeyBlobFormat.RawPrivateKey);
 			writer.Write(outputPath, key);
 		}
 		else
 		{
-			writer.WriteUnsigned(outputPath);
+			// v0.2.6 requires install/build-time Ed25519 verification. Use the stable local
+			// machine key for ordinary local packs; CI/publishers can supply --sign for a
+			// pinned publisher key. --no-sign remains an explicit unsupported-by-install escape hatch.
+			var packageCache = new PackageCache();
+			using var key = packageCache.LoadSigningKey();
+			writer.Write(outputPath, key);
 		}
 
 		// 7. Read back the container to report authoritative size and Merkle root.

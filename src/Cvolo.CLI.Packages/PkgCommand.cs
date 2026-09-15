@@ -8,11 +8,27 @@ public sealed class PkgCommand : Command
 {
 	private readonly PackageCache _cache;
 	private readonly PackageInstaller _installer;
+	private readonly Func<string> _workingDirectory;
+	private readonly TextWriter _stdout;
+	private readonly TextWriter _stderr;
 
-	public PkgCommand(PackageCache cache, PackageInstaller installer) : base("pkg", "Cvolo package manager.")
+	public PkgCommand(PackageCache cache, PackageInstaller installer)
+		: this(cache, installer, Directory.GetCurrentDirectory, Console.Out, Console.Error)
+	{
+	}
+
+	public PkgCommand(
+		PackageCache cache,
+		PackageInstaller installer,
+		Func<string> workingDirectory,
+		TextWriter stdout,
+		TextWriter stderr) : base("pkg", "Cvolo package manager.")
 	{
 		_cache = cache;
 		_installer = installer;
+		_workingDirectory = workingDirectory ?? throw new ArgumentNullException(nameof(workingDirectory));
+		_stdout = stdout ?? throw new ArgumentNullException(nameof(stdout));
+		_stderr = stderr ?? throw new ArgumentNullException(nameof(stderr));
 		Add(CreateInstallCommand());
 		Add(CreateAddCommand());
 		Add(CreateRemoveCommand());
@@ -35,7 +51,7 @@ public sealed class PkgCommand : Command
 				return;
 			}
 
-			var manifest = ProjectManifest.Load(Directory.GetCurrentDirectory());
+			var manifest = ProjectManifest.Load(_workingDirectory());
 			InstallFromLock(manifest);
 		}));
 		return command;
@@ -50,7 +66,7 @@ public sealed class PkgCommand : Command
 		command.Add(version);
 		command.SetAction(parseResult => Run(() =>
 		{
-			var manifest = ProjectManifest.Load(Directory.GetCurrentDirectory());
+			var manifest = ProjectManifest.Load(_workingDirectory());
 			ProjectManifestWriter.AddPackageReference(manifest, parseResult.GetValue(id)!, parseResult.GetValue(version) ?? "*");
 			manifest = ProjectManifest.Load(manifest.ProjectPath);
 			ResolveWriteAndInstall(manifest);
@@ -65,7 +81,7 @@ public sealed class PkgCommand : Command
 		command.Add(id);
 		command.SetAction(parseResult => Run(() =>
 		{
-			var manifest = ProjectManifest.Load(Directory.GetCurrentDirectory());
+			var manifest = ProjectManifest.Load(_workingDirectory());
 			var value = parseResult.GetValue(id)!;
 			if (!ProjectManifestWriter.RemovePackageReference(manifest, value))
 				throw new PackageException(PackageDiagnosticIds.PackageNotReferenced, $"Project does not reference package '{value}'.");
@@ -80,18 +96,18 @@ public sealed class PkgCommand : Command
 		var command = new Command("list", "List direct and transitive packages from cvolo.lock.json.");
 		command.SetAction(_ => Run(() =>
 		{
-			var manifest = ProjectManifest.Load(Directory.GetCurrentDirectory());
+			var manifest = ProjectManifest.Load(_workingDirectory());
 			var lockFile = ReadValidatedLock(manifest);
-			Console.WriteLine("Direct dependencies:");
+			_stdout.WriteLine("Direct dependencies:");
 			foreach (var dependency in manifest.Dependencies.OrderBy(d => d.Id, StringComparer.OrdinalIgnoreCase))
 			{
 				if (lockFile.Packages.TryGetValue(dependency.Id, out var locked))
-					Console.WriteLine($"  {dependency.Id} {dependency.Version} -> {locked.Resolved}");
+					_stdout.WriteLine($"  {dependency.Id} {dependency.Version} -> {locked.Resolved}");
 			}
-			Console.WriteLine("Transitive dependencies:");
+			_stdout.WriteLine("Transitive dependencies:");
 			var direct = manifest.Dependencies.Select(d => d.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
 			foreach (var package in lockFile.Packages.Where(p => !direct.Contains(p.Key)).OrderBy(p => p.Key, StringComparer.OrdinalIgnoreCase))
-				Console.WriteLine($"  {package.Key} {package.Value.Resolved} -> {package.Value.Resolved}");
+				_stdout.WriteLine($"  {package.Key} {package.Value.Resolved} -> {package.Value.Resolved}");
 		}));
 		return command;
 	}
@@ -103,7 +119,7 @@ public sealed class PkgCommand : Command
 		command.Add(id);
 		command.SetAction(parseResult => Run(() =>
 		{
-			var manifest = ProjectManifest.Load(Directory.GetCurrentDirectory());
+			var manifest = ProjectManifest.Load(_workingDirectory());
 			var value = parseResult.GetValue(id);
 			if (!string.IsNullOrWhiteSpace(value) && !manifest.Dependencies.Any(d => string.Equals(d.Id, value, StringComparison.OrdinalIgnoreCase)))
 				throw new PackageException(PackageDiagnosticIds.PackageNotReferenced, $"Project does not reference package '{value}'.");
@@ -128,7 +144,7 @@ public sealed class PkgCommand : Command
 		command.SetAction(_ => Run(() =>
 		{
 			foreach (var package in ReadCachedPackages())
-				Console.WriteLine($"{package.Metadata.PackageId} {package.Metadata.Version} {package.Metadata.ContentHash}");
+				_stdout.WriteLine($"{package.Metadata.PackageId} {package.Metadata.Version} {package.Metadata.ContentHash}");
 		}));
 		return command;
 	}
@@ -140,7 +156,7 @@ public sealed class PkgCommand : Command
 		command.Add(unused);
 		command.SetAction(parseResult => Run(() =>
 		{
-			var keep = parseResult.GetValue(unused) ? ReadLockedPackageKeys(Directory.GetCurrentDirectory()) : [];
+			var keep = parseResult.GetValue(unused) ? ReadLockedPackageKeys(_workingDirectory()) : [];
 			var removed = 0;
 			var touchedParents = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 			foreach (var package in ReadCachedPackages())
@@ -157,7 +173,7 @@ public sealed class PkgCommand : Command
 			foreach (var parent in touchedParents)
 				RewritePackageIndex(parent);
 
-			Console.WriteLine($"Removed {removed} cached package(s).");
+			_stdout.WriteLine($"Removed {removed} cached package(s).");
 		}));
 		return command;
 	}
@@ -170,7 +186,7 @@ public sealed class PkgCommand : Command
 			var directory = Path.Combine(_cache.RootPath, "pkg");
 			if (Directory.Exists(directory))
 				Directory.Delete(directory, true);
-			Console.WriteLine("Package cache cleared.");
+			_stdout.WriteLine("Package cache cleared.");
 		}));
 		return command;
 	}
@@ -180,8 +196,20 @@ public sealed class PkgCommand : Command
 		var graph = ResolveAndWriteLock(manifest);
 		foreach (var package in graph.Packages.Values.OrderBy(p => p.Id, StringComparer.OrdinalIgnoreCase))
 		{
-			if (!_installer.IsInstalled(package.Id, package.Version))
-				PrintInstall(_installer.InstallFromFile(package.Path));
+			if (_installer.IsInstalled(package.Id, package.Version))
+			{
+				var installed = _installer.InstallFromCache(package.Id, package.Version);
+				if (!string.Equals(installed.ContentHash, package.ContentHash, StringComparison.OrdinalIgnoreCase))
+				{
+					throw new PackageException(
+						PackageDiagnosticIds.CachedContentMismatch,
+						$"Cached package '{package.Id}@{package.Version}' has content hash {installed.ContentHash}, but the resolved feed now provides {package.ContentHash}. Remove/reinstall the cached package before updating the lock.");
+				}
+
+				continue;
+			}
+
+			PrintInstall(_installer.InstallFromFile(package.Path));
 		}
 	}
 
@@ -242,10 +270,24 @@ public sealed class PkgCommand : Command
 		if (!Directory.Exists(root))
 			return [];
 
-		return Directory.GetFiles(root, ".metadata.json", SearchOption.AllDirectories)
-			.Select(path => (Directory: Path.GetDirectoryName(path)!, Metadata: JsonSerializer.Deserialize<InstalledPackageMetadata>(File.ReadAllText(path))))
-			.Where(package => package.Metadata is not null)
-			.Select(package => (package.Directory, Metadata: package.Metadata!))
+		var packages = new List<(string Directory, InstalledPackageMetadata Metadata)>();
+		foreach (var path in Directory.GetFiles(root, ".metadata.json", SearchOption.AllDirectories))
+		{
+			try
+			{
+				var metadata = JsonSerializer.Deserialize<InstalledPackageMetadata>(File.ReadAllText(path))
+					?? throw new InvalidDataException("Cache metadata deserialized to null.");
+				PackageMetadata.ValidateIdentity(metadata.PackageId, metadata.Version);
+				_ = SemanticVersion.Parse(metadata.Version);
+				packages.Add((Path.GetDirectoryName(path)!, metadata));
+			}
+			catch (Exception ex) when (ex is JsonException or IOException or InvalidDataException or PackageException)
+			{
+				_stderr.WriteLine($"warning: skipping malformed cache metadata '{path}': {ex.Message}");
+			}
+		}
+
+		return packages
 			.OrderBy(package => package.Metadata.PackageId, StringComparer.OrdinalIgnoreCase)
 			.ThenBy(package => SemanticVersion.Parse(package.Metadata.Version))
 			.ToArray();
@@ -288,7 +330,7 @@ public sealed class PkgCommand : Command
 		File.Move(index + ".tmp", index, true);
 	}
 
-	private static int Run(Action action)
+	private int Run(Action action)
 	{
 		try
 		{
@@ -297,23 +339,21 @@ public sealed class PkgCommand : Command
 		}
 		catch (PackageException ex)
 		{
-			Console.Error.WriteLine($"error: {ex.Message}");
-			if (ex.Detail is not null) Console.Error.WriteLine(ex.Detail);
+			_stderr.WriteLine($"error: {ex.Message}");
+			if (ex.Detail is not null) _stderr.WriteLine(ex.Detail);
 			return 1;
 		}
 		catch (Exception ex)
 		{
-			Console.Error.WriteLine($"error: {ex.Message}");
+			_stderr.WriteLine($"error: {ex.Message}");
 			return 1;
 		}
 	}
 
-	private static void PrintInstall(InstallResult result)
+	private void PrintInstall(InstallResult result)
 	{
-		if (result.WasUnsigned)
-			Console.Error.WriteLine($"warning {PackageDiagnosticIds.UnsignedWarning}: Package '{result.PackageId}@{result.Version}' is unsigned; signature verification skipped (Merkle integrity verified).");
-		Console.WriteLine(result.AlreadyInstalled ? "Already installed." : $"Installed {result.PackageId} {result.Version} -> {result.OutputPath}");
-		Console.WriteLine($"  Source: {result.Source}");
-		Console.WriteLine($"  Hash:   {result.ContentHash}");
+		_stdout.WriteLine(result.AlreadyInstalled ? "Already installed." : $"Installed {result.PackageId} {result.Version} -> {result.OutputPath}");
+		_stdout.WriteLine($"  Source: {result.Source}");
+		_stdout.WriteLine($"  Hash:   {result.ContentHash}");
 	}
 }

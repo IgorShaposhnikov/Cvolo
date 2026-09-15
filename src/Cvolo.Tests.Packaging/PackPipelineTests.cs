@@ -109,6 +109,8 @@ public sealed class PackPipelineTests : IDisposable
 		Assert.Equal(TargetTriple.Resolve(hostTriple), result.Targets[0]);
 		Assert.True(result.FileSize > 0);
 		Assert.Equal(64, result.MerkleRootHex.Length);
+		using var verified = CvlArchiveReader.Read(result.OutputPath);
+		Assert.Single(verified.Manifest.Slices);
 	}
 
 	[Fact]

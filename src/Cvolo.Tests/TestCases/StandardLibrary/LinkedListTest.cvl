@@ -1,0 +1,27 @@
+using System;
+using System.Collections.Generic;
+
+int Main()
+{
+	var list = LinkedList<int>();
+	list.Add(10);
+	list.Add(20);
+	list.Add(30);
+	list.Add(40);
+
+	Console.WriteLine($"Count: {list.Count()}");
+
+	var curr = list.Head();
+	while (curr is Some node) {
+		Console.WriteLine($"Value: {node.Value}");
+		curr = node.Next;
+	}
+
+	var back = list.Tail();
+	while (back is Some node) {
+		Console.WriteLine($"Backwards: {node.Value}");
+		back = node.Prev;
+	}
+
+	return 0;
+}

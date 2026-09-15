@@ -10,6 +10,8 @@ public sealed class LockFile
 	private static readonly JsonSerializerOptions Options = new()
 	{
 		WriteIndented = true,
+		PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+		PropertyNameCaseInsensitive = true,
 		DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
 	};
 
@@ -21,8 +23,38 @@ public sealed class LockFile
 
 	public static LockFile Read(string path)
 	{
-		return JsonSerializer.Deserialize<LockFile>(File.ReadAllText(path), Options)
+		var lockFile = JsonSerializer.Deserialize<LockFile>(File.ReadAllText(path), Options)
 			?? throw new InvalidDataException("Invalid cvolo.lock.json.");
+		if (lockFile.Version != 1)
+			throw new InvalidDataException($"Unsupported cvolo.lock.json version {lockFile.Version}.");
+		if (lockFile.Sources is null)
+			throw new InvalidDataException("cvolo.lock.json is missing sources.");
+		if (lockFile.Packages is null)
+			throw new InvalidDataException("cvolo.lock.json is missing packages.");
+		foreach (var package in lockFile.Packages)
+		{
+			if (string.IsNullOrWhiteSpace(package.Key))
+				throw new InvalidDataException("cvolo.lock.json contains a package with an empty id.");
+			if (string.IsNullOrWhiteSpace(package.Value.Resolved))
+				throw new InvalidDataException($"cvolo.lock.json package '{package.Key}' is missing resolved.");
+			if (string.IsNullOrWhiteSpace(package.Value.ContentHash))
+				throw new InvalidDataException($"cvolo.lock.json package '{package.Key}' is missing contentHash.");
+			if (package.Value.Dependencies is null)
+				throw new InvalidDataException($"cvolo.lock.json package '{package.Key}' is missing dependencies.");
+		}
+
+		return new LockFile
+		{
+			Version = lockFile.Version,
+			Sources = lockFile.Sources.ToArray(),
+			Packages = lockFile.Packages.ToDictionary(
+				p => p.Key,
+				p => new LockedPackage(
+					p.Value.Resolved,
+					p.Value.ContentHash,
+					p.Value.Dependencies.ToDictionary(d => d.Key, d => d.Value, StringComparer.OrdinalIgnoreCase)),
+				StringComparer.OrdinalIgnoreCase)
+		};
 	}
 
 	public void Write(string path)

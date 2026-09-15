@@ -24,6 +24,20 @@ public sealed unsafe class CvlArchive : IDisposable
 	/// </summary>
 	public ReadOnlySpan<byte> MerkleRootHash => new(_basePointer + 32, 32);
 
+	/// <summary>
+	/// Returns a zero-allocation span over an arbitrary validated byte range in the archive.
+	/// The range is bounded by the header-declared file size and is useful for container
+	/// metadata that does not belong to a logical sector (for example the signature block).
+	/// </summary>
+	public ReadOnlySpan<byte> GetRawSlice(ulong offset, int length)
+	{
+		ArgumentOutOfRangeException.ThrowIfNegative(length);
+		if (offset > Header.FileSize || (ulong)length > Header.FileSize - offset)
+			throw new ArgumentOutOfRangeException(nameof(offset), $"Raw archive range [{offset}, {offset + (ulong)length}) exceeds file size {Header.FileSize}.");
+
+		return new ReadOnlySpan<byte>(_basePointer + offset, length);
+	}
+
 	internal CvlArchive(
 		MemoryMappedFile mmf,
 		MemoryMappedViewAccessor accessor,

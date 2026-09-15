@@ -310,6 +310,16 @@ public sealed class CvlArchiveReaderTests : IDisposable
 	}
 
 	[Fact]
+	public unsafe void Read_ZeroSectors_ThrowsCVLF1911InsteadOfIndexError()
+	{
+		WriteRawHeaderFile(_tempFile, h => h->SectorCount = 0);
+
+		var ex = Assert.Throws<CvlFormatException>(() => CvlArchiveReader.Read(_tempFile));
+		Assert.Equal(CvlFormatDiagnosticIds.SectorBoundsInvalid, ex.Code);
+		Assert.Contains("Sector 1", ex.Message);
+	}
+
+	[Fact]
 	public unsafe void Read_IndexTableOverflowsReservedSpace_ThrowsCVLF1911()
 	{
 		// SignatureOffset == MerkleIndexTableOffset leaves zero room for the index table.

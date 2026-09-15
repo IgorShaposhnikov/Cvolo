@@ -122,17 +122,24 @@ public sealed class CvlArchiveReader
 
 			previousOffset = entry.Offset;
 
+			// Rule 11 applies to empty sectors too: their zero-length range must still begin
+			// at or before FileSize. Keeping this outside the Length > 0 branch avoids
+			// accepting an empty marker whose offset points beyond the physical container.
+			if (entry.Offset > header.FileSize)
+				throw new CvlFormatException(CvlFormatDiagnosticIds.SectorBoundsInvalid, entryBase, $"Sector {i + 1} offset lies beyond FileSize.");
+
 			if (entry.Length > 0)
 			{
-				// Guard the alignment arithmetic: a bound already exceeded by the raw offset is invalid regardless.
-				if (entry.Offset > header.FileSize)
-					throw new CvlFormatException(CvlFormatDiagnosticIds.SectorBoundsInvalid, entryBase, $"Sector {i + 1} payload lies beyond FileSize.");
+				// Check the logical payload before alignment so hostile ulong lengths cannot
+				// overflow either addition below. FileSize is capped at 2 GiB.
+				if (entry.Length > header.FileSize - entry.Offset)
+					throw new CvlFormatException(CvlFormatDiagnosticIds.SectorBoundsInvalid, entryBase, $"Sector {i + 1} payload extends beyond FileSize.");
 
 				var alignedLength = (entry.Length + (PageSize - 1)) & ~(PageSize - 1);
 
 				// 11. The padded payload must fit inside the file.
-				if (entry.Offset + alignedLength > header.FileSize)
-					throw new CvlFormatException(CvlFormatDiagnosticIds.SectorBoundsInvalid, entryBase, $"Sector {i + 1} payload extends beyond FileSize.");
+				if (alignedLength > header.FileSize - entry.Offset)
+					throw new CvlFormatException(CvlFormatDiagnosticIds.SectorBoundsInvalid, entryBase, $"Sector {i + 1} padded payload extends beyond FileSize.");
 
 				// 12. Non-empty sectors must not overlap.
 				if (entry.Offset < previousNonEmptyEnd)
@@ -142,7 +149,28 @@ public sealed class CvlArchiveReader
 			}
 		}
 
-		// Structural checks passed. Mount the file for verification and payload access.
+		// 13. Parse and validate the slice manifest before any mmap/view is created (§1.7).
+		if (sectors.Length == 0)
+			throw new CvlFormatException(CvlFormatDiagnosticIds.SectorBoundsInvalid, 64, "A .cvlib must contain Sector 1 metadata.");
+
+		var s1Entry = sectors[0];
+		var maxSector1Length = 4UL + CvlSliceManifest.MaxManifestSize + CvlSliceManifest.MaxLayoutMetadataSize;
+		if (s1Entry.Length > maxSector1Length)
+		{
+			throw new CvlFormatException(
+				CvlFormatDiagnosticIds.ManifestTooLarge,
+				(long)s1Entry.Offset,
+				$"Sector 1 payload ({s1Entry.Length} bytes) exceeds the maximum manifest + layout metadata size ({maxSector1Length} bytes).");
+		}
+
+		var sector1Bytes = new byte[checked((int)s1Entry.Length)];
+		fs.Position = (long)s1Entry.Offset;
+		fs.ReadExactly(sector1Bytes);
+		var s2Length = sectors.Length > 1 ? sectors[1].Length : 0;
+		var s3Length = sectors.Length > 2 ? sectors[2].Length : 0;
+		var manifest = CvlSliceManifest.Parse(sector1Bytes, s2Length, s3Length, (long)s1Entry.Offset);
+
+		// Structural checks passed. Mount the file for cryptographic verification and payload access.
 		var mmf = MemoryMappedFile.CreateFromFile(fs, null, 0, MemoryMappedFileAccess.Read, HandleInheritability.None, false);
 		var accessor = mmf.CreateViewAccessor(0, 0, MemoryMappedFileAccess.Read);
 
@@ -156,14 +184,6 @@ public sealed class CvlArchiveReader
 
 			if (!skipMerkleHashVerification)
 				VerifyMerkleTree(basePtr, header, sectors);
-
-			// 13. Parse and validate the slice manifest inside Sector 1.
-			var s1Entry = sectors[0];
-			var s2Length = sectors.Length > 1 ? sectors[1].Length : 0;
-			var s3Length = sectors.Length > 2 ? sectors[2].Length : 0;
-
-			var s1Span = new ReadOnlySpan<byte>(basePtr + s1Entry.Offset, (int)s1Entry.Length);
-			var manifest = CvlSliceManifest.Parse(s1Span, s2Length, s3Length, (long)s1Entry.Offset);
 
 			return new CvlArchive(mmf, accessor, basePtr, header, sectors, manifest);
 		}

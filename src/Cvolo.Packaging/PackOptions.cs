@@ -29,10 +29,10 @@ public sealed class PackOptions
 	/// <summary>When true, Sector 5 (source buffer) is omitted.</summary>
 	public bool StripSource { get; init; }
 
-	/// <summary>Size of the temporary directive; not used by the MVP pipeline beyond profile resolution.</summary>
+	/// <summary>Optional raw 32-byte Ed25519 private-key seed. When omitted, the local machine signing key is used.</summary>
 	public string? SigningKeyPath { get; init; }
 
-	/// <summary>When true, the archive is written unsigned (96 zero signature bytes).</summary>
+	/// <summary>When true, the archive is deliberately written unsigned (96 zero signature bytes).</summary>
 	public bool NoSign { get; init; }
 
 	/// <summary>Enables progress logging to the console.</summary>

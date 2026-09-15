@@ -3,10 +3,10 @@ using System.Text.Json;
 using Cvolo.CLI.Packages;
 using Cvolo.Core.Packages;
 using Cvolo.Packaging;
+using NSec.Cryptography;
 
 namespace Cvolo.Tests.Packaging;
 
-[Collection("Sequential")]
 public sealed class LocalPackageManagerTests : IDisposable
 {
 	private readonly string _root = Path.Combine(Path.GetTempPath(), "cvolo-local-pkg-" + Guid.NewGuid().ToString("N"));
@@ -71,6 +71,63 @@ public sealed class LocalPackageManagerTests : IDisposable
 	}
 
 	[Fact]
+	public void LockFile_ReadRejectsUnsupportedVersion()
+	{
+		var lockPath = Path.Combine(_root, "cvolo.lock.json");
+		File.WriteAllText(lockPath, """
+{
+  "version": 2,
+  "sources": [],
+  "packages": {}
+}
+""");
+
+		var ex = Assert.Throws<InvalidDataException>(() => LockFile.Read(lockPath));
+
+		Assert.Contains("Unsupported", ex.Message);
+	}
+
+	[Fact]
+	public void LockFile_ReadRejectsMissingPackageFields()
+	{
+		var lockPath = Path.Combine(_root, "cvolo.lock.json");
+		File.WriteAllText(lockPath, """
+{
+  "version": 1,
+  "sources": [],
+  "packages": {
+    "Foo": { "resolved": "1.0.0", "contentHash": "blake3:abc" }
+  }
+}
+""");
+
+		var ex = Assert.Throws<InvalidDataException>(() => LockFile.Read(lockPath));
+
+		Assert.Contains("dependencies", ex.Message);
+	}
+
+	[Fact]
+	public void LockFile_ReadNormalizesPackageLookupToIgnoreCase()
+	{
+		var lockPath = Path.Combine(_root, "cvolo.lock.json");
+		File.WriteAllText(lockPath, $$"""
+{
+  "version": 1,
+  "sources": [],
+  "packages": {
+    "Foo": { "resolved": "1.0.0", "contentHash": "{{ValidHash("foo")}}", "dependencies": { "Bar": "^1.0.0" } },
+    "Bar": { "resolved": "1.2.0", "contentHash": "{{ValidHash("bar")}}", "dependencies": {} }
+  }
+}
+""");
+
+		var lockFile = LockFile.Read(lockPath);
+
+		Assert.True(lockFile.Packages.ContainsKey("foo"));
+		Assert.True(lockFile.Packages["foo"].Dependencies.ContainsKey("bar"));
+	}
+
+	[Fact]
 	public void ProjectManifestWriter_AddsUpdatesAndRemovesPackageReference()
 	{
 		var manifest = CreateProject("edit", Dir("feed"), []);
@@ -115,65 +172,38 @@ public sealed class LocalPackageManagerTests : IDisposable
 	[Fact]
 	public void PkgUpdate_UnknownPackageId_ReportsNotReferenced()
 	{
-		// TODO: inject working directory and console writers into PkgCommand so CLI tests do not mutate process-wide state.
 		var feedDir = Dir("update-feed");
 		CreateArchive(feedDir, "Foo", "1.0.0");
-		CreateProject("update-app", feedDir, [new PackageReference("Foo", "1.0.0")]);
+		var manifest = CreateProject("update-app", feedDir, [new PackageReference("Foo", "1.0.0")]);
 		var cache = new PackageCache(Path.Combine(_root, "cache"));
-		var command = new PkgCommand(cache, new PackageInstaller(cache));
-		var previousCurrentDirectory = Directory.GetCurrentDirectory();
-		var previousError = Console.Error;
+		using var output = new StringWriter();
 		using var error = new StringWriter();
-		try
-		{
-			Directory.SetCurrentDirectory(Path.Combine(_root, "update-app"));
-			Console.SetError(error);
+		var command = new PkgCommand(cache, new PackageInstaller(cache), () => manifest.ProjectDirectory, output, error);
 
-			var exitCode = command.Parse("update Missing").Invoke();
+		var exitCode = command.Parse("update Missing").Invoke();
 
-			Assert.Equal(1, exitCode);
-			Assert.Contains(PackageDiagnosticIds.PackageNotReferenced, error.ToString());
-		}
-		finally
-		{
-			Console.SetError(previousError);
-			Directory.SetCurrentDirectory(previousCurrentDirectory);
-		}
+		Assert.Equal(1, exitCode);
+		Assert.Contains(PackageDiagnosticIds.PackageNotReferenced, error.ToString());
 	}
-
 	[Fact]
 	public void PkgRemove_UnknownPackageId_ReportsNotReferenced()
 	{
-		// TODO: inject working directory and console writers into PkgCommand so CLI tests do not mutate process-wide state.
 		var feedDir = Dir("remove-feed");
 		CreateArchive(feedDir, "Foo", "1.0.0");
 		var manifest = CreateProject("remove-app", feedDir, [new PackageReference("Foo", "1.0.0")]);
 		var cache = new PackageCache(Path.Combine(_root, "cache"));
-		var command = new PkgCommand(cache, new PackageInstaller(cache));
-		var previousCurrentDirectory = Directory.GetCurrentDirectory();
-		var previousError = Console.Error;
+		using var output = new StringWriter();
 		using var error = new StringWriter();
-		try
-		{
-			Directory.SetCurrentDirectory(manifest.ProjectDirectory);
-			Console.SetError(error);
+		var command = new PkgCommand(cache, new PackageInstaller(cache), () => manifest.ProjectDirectory, output, error);
 
-			var exitCode = command.Parse("remove Missing").Invoke();
+		var exitCode = command.Parse("remove Missing").Invoke();
 
-			Assert.Equal(1, exitCode);
-			Assert.Contains(PackageDiagnosticIds.PackageNotReferenced, error.ToString());
-		}
-		finally
-		{
-			Console.SetError(previousError);
-			Directory.SetCurrentDirectory(previousCurrentDirectory);
-		}
+		Assert.Equal(1, exitCode);
+		Assert.Contains(PackageDiagnosticIds.PackageNotReferenced, error.ToString());
 	}
-
 	[Fact]
 	public void PkgCachePruneUnused_RemovesOnlyPackagesNotReferencedByLocks()
 	{
-		// TODO: inject working directory and console writers into PkgCommand so CLI tests do not mutate process-wide state.
 		var projectDir = Dir("prune-app");
 		var cache = new PackageCache(Path.Combine(_root, "cache"));
 		WriteCachedPackage(cache, "Foo", "1.0.0");
@@ -183,36 +213,23 @@ public sealed class LocalPackageManagerTests : IDisposable
 			Sources = [],
 			Packages = new Dictionary<string, LockedPackage>(StringComparer.OrdinalIgnoreCase)
 			{
-				["Foo"] = new("1.0.0", "blake3:foo", new Dictionary<string, string>())
+				["Foo"] = new("1.0.0", ValidHash("foo"), new Dictionary<string, string>())
 			}
 		}.Write(Path.Combine(projectDir, "cvolo.lock.json"));
-		var command = new PkgCommand(cache, new PackageInstaller(cache));
-		var previousCurrentDirectory = Directory.GetCurrentDirectory();
-		var previousOutput = Console.Out;
 		using var output = new StringWriter();
-		try
-		{
-			Directory.SetCurrentDirectory(projectDir);
-			Console.SetOut(output);
+		using var error = new StringWriter();
+		var command = new PkgCommand(cache, new PackageInstaller(cache), () => projectDir, output, error);
 
-			var exitCode = command.Parse("cache prune --unused").Invoke();
+		var exitCode = command.Parse("cache prune --unused").Invoke();
 
-			Assert.Equal(0, exitCode);
-			Assert.True(Directory.Exists(cache.GetPackageDirectory("Foo", "1.0.0")));
-			Assert.False(Directory.Exists(cache.GetPackageDirectory("Bar", "2.0.0")));
-			Assert.Contains("Removed 1 cached package", output.ToString());
-		}
-		finally
-		{
-			Console.SetOut(previousOutput);
-			Directory.SetCurrentDirectory(previousCurrentDirectory);
-		}
+		Assert.Equal(0, exitCode);
+		Assert.True(Directory.Exists(cache.GetPackageDirectory("Foo", "1.0.0")));
+		Assert.False(Directory.Exists(cache.GetPackageDirectory("Bar", "2.0.0")));
+		Assert.Contains("Removed 1 cached package", output.ToString());
 	}
-
 	[Fact]
 	public void PkgCachePruneUnused_RewritesPackageIndex()
 	{
-		// TODO: inject working directory and console writers into PkgCommand so CLI tests do not mutate process-wide state.
 		var projectDir = Dir("prune-index-app");
 		var cache = new PackageCache(Path.Combine(_root, "cache"));
 		WriteCachedPackage(cache, "Foo", "1.0.0");
@@ -226,32 +243,19 @@ public sealed class LocalPackageManagerTests : IDisposable
 				["Foo"] = new("2.0.0", ValidHash("foo"), new Dictionary<string, string>())
 			}
 		}.Write(Path.Combine(projectDir, "cvolo.lock.json"));
-		var command = new PkgCommand(cache, new PackageInstaller(cache));
-		var previousCurrentDirectory = Directory.GetCurrentDirectory();
-		var previousOutput = Console.Out;
 		using var output = new StringWriter();
-		try
-		{
-			Directory.SetCurrentDirectory(projectDir);
-			Console.SetOut(output);
+		using var error = new StringWriter();
+		var command = new PkgCommand(cache, new PackageInstaller(cache), () => projectDir, output, error);
 
-			var exitCode = command.Parse("cache prune --unused").Invoke();
+		var exitCode = command.Parse("cache prune --unused").Invoke();
 
-			Assert.Equal(0, exitCode);
-			var versions = JsonSerializer.Deserialize<string[]>(File.ReadAllText(Path.Combine(_root, "cache", "pkg", "foo", "index.json")));
-			Assert.Equal(["2.0.0"], versions);
-		}
-		finally
-		{
-			Console.SetOut(previousOutput);
-			Directory.SetCurrentDirectory(previousCurrentDirectory);
-		}
+		Assert.Equal(0, exitCode);
+		var versions = JsonSerializer.Deserialize<string[]>(File.ReadAllText(Path.Combine(_root, "cache", "pkg", "foo", "index.json")));
+		Assert.Equal(["2.0.0"], versions);
 	}
-
 	[Fact]
 	public void PkgList_InvalidLock_ReportsLockOutOfSync()
 	{
-		// TODO: inject working directory and console writers into PkgCommand so CLI tests do not mutate process-wide state.
 		var manifest = CreateProject("list-app", Dir("feed"), [new PackageReference("Foo", "1.0.0")]);
 		new LockFile
 		{
@@ -262,31 +266,18 @@ public sealed class LocalPackageManagerTests : IDisposable
 			}
 		}.Write(LockFile.GetPath(manifest));
 		var cache = new PackageCache(Path.Combine(_root, "cache"));
-		var command = new PkgCommand(cache, new PackageInstaller(cache));
-		var previousCurrentDirectory = Directory.GetCurrentDirectory();
-		var previousError = Console.Error;
+		using var output = new StringWriter();
 		using var error = new StringWriter();
-		try
-		{
-			Directory.SetCurrentDirectory(manifest.ProjectDirectory);
-			Console.SetError(error);
+		var command = new PkgCommand(cache, new PackageInstaller(cache), () => manifest.ProjectDirectory, output, error);
 
-			var exitCode = command.Parse("list").Invoke();
+		var exitCode = command.Parse("list").Invoke();
 
-			Assert.Equal(1, exitCode);
-			Assert.Contains(PackageDiagnosticIds.LockOutOfSync, error.ToString());
-		}
-		finally
-		{
-			Console.SetError(previousError);
-			Directory.SetCurrentDirectory(previousCurrentDirectory);
-		}
+		Assert.Equal(1, exitCode);
+		Assert.Contains(PackageDiagnosticIds.LockOutOfSync, error.ToString());
 	}
-
 	[Fact]
 	public void PkgInstallFromLock_CachedHashMismatch_ReportsCachedContentMismatch()
 	{
-		// TODO: inject working directory and console writers into PkgCommand so CLI tests do not mutate process-wide state.
 		var feedDir = Dir("install-cache-feed");
 		var archive = CreateArchive(feedDir, "Foo", "1.0.0");
 		var manifest = CreateProject("install-cache-app", feedDir, [new PackageReference("Foo", "1.0.0")]);
@@ -300,25 +291,79 @@ public sealed class LocalPackageManagerTests : IDisposable
 				["Foo"] = new("1.0.0", ValidHash("different"), new Dictionary<string, string>())
 			}
 		}.Write(LockFile.GetPath(manifest));
-		var command = new PkgCommand(cache, new PackageInstaller(cache));
-		var previousCurrentDirectory = Directory.GetCurrentDirectory();
-		var previousError = Console.Error;
+		using var output = new StringWriter();
 		using var error = new StringWriter();
-		try
-		{
-			Directory.SetCurrentDirectory(manifest.ProjectDirectory);
-			Console.SetError(error);
+		var command = new PkgCommand(cache, new PackageInstaller(cache), () => manifest.ProjectDirectory, output, error);
 
-			var exitCode = command.Parse("install").Invoke();
+		var exitCode = command.Parse("install").Invoke();
 
-			Assert.Equal(1, exitCode);
-			Assert.Contains(PackageDiagnosticIds.CachedContentMismatch, error.ToString());
-		}
-		finally
-		{
-			Console.SetError(previousError);
-			Directory.SetCurrentDirectory(previousCurrentDirectory);
-		}
+		Assert.Equal(1, exitCode);
+		Assert.Contains(PackageDiagnosticIds.CachedContentMismatch, error.ToString());
+	}
+	[Fact]
+	public void PkgUpdate_RepublishedSameVersion_RejectsStaleCachedContent()
+	{
+		var feedDir = Dir("republish-feed");
+		var original = CreateArchive(feedDir, "Foo", "1.0.0");
+		var manifest = CreateProject("republish-app", feedDir, [new PackageReference("Foo", "1.0.0")]);
+		var cache = new PackageCache(Path.Combine(_root, "republish-cache"));
+		new PackageInstaller(cache).InstallFromFile(original);
+
+		// Re-publish the same identity/version. A new signing key changes the archive bytes/hash.
+		CreateArchive(feedDir, "Foo", "1.0.0");
+		using var output = new StringWriter();
+		using var error = new StringWriter();
+		var command = new PkgCommand(cache, new PackageInstaller(cache), () => manifest.ProjectDirectory, output, error);
+
+		var exitCode = command.Parse("update").Invoke();
+
+		Assert.Equal(1, exitCode);
+		Assert.Contains(PackageDiagnosticIds.CachedContentMismatch, error.ToString());
+	}
+
+	[Fact]
+	public void PkgCacheList_MalformedMetadata_IsSkippedWithPathWarning()
+	{
+		var cache = new PackageCache(Path.Combine(_root, "malformed-list-cache"));
+		WriteCachedPackage(cache, "Good", "1.0.0");
+		var badDirectory = cache.GetPackageDirectory("Bad", "1.0.0");
+		Directory.CreateDirectory(badDirectory);
+		var badPath = Path.Combine(badDirectory, ".metadata.json");
+		File.WriteAllText(badPath, "{ definitely-not-json");
+		using var output = new StringWriter();
+		using var error = new StringWriter();
+		var command = new PkgCommand(cache, new PackageInstaller(cache), () => _root, output, error);
+
+		var exitCode = command.Parse("cache list").Invoke();
+
+		Assert.Equal(0, exitCode);
+		Assert.Contains("Good 1.0.0", output.ToString());
+		Assert.DoesNotContain("Bad 1.0.0", output.ToString());
+		Assert.Contains(badPath, error.ToString());
+		Assert.Contains("warning: skipping malformed cache metadata", error.ToString());
+	}
+
+	[Fact]
+	public void PkgCachePrune_MalformedMetadata_IsSkippedInsteadOfCrashing()
+	{
+		var cache = new PackageCache(Path.Combine(_root, "malformed-prune-cache"));
+		WriteCachedPackage(cache, "Good", "1.0.0");
+		var goodDirectory = cache.GetPackageDirectory("Good", "1.0.0");
+		var badDirectory = cache.GetPackageDirectory("Bad", "1.0.0");
+		Directory.CreateDirectory(badDirectory);
+		var badPath = Path.Combine(badDirectory, ".metadata.json");
+		File.WriteAllText(badPath, "{ definitely-not-json");
+		using var output = new StringWriter();
+		using var error = new StringWriter();
+		var command = new PkgCommand(cache, new PackageInstaller(cache), () => _root, output, error);
+
+		var exitCode = command.Parse("cache prune").Invoke();
+
+		Assert.Equal(0, exitCode);
+		Assert.False(Directory.Exists(goodDirectory));
+		Assert.True(Directory.Exists(badDirectory));
+		Assert.Contains(badPath, error.ToString());
+		Assert.Contains("Removed 1 cached package", output.ToString());
 	}
 
 	[Fact]
@@ -423,7 +468,8 @@ public sealed class LocalPackageManagerTests : IDisposable
 		writer.SetSector(1, sector);
 		writer.SetSector(2, new byte[] { 1 });
 		writer.SetSector(3, new byte[] { 2 });
-		writer.WriteUnsigned(path);
+		using var key = Key.Create(SignatureAlgorithm.Ed25519);
+		writer.Write(path, key);
 		return path;
 	}
 

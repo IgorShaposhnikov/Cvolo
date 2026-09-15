@@ -7,7 +7,7 @@ namespace Cvolo.Strategies;
 
 internal sealed class LinkStrategy(string binDirectory) : ICompilationStrategy
 {
-	public int Execute(string llPath, CompilationProject project, string? linkerPath, string? linkerName, string optLevel = "Os", bool verbose = false, IEnumerable<NativeLibraryInfo>? nativeLibraries = null, string? targetOs = null)
+	public int Execute(string llPath, CompilationProject project, string? linkerPath, string? linkerName, string optLevel = "Os", bool verbose = false, IEnumerable<NativeLibraryInfo>? nativeLibraries = null, string? targetOs = null, IEnumerable<string>? additionalObjects = null)
 	{
 		if (linkerPath is null)
 		{
@@ -36,6 +36,12 @@ internal sealed class LinkStrategy(string binDirectory) : ICompilationStrategy
 		var subsystemFlag = isClang && OperatingSystem.IsWindows() && !project.IsShared
 			? " -Xlinker /subsystem:console"
 			: "";
+
+		// Package dependencies are already compiled native objects extracted from .cvlib.
+		// Preserve the loader-provided deterministic id@version order.
+		var objectFlags = additionalObjects is null
+			? string.Empty
+			: string.Concat(additionalObjects.Select(path => $" \"{Path.GetFullPath(path)}\""));
 
 		// FFI native libraries: [LibraryImport] forwards ONLY the path matching the current
 		// compilation target OS (win:/linux:/mac:); a missing target path falls back to the
@@ -90,7 +96,7 @@ internal sealed class LinkStrategy(string binDirectory) : ICompilationStrategy
 		var psi = new ProcessStartInfo
 		{
 			FileName = linkerPath,
-			Arguments = $"-o \"{binaryPath}\" \"{llPath}\"{typeFlag}{visibilityFlag}{optFlag}{libraryFlags}{subsystemFlag}",
+			Arguments = $"-o \"{binaryPath}\" \"{llPath}\"{objectFlags}{typeFlag}{visibilityFlag}{optFlag}{libraryFlags}{subsystemFlag}",
 			RedirectStandardOutput = !verbose,
 			RedirectStandardError = !verbose,
 			UseShellExecute = false,

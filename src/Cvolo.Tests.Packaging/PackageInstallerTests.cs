@@ -20,11 +20,11 @@ public sealed class PackageInstallerTests : IDisposable
 	}
 
 	[Fact]
-	public void UnsignedSingleTarget_PreservesBytesAndReinstallIsNoOp()
+	public void SignedSingleTarget_PreservesBytesAndReinstallIsNoOp()
 	{
 		var source = CreateArchive();
 		var installed = _installer.InstallFromFile(source);
-		Assert.True(installed.WasUnsigned);
+		Assert.False(installed.WasUnsigned);
 		Assert.False(installed.AlreadyInstalled);
 		Assert.Equal(File.ReadAllBytes(source), File.ReadAllBytes(installed.OutputPath));
 		Assert.StartsWith("blake3:", installed.ContentHash);
@@ -34,14 +34,10 @@ public sealed class PackageInstallerTests : IDisposable
 	}
 
 	[Fact]
-	public void UnsignedPackage_IsRejectedWhenTrustedKeysConfigured()
+	public void UnsignedPackage_IsRejectedByCvlibTrustContract()
 	{
-		var keys = Path.Combine(_cache.RootPath, "keys");
-		Directory.CreateDirectory(keys);
-		File.WriteAllText(Path.Combine(keys, "trusted.json"), "[\"001122\"]");
-
-		var error = Assert.Throws<PackageException>(() => _installer.InstallFromFile(CreateArchive()));
-		Assert.Contains(PackageDiagnosticIds.UnsignedRejected, error.Message);
+		var error = Assert.Throws<CvlFormatException>(() => _installer.InstallFromFile(CreateArchive(signed: false)));
+		Assert.Equal(CvlFormatDiagnosticIds.BitcodeTampered, error.Code);
 	}
 
 	[Fact]
@@ -62,13 +58,19 @@ public sealed class PackageInstallerTests : IDisposable
 	}
 
 	[Fact]
-	public void SignedSingleTarget_PreservesOriginalSignature()
+	public void CachedFatArchive_IsRejectedBecauseInstallCacheMustBeSingleTarget()
 	{
-		var source = CreateArchive(signed: true);
-		var installed = _installer.InstallFromFile(source);
-		Assert.False(installed.WasUnsigned);
-		Assert.Equal(File.ReadAllBytes(source), File.ReadAllBytes(installed.OutputPath));
-		using var archive = CvlArchiveReader.Read(installed.OutputPath);
+		var source = CreateArchive(fat: true);
+		using var sourceArchive = CvlArchiveReader.Read(source);
+		var metadata = PackageMetadata.Read(sourceArchive);
+		var directory = _cache.GetPackageDirectory(metadata.PackageId, metadata.Version);
+		Directory.CreateDirectory(directory);
+		File.Copy(source, Path.Combine(directory, metadata.PackageId + ".cvlib"));
+		File.WriteAllText(Path.Combine(directory, ".metadata.json"), JsonSerializer.Serialize(
+			new InstalledPackageMetadata(metadata.PackageId, metadata.Version, source, LocalFeed.ComputeHash(source), DateTimeOffset.UtcNow)));
+
+		var error = Assert.Throws<PackageException>(() => _installer.InstallFromCache(metadata.PackageId, metadata.Version));
+		Assert.Equal(PackageDiagnosticIds.CacheNotThinned, error.Code);
 	}
 
 	[Fact]
@@ -80,33 +82,38 @@ public sealed class PackageInstallerTests : IDisposable
 	}
 
 	[Fact]
-	public void MissingHost_IsRejectedWithoutCacheEntry()
+	public void MissingHost_IsRejectedWithCVLF1901WithoutCacheEntry()
 	{
 		var error = Assert.Throws<PackageException>(() => _installer.InstallFromFile(CreateArchive(missingHost: true)));
-		Assert.Contains(PackageDiagnosticIds.MissingHostSlice, error.Message);
+		Assert.Equal(CvlFormatDiagnosticIds.MissingTargetSlice, error.Code);
 		Assert.False(Directory.Exists(_cache.GetPackageDirectory("Foo", "1.0.0")));
 	}
 
-	[Theory]
-	[InlineData(false)]
-	[InlineData(true)]
-	public void TamperedPayload_IsRejected(bool signed)
-	{
-		var source = CreateArchive(signed: signed);
-		long offset;
-		using (var archive = CvlArchiveReader.Read(source, verifySignature: signed)) offset = (long)archive.Sectors[1].Offset;
-		using (var file = File.OpenWrite(source)) { file.Position = offset; file.WriteByte(99); }
-		var error = Assert.Throws<CvlFormatException>(() => _installer.InstallFromFile(source));
-		Assert.Contains("CVLF1902", error.Message);
-	}
-
 	[Fact]
-	public void InvalidNonzeroSignature_IsNotTreatedAsUnsigned()
+	public void TamperedPayload_IsRejected()
 	{
 		var source = CreateArchive();
 		long offset;
-		using (var archive = CvlArchiveReader.Read(source, verifySignature: false)) offset = (long)archive.Header.SignatureOffset;
-		using (var file = File.OpenWrite(source)) { file.Position = offset; file.WriteByte(1); }
+		using (var archive = CvlArchiveReader.Read(source)) offset = (long)archive.Sectors[1].Offset;
+		using (var file = File.OpenWrite(source)) { file.Position = offset; file.WriteByte(99); }
+		var error = Assert.Throws<CvlFormatException>(() => _installer.InstallFromFile(source));
+		Assert.Equal(CvlFormatDiagnosticIds.BitcodeTampered, error.Code);
+	}
+
+	[Fact]
+	public void InvalidNonzeroSignature_IsRejected()
+	{
+		var source = CreateArchive();
+		long offset;
+		using (var archive = CvlArchiveReader.Read(source)) offset = (long)archive.Header.SignatureOffset;
+		using (var file = new FileStream(source, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+		{
+			file.Position = offset + 32;
+			var original = file.ReadByte();
+			Assert.NotEqual(-1, original);
+			file.Position = offset + 32;
+			file.WriteByte((byte)(original ^ 0xFF));
+		}
 		Assert.Throws<CvlFormatException>(() => _installer.InstallFromFile(source));
 	}
 
@@ -119,7 +126,7 @@ public sealed class PackageInstallerTests : IDisposable
 		Assert.Throws<PackageException>(() => _installer.InstallFromFile(CreateArchive(id: id)));
 	}
 
-	private string CreateArchive(bool fat = false, bool signed = false, bool missingHost = false, string id = "Foo")
+	private string CreateArchive(bool fat = false, bool signed = true, bool missingHost = false, string id = "Foo")
 	{
 		var path = Path.Combine(_root, Guid.NewGuid().ToString("N") + ".cvlib");
 		var slices = new List<CvlSliceEntry>();
@@ -148,7 +155,10 @@ public sealed class PackageInstallerTests : IDisposable
 			using var key = Key.Create(SignatureAlgorithm.Ed25519);
 			writer.Write(path, key);
 		}
-		else writer.WriteUnsigned(path);
+		else
+		{
+			writer.WriteUnsigned(path);
+		}
 		return path;
 	}
 

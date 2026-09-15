@@ -14,8 +14,6 @@ public sealed class InstallCommand : Command
 			try
 			{
 				var result = installer.InstallFromFile(parseResult.GetValue(path)!);
-				if (result.WasUnsigned)
-					Console.Error.WriteLine($"warning {PackageDiagnosticIds.UnsignedWarning}: Package '{result.PackageId}@{result.Version}' is unsigned; signature verification skipped (Merkle integrity verified).");
 				Console.WriteLine(result.AlreadyInstalled ? "Already installed." : $"Installed {result.PackageId} {result.Version} → {result.OutputPath}");
 				Console.WriteLine($"  Source: {result.Source}");
 				Console.WriteLine($"  Hash:   {result.ContentHash}");

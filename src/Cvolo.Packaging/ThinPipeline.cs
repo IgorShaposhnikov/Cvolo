@@ -11,7 +11,7 @@ public static class ThinPipeline
 	public static void Write(CvlArchive archive, string triple, string outputPath, Key key, bool stripSource = false, bool stripBinaries = false)
 	{
 		var slice = archive.Manifest.Slices.SingleOrDefault(s => s.Triple == triple)
-			?? throw new PackageException(PackageDiagnosticIds.MissingHostSlice, $"No slice for host triple '{triple}'.");
+			?? throw new PackageException(CvlFormatDiagnosticIds.MissingTargetSlice, $"No slice for host triple '{triple}'.");
 		var payload = archive.GetSectorPayload(1);
 		var length = checked((int)BinaryPrimitives.ReadUInt32LittleEndian(payload));
 		var manifest = JsonNode.Parse(payload.Slice(4, length))!.AsObject();

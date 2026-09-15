@@ -21,7 +21,7 @@ namespace Cvolo.Drivers;
 /// <summary>
 /// Manages the full systems compilation pipeline, translating front-end Cvolo ASTs into optimized native machine binaries.
 /// </summary>
-internal sealed class CompilerDriver : ICompilerDriver
+internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDriver
 {
 	private static readonly string[] _linkerCandidates = ["clang", "gcc", "g++"];
 
@@ -50,8 +50,38 @@ internal sealed class CompilerDriver : ICompilerDriver
 			return 1;
 		}
 
-		if (!ValidatePackageLock(path, reporter))
+		var packageState = ValidatePackageLock(path, reporter, out var packageLockValid);
+		if (!packageLockValid)
 			return 1;
+
+		IReadOnlyList<ResolvedPackageArtifacts> packageArtifacts = [];
+		if (!checkOnly && !emitLowered && !llvmOnly && packageState is { } validatedPackages)
+		{
+			try
+			{
+				var installer = new PackageInstaller(packageCache);
+				packageArtifacts = new PackageDependencyLoader(packageCache, installer)
+					.Load(validatedPackages.Manifest, validatedPackages.LockFile);
+
+				if (verbose && !reporter.Exclusive)
+				{
+					Console.WriteLine("Package objects selected for linking:");
+					foreach (var artifact in packageArtifacts)
+						Console.WriteLine($"  -> {artifact.PackageId}@{artifact.Version}: {artifact.NativeObjectPath}");
+					Console.WriteLine();
+				}
+			}
+			catch (PackageException ex)
+			{
+				reporter.ReportSynthetic(ex.Code, "error", ex.Message, path);
+				return 1;
+			}
+			catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
+			{
+				reporter.ReportSynthetic(PackageDiagnosticIds.LockOutOfSync, "error", $"Failed to prepare package dependencies: {ex.Message}", path);
+				return 1;
+			}
+		}
 
 		// 2. Instrument compiled files list only under verbose logging rules.
 		// Machine reporters claim stdout, so verbose chatter is gated on !Exclusive.
@@ -275,7 +305,16 @@ internal sealed class CompilerDriver : ICompilerDriver
 			? new IrOnlyStrategy()
 			: new LinkStrategy(binDirectory);
 
-		var linkResult = strategy.Execute(llPath, project, linkerPath, linkerName, optLevel, verbose, binder.Context.NativeLibraries.Values, targetOs);
+		var linkResult = strategy.Execute(
+			llPath,
+			project,
+			linkerPath,
+			linkerName,
+			optLevel,
+			verbose,
+			binder.Context.NativeLibraries.Values,
+			targetOs,
+			packageArtifacts.Select(a => a.NativeObjectPath));
 		if (linkResult != 0)
 		{
 			return linkResult;
@@ -323,10 +362,11 @@ internal sealed class CompilerDriver : ICompilerDriver
 		};
 	}
 
-	private static bool ValidatePackageLock(string path, IDiagnosticReporter reporter)
+	private static (ProjectManifest Manifest, LockFile LockFile)? ValidatePackageLock(string path, IDiagnosticReporter reporter, out bool valid)
 	{
+		valid = true;
 		if (File.Exists(path) && string.Equals(Path.GetExtension(path), ".cvl", StringComparison.OrdinalIgnoreCase))
-			return true;
+			return null;
 
 		var hasRefs = HasPackageReferences(path);
 		ProjectManifest manifest;
@@ -336,31 +376,34 @@ internal sealed class CompilerDriver : ICompilerDriver
 		}
 		catch (FileNotFoundException)
 		{
-			return true;
+			return null;
 		}
 		catch (PackageException ex) when ((ex.Code is PackageDiagnosticIds.MissingPackageId or PackageDiagnosticIds.MissingVersion) && !hasRefs)
 		{
-			return true;
+			return null;
 		}
 		catch (PackageException ex)
 		{
 			reporter.ReportSynthetic(PackageDiagnosticIds.LockOutOfSync, "error", ex.Message, path);
-			return false;
+			valid = false;
+			return null;
 		}
 		catch (Exception ex) when (ex is IOException or XmlException or InvalidDataException)
 		{
 			reporter.ReportSynthetic(PackageDiagnosticIds.LockOutOfSync, "error", $"Cannot read project manifest: {ex.Message}", path);
-			return false;
+			valid = false;
+			return null;
 		}
 
 		if (manifest.Dependencies.Count == 0)
-			return true;
+			return null;
 
 		var lockPath = LockFile.GetPath(manifest);
 		if (!File.Exists(lockPath))
 		{
 			ReportLockOutOfSync(reporter, path, "cvolo.lock.json is missing; run 'cvolo pkg update' or 'cvolo pkg install'.");
-			return false;
+			valid = false;
+			return null;
 		}
 
 		try
@@ -369,16 +412,18 @@ internal sealed class CompilerDriver : ICompilerDriver
 			if (!PackageLockValidator.Validate(manifest, lockFile, out var message))
 			{
 				ReportLockOutOfSync(reporter, path, message);
-				return false;
+				valid = false;
+				return null;
 			}
+
+			return (manifest, lockFile);
 		}
 		catch (Exception ex) when (ex is IOException or InvalidDataException or JsonException or PackageException)
 		{
 			ReportLockOutOfSync(reporter, path, $"cvolo.lock.json is invalid: {ex.Message}");
-			return false;
+			valid = false;
+			return null;
 		}
-
-		return true;
 	}
 
 	private static bool HasPackageReferences(string path)
