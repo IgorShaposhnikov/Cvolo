@@ -63,8 +63,7 @@ public sealed class CompilationProject
 		{
 			var projDir = Path.GetDirectoryName(projectFilePath)!;
 			projectDir = projDir;
-			var files = Directory.GetFiles(projDir, "*.cvl", SearchOption.AllDirectories).ToList();
-			sourceFiles.AddRange(files);
+			AddProjectSources(projDir, sourceFiles);
 
 			try
 			{
@@ -73,26 +72,7 @@ public sealed class CompilationProject
 				var outputType = xml.Root?.Element("PropertyGroup")?.Element("OutputType")?.Value;
 				var strictOptionValue = xml.Root?.Element("PropertyGroup")?.Element("StrictOption")?.Value;
 
-				foreach (var reference in xml.Root?.Elements("ItemGroup").Elements("ProjectReference") ?? [])
-				{
-					var include = ((string?)reference.Attribute("Include"))?.Trim();
-					if (string.IsNullOrWhiteSpace(include))
-						continue;
-
-					var normalizedInclude = include.Replace('\\', Path.DirectorySeparatorChar).Replace('/', Path.DirectorySeparatorChar);
-					var referencePath = Path.GetFullPath(normalizedInclude, projDir);
-					if (!File.Exists(referencePath) || !string.Equals(Path.GetExtension(referencePath), ".cvlproj", StringComparison.OrdinalIgnoreCase))
-						throw new FileNotFoundException($"ProjectReference '{include}' from '{projectFilePath}' was not found.", referencePath);
-
-					projectReferences.Add(referencePath);
-					var referenceDirectory = Path.GetDirectoryName(referencePath)!;
-					foreach (var sourceFile in Directory.GetFiles(referenceDirectory, "*.cvl", SearchOption.AllDirectories))
-					{
-						var fullSourcePath = Path.GetFullPath(sourceFile);
-						if (!sourceFiles.Contains(fullSourcePath, StringComparer.OrdinalIgnoreCase))
-							sourceFiles.Add(fullSourcePath);
-					}
-				}
+				ResolveProjectReferences(projectFilePath, xml, sourceFiles, projectReferences);
 
 				if (!string.IsNullOrEmpty(assemblyName))
 					outputName = assemblyName;
@@ -105,11 +85,7 @@ public sealed class CompilationProject
 				if (string.Equals(strictOptionValue, "true", StringComparison.OrdinalIgnoreCase))
 					strictOption = true;
 			}
-			catch (FileNotFoundException)
-			{
-				throw;
-			}
-			catch
+			catch (Exception ex) when (ex is not FileNotFoundException && ex is not InvalidOperationException)
 			{
 				outputName = Path.GetFileNameWithoutExtension(projectFilePath);
 			}
@@ -151,6 +127,65 @@ public sealed class CompilationProject
 		}
 
 		return new CompilationProject(sourceFiles, outputName, isShared, projectDir, strictOption, projectReferences);
+	}
+
+	private static void ResolveProjectReferences(
+		string rootProjectPath,
+		XDocument rootProject,
+		List<string> sourceFiles,
+		List<string> projectReferences)
+	{
+		var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { Path.GetFullPath(rootProjectPath) };
+		var active = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { Path.GetFullPath(rootProjectPath) };
+		var stack = new List<string> { Path.GetFullPath(rootProjectPath) };
+
+		Visit(rootProjectPath, rootProject);
+
+		void Visit(string projectPath, XDocument project)
+		{
+			var projectDirectory = Path.GetDirectoryName(projectPath)!;
+			foreach (var reference in project.Root?.Elements("ItemGroup").Elements("ProjectReference") ?? [])
+			{
+				var include = ((string?)reference.Attribute("Include"))?.Trim();
+				if (string.IsNullOrWhiteSpace(include))
+					continue;
+
+				var normalizedInclude = include.Replace('\\', Path.DirectorySeparatorChar).Replace('/', Path.DirectorySeparatorChar);
+				var referencePath = Path.GetFullPath(normalizedInclude, projectDirectory);
+				if (!File.Exists(referencePath) || !string.Equals(Path.GetExtension(referencePath), ".cvlproj", StringComparison.OrdinalIgnoreCase))
+					throw new FileNotFoundException($"ProjectReference '{include}' from '{projectPath}' was not found.", referencePath);
+
+				if (active.Contains(referencePath))
+				{
+					var cycleStart = stack.FindIndex(path => string.Equals(path, referencePath, StringComparison.OrdinalIgnoreCase));
+					var cycle = stack.Skip(Math.Max(0, cycleStart)).Append(referencePath).Select(Path.GetFileNameWithoutExtension);
+					throw new InvalidOperationException($"ProjectReference cycle detected: {string.Join(" -> ", cycle)}");
+				}
+
+				if (!visited.Add(referencePath))
+					continue;
+
+				projectReferences.Add(referencePath);
+				AddProjectSources(Path.GetDirectoryName(referencePath)!, sourceFiles);
+
+				var referencedProject = XDocument.Load(referencePath);
+				active.Add(referencePath);
+				stack.Add(referencePath);
+				Visit(referencePath, referencedProject);
+				stack.RemoveAt(stack.Count - 1);
+				active.Remove(referencePath);
+			}
+		}
+	}
+
+	private static void AddProjectSources(string projectDirectory, List<string> sourceFiles)
+	{
+		foreach (var sourceFile in Directory.GetFiles(projectDirectory, "*.cvl", SearchOption.AllDirectories))
+		{
+			var fullSourcePath = Path.GetFullPath(sourceFile);
+			if (!sourceFiles.Contains(fullSourcePath, StringComparer.OrdinalIgnoreCase))
+				sourceFiles.Add(fullSourcePath);
+		}
 	}
 
 	public static void CreateNewProject(string projectName)

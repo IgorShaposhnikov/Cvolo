@@ -51,6 +51,83 @@ public sealed class ProjectReferenceIntegrationTests : IDisposable
 	}
 
 	[Fact]
+	public void CompilationProject_LoadsTransitiveProjectReferencesOnce()
+	{
+		var (appDirectory, libAProject, libBProject, libBSource) = CreateTransitiveProjectGraph();
+
+		var project = CompilationProject.Load(appDirectory, compilerBaseDir: _root);
+
+		Assert.Equal(2, project.ProjectReferences.Count);
+		Assert.Contains(Path.GetFullPath(libAProject), project.ProjectReferences);
+		Assert.Contains(Path.GetFullPath(libBProject), project.ProjectReferences);
+		Assert.Equal(1, project.SourceFiles.Count(file => string.Equals(file, Path.GetFullPath(libBSource), StringComparison.OrdinalIgnoreCase)));
+	}
+
+	[Fact]
+	public void Build_AppWithTransitiveProjectReference_CompilesWholeGraph()
+	{
+		RequireClang();
+		var (appDirectory, _, _, _) = CreateTransitiveProjectGraph();
+
+		var cache = new PackageCache(Path.Combine(_root, "transitive-cache"));
+		var driverType = typeof(ICompilerDriver).Assembly.GetType("Cvolo.Drivers.CompilerDriver", throwOnError: true)!;
+		var driver = Assert.IsAssignableFrom<ICompilerDriver>(Activator.CreateInstance(driverType, cache));
+		var (exitCode, buildOutput) = CompileWithCapturedOutput(driver, appDirectory);
+		Assert.True(exitCode == 0, buildOutput);
+
+		var executable = Path.Combine(appDirectory, "bin", "Debug", OperatingSystem.IsWindows() ? "App.exe" : "App");
+		Assert.True(File.Exists(executable), $"Expected compiler output '{executable}'.");
+		using var process = Process.Start(new ProcessStartInfo
+		{
+			FileName = executable,
+			UseShellExecute = false,
+			RedirectStandardOutput = true,
+			RedirectStandardError = true
+		});
+		Assert.NotNull(process);
+		Assert.True(process!.WaitForExit(10_000), $"Compiled app '{executable}' did not exit within 10 seconds.");
+		Assert.Equal(0, process.ExitCode);
+	}
+
+	[Fact]
+	public void CompilationProject_DiamondProjectReference_DeduplicatesSharedDependency()
+	{
+		var commonDirectory = CreateLibrary("Common", "namespace Common; public int Value() { return 42; }");
+		var leftDirectory = CreateLibrary("Left", "namespace Left; public int LeftValue() { return 1; }");
+		var rightDirectory = CreateLibrary("Right", "namespace Right; public int RightValue() { return 1; }");
+		AddProjectReference(leftDirectory, Path.Combine(commonDirectory, "Common.cvlproj"));
+		AddProjectReference(rightDirectory, Path.Combine(commonDirectory, "Common.cvlproj"));
+
+		var appDirectory = Path.Combine(_root, "DiamondApp");
+		Directory.CreateDirectory(appDirectory);
+		WriteProject(Path.Combine(appDirectory, "DiamondApp.cvlproj"), "DiamondApp",
+			Path.Combine(leftDirectory, "Left.cvlproj"), Path.Combine(rightDirectory, "Right.cvlproj"));
+		File.WriteAllText(Path.Combine(appDirectory, "Main.cvl"), "int main() { return 0; }");
+
+		var project = CompilationProject.Load(appDirectory, compilerBaseDir: _root);
+		var commonProject = Path.GetFullPath(Path.Combine(commonDirectory, "Common.cvlproj"));
+		var commonSource = Path.GetFullPath(Path.Combine(commonDirectory, "Common.cvl"));
+
+		Assert.Equal(1, project.ProjectReferences.Count(path => string.Equals(path, commonProject, StringComparison.OrdinalIgnoreCase)));
+		Assert.Equal(1, project.SourceFiles.Count(path => string.Equals(path, commonSource, StringComparison.OrdinalIgnoreCase)));
+	}
+
+	[Fact]
+	public void CompilationProject_ProjectReferenceCycle_FailsWithCycleChain()
+	{
+		var aDirectory = CreateLibrary("A", "namespace A; public int AValue() { return 1; }");
+		var bDirectory = CreateLibrary("B", "namespace B; public int BValue() { return 2; }");
+		AddProjectReference(aDirectory, Path.Combine(bDirectory, "B.cvlproj"));
+		AddProjectReference(bDirectory, Path.Combine(aDirectory, "A.cvlproj"));
+
+		var ex = Assert.Throws<InvalidOperationException>(() =>
+			CompilationProject.Load(Path.Combine(aDirectory, "A.cvlproj"), compilerBaseDir: _root));
+
+		Assert.Contains("ProjectReference cycle detected", ex.Message);
+		Assert.Contains("A -> B -> A", ex.Message);
+	}
+
+	[Fact]
 	public void CompilationProject_MissingProjectReference_FailsWithReferencedPath()
 	{
 		var appDirectory = Path.Combine(_root, "missing-app");
@@ -71,6 +148,58 @@ public sealed class ProjectReferenceIntegrationTests : IDisposable
 		var ex = Assert.Throws<FileNotFoundException>(() => CompilationProject.Load(appDirectory, compilerBaseDir: _root));
 		Assert.Contains("ProjectReference", ex.Message);
 		Assert.Contains("Missing.cvlproj", ex.Message);
+	}
+
+	private (string AppDirectory, string LibAProject, string LibBProject, string LibBSource) CreateTransitiveProjectGraph()
+	{
+		var libBDirectory = CreateLibrary("LibB", "namespace LibB; public int BaseValue() { return 40; }");
+		var libADirectory = CreateLibrary("LibA", "using LibB; namespace LibA; public int Combined() { return BaseValue() + 2; }");
+		AddProjectReference(libADirectory, Path.Combine(libBDirectory, "LibB.cvlproj"));
+
+		var appDirectory = Path.Combine(_root, "TransitiveApp");
+		Directory.CreateDirectory(appDirectory);
+		WriteProject(Path.Combine(appDirectory, "App.cvlproj"), "App", Path.Combine(libADirectory, "LibA.cvlproj"));
+		File.WriteAllText(Path.Combine(appDirectory, "Main.cvl"), "using LibA; int main() { return Combined() - 42; }");
+
+		return (
+			appDirectory,
+			Path.Combine(libADirectory, "LibA.cvlproj"),
+			Path.Combine(libBDirectory, "LibB.cvlproj"),
+			Path.Combine(libBDirectory, "LibB.cvl"));
+	}
+
+	private string CreateLibrary(string name, string source)
+	{
+		var directory = Path.Combine(_root, name);
+		Directory.CreateDirectory(directory);
+		WriteProject(Path.Combine(directory, $"{name}.cvlproj"), name);
+		File.WriteAllText(Path.Combine(directory, $"{name}.cvl"), source);
+		return directory;
+	}
+
+	private static void AddProjectReference(string projectDirectory, string referencedProject)
+	{
+		var projectPath = Directory.GetFiles(projectDirectory, "*.cvlproj", SearchOption.TopDirectoryOnly).Single();
+		var projectName = Path.GetFileNameWithoutExtension(projectPath);
+		WriteProject(projectPath, projectName, referencedProject);
+	}
+
+	private static void WriteProject(string projectPath, string assemblyName, params string[] projectReferences)
+	{
+		var projectDirectory = Path.GetDirectoryName(projectPath)!;
+		var references = projectReferences.Length == 0
+			? string.Empty
+			: "\n  <ItemGroup>\n" + string.Join("\n", projectReferences.Select(reference =>
+				$"    <ProjectReference Include=\"{Path.GetRelativePath(projectDirectory, reference)}\" />")) + "\n  </ItemGroup>";
+
+		File.WriteAllText(projectPath, $"""
+<Project Sdk="Cvolo.Sdk">
+  <PropertyGroup>
+    <OutputType>{(assemblyName == "App" || assemblyName == "DiamondApp" ? "Exe" : "Library")}</OutputType>
+    <AssemblyName>{assemblyName}</AssemblyName>
+  </PropertyGroup>{references}
+</Project>
+""");
 	}
 
 	private (string AppDirectory, string LibraryProject, string LibrarySource) CreateProjectPair()
