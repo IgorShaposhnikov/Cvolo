@@ -144,9 +144,21 @@ public sealed class PackageInstallerTests : IDisposable
 	}
 
 	[Fact]
-	public void MissingHost_IsRejectedWithCVLP3010WithoutCacheEntry()
+	public void MissingHost_WithSector5_InstallsForSourceFallback()
 	{
-		var error = Assert.Throws<PackageException>(() => _installer.InstallFromFile(CreateArchive(missingHost: true)));
+		var installed = _installer.InstallFromFile(CreateArchive(missingHost: true));
+
+		Assert.False(installed.AlreadyInstalled);
+		using var archive = CvlArchiveReader.Read(installed.OutputPath);
+		Assert.Equal("source", archive.ReadSourceBuffer());
+		Assert.Empty(archive.GetSectorPayload(2).ToArray());
+		Assert.Empty(archive.GetSectorPayload(3).ToArray());
+	}
+
+	[Fact]
+	public void MissingHost_WithoutSector5_IsRejectedWithCVLP3010WithoutCacheEntry()
+	{
+		var error = Assert.Throws<PackageException>(() => _installer.InstallFromFile(CreateArchive(missingHost: true, includeSource: false)));
 		Assert.Equal(PackageDiagnosticIds.MissingHostSlice, error.Code);
 		Assert.False(Directory.Exists(_cache.GetPackageDirectory("Foo", "1.0.0")));
 	}
@@ -188,7 +200,7 @@ public sealed class PackageInstallerTests : IDisposable
 		Assert.Throws<PackageException>(() => _installer.InstallFromFile(CreateArchive(id: id)));
 	}
 
-	private string CreateArchive(bool fat = false, bool signed = true, bool missingHost = false, string id = "Foo", Key? signingKey = null)
+	private string CreateArchive(bool fat = false, bool signed = true, bool missingHost = false, string id = "Foo", Key? signingKey = null, bool includeSource = true)
 	{
 		var path = Path.Combine(_root, Guid.NewGuid().ToString("N") + ".cvlib");
 		var slices = new List<CvlSliceEntry>();
@@ -211,7 +223,7 @@ public sealed class PackageInstallerTests : IDisposable
 		writer.SetSector(2, fat ? new byte[] { 1, 2, 3, 4 } : new byte[] { 3, 4 });
 		writer.SetSector(3, fat ? new byte[] { 5, 6, 7, 8 } : new byte[] { 7, 8 });
 		writer.SetSector(4, new byte[] { 9 });
-		writer.SetSourceBuffer("source");
+		if (includeSource) writer.SetSourceBuffer("source");
 		if (signed)
 		{
 			if (signingKey is not null)

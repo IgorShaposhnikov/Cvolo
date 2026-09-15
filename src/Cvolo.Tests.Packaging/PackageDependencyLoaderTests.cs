@@ -64,6 +64,35 @@ public sealed class PackageDependencyLoaderTests : IDisposable
 	}
 
 	[Fact]
+	public async Task Load_ConcurrentBuilds_ShareAtomicExtractionWithoutDeletingEachOthersArtifacts()
+	{
+		var project = CreateProject("parallel-app", [new PackageReference("Foo", "1.0.0")]);
+		var source = CreateArchive("Foo", "1.0.0", [0xCA, 0xFE, 0xBA, 0xBE]);
+		var cache = new PackageCache(Path.Combine(_root, "cache-parallel"));
+		var installer = new PackageInstaller(cache);
+		installer.InstallFromFile(source);
+		var lockFile = WriteLock(project, "Foo", "1.0.0", LocalFeed.ComputeHash(source));
+		var loader = new PackageDependencyLoader(cache, installer);
+
+		var loads = Enumerable.Range(0, 8)
+			.Select(_ => Task.Run(() => Assert.Single(loader.Load(project, lockFile))))
+			.ToArray();
+		var artifacts = await Task.WhenAll(loads);
+
+		var first = artifacts[0];
+		Assert.All(artifacts, artifact =>
+		{
+			Assert.Equal(first.NativeObjectPath, artifact.NativeObjectPath);
+			Assert.Equal(first.BitcodePath, artifact.BitcodePath);
+			Assert.Equal(new byte[] { 0xCA, 0xFE, 0xBA, 0xBE }, File.ReadAllBytes(artifact.NativeObjectPath!));
+			Assert.Equal(new byte[] { 0x42 }, File.ReadAllBytes(artifact.BitcodePath!));
+		});
+
+		var packageDirectory = Path.GetDirectoryName(first.BitcodePath!)!;
+		Assert.Empty(Directory.EnumerateFiles(packageDirectory, "*.tmp_*", SearchOption.TopDirectoryOnly));
+	}
+
+	[Fact]
 	public void Load_UsesAllLockedPackagesIncludingTransitivesInDeterministicOrder()
 	{
 		var project = CreateProject("transitive-app", [new PackageReference("Zulu", "1.0.0")]);

@@ -53,39 +53,20 @@ public sealed class PackageDependencyLoader
 			: lockHash;
 		var extractionRoot = Path.Combine(manifest.ProjectDirectory, ".cvolo", "build", lockHashHex);
 
-		// TODO(pkg-concurrency): builds sharing the same lock hash currently share this extraction
-		// root. Parallel builds can delete/recreate each other's files. Add a cross-process lock
-		// or extract to a per-process temp root and atomically publish it.
-		if (Directory.Exists(extractionRoot))
-			Directory.Delete(extractionRoot, recursive: true);
+		// The lock hash makes this directory content-addressed for the current dependency graph.
+		// Never delete it at build start: another compiler process may be linking files from the
+		// same graph. Individual artifacts are published atomically below and are immutable.
 		Directory.CreateDirectory(extractionRoot);
 
-		try
+		var artifacts = new List<ResolvedPackageArtifacts>(lockFile.Packages.Count);
+		foreach (var package in lockFile.Packages
+			.OrderBy(p => p.Key, StringComparer.OrdinalIgnoreCase)
+			.ThenBy(p => p.Value.Resolved, StringComparer.Ordinal))
 		{
-			var artifacts = new List<ResolvedPackageArtifacts>(lockFile.Packages.Count);
-			foreach (var package in lockFile.Packages
-				.OrderBy(p => p.Key, StringComparer.OrdinalIgnoreCase)
-				.ThenBy(p => p.Value.Resolved, StringComparer.Ordinal))
-			{
-				artifacts.Add(LoadPackage(extractionRoot, package.Key, package.Value));
-			}
-
-			return artifacts;
+			artifacts.Add(LoadPackage(extractionRoot, package.Key, package.Value));
 		}
-		catch
-		{
-			try
-			{
-				if (Directory.Exists(extractionRoot))
-					Directory.Delete(extractionRoot, recursive: true);
-			}
-			catch
-			{
-				// Preserve the original package/load failure.
-			}
 
-			throw;
-		}
+		return artifacts;
 	}
 
 	private ResolvedPackageArtifacts LoadPackage(string extractionRoot, string packageId, LockedPackage locked)
@@ -206,8 +187,28 @@ public sealed class PackageDependencyLoader
 				ex.Message);
 		}
 
+		if (File.Exists(outputPath))
+			return;
+
 		var bytes = archive.GetRawSlice(absoluteOffset, length);
-		File.WriteAllBytes(outputPath, bytes.ToArray());
+		var temporaryPath = outputPath + ".tmp_" + Guid.NewGuid().ToString("N");
+		try
+		{
+			File.WriteAllBytes(temporaryPath, bytes.ToArray());
+			try
+			{
+				File.Move(temporaryPath, outputPath);
+			}
+			catch (IOException) when (File.Exists(outputPath))
+			{
+				// Another build published the exact content-addressed artifact first. Reuse it.
+			}
+		}
+		finally
+		{
+			if (File.Exists(temporaryPath))
+				File.Delete(temporaryPath);
+		}
 	}
 
 	private static PackageException MissingFromCache(string packageId, string version) =>
