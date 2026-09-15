@@ -174,7 +174,7 @@ public sealed class CvlArchivePrimitivesTests
 
 		Assert.Equal("CVLF1900", exception.Code);
 		Assert.Equal(0, exception.Offset);
-		Assert.Equal("Magic number mismatch.", exception.Message);
+		Assert.Equal("CVLF1900: Magic number mismatch.", exception.Message);
 		Assert.Contains("Found XYZ", exception.Detail);
 		Assert.Contains("[CVLF1900 at offset 0x00000000]", exception.ToString());
 	}

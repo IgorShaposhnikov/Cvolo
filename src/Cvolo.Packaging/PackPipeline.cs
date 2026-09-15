@@ -87,6 +87,9 @@ public sealed class PackPipeline
 		var manifestJson = JsonSerializer.Serialize(new
 		{
 			Format = FormatId,
+			manifest.PackageId,
+			manifest.Version,
+			manifest.Dependencies,
 			Slices = slices.Select(s => new
 			{
 				s.Triple,

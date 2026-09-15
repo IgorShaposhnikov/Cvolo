@@ -23,6 +23,7 @@ public sealed class ProjectManifest
 		string outputName,
 		bool isLibrary,
 		bool strictOption,
+		string? localFeed,
 		IReadOnlyList<string> targetFrameworks,
 		IReadOnlyList<PackageReference> dependencies)
 	{
@@ -33,6 +34,7 @@ public sealed class ProjectManifest
 		OutputName = outputName;
 		IsLibrary = isLibrary;
 		StrictOption = strictOption;
+		LocalFeed = localFeed;
 		TargetFrameworks = targetFrameworks;
 		Dependencies = dependencies;
 	}
@@ -57,6 +59,9 @@ public sealed class ProjectManifest
 
 	/// <summary>When &lt;StrictOption&gt; is true, optional syntax is rejected (mirrors CompilationProject).</summary>
 	public bool StrictOption { get; }
+
+	/// <summary>Project-local feed path from &lt;LocalFeed&gt;, if declared.</summary>
+	public string? LocalFeed { get; }
 
 	/// <summary>The target frameworks (&lt;TargetFrameworks&gt;), a semicolon-separated list of portable triples.</summary>
 	public IReadOnlyList<string> TargetFrameworks { get; }
@@ -132,6 +137,9 @@ public sealed class ProjectManifest
 
 		var strictOptionValue = (string?)propertyGroup?.Element("StrictOption");
 		var strictOption = string.Equals(strictOptionValue, "true", StringComparison.OrdinalIgnoreCase);
+		var localFeed = ((string?)propertyGroup?.Element("LocalFeed"))?.Trim();
+		if (string.IsNullOrWhiteSpace(localFeed))
+			localFeed = null;
 
 		var dependencies = new List<PackageReference>();
 		foreach (var itemGroup in root.Elements("ItemGroup"))
@@ -154,6 +162,7 @@ public sealed class ProjectManifest
 			outputName: outputName,
 			isLibrary: isLibrary,
 			strictOption: strictOption,
+			localFeed: localFeed,
 			targetFrameworks: targetFrameworks,
 			dependencies: dependencies);
 	}

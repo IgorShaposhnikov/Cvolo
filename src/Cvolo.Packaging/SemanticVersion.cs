@@ -15,7 +15,7 @@ public sealed class SemanticVersion : IComparable<SemanticVersion>
 	public string Prerelease { get; }
 	public string BuildMetadata { get; }
 
-	private SemanticVersion(int major, int minor, int patch, string prerelease, string buildMetadata)
+	internal SemanticVersion(int major, int minor, int patch, string prerelease = "", string buildMetadata = "")
 	{
 		Major = major;
 		Minor = minor;

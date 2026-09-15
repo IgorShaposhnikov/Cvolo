@@ -7,7 +7,7 @@ namespace Cvolo.Core.Packages;
 /// <see cref="System.IO.InvalidDataException"/> is sealed in modern .NET.
 /// </summary>
 public sealed class CvlFormatException(string code, long offset, string message, string? detail = null)
-	: IOException(message)
+	: IOException($"{code}: {message}")
 {
 	/// <summary>The CVLF19xx diagnostic code identifying the exact format violation.</summary>
 	public string Code { get; } = code;

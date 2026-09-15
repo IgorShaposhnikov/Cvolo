@@ -5,7 +5,7 @@ namespace Cvolo.Packaging;
 /// The <see cref="Code"/> identifies the exact CVLP3xxx diagnostic.
 /// </summary>
 public sealed class PackageException(string code, string message, string? detail = null)
-	: Exception(message)
+	: Exception($"{code}: {message}")
 {
 	/// <summary>The CVLP3xxx diagnostic code identifying the failure.</summary>
 	public string Code { get; } = code;

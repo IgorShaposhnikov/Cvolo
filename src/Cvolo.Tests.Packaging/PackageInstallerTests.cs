@@ -1,0 +1,145 @@
+using System.Buffers.Binary;
+using System.Text.Json;
+using Cvolo.Core.Packages;
+using Cvolo.Packaging;
+using NSec.Cryptography;
+
+namespace Cvolo.Tests.Packaging;
+
+public sealed class PackageInstallerTests : IDisposable
+{
+	private readonly string _root = Path.Combine(Path.GetTempPath(), "cvolo-install-tests-" + Guid.NewGuid().ToString("N"));
+	private readonly PackageCache _cache;
+	private readonly PackageInstaller _installer;
+
+	public PackageInstallerTests()
+	{
+		Directory.CreateDirectory(_root);
+		_cache = new PackageCache(Path.Combine(_root, "cache"));
+		_installer = new PackageInstaller(_cache);
+	}
+
+	[Fact]
+	public void UnsignedSingleTarget_PreservesBytesAndReinstallIsNoOp()
+	{
+		var source = CreateArchive();
+		var installed = _installer.InstallFromFile(source);
+		Assert.True(installed.WasUnsigned);
+		Assert.False(installed.AlreadyInstalled);
+		Assert.Equal(File.ReadAllBytes(source), File.ReadAllBytes(installed.OutputPath));
+		Assert.StartsWith("blake3:", installed.ContentHash);
+		Assert.True(_installer.InstallFromFile(source).AlreadyInstalled);
+		Assert.True(_installer.InstallFromCache("foo", "1.0.0").AlreadyInstalled);
+		Assert.Contains("1.0.0", File.ReadAllText(Path.Combine(Path.GetDirectoryName(Path.GetDirectoryName(installed.OutputPath))!, "index.json")));
+	}
+
+	[Fact]
+	public void FatArchive_ThinsRebasesSignsAndPreservesOtherSectors()
+	{
+		var installed = _installer.InstallFromFile(CreateArchive(fat: true));
+		using var archive = CvlArchiveReader.Read(installed.OutputPath);
+		var slice = Assert.Single(archive.Manifest.Slices);
+		Assert.Equal(TargetTriple.HostTriple(), slice.Triple);
+		Assert.Equal(0UL, slice.Sector2.Offset);
+		Assert.Equal(new byte[] { 3, 4 }, archive.GetSectorPayload(2).ToArray());
+		Assert.Equal(new byte[] { 7, 8 }, archive.GetSectorPayload(3).ToArray());
+		Assert.Equal(new byte[] { 9 }, archive.GetSectorPayload(4).ToArray());
+		Assert.Equal("source", archive.ReadSourceBuffer());
+		Assert.Equal("Foo", PackageMetadata.Read(archive).PackageId);
+		Assert.Equal("Bar", Assert.Single(PackageMetadata.Read(archive).Dependencies).Id);
+		Assert.True(File.Exists(Path.Combine(_cache.RootPath, "keys", "machine.key")));
+	}
+
+	[Fact]
+	public void SignedSingleTarget_PreservesOriginalSignature()
+	{
+		var source = CreateArchive(signed: true);
+		var installed = _installer.InstallFromFile(source);
+		Assert.False(installed.WasUnsigned);
+		Assert.Equal(File.ReadAllBytes(source), File.ReadAllBytes(installed.OutputPath));
+		using var archive = CvlArchiveReader.Read(installed.OutputPath);
+	}
+
+	[Fact]
+	public void DifferentContentForSameVersion_IsRejected()
+	{
+		_installer.InstallFromFile(CreateArchive());
+		var error = Assert.Throws<PackageException>(() => _installer.InstallFromFile(CreateArchive(fat: true)));
+		Assert.Contains(PackageDiagnosticIds.CachedContentMismatch, error.Message);
+	}
+
+	[Fact]
+	public void MissingHost_IsRejectedWithoutCacheEntry()
+	{
+		var error = Assert.Throws<PackageException>(() => _installer.InstallFromFile(CreateArchive(missingHost: true)));
+		Assert.Contains(PackageDiagnosticIds.MissingHostSlice, error.Message);
+		Assert.False(Directory.Exists(_cache.GetPackageDirectory("Foo", "1.0.0")));
+	}
+
+	[Theory]
+	[InlineData(false)]
+	[InlineData(true)]
+	public void TamperedPayload_IsRejected(bool signed)
+	{
+		var source = CreateArchive(signed: signed);
+		long offset;
+		using (var archive = CvlArchiveReader.Read(source, verifySignature: signed)) offset = (long)archive.Sectors[1].Offset;
+		using (var file = File.OpenWrite(source)) { file.Position = offset; file.WriteByte(99); }
+		var error = Assert.Throws<CvlFormatException>(() => _installer.InstallFromFile(source));
+		Assert.Contains("CVLF1902", error.Message);
+	}
+
+	[Fact]
+	public void InvalidNonzeroSignature_IsNotTreatedAsUnsigned()
+	{
+		var source = CreateArchive();
+		long offset;
+		using (var archive = CvlArchiveReader.Read(source, verifySignature: false)) offset = (long)archive.Header.SignatureOffset;
+		using (var file = File.OpenWrite(source)) { file.Position = offset; file.WriteByte(1); }
+		Assert.Throws<CvlFormatException>(() => _installer.InstallFromFile(source));
+	}
+
+	[Theory]
+	[InlineData("../escape")]
+	[InlineData("C:foo")]
+	[InlineData("foo/bar")]
+	public void UnsafeIdentity_IsRejected(string id)
+	{
+		Assert.Throws<PackageException>(() => _installer.InstallFromFile(CreateArchive(id: id)));
+	}
+
+	private string CreateArchive(bool fat = false, bool signed = false, bool missingHost = false, string id = "Foo")
+	{
+		var path = Path.Combine(_root, Guid.NewGuid().ToString("N") + ".cvlib");
+		var slices = new List<CvlSliceEntry>();
+		if (fat) slices.Add(new("other-target", new(0, 2), new(0, 2)));
+		slices.Add(new(missingHost ? "missing-target" : TargetTriple.HostTriple(), new(fat ? 2UL : 0, 2), new(fat ? 2UL : 0, 2)));
+		var json = JsonSerializer.SerializeToUtf8Bytes(new
+		{
+			Format = "cvlib.slice-manifest.v1",
+			PackageId = id,
+			Version = "1.0.0",
+			Dependencies = new[] { new PackageReference("Bar", "^1.0.0") },
+			Slices = slices
+		});
+		var sector = new byte[json.Length + 6];
+		BinaryPrimitives.WriteUInt32LittleEndian(sector, (uint)json.Length);
+		json.CopyTo(sector, 4);
+		"{}"u8.CopyTo(sector.AsSpan(4 + json.Length));
+		var writer = new CvlArchiveWriter();
+		writer.SetSector(1, sector);
+		writer.SetSector(2, fat ? new byte[] { 1, 2, 3, 4 } : new byte[] { 3, 4 });
+		writer.SetSector(3, fat ? new byte[] { 5, 6, 7, 8 } : new byte[] { 7, 8 });
+		writer.SetSector(4, new byte[] { 9 });
+		writer.SetSourceBuffer("source");
+		if (signed)
+		{
+			using var key = Key.Create(SignatureAlgorithm.Ed25519);
+			writer.Write(path, key);
+		}
+		else writer.WriteUnsigned(path);
+		return path;
+	}
+
+	public void Dispose() => Directory.Delete(_root, true);
+}
