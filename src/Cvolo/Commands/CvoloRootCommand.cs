@@ -1,4 +1,5 @@
 using System.CommandLine;
+using Cvolo.CLI.Packages;
 
 namespace Cvolo.Commands;
 
@@ -9,7 +10,9 @@ internal sealed class CvoloRootCommand : RootCommand
 		NewCommand newCommand,
 		RunCommand runCommand,
 		CheckCommand checkCommand,
-		CleanCommand cleanCommand)
+		CleanCommand cleanCommand,
+		PackCommand packCommand,
+		PkgCommand pkgCommand)
 		: base("Cvolo Compiler - compiles C# syntax elegance to native optimized machine binaries.")
 	{
 		Add(buildCommand);
@@ -17,5 +20,7 @@ internal sealed class CvoloRootCommand : RootCommand
 		Add(runCommand);
 		Add(checkCommand);
 		Add(cleanCommand);
+		Add(packCommand);
+		Add(pkgCommand);
 	}
 }

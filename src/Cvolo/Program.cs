@@ -1,3 +1,4 @@
+using Cvolo.CLI.Packages;
 using Cvolo.Commands;
 using Cvolo.Drivers;
 using Microsoft.Extensions.DependencyInjection;
@@ -10,6 +11,8 @@ services.AddSingleton<NewCommand>();
 services.AddSingleton<RunCommand>();
 services.AddSingleton<CheckCommand>();
 services.AddSingleton<CleanCommand>();
+services.AddSingleton<PackCommand>();
+services.AddSingleton<PkgCommand>();
 services.AddSingleton<CvoloRootCommand>();
 
 using var serviceProvider = services.BuildServiceProvider();

@@ -17,6 +17,7 @@
 		<ProjectReference Include="..\Cvolo.Syntax.Antlr\Cvolo.Syntax.Antlr.csproj" />
 		<ProjectReference Include="..\Cvolo.Analysis\Cvolo.Analysis.csproj" />
 		<ProjectReference Include="..\Cvolo.Emitter.LLVM\Cvolo.Emitter.LLVM.csproj" />
+		<ProjectReference Include="..\Cvolo.CLI.Packages\Cvolo.CLI.Packages.csproj" />
 	</ItemGroup>
 
 	<!-- Windows x64 Tooling (Only copied when building for Windows) -->
