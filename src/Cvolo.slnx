@@ -16,6 +16,7 @@
   </Folder>
   <Project Path="Cvolo.Analysis/Cvolo.Analysis.csproj" />
   <Project Path="Cvolo.Core/Cvolo.Core.csproj" />
+  <Project Path="Cvolo.Core.Packages/Cvolo.Core.Packages.csproj" />
   <Project Path="Cvolo.Emitter.LLVM/Cvolo.Emitter.LLVM.csproj" />
   <Project Path="Cvolo.Syntax/Cvolo.Syntax.csproj" />
   <Project Path="Cvolo.Syntax.Antlr/Cvolo.Syntax.Antlr.csproj" />

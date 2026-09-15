@@ -1,12 +1,3 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
-	<PropertyGroup>
-		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-	</PropertyGroup>
-
-	<ItemGroup>
-		<PackageReference Include="Blake3" />
-		<PackageReference Include="K4os.Compression.LZ4.Streams" />
-		<PackageReference Include="NSec.Cryptography" />
-	</ItemGroup>
 </Project>

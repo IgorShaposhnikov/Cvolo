@@ -20,6 +20,6 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<ProjectReference Include="..\Cvolo.Core\Cvolo.Core.csproj" />
+		<ProjectReference Include="..\Cvolo.Core.Packages\Cvolo.Core.Packages.csproj" />
 	</ItemGroup>
 </Project>
