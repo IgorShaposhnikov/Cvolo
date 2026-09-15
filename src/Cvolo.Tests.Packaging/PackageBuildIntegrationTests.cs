@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Cvolo.CLI.Packages;
 using Cvolo.Drivers;
 using Cvolo.Packaging;
 
@@ -104,6 +105,101 @@ int main() {
 		Assert.NotNull(process);
 		process!.WaitForExit();
 		Assert.Equal(0, process.ExitCode);
+	}
+
+	[Fact]
+	public void LocalWorkflow_PackAddBuildRun_Succeeds()
+	{
+		RequireClang();
+
+		var feedDirectory = Path.Combine(_root, "feed");
+		Directory.CreateDirectory(feedDirectory);
+
+		var libraryDirectory = Path.Combine(_root, "libfoo-cli");
+		Directory.CreateDirectory(libraryDirectory);
+		File.WriteAllText(Path.Combine(libraryDirectory, "Foo.cvlproj"), """
+<Project Sdk="Cvolo.Sdk">
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <AssemblyName>Foo</AssemblyName>
+    <PackageId>Foo</PackageId>
+    <Version>1.0.0</Version>
+  </PropertyGroup>
+</Project>
+""");
+		File.WriteAllText(Path.Combine(libraryDirectory, "Foo.cvl"), """
+expose extern "C" {
+    public int Add(int a, int b) {
+        return a + b;
+    }
+}
+""");
+
+		var signingKey = Path.Combine(_root, "workflow.key");
+		File.WriteAllBytes(signingKey, Enumerable.Range(1, 32).Select(i => (byte)i).ToArray());
+		var packagePath = Path.Combine(feedDirectory, "Foo.1.0.0.cvlib");
+		using var packOutput = new StringWriter();
+		using var packError = new StringWriter();
+		var pack = new PackCommand(packOutput, packError);
+
+		var packExitCode = pack.Parse($"\"{libraryDirectory}\" --output \"{packagePath}\" --sign \"{signingKey}\"").Invoke();
+
+		Assert.Equal(0, packExitCode);
+		Assert.True(File.Exists(packagePath));
+		Assert.Contains("Packed Foo 1.0.0", packOutput.ToString());
+		Assert.Equal(string.Empty, packError.ToString());
+
+		var appDirectory = Path.Combine(_root, "app-cli");
+		Directory.CreateDirectory(appDirectory);
+		var projectPath = Path.Combine(appDirectory, "App.cvlproj");
+		File.WriteAllText(projectPath, """
+<Project Sdk="Cvolo.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>App</AssemblyName>
+    <PackageId>App</PackageId>
+    <Version>1.0.0</Version>
+    <LocalFeed>../feed</LocalFeed>
+  </PropertyGroup>
+</Project>
+""");
+		File.WriteAllText(Path.Combine(appDirectory, "Main.cvl"), """
+[LibraryImport("Foo")]
+extern "C" {
+    int Add(int a, int b);
+}
+
+int main() {
+    return Add(20, 22) - 42;
+}
+""");
+
+		var cache = new PackageCache(Path.Combine(_root, "workflow-cache"));
+		using var pkgOutput = new StringWriter();
+		using var pkgError = new StringWriter();
+		var pkg = new PkgCommand(cache, new PackageInstaller(cache), () => appDirectory, pkgOutput, pkgError);
+
+		var addExitCode = pkg.Parse("add Foo --version ^1.0.0").Invoke();
+
+		Assert.Equal(0, addExitCode);
+		Assert.Equal(string.Empty, pkgError.ToString());
+		Assert.True(File.Exists(Path.Combine(appDirectory, "cvolo.lock.json")));
+		Assert.True(File.Exists(Path.Combine(cache.GetPackageDirectory("Foo", "1.0.0"), "Foo.cvlib")));
+		var manifest = ProjectManifest.Load(projectPath);
+		var reference = Assert.Single(manifest.Dependencies);
+		Assert.Equal("Foo", reference.Id);
+		Assert.Equal("^1.0.0", reference.Version);
+
+		var lockFile = LockFile.Read(Path.Combine(appDirectory, "cvolo.lock.json"));
+		Assert.True(lockFile.Packages.TryGetValue("Foo", out var locked));
+		Assert.Equal("1.0.0", locked!.Resolved);
+		Assert.Equal(LocalFeed.ComputeHash(packagePath), locked.ContentHash);
+
+		var driverType = typeof(ICompilerDriver).Assembly.GetType("Cvolo.Drivers.CompilerDriver", throwOnError: true)!;
+		var driver = Assert.IsAssignableFrom<ICompilerDriver>(Activator.CreateInstance(driverType, cache));
+		var runExitCode = driver.Compile(projectPath, llvmOnly: false, isShared: false, emitIr: false, optLevel: "O0", runAfterCompile: true);
+
+		Assert.Equal(0, runExitCode);
 	}
 
 	private static void RequireClang()

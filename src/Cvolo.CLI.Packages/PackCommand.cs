@@ -5,8 +5,17 @@ namespace Cvolo.CLI.Packages;
 
 public sealed class PackCommand : Command
 {
-	public PackCommand() : base("pack", "Package a Cvolo project into a .cvlib archive.")
+	private readonly TextWriter _stdout;
+	private readonly TextWriter _stderr;
+
+	public PackCommand() : this(Console.Out, Console.Error)
 	{
+	}
+
+	public PackCommand(TextWriter stdout, TextWriter stderr) : base("pack", "Package a Cvolo project into a .cvlib archive.")
+	{
+		_stdout = stdout ?? throw new ArgumentNullException(nameof(stdout));
+		_stderr = stderr ?? throw new ArgumentNullException(nameof(stderr));
 		var inputArgument = new Argument<string>("path")
 		{
 			Description = "Path to the .cvlproj file or project directory."
@@ -60,7 +69,7 @@ public sealed class PackCommand : Command
 		Add(noSignOption);
 		Add(verboseOption);
 
-		SetAction((ParseResult parseResult) =>
+		SetAction((ParseResult parseResult) => Run(() =>
 		{
 			var path = parseResult.GetValue(inputArgument)!;
 			var options = new PackOptions
@@ -77,24 +86,30 @@ public sealed class PackCommand : Command
 				Verbose = parseResult.GetValue(verboseOption)
 			};
 
-			try
-			{
-				var result = PackPipeline.Execute(path, options);
-				PrintSummary(result);
-			}
-			catch (Exception ex)
-			{
-				Console.Error.WriteLine($"error: {ex.Message}");
-				Environment.Exit(1);
-			}
-		});
+			var result = PackPipeline.Execute(path, options);
+			PrintSummary(result);
+		}));
 	}
 
-	private static void PrintSummary(PackResult result)
+	private int Run(Action action)
 	{
-		Console.WriteLine($"Packed {result.PackageId} {result.Version} \u2192 {result.OutputPath}");
-		Console.WriteLine($"  Targets: {string.Join(", ", result.Targets)}");
-		Console.WriteLine($"  Size:    {result.FileSize} bytes");
-		Console.WriteLine($"  Root:    {result.MerkleRootHex}");
+		try
+		{
+			action();
+			return 0;
+		}
+		catch (Exception ex)
+		{
+			_stderr.WriteLine($"error: {ex.Message}");
+			return 1;
+		}
+	}
+
+	private void PrintSummary(PackResult result)
+	{
+		_stdout.WriteLine($"Packed {result.PackageId} {result.Version} \u2192 {result.OutputPath}");
+		_stdout.WriteLine($"  Targets: {string.Join(", ", result.Targets)}");
+		_stdout.WriteLine($"  Size:    {result.FileSize} bytes");
+		_stdout.WriteLine($"  Root:    {result.MerkleRootHex}");
 	}
 }
