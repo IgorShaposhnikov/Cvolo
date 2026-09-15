@@ -110,7 +110,8 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 		foreach (var file in project.SourceFiles)
 		{
 			var sourceCode = File.ReadAllText(file);
-			var context = new CompilationContext(sourceCode, file);
+			var artifactPath = SourcePathRemapper.Map(file, project.ProjectDirectory, project.ProjectReferences);
+			var context = new CompilationContext(sourceCode, artifactPath);
 			firstContext ??= context;
 
 			var ast = parser.Parse(context);

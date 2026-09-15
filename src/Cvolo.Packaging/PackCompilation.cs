@@ -128,7 +128,8 @@ internal static class PackCompilation
 
 		foreach (var file in sourceFiles)
 		{
-			var context = new CompilationContext(File.ReadAllText(file), file);
+			var artifactPath = SourcePathRemapper.Map(file, manifest.ProjectDirectory);
+			var context = new CompilationContext(File.ReadAllText(file), artifactPath);
 			firstContext ??= context;
 
 			var ast = parser.Parse(context);
