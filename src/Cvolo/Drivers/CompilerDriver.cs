@@ -366,13 +366,10 @@ internal sealed class CompilerDriver : ICompilerDriver
 		try
 		{
 			var lockFile = LockFile.Read(lockPath);
-			foreach (var dependency in manifest.Dependencies)
+			if (!PackageLockValidator.Validate(manifest, lockFile, out var message))
 			{
-				if (!lockFile.Packages.TryGetValue(dependency.Id, out var locked) || !VersionRange.Parse(dependency.Version).Allows(SemanticVersion.Parse(locked.Resolved)))
-				{
-					ReportLockOutOfSync(reporter, path, $"cvolo.lock.json is out of sync for package '{dependency.Id}'; run 'cvolo pkg update'.");
-					return false;
-				}
+				ReportLockOutOfSync(reporter, path, message);
+				return false;
 			}
 		}
 		catch (Exception ex) when (ex is IOException or InvalidDataException or JsonException or PackageException)

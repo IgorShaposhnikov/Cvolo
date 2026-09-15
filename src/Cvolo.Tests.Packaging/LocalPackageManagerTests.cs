@@ -180,6 +180,26 @@ public sealed class LocalPackageManagerTests : IDisposable
 		}
 	}
 
+	[Fact]
+	public void PackageLockValidator_RejectsUnsatisfiedTransitiveDependency()
+	{
+		var manifest = CreateProject("lock-app", Dir("feed"), [new PackageReference("Foo", "1.0.0")]);
+		var lockFile = new LockFile
+		{
+			Sources = [],
+			Packages = new Dictionary<string, LockedPackage>(StringComparer.OrdinalIgnoreCase)
+			{
+				["Foo"] = new("1.0.0", "blake3:foo", new Dictionary<string, string> { ["Bar"] = "^2.0.0" }),
+				["Bar"] = new("1.5.0", "blake3:bar", new Dictionary<string, string>())
+			}
+		};
+
+		var valid = PackageLockValidator.Validate(manifest, lockFile, out var message);
+
+		Assert.False(valid);
+		Assert.Contains("transitive package 'Bar'", message);
+	}
+
 	private string Dir(string name)
 	{
 		var path = Path.Combine(_root, name);
