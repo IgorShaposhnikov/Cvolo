@@ -31,7 +31,7 @@ public static class PackageDiagnosticIds
 	/// <summary>Error: a cached .cvlib is not thinned to exactly the host target as required by cvlib v0.2.6.</summary>
 	public const string CacheNotThinned = "CVLP3014";
 
-	/// <summary>Error: the selected host slice has no Sector 3 bitcode required by the Phase 4 build path.</summary>
+	/// <summary>Error: the selected host slice has no Sector 3 bitcode and Sector 5 source fallback is unavailable.</summary>
 	public const string BitcodeUnavailable = "CVLP3015";
 
 	/// <summary>Error: package bitcode cannot be linked because clang/LLVM is unavailable.</summary>

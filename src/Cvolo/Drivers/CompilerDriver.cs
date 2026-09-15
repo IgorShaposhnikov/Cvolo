@@ -65,9 +65,14 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 
 				if (verbose && !reporter.Exclusive)
 				{
-					Console.WriteLine("Package bitcode selected for linking:");
+					Console.WriteLine("Package dependencies selected for build:");
 					foreach (var artifact in packageArtifacts)
-						Console.WriteLine($"  -> {artifact.PackageId}@{artifact.Version}: {artifact.BitcodePath}");
+					{
+						var input = artifact.UsesSourceFallback
+							? $"Sector 5 source fallback ({artifact.SourceFallbackUnits.Count} file(s))"
+							: artifact.BitcodePath;
+						Console.WriteLine($"  -> {artifact.PackageId}@{artifact.Version}: {input}");
+					}
 					Console.WriteLine();
 				}
 			}
@@ -123,6 +128,20 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 		// These synthetic units have no bodies; Sector 3 bitcode remains the sole implementation.
 		foreach (var artifact in packageArtifacts)
 		{
+			if (artifact.UsesSourceFallback)
+			{
+				// No host bitcode is usable. Compile the verified Sector 5 sources as consumer-local
+				// implementation units. Marking them as package-template units keeps public symbols
+				// internal to this final module and avoids manufacturing a cross-package ABI.
+				foreach (var sourceUnit in artifact.SourceFallbackUnits)
+				{
+					asts.Add(sourceUnit);
+					binder.Context.FileContexts[sourceUnit] = sourceUnit.Context;
+					binder.Context.PackageTemplateUnits.Add(sourceUnit);
+				}
+				continue;
+			}
+
 			foreach (var packageUnit in artifact.ApiMetadata.CreateCompilationUnits(artifact.PackageId, artifact.Version))
 			{
 				asts.Add(packageUnit);
@@ -358,7 +377,7 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 			verbose,
 			nativeLibraries,
 			targetOs,
-			packageArtifacts.Select(a => a.BitcodePath!));
+			packageArtifacts.Where(a => a.BitcodePath is not null).Select(a => a.BitcodePath!));
 		if (linkResult != 0)
 		{
 			return linkResult;

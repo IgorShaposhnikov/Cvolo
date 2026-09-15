@@ -13,7 +13,9 @@ public sealed record ResolvedPackageArtifacts(
 	string? NativeObjectPath,
 	string? BitcodePath,
 	PackageApiMetadata ApiMetadata,
-	IReadOnlyList<Cvolo.Core.AST.Base.CompilationUnitSyntax> TemplateUnits);
+	IReadOnlyList<Cvolo.Core.AST.Base.CompilationUnitSyntax> TemplateUnits,
+	IReadOnlyList<Cvolo.Core.AST.Base.CompilationUnitSyntax> SourceFallbackUnits,
+	bool UsesSourceFallback);
 
 /// <summary>
 /// Resolves every package pinned by cvolo.lock.json from the local package cache,
@@ -107,26 +109,31 @@ public sealed class PackageDependencyLoader
 			}
 
 			var archive = cached.Archive;
-			var apiMetadata = PackageApiMetadata.Read(archive);
-			var templateUnits = PackageTemplateSource.Read(archive, packageId, locked.Resolved);
 			var triple = TargetTriple.HostTriple();
 			var slice = archive.Manifest.Slices.SingleOrDefault(s => string.Equals(s.Triple, triple, StringComparison.Ordinal));
-			if (slice is null || (slice.Sector2.Length == 0 && slice.Sector3.Length == 0))
+
+			// Normal package builds consume Sector 3. If the host slice cannot provide bitcode,
+			// Sector 5 becomes the implementation: compile the package sources in the consumer
+			// rather than manufacturing an ABI boundary or failing an otherwise portable package.
+			if (slice is null || slice.Sector3.Length == 0 || archive.Sectors.Count < 3)
 			{
-				throw new PackageException(
-					CvlFormatDiagnosticIds.MissingTargetSlice,
-					$"Cached package '{packageId}@{locked.Resolved}' has no code for host triple '{triple}'.");
+				var fallbackUnits = PackageTemplateSource.ReadAll(archive, packageId, locked.Resolved);
+				if (fallbackUnits.Count == 0)
+				{
+					var code = slice is null ? CvlFormatDiagnosticIds.MissingTargetSlice : PackageDiagnosticIds.BitcodeUnavailable;
+					throw new PackageException(
+						code,
+						slice is null
+							? $"Cached package '{packageId}@{locked.Resolved}' has no host slice for '{triple}' and no Sector 5 fallback."
+							: $"Package '{packageId}@{locked.Resolved}' has no Sector 3 bitcode for host triple '{triple}' and no Sector 5 fallback.");
+				}
+
+				return new ResolvedPackageArtifacts(
+					packageId, locked.Resolved, null, null, new PackageApiMetadata(), [], fallbackUnits, UsesSourceFallback: true);
 			}
 
-			// Local Package Manager Phase 4 explicitly consumes Sector 3 bitcode during build.
-			if (slice.Sector3.Length == 0 || archive.Sectors.Count < 3)
-			{
-				throw new PackageException(
-					PackageDiagnosticIds.BitcodeUnavailable,
-					$"Package '{packageId}@{locked.Resolved}' has no Sector 3 bitcode for host triple '{triple}'.",
-					"Repack the dependency with bitcode enabled before building this project.");
-			}
-
+			var apiMetadata = PackageApiMetadata.Read(archive);
+			var templateUnits = PackageTemplateSource.Read(archive, packageId, locked.Resolved);
 			var packageDirectory = Path.Combine(extractionRoot, packageId.ToLowerInvariant(), locked.Resolved);
 			Directory.CreateDirectory(packageDirectory);
 
@@ -141,7 +148,8 @@ public sealed class PackageDependencyLoader
 				ExtractSlice(archive, sectorIndex: 1, slice.Sector2, objectPath, packageId, locked.Resolved, "Sector 2 native object");
 			}
 
-			return new ResolvedPackageArtifacts(packageId, locked.Resolved, objectPath, bitcodePath, apiMetadata, templateUnits);
+			return new ResolvedPackageArtifacts(
+				packageId, locked.Resolved, objectPath, bitcodePath, apiMetadata, templateUnits, [], UsesSourceFallback: false);
 		}
 		catch (CvlFormatException ex)
 		{

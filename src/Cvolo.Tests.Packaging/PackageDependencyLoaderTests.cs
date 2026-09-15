@@ -118,6 +118,46 @@ public sealed class PackageDependencyLoaderTests : IDisposable
 	}
 
 	[Fact]
+	public void Load_ObjectOnlyHostSlice_WithSector5_UsesSourceFallback()
+	{
+		var project = CreateProject("source-fallback-app", [new PackageReference("Foo", "1.0.0")]);
+		var source = CreateArchive(
+			"Foo", "1.0.0", [0x10], bitcodeBytes: [],
+			sourceBuffer: "namespace Foo; public int Add(int a, int b) { return a + b; }");
+		var cache = new PackageCache(Path.Combine(_root, "cache-source-fallback"));
+		new PackageInstaller(cache).InstallFromFile(source);
+		var lockFile = WriteLock(project, "Foo", "1.0.0", LocalFeed.ComputeHash(source));
+
+		var artifact = Assert.Single(new PackageDependencyLoader(cache, new PackageInstaller(cache)).Load(project, lockFile));
+
+		Assert.True(artifact.UsesSourceFallback);
+		Assert.Null(artifact.BitcodePath);
+		Assert.Null(artifact.NativeObjectPath);
+		Assert.Empty(artifact.TemplateUnits);
+		Assert.Single(artifact.SourceFallbackUnits);
+	}
+
+	[Fact]
+	public void Install_ForeignSlice_WithSector5_RewritesCacheForHostSourceFallback()
+	{
+		var project = CreateProject("foreign-source-fallback-app", [new PackageReference("Foo", "1.0.0")]);
+		var foreignTriple = TargetTriple.HostTriple() + "-foreign";
+		var source = CreateArchive(
+			"Foo", "1.0.0", [0x10], bitcodeBytes: [0x42],
+			sourceBuffer: "namespace Foo; public int Add(int a, int b) { return a + b; }",
+			triple: foreignTriple);
+		var cache = new PackageCache(Path.Combine(_root, "cache-foreign-source-fallback"));
+		new PackageInstaller(cache).InstallFromFile(source);
+		var lockFile = WriteLock(project, "Foo", "1.0.0", LocalFeed.ComputeHash(source));
+
+		var artifact = Assert.Single(new PackageDependencyLoader(cache, new PackageInstaller(cache)).Load(project, lockFile));
+
+		Assert.True(artifact.UsesSourceFallback);
+		Assert.Null(artifact.BitcodePath);
+		Assert.Single(artifact.SourceFallbackUnits);
+	}
+
+	[Fact]
 	public void Load_MissingCachedPackage_ReportsLockOutOfSync()
 	{
 		var project = CreateProject("missing-app", [new PackageReference("Foo", "1.0.0")]);
@@ -183,11 +223,18 @@ public sealed class PackageDependencyLoaderTests : IDisposable
 		return ProjectManifest.Load(directory);
 	}
 
-	private string CreateArchive(string id, string version, byte[] objectBytes, byte[]? bitcodeBytes = null)
+	private string CreateArchive(
+		string id,
+		string version,
+		byte[] objectBytes,
+		byte[]? bitcodeBytes = null,
+		string? sourceBuffer = null,
+		string? triple = null)
 	{
 		var path = Path.Combine(_root, $"{id}.{version}.{Guid.NewGuid():N}.cvlib");
 		bitcodeBytes ??= [0x42];
-		var slice = new CvlSliceEntry(TargetTriple.HostTriple(), new(0, (ulong)objectBytes.Length), new(0, (ulong)bitcodeBytes.Length));
+		triple ??= TargetTriple.HostTriple();
+		var slice = new CvlSliceEntry(triple, new(0, (ulong)objectBytes.Length), new(0, (ulong)bitcodeBytes.Length));
 		var json = JsonSerializer.SerializeToUtf8Bytes(new
 		{
 			Format = "cvlib.slice-manifest.v1",
@@ -204,6 +251,8 @@ public sealed class PackageDependencyLoaderTests : IDisposable
 		writer.SetSector(1, sector1);
 		writer.SetSector(2, objectBytes);
 		writer.SetSector(3, bitcodeBytes);
+		if (sourceBuffer is not null)
+			writer.SetSourceBuffer(sourceBuffer);
 		using var key = Key.Create(SignatureAlgorithm.Ed25519);
 		writer.Write(path, key);
 		return path;

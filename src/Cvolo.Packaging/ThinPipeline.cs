@@ -12,12 +12,24 @@ public static class ThinPipeline
 	{
 		var slice = archive.Manifest.Slices.SingleOrDefault(s => s.Triple == triple)
 			?? throw new PackageException(CvlFormatDiagnosticIds.MissingTargetSlice, $"No slice for host triple '{triple}'.");
+		WriteCore(archive, triple, outputPath, key, slice, stripSource, stripBinaries);
+	}
+
+	public static void WriteSourceFallback(CvlArchive archive, string triple, string outputPath, Key key, bool stripBinaries = false)
+	{
+		if (string.IsNullOrEmpty(archive.ReadSourceBuffer()))
+			throw new PackageException(CvlFormatDiagnosticIds.MissingTargetSlice, $"No source fallback is available for host triple '{triple}'.");
+		WriteCore(archive, triple, outputPath, key, null, stripSource: false, stripBinaries);
+	}
+
+	private static void WriteCore(CvlArchive archive, string triple, string outputPath, Key key, CvlSliceEntry? slice, bool stripSource, bool stripBinaries)
+	{
 		var payload = archive.GetSectorPayload(1);
 		var length = checked((int)BinaryPrimitives.ReadUInt32LittleEndian(payload));
 		var manifest = JsonNode.Parse(payload.Slice(4, length))!.AsObject();
 		manifest["Slices"] = JsonSerializer.SerializeToNode(new[]
 		{
-			new CvlSliceEntry(triple, new(0, slice.Sector2.Length), new(0, slice.Sector3.Length))
+			new CvlSliceEntry(triple, new(0, slice?.Sector2.Length ?? 0), new(0, slice?.Sector3.Length ?? 0))
 		});
 		var json = JsonSerializer.SerializeToUtf8Bytes(manifest);
 		var metadata = new byte[4 + json.Length + payload.Length - 4 - length];
@@ -30,8 +42,8 @@ public static class ThinPipeline
 			IntendedLlvmBackendVersion = archive.Header.IntendedLlvmBackendVersion
 		};
 		writer.SetSector(1, metadata);
-		writer.SetSector(2, Extract(archive, 2, slice.Sector2));
-		writer.SetSector(3, Extract(archive, 3, slice.Sector3));
+		writer.SetSector(2, slice is null ? [] : Extract(archive, 2, slice.Sector2));
+		writer.SetSector(3, slice is null ? [] : Extract(archive, 3, slice.Sector3));
 		for (var sector = 4; sector <= archive.Sectors.Count; sector++)
 			writer.SetSector(sector, (sector == 4 && stripBinaries) || (sector == 5 && stripSource)
 				? Array.Empty<byte>() : archive.GetSectorPayload(sector).ToArray());

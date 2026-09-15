@@ -44,11 +44,12 @@ public sealed class PackageInstaller(PackageCache cache)
 		var metadata = PackageMetadata.Read(archive);
 		var triple = TargetTriple.HostTriple();
 		var hostSlice = archive.Manifest.Slices.SingleOrDefault(s => string.Equals(s.Triple, triple, StringComparison.Ordinal));
-		if (hostSlice is null || (hostSlice.Sector2.Length == 0 && hostSlice.Sector3.Length == 0))
+		var hasSourceFallback = !string.IsNullOrEmpty(archive.ReadSourceBuffer());
+		if ((hostSlice is null || (hostSlice.Sector2.Length == 0 && hostSlice.Sector3.Length == 0)) && !hasSourceFallback)
 		{
 			throw new PackageException(
 				PackageDiagnosticIds.MissingHostSlice,
-				$"No usable slice for host triple '{triple}' in '{source}'.");
+				$"No usable slice for host triple '{triple}' in '{source}', and Sector 5 source fallback is unavailable.");
 		}
 
 		var destination = cache.GetPackageDirectory(metadata.PackageId, metadata.Version);
@@ -70,7 +71,7 @@ public sealed class PackageInstaller(PackageCache cache)
 		try
 		{
 			var output = Path.Combine(temporary, name);
-			if (archive.Manifest.Slices.Count == 1)
+			if (archive.Manifest.Slices.Count == 1 && hostSlice is not null)
 			{
 				// The source archive has already been verified once above. Do not verify the
 				// identical copied bytes a second time; validate the cache shape on that mapping.
@@ -82,7 +83,10 @@ public sealed class PackageInstaller(PackageCache cache)
 				// Install-time thinning is mandatory for fat archives. The rewritten cache
 				// archive is signed with the local machine key because thinning changes the root.
 				using var key = cache.LoadSigningKey();
-				ThinPipeline.Write(archive, triple, output, key);
+				if (hostSlice is not null)
+					ThinPipeline.Write(archive, triple, output, key);
+				else
+					ThinPipeline.WriteSourceFallback(archive, triple, output, key);
 
 				// This is newly-generated content, so verify it once before publishing it.
 				using var installedArchive = CvlArchiveReader.Read(output);
@@ -179,11 +183,11 @@ public sealed class PackageInstaller(PackageCache cache)
 		}
 
 		var slice = archive.Manifest.Slices[0];
-		if (slice.Sector2.Length == 0 && slice.Sector3.Length == 0)
+		if (slice.Sector2.Length == 0 && slice.Sector3.Length == 0 && string.IsNullOrEmpty(archive.ReadSourceBuffer()))
 		{
 			throw new PackageException(
 				CvlFormatDiagnosticIds.MissingTargetSlice,
-				$"Cached package '{packageId}@{version}' has no code for host triple '{triple}'.");
+				$"Cached package '{packageId}@{version}' has neither host code nor Sector 5 source fallback.");
 		}
 	}
 }

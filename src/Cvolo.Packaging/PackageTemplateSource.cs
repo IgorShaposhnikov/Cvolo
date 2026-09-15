@@ -15,6 +15,40 @@ public static class PackageTemplateSource
 {
 	public static IReadOnlyList<CompilationUnitSyntax> Read(CvlArchive archive, string packageId, string version)
 	{
+		var parsedUnits = ParseAll(archive, packageId, version);
+		if (parsedUnits.Count == 0)
+			return [];
+
+		var contractNames = CollectPublicContractNames(parsedUnits.Select(item => item.Unit));
+		var templates = new List<CompilationUnitSyntax>();
+		foreach (var (unit, context) in parsedUnits)
+		{
+			var ns = unit.NamespaceDeclaration;
+			var members = ns is null ? unit.Members : ns.Members;
+			var sourceBackedMembers = members.Where(member => IsSourceBackedPublicDeclaration(member, contractNames)).ToArray();
+			if (sourceBackedMembers.Length == 0)
+				continue;
+
+			NamespaceDeclarationSyntax? templateNamespace = null;
+			IReadOnlyList<SyntaxNode> topLevelMembers = sourceBackedMembers;
+			if (ns is not null)
+			{
+				templateNamespace = new NamespaceDeclarationSyntax(ns.Span, ns.Name, ns.Usings, sourceBackedMembers);
+				topLevelMembers = [];
+			}
+
+
+			templates.Add(new CompilationUnitSyntax(unit.Span, context, unit.Usings, templateNamespace, topLevelMembers));
+		}
+
+		return templates;
+	}
+
+	public static IReadOnlyList<CompilationUnitSyntax> ReadAll(CvlArchive archive, string packageId, string version) =>
+		ParseAll(archive, packageId, version).Select(item => item.Unit).ToArray();
+
+	private static List<(CompilationUnitSyntax Unit, CompilationContext Context)> ParseAll(CvlArchive archive, string packageId, string version)
+	{
 		ArgumentNullException.ThrowIfNull(archive);
 		var sourceBuffer = archive.ReadSourceBuffer();
 		if (string.IsNullOrEmpty(sourceBuffer))
@@ -39,28 +73,7 @@ public static class PackageTemplateSource
 			parsedUnits.Add((unit, context));
 		}
 
-		var contractNames = CollectPublicContractNames(parsedUnits.Select(item => item.Unit));
-		var templates = new List<CompilationUnitSyntax>();
-		foreach (var (unit, context) in parsedUnits)
-		{
-			var ns = unit.NamespaceDeclaration;
-			var members = ns is null ? unit.Members : ns.Members;
-			var sourceBackedMembers = members.Where(member => IsSourceBackedPublicDeclaration(member, contractNames)).ToArray();
-			if (sourceBackedMembers.Length == 0)
-				continue;
-
-			NamespaceDeclarationSyntax? templateNamespace = null;
-			IReadOnlyList<SyntaxNode> topLevelMembers = sourceBackedMembers;
-			if (ns is not null)
-			{
-				templateNamespace = new NamespaceDeclarationSyntax(ns.Span, ns.Name, ns.Usings, sourceBackedMembers);
-				topLevelMembers = [];
-			}
-
-			templates.Add(new CompilationUnitSyntax(unit.Span, context, unit.Usings, templateNamespace, topLevelMembers));
-		}
-
-		return templates;
+		return parsedUnits;
 	}
 
 	internal static HashSet<string> CollectPublicContractNames(IEnumerable<CompilationUnitSyntax> units)
