@@ -1,0 +1,45 @@
+using Cvolo.Tests.Core;
+
+namespace Cvolo.Tests;
+
+public sealed class LinkedListTests : CompilerTestBase
+{
+	[Fact]
+	public void Stdlib_LinkedList_MakeNode_Forward_And_Backward_Traversal_Work()
+	{
+		var fileName = "StandardLibrary/LinkedListTest.cvl";
+		var (exitCode, stdout, stderr) = RunCompiler(fileName);
+		AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
+
+		var (runCode, runStdout) = ExecuteBinary("LinkedListTest", "StandardLibrary");
+		Assert.Equal(0, runCode);
+		Assert.Contains("Value: 40", runStdout);
+		Assert.Contains("Backwards: 40", runStdout);
+		Assert.Contains("Backwards: 10", runStdout);
+	}
+
+	[Fact]
+	public void Generic_Heap_Allocation_Is_Sized_From_The_Instantiated_Struct()
+	{
+		var fileName = "StandardLibrary/HeapGenericBox.cvl";
+		var (exitCode, stdout, stderr) = RunCompiler(fileName, "-O0", "--emit-ir");
+		AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
+
+		// Regression: generic-arg stripping sized the alloc from the empty generic template
+		// placeholder (store size 1), corrupting a 4-byte struct with a 1-byte malloc.
+		Assert.Contains("call ptr @malloc(i64 4)", stdout);
+		Assert.DoesNotContain("@malloc(i64 1)", stdout);
+	}
+
+	[Fact]
+	public void Heap_Generic_Struct_Executes_Correctly()
+	{
+		var fileName = "StandardLibrary/HeapGenericBox.cvl";
+		var (exitCode, stdout, stderr) = RunCompiler(fileName);
+		AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
+
+		var (runCode, runStdout) = ExecuteBinary("HeapGenericBox", "StandardLibrary");
+		Assert.Equal(0, runCode);
+		Assert.Contains("7", runStdout.Trim());
+	}
+}

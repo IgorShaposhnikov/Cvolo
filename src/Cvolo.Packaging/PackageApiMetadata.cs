@@ -2,18 +2,20 @@ using System.Text.Json;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
 using Cvolo.Core.AST.Directives;
+using Cvolo.Core.AST.Expressions;
 using Cvolo.Core.Diagnostics;
 
 namespace Cvolo.Packaging;
 
 /// <summary>
 /// Language-level public API carried in Sector 1 layout metadata. This is compiler metadata,
-/// not a C ABI surface: package consumers bind ordinary Cvolo calls against these declarations
-/// while Sector 3 supplies the implementation at link time.
+/// not a C ABI surface: package consumers bind ordinary Cvolo declarations against these
+/// synthetic units while Sector 3 supplies executable implementations and data definitions.
 /// </summary>
 public sealed class PackageApiMetadata
 {
-	public const string FormatId = "cvolo.package-api.v1";
+	public const string FormatId = "cvolo.package-api.v2";
+	private const string LegacyFormatId = "cvolo.package-api.v1";
 
 	public string Format { get; init; } = FormatId;
 	public IReadOnlyList<PackageApiUnit> Units { get; init; } = [];
@@ -40,7 +42,42 @@ public sealed class PackageApiMetadata
 				})
 				.ToArray();
 
-			if (functions.Length == 0)
+			var structs = members
+				.OfType<StructDeclarationSyntax>()
+				.Where(type => type.Visibility == Visibility.Public && type.GenericParameters.Count == 0)
+				.Select(type => new PackageApiStruct
+				{
+					Name = type.Name,
+					EmbeddedType = type.EmbeddedType,
+					Fields = type.Fields.Select(field => new PackageApiStructField(field.Type, field.Name, field.Visibility)).ToArray(),
+					Attributes = SerializableAttributeNames(type.Attributes)
+				})
+				.ToArray();
+
+			var enums = members
+				.OfType<EnumDeclarationSyntax>()
+				.Where(type => type.Visibility == Visibility.Public)
+				.Select(type => new PackageApiEnum
+				{
+					Name = type.Name,
+					StorageType = type.StorageType,
+					Attributes = SerializableAttributeNames(type.Attributes),
+					Variants = type.Variants.Select(SerializeVariant).ToArray()
+				})
+				.ToArray();
+
+			var globals = members
+				.OfType<GlobalVariableDeclarationSyntax>()
+				.Where(global => global.Visibility == Visibility.Public)
+				.Select(global => new PackageApiGlobal
+				{
+					Name = global.Name,
+					Type = global.Type,
+					IsMutable = global.IsMutable
+				})
+				.ToArray();
+
+			if (functions.Length == 0 && structs.Length == 0 && enums.Length == 0 && globals.Length == 0)
 				continue;
 
 			apiUnits.Add(new PackageApiUnit
@@ -48,7 +85,10 @@ public sealed class PackageApiMetadata
 				Namespace = ns?.Name,
 				FileUsings = unit.Usings.Where(u => !u.IsExposed).Select(u => u.NamespaceName).ToArray(),
 				NamespaceUsings = ns?.Usings.Where(u => !u.IsExposed).Select(u => u.NamespaceName).ToArray() ?? [],
-				Functions = functions
+				Functions = functions,
+				Structs = structs,
+				Enums = enums,
+				Globals = globals
 			});
 		}
 
@@ -67,7 +107,8 @@ public sealed class PackageApiMetadata
 		try
 		{
 			var api = JsonSerializer.Deserialize<PackageApiMetadata>(metadata);
-			return api is not null && string.Equals(api.Format, FormatId, StringComparison.Ordinal)
+			return api is not null && (string.Equals(api.Format, FormatId, StringComparison.Ordinal)
+				|| string.Equals(api.Format, LegacyFormatId, StringComparison.Ordinal))
 				? api
 				: new PackageApiMetadata();
 		}
@@ -88,7 +129,34 @@ public sealed class PackageApiMetadata
 			var span = new TextSpan(0, 0);
 			var filePath = $"<package:{packageId}@{version}:{i}>";
 			var context = new CompilationContext(string.Empty, filePath);
-			var functions = unit.Functions.Select(function =>
+			var members = new List<SyntaxNode>();
+
+			members.AddRange(unit.Structs.Select(type => (SyntaxNode)new StructDeclarationSyntax(
+				span,
+				type.Name,
+				[],
+				type.Fields.Select(field => new StructFieldSyntax(span, field.Type, field.Name, field.Visibility)).ToArray(),
+				type.EmbeddedType,
+				CreateAttributes(type.Attributes, span),
+				Visibility.Public)));
+
+			members.AddRange(unit.Enums.Select(type => (SyntaxNode)new EnumDeclarationSyntax(
+				span,
+				type.Name,
+				type.StorageType,
+				type.Variants.Select(variant => new EnumVariantDeclarationSyntax(span, variant.Name, CreateEnumValue(variant, span))).ToArray(),
+				CreateAttributes(type.Attributes, span),
+				Visibility.Public)));
+
+			members.AddRange(unit.Globals.Select(global => (SyntaxNode)new GlobalVariableDeclarationSyntax(
+				span,
+				global.Type,
+				global.Name,
+				null,
+				global.IsMutable,
+				Visibility.Public)));
+
+			members.AddRange(unit.Functions.Select(function =>
 				(SyntaxNode)new FunctionDeclarationSyntax(
 					span,
 					function.ReturnType,
@@ -97,15 +165,15 @@ public sealed class PackageApiMetadata
 					function.Parameters.Select(parameter => new ParameterSyntax(span, parameter.Type, parameter.Name)).ToArray(),
 					null!,
 					modifier: function.Modifier,
-					visibility: Visibility.Public)).ToArray();
+					visibility: Visibility.Public)));
 
 			var fileUsings = unit.FileUsings.Select(ns => new UsingDirectiveSyntax(span, ns)).ToArray();
 			NamespaceDeclarationSyntax? namespaceDeclaration = null;
-			IReadOnlyList<SyntaxNode> topLevelMembers = functions;
+			IReadOnlyList<SyntaxNode> topLevelMembers = members;
 			if (!string.IsNullOrWhiteSpace(unit.Namespace))
 			{
 				var namespaceUsings = unit.NamespaceUsings.Select(ns => new UsingDirectiveSyntax(span, ns)).ToArray();
-				namespaceDeclaration = new NamespaceDeclarationSyntax(span, unit.Namespace!, namespaceUsings, functions);
+				namespaceDeclaration = new NamespaceDeclarationSyntax(span, unit.Namespace!, namespaceUsings, members);
 				topLevelMembers = [];
 			}
 
@@ -114,6 +182,68 @@ public sealed class PackageApiMetadata
 
 		return result;
 	}
+
+	private static IReadOnlyList<string> SerializableAttributeNames(IReadOnlyList<AttributeSyntax> attributes) =>
+		attributes.Where(attribute => attribute.Arguments.Count == 0).Select(attribute => attribute.Name).ToArray();
+
+	private static IReadOnlyList<AttributeSyntax> CreateAttributes(IReadOnlyList<string> names, TextSpan span) =>
+		names.Select(name => new AttributeSyntax(span, name, [])).ToArray();
+
+	private static PackageApiEnumVariant SerializeVariant(EnumVariantDeclarationSyntax variant) =>
+		new() { Name = variant.Name, Value = SerializeEnumExpression(variant.Value) };
+
+	private static PackageApiEnumExpression? SerializeEnumExpression(ExpressionSyntax? expression) => expression switch
+	{
+		null => null,
+		IntegerLiteralExpressionSyntax integer => new PackageApiEnumExpression
+		{
+			Kind = "integer",
+			IntegerValue = integer.Value,
+			IntegerType = integer.LiteralType
+		},
+		IdentifierExpressionSyntax identifier => new PackageApiEnumExpression
+		{
+			Kind = "identifier",
+			Identifier = identifier.Name
+		},
+		UnaryExpressionSyntax unary => new PackageApiEnumExpression
+		{
+			Kind = "unary",
+			Operator = unary.Operator,
+			Left = SerializeEnumExpression(unary.Operand)
+		},
+		BinaryExpressionSyntax binary => new PackageApiEnumExpression
+		{
+			Kind = "binary",
+			Operator = binary.Operator,
+			Left = SerializeEnumExpression(binary.Left),
+			Right = SerializeEnumExpression(binary.Right)
+		},
+		_ => throw new PackageException("PACKAGE_API", "Unsupported public enum constant expression.",
+			$"Public enum metadata currently supports integer, identifier, unary, and binary constant expressions; found {expression.Kind}.")
+	};
+
+	private static ExpressionSyntax? CreateEnumValue(PackageApiEnumVariant variant, TextSpan span) =>
+		CreateEnumExpression(variant.Value, span);
+
+	private static ExpressionSyntax? CreateEnumExpression(PackageApiEnumExpression? expression, TextSpan span)
+	{
+		if (expression is null)
+			return null;
+		return expression.Kind switch
+		{
+			"integer" when expression.IntegerValue is not null => new IntegerLiteralExpressionSyntax(span, expression.IntegerValue.Value, expression.IntegerType),
+			"identifier" when !string.IsNullOrWhiteSpace(expression.Identifier) => new IdentifierExpressionSyntax(span, expression.Identifier!),
+			"unary" when expression.Left is not null => new UnaryExpressionSyntax(span, expression.Operator ?? string.Empty, CreateEnumExpression(expression.Left, span)!),
+			"binary" when expression.Left is not null && expression.Right is not null => new BinaryExpressionSyntax(
+				span,
+				CreateEnumExpression(expression.Left, span)!,
+				expression.Operator ?? string.Empty,
+				CreateEnumExpression(expression.Right, span)!),
+			_ => throw new PackageException("PACKAGE_API", "Malformed public enum metadata.")
+		};
+	}
+
 }
 
 public sealed class PackageApiUnit
@@ -122,6 +252,9 @@ public sealed class PackageApiUnit
 	public IReadOnlyList<string> FileUsings { get; init; } = [];
 	public IReadOnlyList<string> NamespaceUsings { get; init; } = [];
 	public IReadOnlyList<PackageApiFunction> Functions { get; init; } = [];
+	public IReadOnlyList<PackageApiStruct> Structs { get; init; } = [];
+	public IReadOnlyList<PackageApiEnum> Enums { get; init; } = [];
+	public IReadOnlyList<PackageApiGlobal> Globals { get; init; } = [];
 }
 
 public sealed class PackageApiFunction
@@ -133,4 +266,45 @@ public sealed class PackageApiFunction
 	public SafetyTier? Modifier { get; init; }
 }
 
+public sealed class PackageApiStruct
+{
+	public string Name { get; init; } = string.Empty;
+	public string? EmbeddedType { get; init; }
+	public IReadOnlyList<string> Attributes { get; init; } = [];
+	public IReadOnlyList<PackageApiStructField> Fields { get; init; } = [];
+}
+
+public sealed class PackageApiEnum
+{
+	public string Name { get; init; } = string.Empty;
+	public string? StorageType { get; init; }
+	public IReadOnlyList<string> Attributes { get; init; } = [];
+	public IReadOnlyList<PackageApiEnumVariant> Variants { get; init; } = [];
+}
+
+public sealed class PackageApiGlobal
+{
+	public string Name { get; init; } = string.Empty;
+	public string Type { get; init; } = string.Empty;
+	public bool IsMutable { get; init; }
+}
+
+public sealed class PackageApiEnumVariant
+{
+	public string Name { get; init; } = string.Empty;
+	public PackageApiEnumExpression? Value { get; init; }
+}
+
+public sealed class PackageApiEnumExpression
+{
+	public string Kind { get; init; } = string.Empty;
+	public ulong? IntegerValue { get; init; }
+	public string? IntegerType { get; init; }
+	public string? Identifier { get; init; }
+	public string? Operator { get; init; }
+	public PackageApiEnumExpression? Left { get; init; }
+	public PackageApiEnumExpression? Right { get; init; }
+}
+
+public sealed record PackageApiStructField(string Type, string Name, Visibility Visibility);
 public sealed record PackageApiParameter(string Type, string Name);

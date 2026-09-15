@@ -34,8 +34,20 @@ public sealed class PackageBuildIntegrationTests : IDisposable
 		File.WriteAllText(Path.Combine(libraryDirectory, "Foo.cvl"), """
 namespace Foo;
 
-public int Add(int a, int b) {
-    return a + b;
+public struct Pair {
+    public int X;
+    public int Y;
+}
+
+public enum Mode : byte {
+    Slow = 0,
+    Fast = 1
+}
+
+public global int Bias = 5;
+
+public int AddPair(Pair pair) {
+    return pair.X + pair.Y;
 }
 """);
 
@@ -73,7 +85,9 @@ public int Add(int a, int b) {
 using Foo;
 
 int main() {
-    return Add(2, 3) - 5;
+    Pair pair = Pair { X: 2, Y: 3 };
+    Mode mode = Mode.Fast;
+    return AddPair(pair) + Bias + (int)mode - 11;
 }
 """);
 
@@ -88,8 +102,8 @@ int main() {
 
 		var driverType = typeof(ICompilerDriver).Assembly.GetType("Cvolo.Drivers.CompilerDriver", throwOnError: true)!;
 		var driver = Assert.IsAssignableFrom<ICompilerDriver>(Activator.CreateInstance(driverType, cache));
-		var exitCode = driver.Compile(projectPath, llvmOnly: false, isShared: false, emitIr: false, optLevel: "O0");
-		Assert.Equal(0, exitCode);
+		var (exitCode, buildOutput) = CompileWithCapturedOutput(driver, projectPath);
+		Assert.True(exitCode == 0, buildOutput);
 
 		var executable = Path.Combine(appDirectory, "bin", "Debug", OperatingSystem.IsWindows() ? "App.exe" : "App");
 		Assert.True(File.Exists(executable), $"Expected compiler output '{executable}'.");
@@ -101,7 +115,7 @@ int main() {
 			RedirectStandardError = true
 		});
 		Assert.NotNull(process);
-		process!.WaitForExit();
+		Assert.True(process!.WaitForExit(10_000), $"Compiled app '{executable}' did not exit within 10 seconds.");
 		Assert.Equal(0, process.ExitCode);
 	}
 
@@ -128,8 +142,20 @@ int main() {
 		File.WriteAllText(Path.Combine(libraryDirectory, "Foo.cvl"), """
 namespace Foo;
 
-public int Add(int a, int b) {
-    return a + b;
+public struct Pair {
+    public int X;
+    public int Y;
+}
+
+public enum Mode : byte {
+    Slow = 0,
+    Fast = 1
+}
+
+public global int Bias = 5;
+
+public int AddPair(Pair pair) {
+    return pair.X + pair.Y;
 }
 """);
 
@@ -165,7 +191,9 @@ public int Add(int a, int b) {
 using Foo;
 
 int main() {
-    return Add(20, 22) - 42;
+    Pair pair = Pair { X: 20, Y: 22 };
+    Mode mode = Mode.Fast;
+    return AddPair(pair) + Bias + (int)mode - 48;
 }
 """);
 
@@ -192,15 +220,47 @@ int main() {
 
 		var driverType = typeof(ICompilerDriver).Assembly.GetType("Cvolo.Drivers.CompilerDriver", throwOnError: true)!;
 		var driver = Assert.IsAssignableFrom<ICompilerDriver>(Activator.CreateInstance(driverType, cache));
-		var runExitCode = driver.Compile(projectPath, llvmOnly: false, isShared: false, emitIr: false, optLevel: "O0", runAfterCompile: true);
+		var (buildExitCode, buildOutput) = CompileWithCapturedOutput(driver, projectPath);
+		Assert.True(buildExitCode == 0, buildOutput);
 
-		Assert.Equal(0, runExitCode);
+		var executable = Path.Combine(appDirectory, "bin", "Debug", OperatingSystem.IsWindows() ? "App.exe" : "App");
+		Assert.True(File.Exists(executable), $"Expected compiler output '{executable}'.");
+		using var process = Process.Start(new ProcessStartInfo
+		{
+			FileName = executable,
+			UseShellExecute = false,
+			RedirectStandardOutput = true,
+			RedirectStandardError = true
+		});
+		Assert.NotNull(process);
+		Assert.True(process!.WaitForExit(10_000), $"Compiled app '{executable}' did not exit within 10 seconds.");
+		Assert.Equal(0, process.ExitCode);
 	}
 
 	private static void RequireClang()
 	{
 		if (FindClang() is null)
 			Assert.Skip("clang not available; package Sector 3 build integration requires clang/LLVM.");
+	}
+
+	private static (int ExitCode, string Output) CompileWithCapturedOutput(ICompilerDriver driver, string projectPath)
+	{
+		var originalOut = Console.Out;
+		var originalError = Console.Error;
+		using var output = new StringWriter();
+		using var error = new StringWriter();
+		try
+		{
+			Console.SetOut(output);
+			Console.SetError(error);
+			var exitCode = driver.Compile(projectPath, llvmOnly: false, isShared: false, emitIr: false, optLevel: "O0");
+			return (exitCode, output + error.ToString());
+		}
+		finally
+		{
+			Console.SetOut(originalOut);
+			Console.SetError(originalError);
+		}
 	}
 
 	private static string? FindClang()

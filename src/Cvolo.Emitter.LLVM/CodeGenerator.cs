@@ -194,8 +194,14 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			var llvmType = GetLLVMType(globalSymbol.Type);
 			var globalRef = _module.AddGlobal(llvmType, qualifiedName);
 			globalRef.IsGlobalConstant = !globalSymbol.IsMutable;
-			globalRef.Linkage = LLVMLinkage.LLVMInternalLinkage;
-			globalRef.Initializer = BuildGlobalInitializer(globalSymbol.Type, globalNode.Initializer, llvmType);
+			var isExternalPackageGlobal = globalSymbol.DeclaringUnit is not null
+				&& bindingContext.ExternalPackageUnits.Contains(globalSymbol.DeclaringUnit);
+			var isStandardLibraryGlobal = IsStandardLibraryUnit(globalSymbol.DeclaringUnit);
+			globalRef.Linkage = isExternalPackageGlobal || (globalSymbol.Visibility == Visibility.Public && !isStandardLibraryGlobal)
+				? LLVMLinkage.LLVMExternalLinkage
+				: LLVMLinkage.LLVMInternalLinkage;
+			if (!isExternalPackageGlobal)
+				globalRef.Initializer = BuildGlobalInitializer(globalSymbol.Type, globalNode.Initializer, llvmType);
 			_globalVariables[qualifiedName] = globalRef;
 			_globalVariableTypes[qualifiedName] = globalSymbol.Type;
 
@@ -644,12 +650,13 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		var llvmFunc = _module.AddFunction(emitName, funcType);
 
 		if (emitName != "main" && declaredSymbol is FunctionSymbol functionSymbol
+			&& !IsStandardLibraryUnit(functionSymbol.DeclaringUnit)
 			&& (functionSymbol.Visibility == Visibility.Public || functionSymbol.IsNeverInline))
 		{
 			// Public Cvolo functions are package/module symbols. They need external LLVM
 			// linkage so a consumer module can bind an ordinary Cvolo call to Sector 3
-			// bitcode without introducing a C ABI wrapper. [NeverInline] retains the same
-			// external-linkage behavior it already required for optimizer stability.
+			// bitcode without introducing a C ABI wrapper. Standard-library symbols stay
+			// internal because every module already compiles its own stdlib copy.
 			llvmFunc.Linkage = LLVMLinkage.LLVMExternalLinkage;
 		}
 		else if (emitName != "main")
@@ -696,6 +703,18 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 		_globals[emitName] = llvmFunc;
 		_functionTypes[emitName] = funcType;
+	}
+
+	private bool IsStandardLibraryUnit(CompilationUnitSyntax? unit)
+	{
+		if (unit is null)
+			return false;
+
+		var filePath = _bindingContext is not null && _bindingContext.FileContexts.TryGetValue(unit, out var context)
+			? context.FilePath
+			: unit.Context.FilePath;
+		var path = filePath.Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar);
+		return path.Contains($"{Path.DirectorySeparatorChar}libraries{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase);
 	}
 
 	/// <summary>

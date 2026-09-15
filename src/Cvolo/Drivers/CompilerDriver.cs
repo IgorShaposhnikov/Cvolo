@@ -284,7 +284,7 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 		var targetLayout = new TargetLayout();
 		var optimizer = new IrOptimizer(targetLayout, parsedLevel);
 		var irVerifier = new IRVerifier(compilationFailuresDirectory);
-		IEmitter emitter = new CodeGenerator("cvolo_module", targetLayout, optimizer, irVerifier, enableTbaa: !noTbaa, checkedFfiBounds: checkedFfiBounds);
+		using var emitter = new CodeGenerator("cvolo_module", targetLayout, optimizer, irVerifier, enableTbaa: !noTbaa, checkedFfiBounds: checkedFfiBounds);
 		var ir = emitter.Emit(asts, firstContext!, binder.Context);
 
 		File.WriteAllText(llPath, ir);

@@ -112,9 +112,34 @@ internal sealed class LinkStrategy(string binDirectory) : ICompilationStrategy
 		};
 
 		using var linkResult = Process.Start(psi);
-		linkResult?.WaitForExit();
+		if (linkResult is null)
+		{
+			Console.Error.WriteLine($"Failed to start linker '{linkerName}'.");
+			return 1;
+		}
 
-		if (linkResult?.ExitCode == 0)
+		Task<string>? stdoutTask = null;
+		Task<string>? stderrTask = null;
+		if (!verbose)
+		{
+			// Drain both redirected streams concurrently. Waiting before reading stderr can
+			// deadlock if clang fills its pipe while reporting a large LLVM/linker error.
+			stdoutTask = linkResult.StandardOutput.ReadToEndAsync();
+			stderrTask = linkResult.StandardError.ReadToEndAsync();
+		}
+
+		const int linkerTimeoutMilliseconds = 60_000;
+		if (!linkResult.WaitForExit(linkerTimeoutMilliseconds))
+		{
+			try { linkResult.Kill(entireProcessTree: true); } catch { }
+			Console.Error.WriteLine($"Linking timed out after {linkerTimeoutMilliseconds / 1000} seconds.");
+			return 1;
+		}
+
+		if (stdoutTask is not null && stderrTask is not null)
+			Task.WaitAll(stdoutTask, stderrTask);
+
+		if (linkResult.ExitCode == 0)
 		{
 			if (verbose)
 			{
@@ -125,9 +150,9 @@ internal sealed class LinkStrategy(string binDirectory) : ICompilationStrategy
 		}
 
 		// Fallback: If linking failed, print Clang's actual errors even in silent mode so the developer knows what went wrong!
-		if (!verbose && linkResult is not null)
+		if (!verbose)
 		{
-			var errors = linkResult.StandardError.ReadToEnd();
+			var errors = stderrTask?.Result ?? string.Empty;
 			if (nativeLibraries is not null && nativeLibraries.Any())
 			{
 				Console.Error.WriteLine($"Compile Error {DiagnosticIds.NativeLibraryUnresolved}: A native library requested via [LibraryImport] could not be resolved by the linker.");

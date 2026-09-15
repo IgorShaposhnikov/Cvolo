@@ -1,5 +1,7 @@
 using System.Text;
+using Cvolo.Core.AST.Base;
 using Cvolo.Core.Packages;
+using Cvolo.Core.Diagnostics;
 using Cvolo.Packaging;
 
 namespace Cvolo.Tests.Packaging;
@@ -109,6 +111,7 @@ public sealed class PackPipelineTests : IDisposable
 		Assert.Equal(TargetTriple.Resolve(hostTriple), result.Targets[0]);
 		Assert.True(result.FileSize > 0);
 		Assert.Equal(64, result.MerkleRootHex.Length);
+		// v0.2.6 install/build verification requires ordinary pack output to be signed.
 		using var verified = CvlArchiveReader.Read(result.OutputPath);
 		Assert.Single(verified.Manifest.Slices);
 	}
@@ -214,6 +217,13 @@ public sealed class PackPipelineTests : IDisposable
 		File.WriteAllText(Path.Combine(projectDir, "Api.cvl"), """
 namespace TestLibrary;
 
+public struct Pair {
+    public int Left;
+    public int Right;
+}
+
+public enum Mode : byte { Slow = 0, Fast = 1 }
+public global int Bias = 5;
 public int Add(int a, int b) { return a + b; }
 int Hidden(int value) { return value; }
 """);
@@ -236,6 +246,22 @@ int Hidden(int value) { return value; }
 			function.Parameters,
 			parameter => { Assert.Equal("int", parameter.Type); Assert.Equal("a", parameter.Name); },
 			parameter => { Assert.Equal("int", parameter.Type); Assert.Equal("b", parameter.Name); });
+
+		var type = Assert.Single(unit.Structs);
+		Assert.Equal("Pair", type.Name);
+		Assert.Collection(type.Fields,
+			field => { Assert.Equal("int", field.Type); Assert.Equal("Left", field.Name); Assert.Equal(Visibility.Public, field.Visibility); },
+			field => { Assert.Equal("int", field.Type); Assert.Equal("Right", field.Name); Assert.Equal(Visibility.Public, field.Visibility); });
+
+		var enumType = Assert.Single(unit.Enums);
+		Assert.Equal("Mode", enumType.Name);
+		Assert.Equal("byte", enumType.StorageType);
+		Assert.Equal(["Slow", "Fast"], enumType.Variants.Select(variant => variant.Name).ToArray());
+
+		var global = Assert.Single(unit.Globals);
+		Assert.Equal("Bias", global.Name);
+		Assert.Equal("int", global.Type);
+		Assert.False(global.IsMutable);
 	}
 
 	[Fact]
