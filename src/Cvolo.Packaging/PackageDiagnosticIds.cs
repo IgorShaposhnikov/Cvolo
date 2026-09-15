@@ -52,6 +52,12 @@ public static class PackageDiagnosticIds
 	/// <summary>Error: trusted-key policy rejects an unsigned package.</summary>
 	public const string UnsignedRejected = "CVLP3040";
 
+	/// <summary>Error: a signed package is valid but its Ed25519 public key is not trusted.</summary>
+	public const string UntrustedSigner = "CVLP3041";
+
+	/// <summary>Error: keys/trusted.json is malformed or contains an invalid Ed25519 public key.</summary>
+	public const string InvalidTrustedKeysPolicy = "CVLP3042";
+
 	/// <summary>Warning: an unsigned package is accepted because no trusted-key policy is configured.</summary>
 	public const string UnsignedWarning = "CVLP3050";
 

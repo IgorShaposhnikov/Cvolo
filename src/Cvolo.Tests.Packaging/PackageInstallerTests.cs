@@ -46,13 +46,60 @@ public sealed class PackageInstallerTests : IDisposable
 	[Fact]
 	public void UnsignedPackage_WithTrustedKeys_IsRejectedWithCVLP3040()
 	{
-		var keysDirectory = Path.Combine(_cache.RootPath, "keys");
-		Directory.CreateDirectory(keysDirectory);
-		File.WriteAllText(Path.Combine(keysDirectory, "trusted.json"), "[\"001122\"]");
+		using var trustedKey = Key.Create(SignatureAlgorithm.Ed25519);
+		WriteTrustedKeys(trustedKey);
 
 		var error = Assert.Throws<PackageException>(() => _installer.InstallFromFile(CreateArchive(signed: false)));
 
 		Assert.Equal(PackageDiagnosticIds.UnsignedRejected, error.Code);
+	}
+
+	[Fact]
+	public void SignedPackage_WithMatchingTrustedKey_IsAccepted()
+	{
+		using var trustedKey = Key.Create(SignatureAlgorithm.Ed25519);
+		WriteTrustedKeys(trustedKey);
+
+		var installed = _installer.InstallFromFile(CreateArchive(signingKey: trustedKey));
+
+		Assert.False(installed.WasUnsigned);
+	}
+
+	[Fact]
+	public void SignedPackage_WithUntrustedKey_IsRejectedWithCVLP3041()
+	{
+		using var trustedKey = Key.Create(SignatureAlgorithm.Ed25519);
+		using var packageKey = Key.Create(SignatureAlgorithm.Ed25519);
+		WriteTrustedKeys(trustedKey);
+
+		var error = Assert.Throws<PackageException>(() => _installer.InstallFromFile(CreateArchive(signingKey: packageKey)));
+
+		Assert.Equal(PackageDiagnosticIds.UntrustedSigner, error.Code);
+	}
+
+	[Fact]
+	public void CachedSignedPackage_IsRecheckedAgainstCurrentTrustedKeys()
+	{
+		using var packageKey = Key.Create(SignatureAlgorithm.Ed25519);
+		var installed = _installer.InstallFromFile(CreateArchive(signingKey: packageKey));
+		using var differentTrustedKey = Key.Create(SignatureAlgorithm.Ed25519);
+		WriteTrustedKeys(differentTrustedKey);
+
+		var error = Assert.Throws<PackageException>(() => _installer.InstallFromCache(installed.PackageId, installed.Version));
+
+		Assert.Equal(PackageDiagnosticIds.UntrustedSigner, error.Code);
+	}
+
+	[Fact]
+	public void MalformedTrustedKeyPolicy_IsRejectedWithCVLP3042()
+	{
+		var keysDirectory = Path.Combine(_cache.RootPath, "keys");
+		Directory.CreateDirectory(keysDirectory);
+		File.WriteAllText(Path.Combine(keysDirectory, "trusted.json"), "[\"001122\"]");
+
+		var error = Assert.Throws<PackageException>(() => _installer.InstallFromFile(CreateArchive()));
+
+		Assert.Equal(PackageDiagnosticIds.InvalidTrustedKeysPolicy, error.Code);
 	}
 
 	[Fact]
@@ -141,7 +188,7 @@ public sealed class PackageInstallerTests : IDisposable
 		Assert.Throws<PackageException>(() => _installer.InstallFromFile(CreateArchive(id: id)));
 	}
 
-	private string CreateArchive(bool fat = false, bool signed = true, bool missingHost = false, string id = "Foo")
+	private string CreateArchive(bool fat = false, bool signed = true, bool missingHost = false, string id = "Foo", Key? signingKey = null)
 	{
 		var path = Path.Combine(_root, Guid.NewGuid().ToString("N") + ".cvlib");
 		var slices = new List<CvlSliceEntry>();
@@ -167,14 +214,31 @@ public sealed class PackageInstallerTests : IDisposable
 		writer.SetSourceBuffer("source");
 		if (signed)
 		{
-			using var key = Key.Create(SignatureAlgorithm.Ed25519);
-			writer.Write(path, key);
+			if (signingKey is not null)
+			{
+				writer.Write(path, signingKey);
+			}
+			else
+			{
+				using var key = Key.Create(SignatureAlgorithm.Ed25519);
+				writer.Write(path, key);
+			}
 		}
 		else
 		{
 			writer.WriteUnsigned(path);
 		}
 		return path;
+	}
+
+	private void WriteTrustedKeys(params Key[] keys)
+	{
+		var directory = Path.Combine(_cache.RootPath, "keys");
+		Directory.CreateDirectory(directory);
+		var publicKeys = keys
+			.Select(key => Convert.ToHexString(key.Export(KeyBlobFormat.RawPublicKey)))
+			.ToArray();
+		File.WriteAllText(Path.Combine(directory, "trusted.json"), JsonSerializer.Serialize(publicKeys));
 	}
 
 	public void Dispose() => Directory.Delete(_root, true);

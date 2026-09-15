@@ -203,6 +203,7 @@ public sealed class LocalPackageManagerTests : IDisposable
 		Assert.Equal(1, exitCode);
 		Assert.Contains(PackageDiagnosticIds.PackageNotReferenced, error.ToString());
 	}
+
 	[Fact]
 	public void PkgRemove_UnknownPackageId_ReportsNotReferenced()
 	{
@@ -219,6 +220,7 @@ public sealed class LocalPackageManagerTests : IDisposable
 		Assert.Equal(1, exitCode);
 		Assert.Contains(PackageDiagnosticIds.PackageNotReferenced, error.ToString());
 	}
+
 	[Fact]
 	public void PkgCachePruneUnused_RemovesOnlyPackagesNotReferencedByLocks()
 	{
@@ -245,6 +247,7 @@ public sealed class LocalPackageManagerTests : IDisposable
 		Assert.False(Directory.Exists(cache.GetPackageDirectory("Bar", "2.0.0")));
 		Assert.Contains("Removed 1 cached package", output.ToString());
 	}
+
 	[Fact]
 	public void PkgCachePruneUnused_RewritesPackageIndex()
 	{
@@ -271,6 +274,25 @@ public sealed class LocalPackageManagerTests : IDisposable
 		var versions = JsonSerializer.Deserialize<string[]>(File.ReadAllText(Path.Combine(_root, "cache", "pkg", "foo", "index.json")));
 		Assert.Equal(["2.0.0"], versions);
 	}
+
+	[Fact]
+	public void PkgCacheClear_RemovesEntirePackageCache()
+	{
+		var projectDir = Dir("clear-cache-app");
+		var cache = new PackageCache(Path.Combine(_root, "clear-cache"));
+		WriteCachedPackage(cache, "Foo", "1.0.0");
+		WriteCachedPackage(cache, "Bar", "2.0.0");
+		using var output = new StringWriter();
+		using var error = new StringWriter();
+		var command = new PkgCommand(cache, new PackageInstaller(cache), () => projectDir, output, error);
+
+		var exitCode = command.Parse("cache clear").Invoke();
+
+		Assert.Equal(0, exitCode);
+		Assert.False(Directory.Exists(Path.Combine(cache.RootPath, "pkg")));
+		Assert.Contains("Package cache cleared", output.ToString());
+	}
+
 	[Fact]
 	public void PkgList_InvalidLock_ReportsLockOutOfSync()
 	{

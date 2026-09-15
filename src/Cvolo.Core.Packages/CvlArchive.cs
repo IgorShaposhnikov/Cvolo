@@ -21,6 +21,12 @@ public sealed unsafe class CvlArchive : IDisposable
 	public bool IsUnsigned { get; }
 
 	/// <summary>
+	/// Zero-allocation view over the 32-byte Ed25519 public key stored at the start of the signature block.
+	/// Unsigned archives expose 32 zero bytes.
+	/// </summary>
+	public ReadOnlySpan<byte> SigningPublicKey => GetRawSlice(Header.SignatureOffset, 32);
+
+	/// <summary>
 	/// Zero-allocation view over the 32-byte Merkle root hash stored in the container header (offset 0x20..0x3F).
 	/// </summary>
 	public ReadOnlySpan<byte> MerkleRootHash => new(_basePointer + 32, 32);

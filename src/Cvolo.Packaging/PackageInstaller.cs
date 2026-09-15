@@ -40,8 +40,7 @@ public sealed class PackageInstaller(PackageCache cache)
 		// trusted-key policy is configured. Structural/Merkle verification still runs.
 		using var archive = CvlArchiveReader.Read(source, allowUnsigned: true);
 		var unsigned = archive.IsUnsigned;
-		if (unsigned && HasTrustedKeysPolicy())
-			throw new PackageException(PackageDiagnosticIds.UnsignedRejected, $"Package '{source}' is unsigned and trusted keys are configured.");
+		TrustedKeyPolicy.Load(cache).Validate(archive, source);
 		var metadata = PackageMetadata.Read(archive);
 		var triple = TargetTriple.HostTriple();
 		var hostSlice = archive.Manifest.Slices.SingleOrDefault(s => string.Equals(s.Triple, triple, StringComparison.Ordinal));
@@ -137,8 +136,7 @@ public sealed class PackageInstaller(PackageCache cache)
 		var archive = CvlArchiveReader.Read(path, allowUnsigned: true);
 		try
 		{
-			if (archive.IsUnsigned && HasTrustedKeysPolicy())
-				throw new PackageException(PackageDiagnosticIds.UnsignedRejected, $"Cached package '{packageId}@{version}' is unsigned and trusted keys are configured.");
+			TrustedKeyPolicy.Load(cache).Validate(archive, $"{packageId}@{version}");
 
 			var identity = PackageMetadata.Read(archive);
 			if (!string.Equals(identity.PackageId, metadata.PackageId, StringComparison.OrdinalIgnoreCase)
@@ -168,24 +166,6 @@ public sealed class PackageInstaller(PackageCache cache)
 	{
 		var directory = cache.GetPackageDirectory(packageId, version);
 		return File.Exists(Path.Combine(directory, ".metadata.json")) && File.Exists(Path.Combine(directory, packageId + ".cvlib"));
-	}
-
-	private bool HasTrustedKeysPolicy()
-	{
-		var path = Path.Combine(cache.RootPath, "keys", "trusted.json");
-		if (!File.Exists(path))
-			return false;
-
-		try
-		{
-			var keys = JsonSerializer.Deserialize<string[]>(File.ReadAllText(path))
-				?? throw new InvalidDataException("Trusted-key policy deserialized to null.");
-			return keys.Any(key => !string.IsNullOrWhiteSpace(key));
-		}
-		catch (Exception ex) when (ex is JsonException or IOException or InvalidDataException)
-		{
-			throw new PackageException(PackageDiagnosticIds.UnsignedRejected, "Trusted-key policy is invalid.", ex.Message);
-		}
 	}
 
 	private static void ValidateCacheSliceInvariant(CvlArchive archive, string packageId, string version)
