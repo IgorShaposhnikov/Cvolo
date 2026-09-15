@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<IsPackable>false</IsPackable>
+		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<PackageReference Include="coverlet.collector" />
+		<PackageReference Include="Microsoft.NET.Test.Sdk" />
+		<PackageReference Include="xunit.runner.visualstudio">
+			<PrivateAssets>all</PrivateAssets>
+			<IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+		</PackageReference>
+		<PackageReference Include="xunit.v3" />
+		<!-- In-process LLVM codegen requires the native runtime, exactly like the compiler host. -->
+		<PackageReference Include="libLLVM.runtime.win-x64" Condition="'$(OS)' == 'Windows_NT'" />
+		<PackageReference Include="libLLVM.runtime.linux-x64" Condition="'$(OS)' != 'Windows_NT'" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<Using Include="Xunit" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\Cvolo.Packaging\Cvolo.Packaging.csproj" />
+	</ItemGroup>
+
+	<ItemGroup Condition="'$(OS)' == 'Windows_NT' And Exists('..\Cvolo\tooling\win-x64\clang.exe')">
+		<None Include="..\Cvolo\tooling\win-x64\clang.exe" Link="clang.exe" CopyToOutputDirectory="PreserveNewest" Visible="False" />
+		<None Include="..\Cvolo\tooling\win-x64\lld-link.exe" Link="lld-link.exe" CopyToOutputDirectory="PreserveNewest" Visible="False" />
+	</ItemGroup>
+</Project>

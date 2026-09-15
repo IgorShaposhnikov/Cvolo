@@ -57,14 +57,44 @@ public sealed class CvlArchiveWriter
 	/// <summary>
 	/// Executes the 3-pass deterministic write pipeline and atomically moves the
 	/// finished container onto <paramref name="outputPath"/> via &lt;name&gt;.tmp_&lt;pid&gt;.
+	/// The Ed25519 signature is computed strictly over the 32-byte Merkle root (§1.3/§5).
 	/// </summary>
 	/// <param name="outputPath">Destination path of the .cvlib archive.</param>
-	/// <param name="signingKey">Ed25519 signing key. Signs strictly the 32-byte Merkle root hash (§1.3/§5).</param>
-	public unsafe void Write(string outputPath, Key signingKey)
+	/// <param name="signingKey">Ed25519 signing key.</param>
+	public void Write(string outputPath, Key signingKey)
 	{
 		if (signingKey.Algorithm != SignatureAlgorithm.Ed25519)
 			throw new ArgumentException("Signing key must be an Ed25519 key.", nameof(signingKey));
 
+		var plan = ComputePlan();
+
+		var algorithm = SignatureAlgorithm.Ed25519;
+		var signature = algorithm.Sign(signingKey, plan.RootHash);
+		var publicKey = signingKey.Export(KeyBlobFormat.RawPublicKey);
+
+		WriteContainer(outputPath, plan, publicKey, signature);
+	}
+
+	/// <summary>
+	/// Executes the 3-pass deterministic write pipeline but emits a signature block of
+	/// 96 zero bytes, producing an unsigned container for dev/scratch artifacts.
+	/// </summary>
+	/// <param name="outputPath">Destination path of the .cvlib archive.</param>
+	public void WriteUnsigned(string outputPath)
+	{
+		WriteContainer(outputPath, ComputePlan(), null, null);
+	}
+
+	private sealed record ContainerPlan(
+		CvlArchiveHeader Header,
+		CvlSectorIndexEntry[] IndexEntries,
+		ulong SectorCount,
+		ulong MerkleIndexTableOffset,
+		ulong SignatureOffset,
+		byte[] RootHash);
+
+	private unsafe ContainerPlan ComputePlan()
+	{
 		// Sector 1 (COMPLIANCE_METADATA) is mandatory and must carry the slice manifest.
 		if (!_sectors.TryGetValue(1, out var sector1) || sector1.Length == 0)
 			throw new InvalidOperationException("Sector 1 (COMPLIANCE_METADATA) is mandatory and must not be empty.");
@@ -166,11 +196,11 @@ public sealed class CvlArchiveWriter
 		var rootHash = MerkleRoot(leaves);
 		rootHash.CopyTo(new Span<byte>(header.MerkleRootHash, 32));
 
-		// Ed25519 signature strictly over the 32-byte Merkle root (§1.3, §5).
-		var algorithm = SignatureAlgorithm.Ed25519;
-		var signature = algorithm.Sign(signingKey, rootHash);
-		var publicKey = signingKey.Export(KeyBlobFormat.RawPublicKey);
+		return new ContainerPlan(header, indexEntries, sectorCount, merkleIndexTableOffset, signatureOffset, rootHash);
+	}
 
+	private unsafe void WriteContainer(string outputPath, ContainerPlan plan, byte[]? publicKey, byte[]? signature)
+	{
 		// =========================================================================
 		// Pass 3: Write + atomic rename
 		// =========================================================================
@@ -182,26 +212,30 @@ public sealed class CvlArchiveWriter
 			{
 				// Header page: 80-byte header + zero padding to 4096.
 				var headerPage = new byte[PageSize];
-				header.WriteTo(headerPage);
+				plan.Header.WriteTo(headerPage);
 				fs.Write(headerPage);
 
 				// Index table + zero padding up to the signature block.
-				var indexBytes = new byte[signatureOffset - merkleIndexTableOffset];
-				for (var i = 0; i < (int)sectorCount; i++)
-					indexEntries[i].WriteTo(indexBytes.AsSpan(i * 32, 32));
+				var indexBytes = new byte[plan.SignatureOffset - plan.MerkleIndexTableOffset];
+				for (var i = 0; i < (int)plan.SectorCount; i++)
+					plan.IndexEntries[i].WriteTo(indexBytes.AsSpan(i * 32, 32));
 				fs.Write(indexBytes);
 
 				// Signature block page: 32B public key + 64B signature + zero padding.
+				// An unsigned container leaves all 96 signature bytes at zero.
 				var sigBlockPage = new byte[PageSize];
-				publicKey.CopyTo(sigBlockPage, 0);
-				signature.CopyTo(sigBlockPage, 32);
+				if (publicKey is not null && signature is not null)
+				{
+					publicKey.CopyTo(sigBlockPage, 0);
+					signature.CopyTo(sigBlockPage, 32);
+				}
 				fs.Write(sigBlockPage);
 
 				// Sector payloads in declared order, each zero-padded to its page boundary.
-				for (var i = 0; i < (int)sectorCount; i++)
+				for (var i = 0; i < (int)plan.SectorCount; i++)
 				{
 					var sectorId = i + 1;
-					var entry = indexEntries[i];
+					var entry = plan.IndexEntries[i];
 					if (entry.Length == 0)
 						continue;
 

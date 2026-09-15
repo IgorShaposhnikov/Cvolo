@@ -1,8 +1,12 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
 	<ItemGroup>
+		<ProjectReference Include="..\Cvolo.Analysis\Cvolo.Analysis.csproj" />
 		<ProjectReference Include="..\Cvolo.Core\Cvolo.Core.csproj" />
 		<ProjectReference Include="..\Cvolo.Core.Packages\Cvolo.Core.Packages.csproj" />
+		<ProjectReference Include="..\Cvolo.Emitter.LLVM\Cvolo.Emitter.LLVM.csproj" />
+		<ProjectReference Include="..\Cvolo.Syntax\Cvolo.Syntax.csproj" />
+		<ProjectReference Include="..\Cvolo.Syntax.Antlr\Cvolo.Syntax.Antlr.csproj" />
 	</ItemGroup>
 
 </Project>

@@ -22,9 +22,10 @@ public sealed class CvlArchiveReader
 	/// <summary>
 	/// Opens, structurally validates, and cryptographically verifies a .cvlib archive.
 	/// By default the full Merkle tree is re-verified (install/build time). Pass
-	/// <paramref name="skipMerkleHashVerification"/> to skip the recomputation (plugin/LSP hot paths).
+	/// <paramref name="skipMerkleHashVerification"/> to skip the recomputation (plugin/LSP hot paths)
+	/// and <paramref name="verifySignature"/> to skip the Ed25519 check (unsigned dev artifacts).
 	/// </summary>
-	public static unsafe CvlArchive Read(string path, bool skipMerkleHashVerification = false)
+	public static unsafe CvlArchive Read(string path, bool skipMerkleHashVerification = false, bool verifySignature = true)
 	{
 		var fileInfo = new FileInfo(path);
 
@@ -150,7 +151,8 @@ public sealed class CvlArchiveReader
 
 		try
 		{
-			VerifySignature(basePtr, header, sectors);
+			if (verifySignature)
+				VerifySignature(basePtr, header, sectors);
 
 			if (!skipMerkleHashVerification)
 				VerifyMerkleTree(basePtr, header, sectors);
