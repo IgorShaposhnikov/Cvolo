@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using Cvolo.CLI.Packages;
+using Cvolo.Core.AST.Declarations;
+using Cvolo.Core.Packages;
 using Cvolo.Drivers;
 using Cvolo.Packaging;
 
@@ -192,6 +194,141 @@ int main() {
 			Packages = new Dictionary<string, LockedPackage>(StringComparer.OrdinalIgnoreCase)
 			{
 				["GenericLib"] = new("1.0.0", LocalFeed.ComputeHash(packagePath), new Dictionary<string, string>())
+			}
+		}.Write(Path.Combine(appDirectory, "cvolo.lock.json"));
+
+		var driverType = typeof(ICompilerDriver).Assembly.GetType("Cvolo.Drivers.CompilerDriver", throwOnError: true)!;
+		var driver = Assert.IsAssignableFrom<ICompilerDriver>(Activator.CreateInstance(driverType, cache));
+		var (exitCode, buildOutput) = CompileWithCapturedOutput(driver, projectPath);
+		Assert.True(exitCode == 0, buildOutput);
+
+		var executable = Path.Combine(appDirectory, "bin", "Debug", OperatingSystem.IsWindows() ? "App.exe" : "App");
+		Assert.True(File.Exists(executable));
+		using var process = Process.Start(new ProcessStartInfo
+		{
+			FileName = executable,
+			UseShellExecute = false,
+			RedirectStandardOutput = true,
+			RedirectStandardError = true
+		});
+		Assert.NotNull(process);
+		Assert.True(process!.WaitForExit(10_000), $"Compiled app '{executable}' did not exit within 10 seconds.");
+		Assert.Equal(0, process.ExitCode);
+	}
+
+
+	[Fact]
+	public void Build_AppUsingPackageContractsAndExtensions_RehydratesSector5WithoutCAbi()
+	{
+		RequireClang();
+
+		var libraryDirectory = Path.Combine(_root, "libcontracts");
+		Directory.CreateDirectory(libraryDirectory);
+		File.WriteAllText(Path.Combine(libraryDirectory, "Contracts.cvlproj"), """
+<Project Sdk="Cvolo.Sdk">
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <AssemblyName>Contracts</AssemblyName>
+    <PackageId>Contracts</PackageId>
+    <Version>1.0.0</Version>
+  </PropertyGroup>
+</Project>
+""");
+		File.WriteAllText(Path.Combine(libraryDirectory, "Contracts.cvl"), """
+namespace Contracts;
+
+public interface IValue {
+    int Value();
+}
+
+public protocol IOffset {
+    int Offset();
+}
+
+public struct Box {
+    public int N;
+}
+
+public extension Box : IValue {
+    public int Value() {
+        return N;
+    }
+
+    public int Offset() {
+        return 2;
+    }
+}
+
+public int Read(IValue value) {
+    return value.Value();
+}
+
+public int ReadOffset(IOffset value) {
+    return value.Offset();
+}
+""");
+
+		var signingKey = Path.Combine(_root, "contracts.key");
+		File.WriteAllBytes(signingKey, Enumerable.Range(48, 32).Select(i => (byte)i).ToArray());
+		var packagePath = Path.Combine(_root, "Contracts.1.0.0.cvlib");
+		PackPipeline.Execute(libraryDirectory, new PackOptions
+		{
+			OutputPath = packagePath,
+			SigningKeyPath = signingKey,
+			Targets = [TargetTriple.HostTriple()]
+		});
+
+		using (var archive = CvlArchiveReader.Read(packagePath))
+		{
+			var api = PackageApiMetadata.Read(archive);
+			var apiUnit = Assert.Single(api.Units);
+			Assert.Single(apiUnit.Structs);
+			Assert.Empty(apiUnit.Functions);
+
+			var templateUnits = PackageTemplateSource.Read(archive, "Contracts", "1.0.0");
+			var templateUnit = Assert.Single(templateUnits);
+			var members = templateUnit.NamespaceDeclaration!.Members;
+			Assert.Contains(members, member => member is InterfaceDeclarationSyntax { Name: "IValue" });
+			Assert.Contains(members, member => member is ProtocolDeclarationSyntax { Name: "IOffset" });
+			Assert.Contains(members, member => member is ExtensionDeclarationSyntax { ExtendedTypeName: "Box" });
+			Assert.Contains(members, member => member is FunctionDeclarationSyntax { Name: "Read" });
+			Assert.Contains(members, member => member is FunctionDeclarationSyntax { Name: "ReadOffset" });
+		}
+
+		var cache = new PackageCache(Path.Combine(_root, "contracts-cache"));
+		new PackageInstaller(cache).InstallFromFile(packagePath);
+
+		var appDirectory = Path.Combine(_root, "contracts-app");
+		Directory.CreateDirectory(appDirectory);
+		var projectPath = Path.Combine(appDirectory, "App.cvlproj");
+		File.WriteAllText(projectPath, """
+<Project Sdk="Cvolo.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>App</AssemblyName>
+    <PackageId>App</PackageId>
+    <Version>1.0.0</Version>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Contracts" Version="1.0.0" />
+  </ItemGroup>
+</Project>
+""");
+		File.WriteAllText(Path.Combine(appDirectory, "Main.cvl"), """
+using Contracts;
+
+int main() {
+    Box box = Box { N: 40 };
+    return Read(box) + ReadOffset(box) - 42;
+}
+""");
+
+		new LockFile
+		{
+			Sources = [],
+			Packages = new Dictionary<string, LockedPackage>(StringComparer.OrdinalIgnoreCase)
+			{
+				["Contracts"] = new("1.0.0", LocalFeed.ComputeHash(packagePath), new Dictionary<string, string>())
 			}
 		}.Write(Path.Combine(appDirectory, "cvolo.lock.json"));
 

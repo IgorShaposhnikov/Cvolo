@@ -78,9 +78,22 @@ internal static class ProcessRunner
 		if (process is null)
 			throw new InvalidOperationException($"Failed to start '{toolName}'.");
 
-		var stdout = process.StandardOutput.ReadToEnd();
-		var stderr = process.StandardError.ReadToEnd();
-		process.WaitForExit();
+		// Begin draining both redirected streams before waiting for process exit. Reading
+		// one stream synchronously while the child fills the other can deadlock once the
+		// OS pipe buffer is full (most visible when clang emits a large diagnostic).
+		var stdoutTask = process.StandardOutput.ReadToEndAsync();
+		var stderrTask = process.StandardError.ReadToEndAsync();
+
+		const int timeoutMilliseconds = 60_000;
+		if (!process.WaitForExit(timeoutMilliseconds))
+		{
+			try { process.Kill(entireProcessTree: true); } catch { }
+			throw new TimeoutException($"'{toolName}' did not exit within {timeoutMilliseconds / 1000} seconds.");
+		}
+
+		Task.WaitAll(stdoutTask, stderrTask);
+		var stdout = stdoutTask.Result;
+		var stderr = stderrTask.Result;
 
 		if (process.ExitCode != 0)
 			throw new InvalidOperationException(

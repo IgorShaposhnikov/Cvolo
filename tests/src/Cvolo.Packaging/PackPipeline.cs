@@ -56,14 +56,12 @@ public sealed class PackPipeline
 				Console.WriteLine($"  -> {target}");
 		}
 
-		// 4. Produce per-target object code and target-specific bitcode.
+		// 4. Produce per-target object code and shared bitcode.
 		var objects = new Dictionary<string, byte[]>(StringComparer.Ordinal);
-		var bitcodes = new Dictionary<string, byte[]>(StringComparer.Ordinal);
 		foreach (var target in targets)
-		{
 			objects[target] = compile.ProduceObjectFile(target);
-			bitcodes[target] = compile.ProduceBitcode(target);
-		}
+
+		var bitcode = compile.ProduceBitcode(targets[0]);
 
 		// 5. Assemble Sector 1 (slice manifest), Sector 2 (concatenated objects per triple),
 		//    Sector 3 (bitcode ranges), Sector 5 (LZ4 source buffer unless stripped).
@@ -77,7 +75,6 @@ public sealed class PackPipeline
 			var sector2Offset = (ulong)sector2Stream.Length;
 			sector2Stream.Write(obj);
 
-			var bitcode = bitcodes[target];
 			var sector3Offset = (ulong)sector3Stream.Length;
 			sector3Stream.Write(bitcode);
 
@@ -101,18 +98,16 @@ public sealed class PackPipeline
 			})
 		});
 
-		// Sector 1 = [uint32_le JSON length][JSON][language/layout metadata].
-		// The public Cvolo API is declaration metadata only; implementations remain in Sector 3.
+		// Sector 1 = [uint32_le JSON length][JSON][layout metadata "{}"].
 		var manifestBytes = Encoding.UTF8.GetBytes(manifestJson);
-		var layoutMetadata = PackageApiMetadata.FromCompilationUnits(compile.ProjectUnits).Serialize();
-		var sector1 = new byte[4 + manifestBytes.Length + layoutMetadata.Length];
+		var layoutMetadata = Encoding.ASCII.GetBytes("{}");
 		var sector1 = new byte[4 + manifestBytes.Length + layoutMetadata.Length];
 		BinaryPrimitives.WriteUInt32LittleEndian(sector1, (uint)manifestBytes.Length);
 		manifestBytes.CopyTo(sector1, 4);
 		layoutMetadata.CopyTo(sector1, 4 + manifestBytes.Length);
 
 		// 6. Build the container.
-		var sourceBuffer = options.StripSource ? null : PackageSourceBundle.Build(compile.SourceFiles, manifest.ProjectDirectory);
+		var sourceBuffer = options.StripSource ? null : BuildSourceBuffer(compile.SourceFiles, manifest.ProjectDirectory);
 
 		var writer = new CvlArchiveWriter();
 		writer.SetSector(1, sector1);
@@ -162,5 +157,21 @@ public sealed class PackPipeline
 		};
 	}
 
+	/// <summary>
+	/// Concatenates the project's .cvl sources (already sorted by relative path in PackCompilation)
+	/// separated by a newline; the writer applies LZ4 compression to Sector 5.
+	/// </summary>
+	private static string BuildSourceBuffer(IReadOnlyList<string> sourceFiles, string projectDirectory)
+	{
+		var builder = new StringBuilder();
+		foreach (var file in sourceFiles)
+		{
+			if (builder.Length > 0)
+				builder.Append('\n');
 
+			builder.Append(File.ReadAllText(file));
+		}
+
+		return builder.ToString();
+	}
 }

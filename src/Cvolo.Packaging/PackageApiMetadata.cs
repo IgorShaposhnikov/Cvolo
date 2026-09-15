@@ -22,14 +22,18 @@ public sealed class PackageApiMetadata
 
 	public static PackageApiMetadata FromCompilationUnits(IEnumerable<CompilationUnitSyntax> units)
 	{
+		var compilationUnits = units.ToArray();
+		var sourceBackedContractNames = PackageTemplateSource.CollectPublicContractNames(compilationUnits);
 		var apiUnits = new List<PackageApiUnit>();
-		foreach (var unit in units)
+		foreach (var unit in compilationUnits)
 		{
 			var ns = unit.NamespaceDeclaration;
 			var members = ns is null ? unit.Members : ns.Members;
 			var functions = members
 				.OfType<FunctionDeclarationSyntax>()
-				.Where(function => function.Visibility == Visibility.Public && function.GenericParameters.Count == 0)
+				.Where(function => function.Visibility == Visibility.Public
+					&& function.GenericParameters.Count == 0
+					&& !function.Parameters.Any(parameter => PackageTemplateSource.ReferencesContract(parameter.Type, sourceBackedContractNames)))
 				.Select(function => new PackageApiFunction
 				{
 					Name = function.Name,

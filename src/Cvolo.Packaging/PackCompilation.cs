@@ -1,6 +1,5 @@
 using System.Text;
 using Cvolo.Analysis;
-using Cvolo.Core.AST;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.Diagnostics;
 using Cvolo.Emitter.LLVM;
@@ -227,7 +226,7 @@ internal static class PackCompilation
 		var targetLayout = new TargetLayout();
 		var optimizer = new IrOptimizer(targetLayout, OptimizationLevel.Os);
 		var irVerifier = new IRVerifier(Path.Combine(manifest.ProjectDirectory, "obj", "Debug"));
-		IEmitter emitter = new CodeGenerator("cvolo_module", targetLayout, optimizer, irVerifier, enableTbaa: true, checkedFfiBounds: false);
+		using var emitter = new CodeGenerator("cvolo_module", targetLayout, optimizer, irVerifier, enableTbaa: true, checkedFfiBounds: false);
 		var ir = emitter.Emit(asts, firstContext!, binder.Context);
 
 		var projectFileSet = projectFiles.ToHashSet(StringComparer.OrdinalIgnoreCase);

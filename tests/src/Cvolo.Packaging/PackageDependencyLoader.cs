@@ -4,20 +4,12 @@ namespace Cvolo.Packaging;
 
 /// <summary>
 /// A verified, host-specific package artifact extracted from the local cache for linking.
-/// Sector 3 bitcode is the Phase 4 build input. Sector 2 is retained when present for
-/// future AOT/release paths but is not the primary dependency input for normal builds.
 /// </summary>
-public sealed record ResolvedPackageArtifacts(
-	string PackageId,
-	string Version,
-	string? NativeObjectPath,
-	string? BitcodePath,
-	PackageApiMetadata ApiMetadata,
-	IReadOnlyList<Cvolo.Core.AST.Base.CompilationUnitSyntax> TemplateUnits);
+public sealed record ResolvedPackageArtifacts(string PackageId, string Version, string NativeObjectPath, string? BitcodePath);
 
 /// <summary>
 /// Resolves every package pinned by cvolo.lock.json from the local package cache,
-/// verifies it at build start, and extracts deterministic host artifacts into a
+/// verifies it at build start, and extracts the host native object into a deterministic
 /// project-local build directory.
 /// </summary>
 public sealed class PackageDependencyLoader
@@ -94,8 +86,8 @@ public sealed class PackageDependencyLoader
 
 		try
 		{
-			// OpenFromCache performs the single build-start signature/Merkle verification
-			// (or permitted unsigned-Merkle verification) and leaves that exact mapping open.
+			// OpenFromCache performs the single build-start signature + Merkle verification and
+			// leaves that exact verified mapping open for identity/slice consumption below.
 			using var cached = _installer.OpenFromCache(packageId, locked.Resolved);
 			var installed = cached.Result;
 			if (!string.Equals(installed.ContentHash, locked.ContentHash, StringComparison.OrdinalIgnoreCase))
@@ -107,8 +99,6 @@ public sealed class PackageDependencyLoader
 			}
 
 			var archive = cached.Archive;
-			var apiMetadata = PackageApiMetadata.Read(archive);
-			var templateUnits = PackageTemplateSource.Read(archive, packageId, locked.Resolved);
 			var triple = TargetTriple.HostTriple();
 			var slice = archive.Manifest.Slices.SingleOrDefault(s => string.Equals(s.Triple, triple, StringComparison.Ordinal));
 			if (slice is null || (slice.Sector2.Length == 0 && slice.Sector3.Length == 0))
@@ -118,30 +108,59 @@ public sealed class PackageDependencyLoader
 					$"Cached package '{packageId}@{locked.Resolved}' has no code for host triple '{triple}'.");
 			}
 
-			// Local Package Manager Phase 4 explicitly consumes Sector 3 bitcode during build.
-			if (slice.Sector3.Length == 0 || archive.Sectors.Count < 3)
+			// A bitcode-only slice is valid per the cvlib manifest. It is not CVLF1901; this
+			// increment links Sector 2 objects only, so diagnose the unimplemented consumer path.
+			if (slice.Sector2.Length == 0)
 			{
 				throw new PackageException(
-					PackageDiagnosticIds.BitcodeUnavailable,
-					$"Package '{packageId}@{locked.Resolved}' has no Sector 3 bitcode for host triple '{triple}'.",
-					"Repack the dependency with bitcode enabled before building this project.");
+					PackageDiagnosticIds.NativeObjectUnavailable,
+					$"Package '{packageId}@{locked.Resolved}' provides host bitcode but no Sector 2 native object.",
+					"Sector 3 package-LTO consumption is not implemented yet.");
+			}
+
+			if (archive.Sectors.Count < 2)
+			{
+				throw new PackageException(
+					PackageDiagnosticIds.NativeObjectUnavailable,
+					$"Cached package '{packageId}@{locked.Resolved}' does not contain Sector 2 native object data.");
 			}
 
 			var packageDirectory = Path.Combine(extractionRoot, packageId.ToLowerInvariant(), locked.Resolved);
 			Directory.CreateDirectory(packageDirectory);
+			var objectExtension = OperatingSystem.IsWindows() ? ".obj" : ".o";
+			var objectPath = Path.Combine(packageDirectory, packageId + objectExtension);
 
-			var bitcodePath = Path.Combine(packageDirectory, packageId + ".bc");
-			ExtractSlice(archive, sectorIndex: 2, slice.Sector3, bitcodePath, packageId, locked.Resolved, "Sector 3 bitcode");
-
-			string? objectPath = null;
-			if (slice.Sector2.Length > 0 && archive.Sectors.Count >= 2)
+			int length;
+			try
 			{
-				var objectExtension = OperatingSystem.IsWindows() ? ".obj" : ".o";
-				objectPath = Path.Combine(packageDirectory, packageId + objectExtension);
-				ExtractSlice(archive, sectorIndex: 1, slice.Sector2, objectPath, packageId, locked.Resolved, "Sector 2 native object");
+				length = checked((int)slice.Sector2.Length);
+			}
+			catch (OverflowException ex)
+			{
+				throw new PackageException(
+					PackageDiagnosticIds.ArtifactRangeTooLarge,
+					$"Native object slice for '{packageId}@{locked.Resolved}' is too large to extract.",
+					$"Sector 2 slice length is {slice.Sector2.Length} bytes; maximum supported length is {int.MaxValue}. {ex.Message}");
 			}
 
-			return new ResolvedPackageArtifacts(packageId, locked.Resolved, objectPath, bitcodePath, apiMetadata, templateUnits);
+			ulong absoluteOffset;
+			try
+			{
+				absoluteOffset = checked(archive.Sectors[1].Offset + slice.Sector2.Offset);
+			}
+			catch (OverflowException ex)
+			{
+				throw new PackageException(
+					PackageDiagnosticIds.ArtifactRangeTooLarge,
+					$"Native object slice for '{packageId}@{locked.Resolved}' has an invalid offset.",
+					ex.Message);
+			}
+
+			var objectBytes = archive.GetRawSlice(absoluteOffset, length);
+			File.WriteAllBytes(objectPath, objectBytes.ToArray());
+
+			// Sector 3 extraction is intentionally deferred until package bitcode/LTO consumption lands.
+			return new ResolvedPackageArtifacts(packageId, locked.Resolved, objectPath, BitcodePath: null);
 		}
 		catch (CvlFormatException ex)
 		{
@@ -161,45 +180,6 @@ public sealed class PackageDependencyLoader
 				$"Cached package '{packageId}@{locked.Resolved}' is invalid; run 'cvolo pkg install'.",
 				ex.Message);
 		}
-	}
-
-	private static void ExtractSlice(
-		CvlArchive archive,
-		int sectorIndex,
-		CvlSectorRange range,
-		string outputPath,
-		string packageId,
-		string version,
-		string artifactName)
-	{
-		int length;
-		try
-		{
-			length = checked((int)range.Length);
-		}
-		catch (OverflowException ex)
-		{
-			throw new PackageException(
-				PackageDiagnosticIds.ArtifactRangeTooLarge,
-				$"{artifactName} for '{packageId}@{version}' is too large to extract.",
-				$"Slice length is {range.Length} bytes; maximum supported length is {int.MaxValue}. {ex.Message}");
-		}
-
-		ulong absoluteOffset;
-		try
-		{
-			absoluteOffset = checked(archive.Sectors[sectorIndex].Offset + range.Offset);
-		}
-		catch (OverflowException ex)
-		{
-			throw new PackageException(
-				PackageDiagnosticIds.ArtifactRangeTooLarge,
-				$"{artifactName} for '{packageId}@{version}' has an invalid offset.",
-				ex.Message);
-		}
-
-		var bytes = archive.GetRawSlice(absoluteOffset, length);
-		File.WriteAllBytes(outputPath, bytes.ToArray());
 	}
 
 	private static PackageException MissingFromCache(string packageId, string version) =>
