@@ -1,4 +1,7 @@
+using System.Buffers.Binary;
 using System.IO.MemoryMappedFiles;
+using System.Text;
+using K4os.Compression.LZ4.Streams;
 
 namespace Cvolo.Core.Packages;
 
@@ -52,6 +55,77 @@ public sealed unsafe class CvlArchive : IDisposable
 			return ReadOnlySpan<byte>.Empty;
 
 		return new ReadOnlySpan<byte>(_basePointer + entry.Offset, (int)entry.Length);
+	}
+
+	/// <summary>
+	/// Decompresses Sector 5 (EMBEDDED_SOURCE_BUFFER) into the original UTF-8 `.cvl` source (§1.9).
+	/// Returns an empty string when the sector is absent. Throws <see cref="CvlFormatException"/>
+	/// (CVLF1913) on wrong LZ4 magic, truncated streams, advertised size over the 1 GiB limit,
+	/// or invalid UTF-8 after decompression.
+	/// </summary>
+	public string ReadSourceBuffer()
+	{
+		if (Sectors.Count < 5 || Sectors[4].Length == 0)
+			return string.Empty;
+
+		var entry = Sectors[4];
+		var payload = GetSectorPayload(5);
+
+		// §1.9: length > 0 => payload MUST begin with the LZ4 frame magic 04 22 4D 18.
+		if (payload.Length < 7 || payload[0] != 0x04 || payload[1] != 0x22 || payload[2] != 0x4D || payload[3] != 0x18)
+			throw new CvlFormatException(CvlFormatDiagnosticIds.DecompressionFailed, (long)entry.Offset, "Sector 5 payload does not start with the LZ4 frame magic.");
+
+		// Parse the LZ4 frame descriptor to read the advertised content size so we can reject
+		// oversized frames before allocating (§1.9). Layout: Magic(4) FLG(1) BD(1)
+		// [ContentSize(8) if FLG.0x08] [DictID(4) if FLG.0x01] HC(1).
+		var flg = payload[4];
+		long advertisedContentSize = 0;
+		if ((flg & 0x08) != 0)
+		{
+			if (payload.Length < 14)
+				throw new CvlFormatException(CvlFormatDiagnosticIds.DecompressionFailed, (long)entry.Offset, "Truncated LZ4 frame descriptor.");
+			advertisedContentSize = (long)BinaryPrimitives.ReadUInt64LittleEndian(payload.Slice(6, 8));
+		}
+
+		const long MaxSourceSize = 1024L * 1024 * 1024; // CVL_MAX_SOURCE_SIZE = 1 GiB
+
+		if (advertisedContentSize > MaxSourceSize)
+			throw new CvlFormatException(CvlFormatDiagnosticIds.DecompressionFailed, (long)entry.Offset, $"Advertised LZ4 content size ({advertisedContentSize} bytes) exceeds the 1 GiB maximum.");
+
+		byte[] decompressed;
+		try
+		{
+			using var input = new MemoryStream(payload.ToArray());
+			using var decoder = LZ4Stream.Decode(input);
+			using var output = new MemoryStream();
+			var buffer = new byte[81920];
+			int read;
+			long total = 0;
+			while ((read = decoder.Read(buffer, 0, buffer.Length)) > 0)
+			{
+				total += read;
+				if (total > MaxSourceSize)
+					throw new CvlFormatException(CvlFormatDiagnosticIds.DecompressionFailed, (long)entry.Offset, "Decompressed source exceeds the 1 GiB maximum.");
+				output.Write(buffer, 0, read);
+			}
+			if (advertisedContentSize != 0 && total != advertisedContentSize)
+				throw new CvlFormatException(CvlFormatDiagnosticIds.DecompressionFailed, (long)entry.Offset, $"Truncated LZ4 stream: advertised {advertisedContentSize} bytes but decoded {total}.");
+			decompressed = output.ToArray();
+		}
+		catch (CvlFormatException) { throw; }
+		catch (Exception)
+		{
+			throw new CvlFormatException(CvlFormatDiagnosticIds.DecompressionFailed, (long)entry.Offset, "LZ4 decompression failed.");
+		}
+
+		try
+		{
+			return new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true).GetString(decompressed);
+		}
+		catch (DecoderFallbackException)
+		{
+			throw new CvlFormatException(CvlFormatDiagnosticIds.DecompressionFailed, (long)entry.Offset, "Decompressed source is not valid UTF-8.");
+		}
 	}
 
 	public void Dispose()

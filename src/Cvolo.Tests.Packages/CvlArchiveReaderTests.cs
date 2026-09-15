@@ -321,6 +321,26 @@ public sealed class CvlArchiveReaderTests : IDisposable
 	}
 
 	[Fact]
+	public unsafe void Read_SectorReservedNonZero_ThrowsCVLF1911()
+	{
+		var header = CreateTwoSectorHeader();
+		header.FileSize = 24576;
+		CvlArchiveHeader.ExpectedMagic.CopyTo(new Span<byte>(header.Magic, 6));
+
+		var entries = new[]
+		{
+			new CvlSectorIndexEntry(offset: 12288, length: 0, startLeafIndex: 1, leafCount: 1, reserved: 0),
+			new CvlSectorIndexEntry(offset: 12288, length: 0, startLeafIndex: 2, leafCount: 1, reserved: 1)
+		};
+
+		WriteRawLayout(header, entries);
+
+		var ex = Assert.Throws<CvlFormatException>(() => CvlArchiveReader.Read(_tempFile));
+		Assert.Equal(CvlFormatDiagnosticIds.SectorBoundsInvalid, ex.Code);
+		Assert.Contains("reserved bytes must be zero", ex.Message);
+	}
+
+	[Fact]
 	public unsafe void Read_SectorOutOfOrder_ThrowsCVLF1912()
 	{
 		var header = CreateTwoSectorHeader();

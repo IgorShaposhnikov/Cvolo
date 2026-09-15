@@ -103,6 +103,10 @@ public sealed class CvlArchiveReader
 			sectors[i] = entry;
 			var entryBase = (long)header.MerkleIndexTableOffset + (i * 32);
 
+			// 11. Index-entry reserved bytes must be strictly zero (§1.8).
+			if (entry.Reserved != 0)
+				throw new CvlFormatException(CvlFormatDiagnosticIds.SectorBoundsInvalid, entryBase, $"Sector {i + 1} reserved bytes must be zero.");
+
 			// 11. Every entry offset is page-aligned.
 			if (entry.Offset % PageSize != 0)
 				throw new CvlFormatException(CvlFormatDiagnosticIds.SectorBoundsInvalid, entryBase, $"Sector {i + 1} offset is not page-aligned.");
