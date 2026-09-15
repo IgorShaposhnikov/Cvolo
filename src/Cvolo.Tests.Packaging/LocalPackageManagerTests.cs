@@ -141,6 +141,45 @@ public sealed class LocalPackageManagerTests : IDisposable
 		}
 	}
 
+	[Fact]
+	public void PkgCachePruneUnused_RemovesOnlyPackagesNotReferencedByLocks()
+	{
+		// TODO: inject working directory and console writers into PkgCommand so CLI tests do not mutate process-wide state.
+		var projectDir = Dir("prune-app");
+		var cache = new PackageCache(Path.Combine(_root, "cache"));
+		WriteCachedPackage(cache, "Foo", "1.0.0");
+		WriteCachedPackage(cache, "Bar", "2.0.0");
+		new LockFile
+		{
+			Sources = [],
+			Packages = new Dictionary<string, LockedPackage>(StringComparer.OrdinalIgnoreCase)
+			{
+				["Foo"] = new("1.0.0", "blake3:foo", new Dictionary<string, string>())
+			}
+		}.Write(Path.Combine(projectDir, "cvolo.lock.json"));
+		var command = new PkgCommand(cache, new PackageInstaller(cache));
+		var previousCurrentDirectory = Directory.GetCurrentDirectory();
+		var previousOutput = Console.Out;
+		using var output = new StringWriter();
+		try
+		{
+			Directory.SetCurrentDirectory(projectDir);
+			Console.SetOut(output);
+
+			var exitCode = command.Parse("cache prune --unused").Invoke();
+
+			Assert.Equal(0, exitCode);
+			Assert.True(Directory.Exists(cache.GetPackageDirectory("Foo", "1.0.0")));
+			Assert.False(Directory.Exists(cache.GetPackageDirectory("Bar", "2.0.0")));
+			Assert.Contains("Removed 1 cached package", output.ToString());
+		}
+		finally
+		{
+			Console.SetOut(previousOutput);
+			Directory.SetCurrentDirectory(previousCurrentDirectory);
+		}
+	}
+
 	private string Dir(string name)
 	{
 		var path = Path.Combine(_root, name);
@@ -196,6 +235,13 @@ public sealed class LocalPackageManagerTests : IDisposable
 			Format = "cvolo.feed.v1",
 			Packages = new[] { new { Id = id, Version = version, Hash = hash, File = file } }
 		}));
+	}
+
+	private static void WriteCachedPackage(PackageCache cache, string id, string version)
+	{
+		var directory = cache.GetPackageDirectory(id, version);
+		Directory.CreateDirectory(directory);
+		File.WriteAllText(Path.Combine(directory, ".metadata.json"), JsonSerializer.Serialize(new InstalledPackageMetadata(id, version, id + ".cvlib", "blake3:" + id.ToLowerInvariant(), DateTimeOffset.UtcNow)));
 	}
 
 	public void Dispose() => Directory.Delete(_root, true);
