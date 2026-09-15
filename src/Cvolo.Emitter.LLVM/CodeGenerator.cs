@@ -197,7 +197,8 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			var isExternalPackageGlobal = globalSymbol.DeclaringUnit is not null
 				&& bindingContext.ExternalPackageUnits.Contains(globalSymbol.DeclaringUnit);
 			var isStandardLibraryGlobal = IsStandardLibraryUnit(globalSymbol.DeclaringUnit);
-			globalRef.Linkage = isExternalPackageGlobal || (globalSymbol.Visibility == Visibility.Public && !isStandardLibraryGlobal)
+			var isPackageTemplateGlobal = IsPackageTemplateUnit(globalSymbol.DeclaringUnit);
+			globalRef.Linkage = isExternalPackageGlobal || (globalSymbol.Visibility == Visibility.Public && !isStandardLibraryGlobal && !isPackageTemplateGlobal)
 				? LLVMLinkage.LLVMExternalLinkage
 				: LLVMLinkage.LLVMInternalLinkage;
 			if (!isExternalPackageGlobal)
@@ -650,6 +651,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		var llvmFunc = _module.AddFunction(emitName, funcType);
 
 		if (emitName != "main" && declaredSymbol is FunctionSymbol functionSymbol
+			&& !IsPackageTemplateUnit(functionSymbol.DeclaringUnit)
 			&& !IsStandardLibraryUnit(functionSymbol.DeclaringUnit)
 			&& (functionSymbol.Visibility == Visibility.Public || functionSymbol.IsNeverInline))
 		{
@@ -704,6 +706,9 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		_globals[emitName] = llvmFunc;
 		_functionTypes[emitName] = funcType;
 	}
+
+	private bool IsPackageTemplateUnit(CompilationUnitSyntax? unit) =>
+		unit is not null && _bindingContext is not null && _bindingContext.PackageTemplateUnits.Contains(unit);
 
 	private bool IsStandardLibraryUnit(CompilationUnitSyntax? unit)
 	{

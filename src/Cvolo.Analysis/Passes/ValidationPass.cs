@@ -2060,6 +2060,9 @@ public sealed class ValidationPass(BindingContext context)
 			Visibility = templateDecl.Visibility,
 			SafetyTier = templateDecl.Modifier ?? SafetyTier.Safe
 		};
+		var templateMangledNameForUnit = ResolveFunctionTemplateName(templateDecl.Name, scope);
+		if (templateMangledNameForUnit is not null && context.SymbolUnits.TryGetValue(templateMangledNameForUnit, out var declaringUnit))
+			instSymbol.DeclaringUnit = declaringUnit;
 		context.MonomorphizedFunctions[instName] = instSymbol;
 
 		var instBody = SubstituteBlockGenerics(templateDecl.Body, substitutionMap);

@@ -134,6 +134,7 @@ public sealed class BindingContext
 	/// live in linked Sector 3 bitcode, so the emitter must not generate their bodies again.
 	/// </summary>
 	public HashSet<CompilationUnitSyntax> ExternalPackageUnits { get; } = [];
+	public HashSet<CompilationUnitSyntax> PackageTemplateUnits { get; } = [];
 
 	/// <summary>Current safety tier used during attribute validation in DeclarationPass.</summary>
 	public SafetyTier CurrentSafetyTier { get; set; }

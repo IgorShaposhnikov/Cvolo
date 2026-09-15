@@ -120,6 +120,101 @@ int main() {
 	}
 
 	[Fact]
+	public void Build_AppUsingGenericPackageTemplates_RehydratesSector5WithoutCAbi()
+	{
+		RequireClang();
+
+		var libraryDirectory = Path.Combine(_root, "libgeneric");
+		Directory.CreateDirectory(libraryDirectory);
+		File.WriteAllText(Path.Combine(libraryDirectory, "Generic.cvlproj"), """
+<Project Sdk="Cvolo.Sdk">
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <AssemblyName>GenericLib</AssemblyName>
+    <PackageId>GenericLib</PackageId>
+    <Version>1.0.0</Version>
+  </PropertyGroup>
+</Project>
+""");
+		File.WriteAllText(Path.Combine(libraryDirectory, "Generic.cvl"), """
+namespace GenericLib;
+
+public struct Box<T> {
+    public T Value;
+}
+
+public T Identity<T>(T value) {
+    return value;
+}
+""");
+
+		var signingKey = Path.Combine(_root, "generic.key");
+		File.WriteAllBytes(signingKey, Enumerable.Range(16, 32).Select(i => (byte)i).ToArray());
+		var packagePath = Path.Combine(_root, "GenericLib.1.0.0.cvlib");
+		PackPipeline.Execute(libraryDirectory, new PackOptions
+		{
+			OutputPath = packagePath,
+			SigningKeyPath = signingKey,
+			Targets = [TargetTriple.HostTriple()]
+		});
+
+		var cache = new PackageCache(Path.Combine(_root, "generic-cache"));
+		new PackageInstaller(cache).InstallFromFile(packagePath);
+
+		var appDirectory = Path.Combine(_root, "generic-app");
+		Directory.CreateDirectory(appDirectory);
+		var projectPath = Path.Combine(appDirectory, "App.cvlproj");
+		File.WriteAllText(projectPath, """
+<Project Sdk="Cvolo.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>App</AssemblyName>
+    <PackageId>App</PackageId>
+    <Version>1.0.0</Version>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="GenericLib" Version="1.0.0" />
+  </ItemGroup>
+</Project>
+""");
+		File.WriteAllText(Path.Combine(appDirectory, "Main.cvl"), """
+using GenericLib;
+
+int main() {
+    Box<int> box = Box<int> { Value: 21 };
+    return Identity<int>(box.Value) - 21;
+}
+""");
+
+		new LockFile
+		{
+			Sources = [],
+			Packages = new Dictionary<string, LockedPackage>(StringComparer.OrdinalIgnoreCase)
+			{
+				["GenericLib"] = new("1.0.0", LocalFeed.ComputeHash(packagePath), new Dictionary<string, string>())
+			}
+		}.Write(Path.Combine(appDirectory, "cvolo.lock.json"));
+
+		var driverType = typeof(ICompilerDriver).Assembly.GetType("Cvolo.Drivers.CompilerDriver", throwOnError: true)!;
+		var driver = Assert.IsAssignableFrom<ICompilerDriver>(Activator.CreateInstance(driverType, cache));
+		var (exitCode, buildOutput) = CompileWithCapturedOutput(driver, projectPath);
+		Assert.True(exitCode == 0, buildOutput);
+
+		var executable = Path.Combine(appDirectory, "bin", "Debug", OperatingSystem.IsWindows() ? "App.exe" : "App");
+		Assert.True(File.Exists(executable));
+		using var process = Process.Start(new ProcessStartInfo
+		{
+			FileName = executable,
+			UseShellExecute = false,
+			RedirectStandardOutput = true,
+			RedirectStandardError = true
+		});
+		Assert.NotNull(process);
+		Assert.True(process!.WaitForExit(10_000), $"Compiled app '{executable}' did not exit within 10 seconds.");
+		Assert.Equal(0, process.ExitCode);
+	}
+
+	[Fact]
 	public void LocalWorkflow_PackAddBuildRun_UsesCvoloModuleImport()
 	{
 		RequireClang();
@@ -237,12 +332,6 @@ int main() {
 		Assert.Equal(0, process.ExitCode);
 	}
 
-	private static void RequireClang()
-	{
-		if (FindClang() is null)
-			Assert.Skip("clang not available; package Sector 3 build integration requires clang/LLVM.");
-	}
-
 	private static (int ExitCode, string Output) CompileWithCapturedOutput(ICompilerDriver driver, string projectPath)
 	{
 		var originalOut = Console.Out;
@@ -253,14 +342,20 @@ int main() {
 		{
 			Console.SetOut(output);
 			Console.SetError(error);
-			var exitCode = driver.Compile(projectPath, llvmOnly: false, isShared: false, emitIr: false, optLevel: "O0");
-			return (exitCode, output + error.ToString());
+			var exitCode = driver.Compile(projectPath, llvmOnly: false, isShared: false, emitIr: false, optLevel: "O0", verbose: true);
+			return (exitCode, output.ToString() + error.ToString());
 		}
 		finally
 		{
 			Console.SetOut(originalOut);
 			Console.SetError(originalError);
 		}
+	}
+
+	private static void RequireClang()
+	{
+		if (FindClang() is null)
+			Assert.Skip("clang not available; package Sector 3 build integration requires clang/LLVM.");
 	}
 
 	private static string? FindClang()

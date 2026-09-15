@@ -129,6 +129,16 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 				binder.Context.FileContexts[packageUnit] = packageUnit.Context;
 				binder.Context.ExternalPackageUnits.Add(packageUnit);
 			}
+
+			// Generic package declarations keep their bodies in Sector 5 so the consumer can
+			// monomorphize them after concrete type arguments are known. These units are not
+			// external stubs: they participate in normal lowering/codegen as templates.
+			foreach (var templateUnit in artifact.TemplateUnits)
+			{
+				asts.Add(templateUnit);
+				binder.Context.FileContexts[templateUnit] = templateUnit.Context;
+				binder.Context.PackageTemplateUnits.Add(templateUnit);
+			}
 		}
 
 		// Cross-file declaration index feeding the try/catch lowering (function
@@ -177,6 +187,8 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 					binder.Context.FileContexts[currentAst] = fileContext;
 					binder.Context.FileContexts.Remove(ast); // Clean up the old reference
 				}
+				if (binder.Context.PackageTemplateUnits.Remove(ast))
+					binder.Context.PackageTemplateUnits.Add(currentAst);
 
 				loweredAsts.Add(currentAst);
 			}
@@ -235,7 +247,6 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 					binder.Context.FileContexts[expanded] = expandedContext;
 					binder.Context.FileContexts.Remove(ast);
 				}
-
 				expandedAsts.Add(expanded);
 			}
 

@@ -144,7 +144,9 @@ public sealed class PackPipelineTests : IDisposable
 		Assert.True(objects.Length > 0);
 		Assert.True(bitcode.Length > 0);
 
-		Assert.Equal(source, archive.ReadSourceBuffer());
+		var bundledSource = Assert.Single(PackageSourceBundle.Parse(archive.ReadSourceBuffer()));
+		Assert.Equal("Main.cvl", bundledSource.RelativePath);
+		Assert.Equal(source, bundledSource.Source);
 	}
 
 	[Fact]
@@ -344,7 +346,7 @@ int Hidden(int value) { return value; }
 	}
 
 	[Fact]
-	public void Pack_SourceBuffer_ConcatenatesAllProjectFilesInRelPathOrder()
+	public void Pack_SourceBuffer_PreservesProjectFilesInRelPathOrder()
 	{
 		RequireClang();
 		var projectDir = CreateProject(Fixture("multifile"));
@@ -355,9 +357,18 @@ int Hidden(int value) { return value; }
 		var result = PackPipeline.Execute(projectDir, DefaultOptions(Fixture(Path.Combine("out", "multifile.cvlib")), [TargetTriple.HostTriple()]));
 
 		using var archive = CvlArchiveReader.Read(result.OutputPath, verifySignature: false);
-		var sourceBuffer = archive.ReadSourceBuffer();
-		// Rel-path order: "A.cvl" sorts before "Sub\Util.cvl".
-		var expected = "int Main() { return 0; }\npublic int Twice(int x) { return x * 2; }";
-		Assert.Equal(expected, sourceBuffer);
+		var files = PackageSourceBundle.Parse(archive.ReadSourceBuffer());
+		Assert.Collection(files,
+			file => { Assert.Equal("A.cvl", file.RelativePath); Assert.Equal("int Main() { return 0; }", file.Source); },
+			file => { Assert.Equal("Sub/Util.cvl", file.RelativePath); Assert.Equal("public int Twice(int x) { return x * 2; }", file.Source); });
+	}
+
+	[Fact]
+	public void PackageSourceBundle_UnframedLegacySource_RemainsReadable()
+	{
+		var files = PackageSourceBundle.Parse("public int Add(int a, int b) { return a + b; }");
+		var file = Assert.Single(files);
+		Assert.Equal("package.cvl", file.RelativePath);
+		Assert.Contains("Add", file.Source);
 	}
 }
