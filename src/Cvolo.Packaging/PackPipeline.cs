@@ -46,7 +46,7 @@ public sealed class PackPipeline
 			Directory.CreateDirectory(outputDirectory);
 
 		// 3. In-process front-end compile.
-		using var compile = PackCompilation.Compile(manifest, options.Verbose);
+		using var compile = PackCompilation.Compile(manifest, options.Verbose, options.Configuration);
 
 		if (options.Verbose)
 		{

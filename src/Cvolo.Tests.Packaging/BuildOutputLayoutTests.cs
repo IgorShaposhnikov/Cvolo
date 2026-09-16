@@ -31,8 +31,31 @@ public sealed class BuildOutputLayoutTests
 	}
 
 	[Theory]
+	[InlineData("Debug", "Debug")]
+	[InlineData("debug", "Debug")]
+	[InlineData("Release", "Release")]
+	[InlineData("RELEASE", "Release")]
+	public void ConfigurationIsCanonicalized(string input, string expected)
+	{
+		Assert.Equal(expected, BuildOutputLayout.NormalizeConfiguration(input));
+	}
+
+	[Fact]
+	public void ReleaseArtifactsUseIndependentBinAndObjRoots()
+	{
+		var root = Path.Combine(Path.GetTempPath(), "cvolo-layout-" + Guid.NewGuid().ToString("N"));
+
+		var native = BuildOutputLayout.GetNativeOutputPath(root, "App", shared: false, configuration: "Release");
+		var state = BuildOutputLayout.GetBuildStatePath(root, "Release");
+
+		Assert.Equal(Path.Combine(root, "bin", "Release", "App" + (OperatingSystem.IsWindows() ? ".exe" : string.Empty)), native);
+		Assert.Equal(Path.Combine(root, "obj", "Release", "cvolo.build-state.json"), state);
+	}
+
+	[Theory]
 	[InlineData("")]
 	[InlineData("../Release")]
+	[InlineData("Staging")]
 	public void ConfigurationMustBeSinglePathSegment(string configuration)
 	{
 		var root = Path.Combine(Path.GetTempPath(), "cvolo-layout-" + Guid.NewGuid().ToString("N"));

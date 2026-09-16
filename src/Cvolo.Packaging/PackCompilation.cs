@@ -99,8 +99,10 @@ public sealed class PackCompileResult : IDisposable
 /// </summary>
 internal static class PackCompilation
 {
-	public static PackCompileResult Compile(ProjectManifest manifest, bool verbose = false)
+	public static PackCompileResult Compile(ProjectManifest manifest, bool verbose = false, string configuration = BuildOutputLayout.DefaultConfiguration)
 	{
+		configuration = BuildOutputLayout.NormalizeConfiguration(configuration);
+
 		// 1. Disambiguate sources: everything still compiles with the standard library,
 		//    but only project files (non-stdlib) are shipped in the package source buffer.
 		var stdlibFiles = FindStdlibFiles();
@@ -252,7 +254,7 @@ internal static class PackCompilation
 
 		var targetLayout = new TargetLayout();
 		var optimizer = new IrOptimizer(targetLayout, OptimizationLevel.Os);
-		var irVerifier = new IRVerifier(Path.Combine(manifest.ProjectDirectory, "obj", "Debug"));
+		var irVerifier = new IRVerifier(BuildOutputLayout.GetCompilationFailuresDirectory(manifest.ProjectDirectory, configuration));
 		using var emitter = new CodeGenerator(
 			"cvolo_module",
 			targetLayout,

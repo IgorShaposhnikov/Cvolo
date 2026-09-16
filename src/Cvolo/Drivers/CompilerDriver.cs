@@ -25,8 +25,10 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 {
 	private static readonly string[] _linkerCandidates = ["clang", "gcc", "g++"];
 
-	public int Compile(string path, bool llvmOnly, bool isShared, bool emitIr, string optLevel, bool checkOnly = false, bool runAfterCompile = false, bool verbose = false, bool emitLowered = false, string? noWarn = null, bool suppressWarnings = false, bool legacyVisibility = false, bool strictOption = false, bool noTbaa = false, string? targetOs = null, bool checkedFfiBounds = false, string format = "text")
+	public int Compile(string path, bool llvmOnly, bool isShared, bool emitIr, string optLevel, bool checkOnly = false, bool runAfterCompile = false, bool verbose = false, bool emitLowered = false, string? noWarn = null, bool suppressWarnings = false, bool legacyVisibility = false, bool strictOption = false, bool noTbaa = false, string? targetOs = null, bool checkedFfiBounds = false, string format = "text", string configuration = BuildOutputLayout.DefaultConfiguration)
 	{
+		configuration = BuildOutputLayout.NormalizeConfiguration(configuration);
+
 		// The driver itself is format-agnostic: it hands diagnostics to a
 		// reporter and, for verbose chatter, asks whether the reporter owns
 		// stdout exclusively. Concrete formats live in IDiagnosticReporter.
@@ -295,16 +297,16 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 		}
 
 		// Keep final artifacts and compiler intermediates in the shared build layout.
-		// Verification dumps are intermediates too, so they live below obj/Debug and
+		// Verification dumps are intermediates too, so they live below obj/<configuration> and
 		// are removed by the same clean operation as generated LLVM IR.
-		var objDirectory = BuildOutputLayout.GetObjDirectory(project.ProjectDirectory);
-		var binDirectory = BuildOutputLayout.GetBinDirectory(project.ProjectDirectory);
-		var compilationFailuresDirectory = BuildOutputLayout.GetCompilationFailuresDirectory(project.ProjectDirectory);
+		var objDirectory = BuildOutputLayout.GetObjDirectory(project.ProjectDirectory, configuration);
+		var binDirectory = BuildOutputLayout.GetBinDirectory(project.ProjectDirectory, configuration);
+		var compilationFailuresDirectory = BuildOutputLayout.GetCompilationFailuresDirectory(project.ProjectDirectory, configuration);
 
 		Directory.CreateDirectory(objDirectory);
 		Directory.CreateDirectory(binDirectory);
 
-		var llPath = BuildOutputLayout.GetIntermediateIrPath(project.ProjectDirectory, project.OutputName);
+		var llPath = BuildOutputLayout.GetIntermediateIrPath(project.ProjectDirectory, project.OutputName, configuration);
 
 		// Resolve optimization level flag
 		if (!Enum.TryParse<OptimizationLevel>(optLevel, true, out var parsedLevel))
@@ -392,7 +394,7 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 		if (runAfterCompile)
 		{
 			var binaryPath = BuildOutputLayout.GetNativeOutputPath(
-				project.ProjectDirectory, project.OutputName, project.IsShared);
+				project.ProjectDirectory, project.OutputName, project.IsShared, configuration);
 
 			if (verbose && !reporter.Exclusive)
 			{

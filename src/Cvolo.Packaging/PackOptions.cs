@@ -37,6 +37,9 @@ public sealed class PackOptions
 
 	/// <summary>Enables progress logging to the console.</summary>
 	public bool Verbose { get; init; }
+
+	/// <summary>Build configuration used for compiler intermediates during developer builds.</summary>
+	public string Configuration { get; init; } = BuildOutputLayout.DefaultConfiguration;
 }
 
 /// <summary>

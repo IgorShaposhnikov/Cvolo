@@ -4,22 +4,20 @@ using System.Text.Json.Serialization;
 namespace Cvolo.Packaging;
 
 /// <summary>
-/// Persists the last successful project build fingerprint under obj/Debug.
+/// Persists the last successful project build fingerprint under obj/<configuration>.
 /// The state is intentionally single-variant: changing compiler options invalidates
 /// the previous state rather than risking reuse of an output produced by another variant.
 /// </summary>
 public static class IncrementalBuildState
 {
 	private const int CurrentVersion = 1;
-	private const string StateFileName = "cvolo.build-state.json";
-
-	public static bool IsUpToDate(ProjectBuildGraph graph, string buildKey, string outputPath)
+	public static bool IsUpToDate(ProjectBuildGraph graph, string buildKey, string outputPath, string configuration = BuildOutputLayout.DefaultConfiguration)
 	{
 		ArgumentNullException.ThrowIfNull(graph);
 		if (!File.Exists(outputPath))
 			return false;
 
-		var statePath = GetStatePath(graph.ProjectDirectory);
+		var statePath = GetStatePath(graph.ProjectDirectory, configuration);
 		if (!File.Exists(statePath))
 			return false;
 
@@ -38,10 +36,10 @@ public static class IncrementalBuildState
 		}
 	}
 
-	public static void Record(ProjectBuildGraph graph, string buildKey, string outputPath)
+	public static void Record(ProjectBuildGraph graph, string buildKey, string outputPath, string configuration = BuildOutputLayout.DefaultConfiguration)
 	{
 		ArgumentNullException.ThrowIfNull(graph);
-		var statePath = GetStatePath(graph.ProjectDirectory);
+		var statePath = GetStatePath(graph.ProjectDirectory, configuration);
 		Directory.CreateDirectory(Path.GetDirectoryName(statePath)!);
 		var state = new BuildState(
 			CurrentVersion,
@@ -63,10 +61,8 @@ public static class IncrementalBuildState
 		}
 	}
 
-	public static string GetStatePath(string projectDirectory)
-	{
-		return BuildOutputLayout.GetBuildStatePath(projectDirectory);
-	}
+	public static string GetStatePath(string projectDirectory, string configuration = BuildOutputLayout.DefaultConfiguration) =>
+		BuildOutputLayout.GetBuildStatePath(projectDirectory, configuration);
 
 	private static string NormalizeOutputPath(string projectDirectory, string outputPath)
 	{

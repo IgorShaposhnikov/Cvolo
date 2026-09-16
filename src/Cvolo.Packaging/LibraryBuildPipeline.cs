@@ -16,6 +16,17 @@ public static class LibraryBuildPipeline
 		bool emitIr,
 		bool emitLowered,
 		bool verbose,
+		out PackResult? result) =>
+		TryBuild(pathOrDirectory, forceNativeShared, llvmOnly, emitIr, emitLowered, verbose, DefaultConfiguration, out result);
+
+	public static bool TryBuild(
+		string pathOrDirectory,
+		bool forceNativeShared,
+		bool llvmOnly,
+		bool emitIr,
+		bool emitLowered,
+		bool verbose,
+		string configuration,
 		out PackResult? result)
 	{
 		result = null;
@@ -53,13 +64,15 @@ public static class LibraryBuildPipeline
 			return false;
 
 		var target = TargetTriple.HostTriple();
-		var outputPath = GetOutputPath(manifest, DefaultConfiguration, target);
+		configuration = BuildOutputLayout.NormalizeConfiguration(configuration);
+		var outputPath = GetOutputPath(manifest, configuration, target);
 		result = PackPipeline.Execute(manifest.ProjectPath, new PackOptions
 		{
 			Targets = [target],
 			OutputPath = outputPath,
 			NoSign = true,
-			Verbose = verbose
+			Verbose = verbose,
+			Configuration = configuration
 		});
 		return true;
 	}

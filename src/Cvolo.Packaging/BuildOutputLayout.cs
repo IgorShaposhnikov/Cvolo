@@ -9,44 +9,36 @@ namespace Cvolo.Packaging;
 /// </summary>
 public static class BuildOutputLayout
 {
-	public const string DefaultConfiguration = "Debug";
+	public const string DebugConfiguration = "Debug";
+	public const string ReleaseConfiguration = "Release";
+	public const string DefaultConfiguration = DebugConfiguration;
 
-	public static string GetBinRoot(string projectDirectory)
-	{
-		return Path.Combine(Path.GetFullPath(projectDirectory), "bin");
-	}
+	public static string GetBinRoot(string projectDirectory) =>
+		Path.Combine(Path.GetFullPath(projectDirectory), "bin");
 
-	public static string GetObjRoot(string projectDirectory)
-	{
-		return Path.Combine(Path.GetFullPath(projectDirectory), "obj");
-	}
+	public static string GetObjRoot(string projectDirectory) =>
+		Path.Combine(Path.GetFullPath(projectDirectory), "obj");
 
-	public static string GetBinDirectory(string projectDirectory, string configuration = DefaultConfiguration)
-	{
-		return Path.Combine(GetBinRoot(projectDirectory), ValidateConfiguration(configuration));
-	}
+	public static string GetBinDirectory(string projectDirectory, string configuration = DefaultConfiguration) =>
+		Path.Combine(GetBinRoot(projectDirectory), NormalizeConfiguration(configuration));
 
-	public static string GetObjDirectory(string projectDirectory, string configuration = DefaultConfiguration)
-	{
-		return Path.Combine(GetObjRoot(projectDirectory), ValidateConfiguration(configuration));
-	}
+	public static string GetObjDirectory(string projectDirectory, string configuration = DefaultConfiguration) =>
+		Path.Combine(GetObjRoot(projectDirectory), NormalizeConfiguration(configuration));
 
-	public static string GetIntermediateIrPath(string projectDirectory, string outputName, string configuration = DefaultConfiguration)
-	{
-		return Path.Combine(GetObjDirectory(projectDirectory, configuration), ValidateOutputName(outputName) + ".ll");
-	}
+	public static string GetIntermediateIrPath(string projectDirectory, string outputName, string configuration = DefaultConfiguration) =>
+		Path.Combine(GetObjDirectory(projectDirectory, configuration), ValidateOutputName(outputName) + ".ll");
 
-	public static string GetCompilationFailuresDirectory(string projectDirectory, string configuration = DefaultConfiguration)
-	{
-		return Path.Combine(GetObjDirectory(projectDirectory, configuration), "CompilationFailures");
-	}
+	public static string GetCompilationFailuresDirectory(string projectDirectory, string configuration = DefaultConfiguration) =>
+		Path.Combine(GetObjDirectory(projectDirectory, configuration), "CompilationFailures");
 
-	public static string GetBuildStatePath(string projectDirectory, string configuration = DefaultConfiguration)
-	{
-		return Path.Combine(GetObjDirectory(projectDirectory, configuration), "cvolo.build-state.json");
-	}
+	public static string GetBuildStatePath(string projectDirectory, string configuration = DefaultConfiguration) =>
+		Path.Combine(GetObjDirectory(projectDirectory, configuration), "cvolo.build-state.json");
 
-	public static string GetNativeOutputPath(string projectDirectory, string outputName, bool shared, string configuration = DefaultConfiguration)
+	public static string GetNativeOutputPath(
+		string projectDirectory,
+		string outputName,
+		bool shared,
+		string configuration = DefaultConfiguration)
 	{
 		var extension = shared
 			? (OperatingSystem.IsWindows() ? ".dll" : ".so")
@@ -54,7 +46,11 @@ public static class BuildOutputLayout
 		return Path.Combine(GetBinDirectory(projectDirectory, configuration), ValidateOutputName(outputName) + extension);
 	}
 
-	public static string GetPackageOutputPath(string projectDirectory, string outputName, string targetTriple, string configuration = DefaultConfiguration)
+	public static string GetPackageOutputPath(
+		string projectDirectory,
+		string outputName,
+		string targetTriple,
+		string configuration = DefaultConfiguration)
 	{
 		if (string.IsNullOrWhiteSpace(targetTriple))
 			throw new ArgumentException("Target triple cannot be empty.", nameof(targetTriple));
@@ -66,15 +62,19 @@ public static class BuildOutputLayout
 			ValidateOutputName(outputName) + ".cvlib");
 	}
 
-	private static string ValidateConfiguration(string configuration)
+	public static string NormalizeConfiguration(string configuration)
 	{
 		if (string.IsNullOrWhiteSpace(configuration))
 			throw new ArgumentException("Configuration cannot be empty.", nameof(configuration));
-		if (configuration.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0
-			|| configuration.Contains(Path.DirectorySeparatorChar)
-			|| configuration.Contains(Path.AltDirectorySeparatorChar))
-			throw new ArgumentException("Configuration must be a single path segment.", nameof(configuration));
-		return configuration;
+
+		if (string.Equals(configuration, DebugConfiguration, StringComparison.OrdinalIgnoreCase))
+			return DebugConfiguration;
+		if (string.Equals(configuration, ReleaseConfiguration, StringComparison.OrdinalIgnoreCase))
+			return ReleaseConfiguration;
+
+		throw new ArgumentException(
+			$"Unsupported build configuration '{configuration}'. Expected '{DebugConfiguration}' or '{ReleaseConfiguration}'.",
+			nameof(configuration));
 	}
 
 	private static string ValidateOutputName(string outputName)
@@ -88,8 +88,6 @@ public static class BuildOutputLayout
 		return outputName;
 	}
 
-	private static string SanitizePathSegment(string value)
-	{
-		return value.Replace(':', '_').Replace('/', '_').Replace('\\', '_');
-	}
+	private static string SanitizePathSegment(string value) =>
+		value.Replace(':', '_').Replace('/', '_').Replace('\\', '_');
 }

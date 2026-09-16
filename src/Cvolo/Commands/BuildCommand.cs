@@ -25,6 +25,7 @@ internal sealed class BuildCommand : Command
 		var noTbaaOption = new Option<bool>("--no-tbaa") { Description = "Disable generation of !tbaa alias-analysis metadata nodes" };
 		var targetOption = new Option<string>("--target") { Description = "Target OS for native library resolution (host, windows, linux, macos). Controls which win:/linux:/mac: [LibraryImport] path is forwarded to the linker." };
 		var checkedFfiBoundsOption = new Option<bool>("--checked-ffi-bounds") { Description = "Generate explicit null-check prologues in expose extern functions for debug builds" };
+		var configurationOption = new Option<string>("--configuration", "-c", BuildOutputLayout.DefaultConfiguration) { Description = "Build configuration (Debug or Release)." };
 
 		Add(pathArg);
 		Add(llvmOption);
@@ -39,6 +40,7 @@ internal sealed class BuildCommand : Command
 		Add(noTbaaOption);
 		Add(targetOption);
 		Add(checkedFfiBoundsOption);
+		Add(configurationOption);
 
 		SetAction((ParseResult parseResult) =>
 		{
@@ -54,31 +56,32 @@ internal sealed class BuildCommand : Command
 			var noTbaaVal = parseResult.GetValue(noTbaaOption);
 			var targetOsVal = parseResult.GetValue(targetOption);
 			var checkedFfiBoundsVal = parseResult.GetValue(checkedFfiBoundsOption);
+			var configurationVal = BuildOutputLayout.NormalizeConfiguration(parseResult.GetValue(configurationOption) ?? BuildOutputLayout.DefaultConfiguration);
 
 			try
 			{
 				var incremental = TryPrepareIncrementalBuild(
 					path, isShared, llvmOnly, emitIrVal, emitLoweredVal, optLevel, noWarnVal,
-					legacyVisibilityVal, strictOptionVal, noTbaaVal, targetOsVal, checkedFfiBoundsVal);
-				if (incremental is { } cached && IncrementalBuildState.IsUpToDate(cached.Graph, cached.BuildKey, cached.OutputPath))
+					legacyVisibilityVal, strictOptionVal, noTbaaVal, targetOsVal, checkedFfiBoundsVal, configurationVal);
+				if (incremental is { } cached && IncrementalBuildState.IsUpToDate(cached.Graph, cached.BuildKey, cached.OutputPath, cached.Configuration))
 				{
 					Console.WriteLine($"Up-to-date -> {cached.OutputPath}");
 					Environment.Exit(0);
 					return;
 				}
 
-				if (LibraryBuildPipeline.TryBuild(path, isShared, llvmOnly, emitIrVal, emitLoweredVal, parseResult.GetValue(verboseOption), out var packageResult))
+				if (LibraryBuildPipeline.TryBuild(path, isShared, llvmOnly, emitIrVal, emitLoweredVal, parseResult.GetValue(verboseOption), configurationVal, out var packageResult))
 				{
 					if (incremental is { } libraryBuild)
-						IncrementalBuildState.Record(libraryBuild.Graph, libraryBuild.BuildKey, packageResult!.OutputPath);
+						IncrementalBuildState.Record(libraryBuild.Graph, libraryBuild.BuildKey, packageResult!.OutputPath, libraryBuild.Configuration);
 					Console.WriteLine($"Built {packageResult!.PackageId} {packageResult.Version} -> {packageResult.OutputPath}");
 					Environment.Exit(0);
 					return;
 				}
 
-				var exitCode = _compilerDriver.Compile(path, llvmOnly, isShared, emitIrVal, optLevel, emitLowered: emitLoweredVal, noWarn: noWarnVal, legacyVisibility: legacyVisibilityVal, strictOption: strictOptionVal, noTbaa: noTbaaVal, targetOs: targetOsVal, checkedFfiBounds: checkedFfiBoundsVal);
+				var exitCode = _compilerDriver.Compile(path, llvmOnly, isShared, emitIrVal, optLevel, emitLowered: emitLoweredVal, noWarn: noWarnVal, legacyVisibility: legacyVisibilityVal, strictOption: strictOptionVal, noTbaa: noTbaaVal, targetOs: targetOsVal, checkedFfiBounds: checkedFfiBoundsVal, configuration: configurationVal);
 				if (exitCode == 0 && incremental is { } compiledBuild)
-					IncrementalBuildState.Record(compiledBuild.Graph, compiledBuild.BuildKey, compiledBuild.OutputPath);
+					IncrementalBuildState.Record(compiledBuild.Graph, compiledBuild.BuildKey, compiledBuild.OutputPath, compiledBuild.Configuration);
 				Environment.Exit(exitCode);
 			}
 			catch (Exception ex)
@@ -101,7 +104,8 @@ internal sealed class BuildCommand : Command
 		bool strictOption,
 		bool noTbaa,
 		string? targetOs,
-		bool checkedFfiBounds)
+		bool checkedFfiBounds,
+		string configuration)
 	{
 		// Output-only modes intentionally bypass the build cache. They are commonly used
 		// for diagnostics or tooling and have no stable binary artifact to reuse.
@@ -111,12 +115,14 @@ internal sealed class BuildCommand : Command
 		if (!ProjectBuildGraph.TryLoad(path, out var graph) || graph is null)
 			return null;
 
-		var outputPath = ResolveOutputPath(path);
+		configuration = BuildOutputLayout.NormalizeConfiguration(configuration);
+		var outputPath = ResolveOutputPath(path, configuration);
 		if (outputPath is null)
 			return null;
 
 		var buildKey = string.Join("|",
-			"build-v1",
+			"build-v2",
+			$"configuration={configuration}",
 			$"opt={optLevel}",
 			$"nowarn={noWarn ?? string.Empty}",
 			$"legacyVisibility={legacyVisibility}",
@@ -124,16 +130,16 @@ internal sealed class BuildCommand : Command
 			$"noTbaa={noTbaa}",
 			$"target={targetOs ?? "host"}",
 			$"checkedFfiBounds={checkedFfiBounds}");
-		return new IncrementalBuild(graph, buildKey, outputPath);
+		return new IncrementalBuild(graph, buildKey, outputPath, configuration);
 	}
 
-	private static string? ResolveOutputPath(string path)
+	private static string? ResolveOutputPath(string path, string configuration)
 	{
 		try
 		{
 			var manifest = ProjectManifest.Load(path);
 			if (manifest.IsLibrary)
-				return LibraryBuildPipeline.GetOutputPath(manifest, LibraryBuildPipeline.DefaultConfiguration, TargetTriple.HostTriple());
+				return LibraryBuildPipeline.GetOutputPath(manifest, configuration, TargetTriple.HostTriple());
 		}
 		catch (PackageException ex) when (ex.Code is PackageDiagnosticIds.MissingPackageId or PackageDiagnosticIds.MissingVersion)
 		{
@@ -145,8 +151,8 @@ internal sealed class BuildCommand : Command
 		}
 
 		var project = CompilationProject.Load(path);
-		return BuildOutputLayout.GetNativeOutputPath(project.ProjectDirectory, project.OutputName, project.IsShared);
+		return BuildOutputLayout.GetNativeOutputPath(project.ProjectDirectory, project.OutputName, project.IsShared, configuration);
 	}
 
-	private sealed record IncrementalBuild(ProjectBuildGraph Graph, string BuildKey, string OutputPath);
+	private sealed record IncrementalBuild(ProjectBuildGraph Graph, string BuildKey, string OutputPath, string Configuration);
 }
