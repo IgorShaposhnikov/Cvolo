@@ -19,7 +19,7 @@ public sealed class StringsTests : CompilerTestBase
 
 		var (runCode, runStdout) = ExecuteBinary(caseName, Category);
 		Assert.Equal(0, runCode);
-		Assert.Equal(expected.Replace("\r\n", "\n").Trim(), runStdout.Replace("\r\n", "\n").Trim());
+		Assert.Equal(NormalizeNewlines(expected).Trim(), NormalizeNewlines(runStdout).Trim());
 	}
 
 	[Theory]
@@ -33,5 +33,10 @@ public sealed class StringsTests : CompilerTestBase
 
 		Assert.Equal(1, exitCode);
 		Assert.Contains(expectedId, stderr);
+	}
+
+	private static string NormalizeNewlines(string value)
+	{
+		return value.Replace("\r\n", "\n").Replace("\r", string.Empty);
 	}
 }
