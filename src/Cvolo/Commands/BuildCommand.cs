@@ -1,6 +1,7 @@
 using System.CommandLine;
 using Cvolo.Drivers;
 using Cvolo.Packaging;
+using Cvolo.Projects;
 
 namespace Cvolo.Commands;
 
@@ -56,14 +57,28 @@ internal sealed class BuildCommand : Command
 
 			try
 			{
+				var incremental = TryPrepareIncrementalBuild(
+					path, isShared, llvmOnly, emitIrVal, emitLoweredVal, optLevel, noWarnVal,
+					legacyVisibilityVal, strictOptionVal, noTbaaVal, targetOsVal, checkedFfiBoundsVal);
+				if (incremental is { } cached && IncrementalBuildState.IsUpToDate(cached.Graph, cached.BuildKey, cached.OutputPath))
+				{
+					Console.WriteLine($"Up-to-date -> {cached.OutputPath}");
+					Environment.Exit(0);
+					return;
+				}
+
 				if (LibraryBuildPipeline.TryBuild(path, isShared, llvmOnly, emitIrVal, emitLoweredVal, parseResult.GetValue(verboseOption), out var packageResult))
 				{
+					if (incremental is { } libraryBuild)
+						IncrementalBuildState.Record(libraryBuild.Graph, libraryBuild.BuildKey, packageResult!.OutputPath);
 					Console.WriteLine($"Built {packageResult!.PackageId} {packageResult.Version} -> {packageResult.OutputPath}");
 					Environment.Exit(0);
 					return;
 				}
 
 				var exitCode = _compilerDriver.Compile(path, llvmOnly, isShared, emitIrVal, optLevel, emitLowered: emitLoweredVal, noWarn: noWarnVal, legacyVisibility: legacyVisibilityVal, strictOption: strictOptionVal, noTbaa: noTbaaVal, targetOs: targetOsVal, checkedFfiBounds: checkedFfiBoundsVal);
+				if (exitCode == 0 && incremental is { } compiledBuild)
+					IncrementalBuildState.Record(compiledBuild.Graph, compiledBuild.BuildKey, compiledBuild.OutputPath);
 				Environment.Exit(exitCode);
 			}
 			catch (Exception ex)
@@ -73,4 +88,68 @@ internal sealed class BuildCommand : Command
 			}
 		});
 	}
+
+	private static IncrementalBuild? TryPrepareIncrementalBuild(
+		string path,
+		bool forceShared,
+		bool llvmOnly,
+		bool emitIr,
+		bool emitLowered,
+		string optLevel,
+		string? noWarn,
+		bool legacyVisibility,
+		bool strictOption,
+		bool noTbaa,
+		string? targetOs,
+		bool checkedFfiBounds)
+	{
+		// Output-only modes intentionally bypass the build cache. They are commonly used
+		// for diagnostics or tooling and have no stable binary artifact to reuse.
+		if (forceShared || llvmOnly || emitIr || emitLowered)
+			return null;
+
+		if (!ProjectBuildGraph.TryLoad(path, out var graph) || graph is null)
+			return null;
+
+		var outputPath = ResolveOutputPath(path);
+		if (outputPath is null)
+			return null;
+
+		var buildKey = string.Join("|",
+			"build-v1",
+			$"opt={optLevel}",
+			$"nowarn={noWarn ?? string.Empty}",
+			$"legacyVisibility={legacyVisibility}",
+			$"strictOption={strictOption}",
+			$"noTbaa={noTbaa}",
+			$"target={targetOs ?? "host"}",
+			$"checkedFfiBounds={checkedFfiBounds}");
+		return new IncrementalBuild(graph, buildKey, outputPath);
+	}
+
+	private static string? ResolveOutputPath(string path)
+	{
+		try
+		{
+			var manifest = ProjectManifest.Load(path);
+			if (manifest.IsLibrary)
+				return LibraryBuildPipeline.GetOutputPath(manifest, LibraryBuildPipeline.DefaultConfiguration, TargetTriple.HostTriple());
+		}
+		catch (PackageException ex) when (ex.Code is PackageDiagnosticIds.MissingPackageId or PackageDiagnosticIds.MissingVersion)
+		{
+			// Ordinary non-package library projects still go through the compiler path below.
+		}
+		catch (FileNotFoundException)
+		{
+			return null;
+		}
+
+		var project = CompilationProject.Load(path);
+		var extension = project.IsShared
+			? (OperatingSystem.IsWindows() ? ".dll" : ".so")
+			: (OperatingSystem.IsWindows() ? ".exe" : string.Empty);
+		return Path.Combine(project.ProjectDirectory, "bin", LibraryBuildPipeline.DefaultConfiguration, project.OutputName + extension);
+	}
+
+	private sealed record IncrementalBuild(ProjectBuildGraph Graph, string BuildKey, string OutputPath);
 }
