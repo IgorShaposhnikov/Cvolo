@@ -5,9 +5,9 @@ namespace Cvolo.Packaging;
 
 /// <summary>
 /// Incremental-build fingerprints layered on top of the canonical ProjectReference graph.
-/// Source content, project files, lock files, and referenced-project fingerprints all
-/// participate in the root fingerprint, so changes anywhere in the graph invalidate
-/// the consuming project.
+/// Each node exposes both its own input fingerprint and a transitive fingerprint that folds
+/// in referenced projects. The split lets the build planner distinguish a project that changed
+/// directly from a project that only became dirty because one of its dependencies changed.
 /// </summary>
 public sealed class ProjectBuildGraph
 {
@@ -17,11 +17,13 @@ public sealed class ProjectBuildGraph
 		ProjectDirectory = Path.GetDirectoryName(rootProjectPath)!;
 		Nodes = nodes;
 		Fingerprint = fingerprint;
+		Root = nodes[^1];
 	}
 
 	public string RootProjectPath { get; }
 	public string ProjectDirectory { get; }
 	public IReadOnlyList<ProjectBuildNode> Nodes { get; }
+	public ProjectBuildNode Root { get; }
 	public string Fingerprint { get; }
 
 	public static bool TryLoad(string pathOrDirectory, out ProjectBuildGraph? graph)
@@ -48,8 +50,14 @@ public sealed class ProjectBuildGraph
 			var dependencies = graphNode.ProjectReferences
 				.Select(reference => completed[reference])
 				.ToArray();
-			var fingerprint = ComputeNodeFingerprint(rootDirectory, graphNode.ProjectPath, graphNode.SourceFiles, dependencies);
-			var node = new ProjectBuildNode(graphNode.ProjectPath, graphNode.SourceFiles, graphNode.ProjectReferences, fingerprint);
+			var localFingerprint = ComputeLocalFingerprint(rootDirectory, graphNode.ProjectPath, graphNode.SourceFiles);
+			var fingerprint = ComputeTransitiveFingerprint(rootDirectory, graphNode.ProjectPath, localFingerprint, dependencies);
+			var node = new ProjectBuildNode(
+				graphNode.ProjectPath,
+				graphNode.SourceFiles,
+				graphNode.ProjectReferences,
+				localFingerprint,
+				fingerprint);
 			completed.Add(graphNode.ProjectPath, node);
 			ordered.Add(node);
 		}
@@ -58,14 +66,13 @@ public sealed class ProjectBuildGraph
 		return new ProjectBuildGraph(projectGraph.RootProjectPath, ordered, root.Fingerprint);
 	}
 
-	private static string ComputeNodeFingerprint(
+	private static string ComputeLocalFingerprint(
 		string rootDirectory,
 		string projectPath,
-		IReadOnlyList<string> sourceFiles,
-		IReadOnlyList<ProjectBuildNode> dependencies)
+		IReadOnlyList<string> sourceFiles)
 	{
 		using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-		AppendText(hash, "cvolo-project-build-node-v1\n");
+		AppendText(hash, "cvolo-project-build-inputs-v2\n");
 		AppendFile(hash, rootDirectory, projectPath);
 
 		var lockPath = Path.Combine(Path.GetDirectoryName(projectPath)!, "cvolo.lock.json");
@@ -76,6 +83,23 @@ public sealed class ProjectBuildGraph
 
 		foreach (var sourceFile in sourceFiles)
 			AppendFile(hash, rootDirectory, sourceFile);
+
+		return "sha256:" + Convert.ToHexStringLower(hash.GetHashAndReset());
+	}
+
+	private static string ComputeTransitiveFingerprint(
+		string rootDirectory,
+		string projectPath,
+		string localFingerprint,
+		IReadOnlyList<ProjectBuildNode> dependencies)
+	{
+		using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+		AppendText(hash, "cvolo-project-build-node-v2\n");
+		AppendText(hash, "project:");
+		AppendText(hash, Normalize(Path.GetRelativePath(rootDirectory, projectPath)));
+		AppendText(hash, "\ninputs:");
+		AppendText(hash, localFingerprint);
+		AppendText(hash, "\n");
 
 		foreach (var dependency in dependencies.OrderBy(node => Normalize(Path.GetRelativePath(rootDirectory, node.ProjectPath)), StringComparer.Ordinal))
 		{
@@ -109,4 +133,5 @@ public sealed record ProjectBuildNode(
 	string ProjectPath,
 	IReadOnlyList<string> SourceFiles,
 	IReadOnlyList<string> ProjectReferences,
+	string LocalFingerprint,
 	string Fingerprint);

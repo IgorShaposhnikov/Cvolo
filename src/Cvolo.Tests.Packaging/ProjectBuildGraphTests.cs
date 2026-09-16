@@ -55,6 +55,43 @@ public sealed class ProjectBuildGraphTests : IDisposable
 	}
 
 	[Fact]
+	public void BuildPlan_TracksDirectAndDependencyInvalidationPerProject()
+	{
+		var library = CreateProject("PlanLibrary", "namespace PlanLibrary; public int Value() { return 1; }");
+		var app = CreateProject("PlanApp", "int main() { return 0; }", library);
+		var graph = ProjectBuildGraph.Load(app);
+
+		var initial = ProjectBuildPlan.Create(graph, "build-v3|configuration=Debug");
+		Assert.All(initial.Nodes, node => Assert.True(node.RequiresBuild));
+
+		ProjectBuildPlan.RecordSuccessful(graph, "build-v3|configuration=Debug");
+		var clean = ProjectBuildPlan.Create(ProjectBuildGraph.Load(app), "build-v3|configuration=Debug");
+		Assert.All(clean.Nodes, node => Assert.False(node.RequiresBuild));
+
+		File.WriteAllText(Path.Combine(Path.GetDirectoryName(library)!, "PlanLibrary.cvl"),
+			"namespace PlanLibrary; public int Value() { return 2; }");
+		var changed = ProjectBuildPlan.Create(ProjectBuildGraph.Load(app), "build-v3|configuration=Debug");
+
+		Assert.True(changed.Nodes[0].InputsChanged);
+		Assert.False(changed.Nodes[0].DependencyChanged);
+		Assert.True(changed.Root.RequiresBuild);
+		Assert.False(changed.Root.InputsChanged);
+		Assert.True(changed.Root.DependencyChanged);
+	}
+
+	[Fact]
+	public void BuildPlan_ConfigurationAndBuildKeyHaveIndependentState()
+	{
+		var app = CreateProject("PlanConfig", "int main() { return 0; }");
+		var graph = ProjectBuildGraph.Load(app);
+		ProjectBuildPlan.RecordSuccessful(graph, "build-v3|opt=Os", "Debug");
+
+		Assert.False(ProjectBuildPlan.Create(graph, "build-v3|opt=Os", "Debug").Root.RequiresBuild);
+		Assert.True(ProjectBuildPlan.Create(graph, "build-v3|opt=O2", "Debug").Root.InputsChanged);
+		Assert.True(ProjectBuildPlan.Create(graph, "build-v3|opt=Os", "Release").Root.InputsChanged);
+	}
+
+	[Fact]
 	public void Fingerprint_ChangesWhenTransitiveProjectSourceChanges()
 	{
 		var library = CreateProject("Library", "namespace Library; public int Value() { return 1; }");

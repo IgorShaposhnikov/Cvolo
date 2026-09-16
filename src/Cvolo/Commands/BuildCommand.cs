@@ -71,6 +71,12 @@ internal sealed class BuildCommand : Command
 				var incremental = TryPrepareIncrementalBuild(
 					path, isShared, llvmOnly, emitIrVal, emitLoweredVal, optLevel, noWarnVal,
 					legacyVisibilityVal, strictOptionVal, noTbaaVal, targetOsVal, checkedFfiBoundsVal, configurationVal);
+				var buildPlan = incremental is { } prepared
+					? ProjectBuildPlan.Create(prepared.Graph, prepared.BuildKey, prepared.Configuration)
+					: null;
+				if (parseResult.GetValue(verboseOption) && buildPlan is not null)
+					PrintProjectBuildPlan(buildPlan);
+
 				if (incremental is { } cached && IncrementalBuildState.IsUpToDate(cached.Graph, cached.BuildKey, cached.OutputPath, cached.Configuration))
 				{
 					Console.WriteLine($"Up-to-date -> {cached.OutputPath}");
@@ -81,7 +87,10 @@ internal sealed class BuildCommand : Command
 				if (LibraryBuildPipeline.TryBuild(path, isShared, llvmOnly, emitIrVal, emitLoweredVal, parseResult.GetValue(verboseOption), configurationVal, out var packageResult))
 				{
 					if (incremental is { } libraryBuild)
+					{
 						IncrementalBuildState.Record(libraryBuild.Graph, libraryBuild.BuildKey, packageResult!.OutputPath, libraryBuild.Configuration);
+						ProjectBuildPlan.RecordSuccessful(libraryBuild.Graph, libraryBuild.BuildKey, libraryBuild.Configuration);
+					}
 					Console.WriteLine($"Built {packageResult!.PackageId} {packageResult.Version} -> {packageResult.OutputPath}");
 					Environment.Exit(0);
 					return;
@@ -89,7 +98,10 @@ internal sealed class BuildCommand : Command
 
 				var exitCode = _compilerDriver.Compile(path, llvmOnly, isShared, emitIrVal, optLevel, emitLowered: emitLoweredVal, noWarn: noWarnVal, legacyVisibility: legacyVisibilityVal, strictOption: strictOptionVal, noTbaa: noTbaaVal, targetOs: targetOsVal, checkedFfiBounds: checkedFfiBoundsVal, configuration: configurationVal);
 				if (exitCode == 0 && incremental is { } compiledBuild)
+				{
 					IncrementalBuildState.Record(compiledBuild.Graph, compiledBuild.BuildKey, compiledBuild.OutputPath, compiledBuild.Configuration);
+					ProjectBuildPlan.RecordSuccessful(compiledBuild.Graph, compiledBuild.BuildKey, compiledBuild.Configuration);
+				}
 				Environment.Exit(exitCode);
 			}
 			catch (PackageException ex)
@@ -105,6 +117,20 @@ internal sealed class BuildCommand : Command
 				Environment.Exit(1);
 			}
 		});
+	}
+
+	private static void PrintProjectBuildPlan(ProjectBuildPlan plan)
+	{
+		Console.WriteLine("Project graph:");
+		foreach (var node in plan.Nodes)
+		{
+			var name = Path.GetFileNameWithoutExtension(node.Project.ProjectPath);
+			var status = node.RequiresBuild
+				? node.InputsChanged ? "dirty inputs" : "dirty dependency"
+				: "up-to-date";
+			Console.WriteLine($"  -> {name}: {status}");
+		}
+		Console.WriteLine();
 	}
 
 	private static void PrintRestoreSummary(RestoreResult? restore, bool verbose)
