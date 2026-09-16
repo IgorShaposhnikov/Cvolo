@@ -1,3 +1,4 @@
+using Cvolo.Packaging;
 using System.CommandLine;
 
 namespace Cvolo.Commands;
@@ -22,8 +23,8 @@ internal sealed class CleanCommand : Command
 				return;
 			}
 
-			var objDir = Path.Combine(projectDir, "obj");
-			var binDir = Path.Combine(projectDir, "bin");
+			var objDir = BuildOutputLayout.GetObjRoot(projectDir);
+			var binDir = BuildOutputLayout.GetBinRoot(projectDir);
 
 			try
 			{

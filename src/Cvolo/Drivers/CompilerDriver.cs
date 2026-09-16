@@ -294,16 +294,17 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 			return 1;
 		}
 
-		// Setup modern C# /bin and /obj folder layouts
-		var outputDirectory = project.ProjectDirectory;
-		var objDirectory = Path.Combine(outputDirectory, "obj", "Debug");
-		var binDirectory = Path.Combine(outputDirectory, "bin", "Debug");
-		var compilationFailuresDirectory = Path.Combine(outputDirectory, "CompilationFailures", "Debug");
+		// Keep final artifacts and compiler intermediates in the shared build layout.
+		// Verification dumps are intermediates too, so they live below obj/Debug and
+		// are removed by the same clean operation as generated LLVM IR.
+		var objDirectory = BuildOutputLayout.GetObjDirectory(project.ProjectDirectory);
+		var binDirectory = BuildOutputLayout.GetBinDirectory(project.ProjectDirectory);
+		var compilationFailuresDirectory = BuildOutputLayout.GetCompilationFailuresDirectory(project.ProjectDirectory);
 
 		Directory.CreateDirectory(objDirectory);
 		Directory.CreateDirectory(binDirectory);
 
-		var llPath = Path.Combine(objDirectory, project.OutputName + ".ll");
+		var llPath = BuildOutputLayout.GetIntermediateIrPath(project.ProjectDirectory, project.OutputName);
 
 		// Resolve optimization level flag
 		if (!Enum.TryParse<OptimizationLevel>(optLevel, true, out var parsedLevel))
@@ -390,10 +391,8 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 		// 9. Execute immediate runtime execution if requested
 		if (runAfterCompile)
 		{
-			var binaryExt = project.IsShared
-				? (OperatingSystem.IsWindows() ? ".dll" : ".so")
-				: (OperatingSystem.IsWindows() ? ".exe" : "");
-			var binaryPath = Path.Combine(binDirectory, project.OutputName + binaryExt);
+			var binaryPath = BuildOutputLayout.GetNativeOutputPath(
+				project.ProjectDirectory, project.OutputName, project.IsShared);
 
 			if (verbose && !reporter.Exclusive)
 			{

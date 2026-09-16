@@ -7,7 +7,7 @@ namespace Cvolo.Packaging;
 /// </summary>
 public static class LibraryBuildPipeline
 {
-	public const string DefaultConfiguration = "Debug";
+	public const string DefaultConfiguration = BuildOutputLayout.DefaultConfiguration;
 
 	public static bool TryBuild(
 		string pathOrDirectory,
@@ -67,20 +67,11 @@ public static class LibraryBuildPipeline
 	public static string GetOutputPath(ProjectManifest manifest, string configuration, string targetTriple)
 	{
 		ArgumentNullException.ThrowIfNull(manifest);
-		if (string.IsNullOrWhiteSpace(configuration))
-			throw new ArgumentException("Configuration cannot be empty.", nameof(configuration));
-		if (string.IsNullOrWhiteSpace(targetTriple))
-			throw new ArgumentException("Target triple cannot be empty.", nameof(targetTriple));
-
-		var targetDirectory = SanitizePathSegment(targetTriple);
-		return Path.Combine(
+		return BuildOutputLayout.GetPackageOutputPath(
 			manifest.ProjectDirectory,
-			"bin",
-			configuration,
-			targetDirectory,
-			$"{manifest.OutputName}.cvlib");
+			manifest.OutputName,
+			targetTriple,
+			configuration);
 	}
 
-	private static string SanitizePathSegment(string value)
-		=> value.Replace(':', '_').Replace('/', '_').Replace('\\', '_');
 }

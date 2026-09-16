@@ -63,8 +63,10 @@ public static class IncrementalBuildState
 		}
 	}
 
-	public static string GetStatePath(string projectDirectory) =>
-		Path.Combine(projectDirectory, "obj", LibraryBuildPipeline.DefaultConfiguration, StateFileName);
+	public static string GetStatePath(string projectDirectory)
+	{
+		return BuildOutputLayout.GetBuildStatePath(projectDirectory);
+	}
 
 	private static string NormalizeOutputPath(string projectDirectory, string outputPath)
 	{

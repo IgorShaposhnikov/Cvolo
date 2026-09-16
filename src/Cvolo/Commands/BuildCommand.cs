@@ -145,10 +145,7 @@ internal sealed class BuildCommand : Command
 		}
 
 		var project = CompilationProject.Load(path);
-		var extension = project.IsShared
-			? (OperatingSystem.IsWindows() ? ".dll" : ".so")
-			: (OperatingSystem.IsWindows() ? ".exe" : string.Empty);
-		return Path.Combine(project.ProjectDirectory, "bin", LibraryBuildPipeline.DefaultConfiguration, project.OutputName + extension);
+		return BuildOutputLayout.GetNativeOutputPath(project.ProjectDirectory, project.OutputName, project.IsShared);
 	}
 
 	private sealed record IncrementalBuild(ProjectBuildGraph Graph, string BuildKey, string OutputPath);
