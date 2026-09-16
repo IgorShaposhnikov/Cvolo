@@ -57,7 +57,10 @@ internal sealed class RunCommand : Command
 			var checkedFfiBoundsVal = parseResult.GetValue(checkedFfiBoundsOption);
 			var configurationVal = BuildOutputLayout.NormalizeConfiguration(parseResult.GetValue(configurationOption) ?? BuildOutputLayout.DefaultConfiguration);
 			var noRestoreVal = parseResult.GetValue(noRestoreOption);
-			if (verboseVal) warnVal = true;
+			if (verboseVal)
+			{
+				warnVal = true;
+			}
 
 			try
 			{
@@ -65,7 +68,29 @@ internal sealed class RunCommand : Command
 				if (restore is not null && (restore.LockFileUpdated || restore.InstalledPackages > 0))
 					Console.WriteLine($"Restored packages: {restore.InstalledPackages} installed, {restore.CachedPackages} cached.");
 
-				var exitCode = _compilerDriver.Compile(path, llvmOnly: false, isShared: false, emitIr: false, optLevel, checkOnly: false, runAfterCompile: true, verbose: verboseVal, emitLowered: emitLoweredVal, noWarn: noWarnVal, suppressWarnings: !warnVal, legacyVisibility: legacyVisibilityVal, strictOption: strictOptionVal, noTbaa: noTbaaVal, targetOs: targetOsVal, checkedFfiBounds: checkedFfiBoundsVal, configuration: configurationVal);
+				ProjectBuildGraph? projectGraph = null;
+				string? projectBuildKey = null;
+				var useProjectReferenceArtifacts = false;
+				if (!emitLoweredVal && ProjectBuildGraph.TryLoad(path, out projectGraph) && projectGraph is not null)
+				{
+					projectBuildKey = string.Join("|",
+						"build-v2",
+						$"configuration={configurationVal}",
+						$"opt={optLevel}",
+						$"nowarn={noWarnVal ?? string.Empty}",
+						$"legacyVisibility={legacyVisibilityVal}",
+						$"strictOption={strictOptionVal}",
+						$"noTbaa={noTbaaVal}",
+						$"target={targetOsVal ?? "host"}",
+						$"checkedFfiBounds={checkedFfiBoundsVal}");
+					var plan = ProjectBuildPlan.Create(projectGraph, projectBuildKey, configurationVal);
+					var projectReferences = ProjectReferenceBuildPipeline.Prepare(projectGraph, plan, projectBuildKey, configurationVal, verboseVal);
+					useProjectReferenceArtifacts = projectReferences.UseArtifacts;
+				}
+
+				var exitCode = _compilerDriver.Compile(path, llvmOnly: false, isShared: false, emitIr: false, optLevel, checkOnly: false, runAfterCompile: true, verbose: verboseVal, emitLowered: emitLoweredVal, noWarn: noWarnVal, suppressWarnings: !warnVal, legacyVisibility: legacyVisibilityVal, strictOption: strictOptionVal, noTbaa: noTbaaVal, targetOs: targetOsVal, checkedFfiBounds: checkedFfiBoundsVal, configuration: configurationVal, useProjectReferencePackages: useProjectReferenceArtifacts);
+				if (exitCode == 0 && projectGraph is not null && projectBuildKey is not null)
+					ProjectBuildPlan.RecordSuccessful(projectGraph, projectBuildKey, configurationVal);
 				Environment.Exit(exitCode);
 			}
 			catch (PackageException ex)

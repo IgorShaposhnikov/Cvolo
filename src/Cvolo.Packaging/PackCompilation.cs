@@ -151,6 +151,32 @@ internal static class PackCompilation
 			binder.Context.FileContexts[ast!] = context;
 		}
 
+		// ProjectReference libraries are consumed through the same language-level package
+		// surface as installed .cvlib dependencies. Their implementations stay in their
+		// own Sector 3 artifacts; this package emits only external declarations for them.
+		if (ProjectGraph.TryLoad(manifest.ProjectPath, out var projectGraph)
+			&& projectGraph is not null
+			&& projectGraph.Nodes.Count > 1)
+		{
+			var projectReferenceArtifacts = ProjectReferenceArtifactLoader.Load(manifest.ProjectPath, configuration);
+			foreach (var artifact in projectReferenceArtifacts)
+			{
+				foreach (var packageUnit in artifact.ApiMetadata.CreateCompilationUnits(artifact.PackageId, artifact.Version))
+				{
+					asts.Add(packageUnit);
+					binder.Context.FileContexts[packageUnit] = packageUnit.Context;
+					binder.Context.ExternalPackageUnits.Add(packageUnit);
+				}
+
+				foreach (var templateUnit in artifact.TemplateUnits)
+				{
+					asts.Add(templateUnit);
+					binder.Context.FileContexts[templateUnit] = templateUnit.Context;
+					binder.Context.PackageTemplateUnits.Add(templateUnit);
+				}
+			}
+		}
+
 		// 3. Cross-file declaration index + source-level lowering rewrites.
 		var declarationIndex = DeclarationIndex.Build(asts);
 		var effectiveStrictOption = manifest.StrictOption;
@@ -159,6 +185,12 @@ internal static class PackCompilation
 		{
 			foreach (var ast in asts)
 			{
+				if (binder.Context.ExternalPackageUnits.Contains(ast))
+				{
+					loweredAsts.Add(ast);
+					continue;
+				}
+
 				var currentAst = ast;
 				if (binder.Context.FileContexts.TryGetValue(ast, out var rewriteContext))
 				{
@@ -179,6 +211,8 @@ internal static class PackCompilation
 
 				if (projectUnits.Remove(ast))
 					projectUnits.Add(currentAst);
+				if (binder.Context.PackageTemplateUnits.Remove(ast))
+					binder.Context.PackageTemplateUnits.Add(currentAst);
 
 				loweredAsts.Add(currentAst);
 			}
@@ -217,6 +251,12 @@ internal static class PackCompilation
 			var foreachLoweringRewriter = new ForeachLoweringRewriter();
 			foreach (var ast in asts)
 			{
+				if (binder.Context.ExternalPackageUnits.Contains(ast))
+				{
+					expandedAsts.Add(ast);
+					continue;
+				}
+
 				var expanded = (CompilationUnitSyntax)foreachLoweringRewriter.Rewrite(ast);
 				if (binder.Context.FileContexts.TryGetValue(ast, out var expandedContext))
 				{
@@ -226,6 +266,8 @@ internal static class PackCompilation
 
 				if (projectUnits.Remove(ast))
 					projectUnits.Add(expanded);
+				if (binder.Context.PackageTemplateUnits.Remove(ast))
+					binder.Context.PackageTemplateUnits.Add(expanded);
 
 				expandedAsts.Add(expanded);
 			}

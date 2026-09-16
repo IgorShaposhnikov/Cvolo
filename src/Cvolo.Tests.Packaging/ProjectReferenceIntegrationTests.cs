@@ -24,6 +24,18 @@ public sealed class ProjectReferenceIntegrationTests : IDisposable
 	}
 
 	[Fact]
+	public void CompilationProject_ArtifactMode_ExcludesReferencedSourcesButKeepsGraphIdentity()
+	{
+		var (appDirectory, libraryProject, librarySource) = CreateProjectPair();
+
+		var project = CompilationProject.Load(appDirectory, compilerBaseDir: _root, mergeProjectReferences: false);
+
+		Assert.Equal(Path.GetFullPath(libraryProject), Assert.Single(project.ProjectReferences));
+		Assert.DoesNotContain(project.SourceFiles, file => string.Equals(file, Path.GetFullPath(librarySource), StringComparison.OrdinalIgnoreCase));
+		Assert.Contains(project.SourceFiles, file => string.Equals(Path.GetFileName(file), "Main.cvl", StringComparison.OrdinalIgnoreCase));
+	}
+
+	[Fact]
 	public void CompilationProject_UsesCanonicalProjectGraphForReferencesAndSources()
 	{
 		var (appDirectory, _, _, _) = CreateTransitiveProjectGraph();
@@ -108,6 +120,60 @@ public sealed class ProjectReferenceIntegrationTests : IDisposable
 	}
 
 	[Fact]
+	public void Build_PackageReadyTransitiveProjectReferences_UsesIndependentCvlibArtifacts()
+	{
+		RequireClang();
+		var libB = CreatePackageReadyLibrary("ArtifactLibB", "namespace ArtifactLibB; public int BaseValue() { return 40; }");
+		var libA = CreatePackageReadyLibrary(
+			"ArtifactLibA",
+			"using ArtifactLibB; namespace ArtifactLibA; public int Combined() { return BaseValue() + 2; }",
+			libB);
+
+		var appDirectory = Path.Combine(_root, "ArtifactApp");
+		Directory.CreateDirectory(appDirectory);
+		WriteProject(Path.Combine(appDirectory, "App.cvlproj"), "App", libA);
+		File.WriteAllText(Path.Combine(appDirectory, "Main.cvl"), "using ArtifactLibA; int main() { return Combined() - 42; }");
+
+		var graph = ProjectBuildGraph.Load(appDirectory);
+		const string buildKey = "build-v2|configuration=Debug|project-artifacts-test";
+		var plan = ProjectBuildPlan.Create(graph, buildKey);
+		var prepared = ProjectReferenceBuildPipeline.Prepare(graph, plan, buildKey);
+
+		Assert.True(prepared.UseArtifacts);
+		Assert.Equal(2, prepared.BuiltProjects);
+		Assert.Equal(2, prepared.ArtifactPaths.Count);
+		Assert.All(prepared.ArtifactPaths, path => Assert.True(File.Exists(path), path));
+
+		var secondPlan = ProjectBuildPlan.Create(ProjectBuildGraph.Load(appDirectory), buildKey);
+		var reused = ProjectReferenceBuildPipeline.Prepare(ProjectBuildGraph.Load(appDirectory), secondPlan, buildKey);
+		Assert.Equal(0, reused.BuiltProjects);
+		Assert.Equal(2, reused.ReusedProjects);
+
+		// Remove referenced sources after producing their artifacts. The consumer must still
+		// compile and link, proving it is not silently falling back to source merging.
+		File.Delete(Path.Combine(Path.GetDirectoryName(libA)!, "ArtifactLibA.cvl"));
+		File.Delete(Path.Combine(Path.GetDirectoryName(libB)!, "ArtifactLibB.cvl"));
+
+		var cache = new PackageCache(Path.Combine(_root, "artifact-cache"));
+		var driverType = typeof(ICompilerDriver).Assembly.GetType("Cvolo.Drivers.CompilerDriver", throwOnError: true)!;
+		var driver = Assert.IsAssignableFrom<ICompilerDriver>(Activator.CreateInstance(driverType, cache));
+		var (exitCode, buildOutput) = CompileWithCapturedOutput(driver, appDirectory, useProjectReferencePackages: true);
+		Assert.True(exitCode == 0, buildOutput);
+
+		var executable = Path.Combine(appDirectory, "bin", "Debug", OperatingSystem.IsWindows() ? "App.exe" : "App");
+		using var process = Process.Start(new ProcessStartInfo
+		{
+			FileName = executable,
+			UseShellExecute = false,
+			RedirectStandardOutput = true,
+			RedirectStandardError = true
+		});
+		Assert.NotNull(process);
+		Assert.True(process!.WaitForExit(10_000));
+		Assert.Equal(0, process.ExitCode);
+	}
+
+	[Fact]
 	public void CompilationProject_DiamondProjectReference_DeduplicatesSharedDependency()
 	{
 		var commonDirectory = CreateLibrary("Common", "namespace Common; public int Value() { return 42; }");
@@ -184,6 +250,29 @@ public sealed class ProjectReferenceIntegrationTests : IDisposable
 			Path.Combine(libADirectory, "LibA.cvlproj"),
 			Path.Combine(libBDirectory, "LibB.cvlproj"),
 			Path.Combine(libBDirectory, "LibB.cvl"));
+	}
+
+	private string CreatePackageReadyLibrary(string name, string source, params string[] projectReferences)
+	{
+		var directory = Path.Combine(_root, name);
+		Directory.CreateDirectory(directory);
+		var projectPath = Path.Combine(directory, name + ".cvlproj");
+		var references = projectReferences.Length == 0
+			? string.Empty
+			: "\n  <ItemGroup>\n" + string.Join("\n", projectReferences.Select(reference =>
+				$"    <ProjectReference Include=\"{Path.GetRelativePath(directory, reference)}\" />")) + "\n  </ItemGroup>";
+		File.WriteAllText(projectPath, $"""
+<Project Sdk="Cvolo.Sdk">
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <AssemblyName>{name}</AssemblyName>
+    <PackageId>{name}</PackageId>
+    <Version>1.0.0</Version>
+  </PropertyGroup>{references}
+</Project>
+""");
+		File.WriteAllText(Path.Combine(directory, name + ".cvl"), source);
+		return projectPath;
 	}
 
 	private string CreateLibrary(string name, string source)
@@ -283,7 +372,7 @@ int main() {
 		return (appDirectory, libraryProject, librarySource);
 	}
 
-	private static (int ExitCode, string Output) CompileWithCapturedOutput(ICompilerDriver driver, string path)
+	private static (int ExitCode, string Output) CompileWithCapturedOutput(ICompilerDriver driver, string path, bool useProjectReferencePackages = false)
 	{
 		var originalOut = Console.Out;
 		var originalError = Console.Error;
@@ -293,7 +382,7 @@ int main() {
 		{
 			Console.SetOut(output);
 			Console.SetError(error);
-			var exitCode = driver.Compile(path, llvmOnly: false, isShared: false, emitIr: false, optLevel: "O0", verbose: true);
+			var exitCode = driver.Compile(path, llvmOnly: false, isShared: false, emitIr: false, optLevel: "O0", verbose: true, useProjectReferencePackages: useProjectReferencePackages);
 			return (exitCode, output.ToString() + error.ToString());
 		}
 		finally

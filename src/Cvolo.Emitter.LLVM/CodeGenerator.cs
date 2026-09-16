@@ -229,8 +229,11 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			shortCandidates.Add(qualifiedName);
 		}
 
-		// Pass C: Declare Extern functions and custom user-defined function signatures
-		foreach (var unit in units)
+		// Pass C: Declare Extern functions and custom user-defined function signatures.
+		// External package units may be omitted from the emission unit list (package builds emit
+		// only their own definitions), but their bodyless API declarations are still required.
+		var declarationUnits = units.Concat(bindingContext.ExternalPackageUnits.Where(unit => !units.Contains(unit)));
+		foreach (var unit in declarationUnits)
 		{
 			var ns = unit.NamespaceDeclaration?.Name;
 			bindingContext.CurrentUnit = unit;

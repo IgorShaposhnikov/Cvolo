@@ -11,7 +11,7 @@ namespace Cvolo.Packaging;
 /// </summary>
 public sealed class ProjectBuildPlan
 {
-	private const int CurrentVersion = 1;
+	private const int CurrentVersion = 2;
 
 	private ProjectBuildPlan(ProjectBuildGraph graph, IReadOnlyList<ProjectBuildPlanNode> nodes)
 	{
@@ -37,8 +37,13 @@ public sealed class ProjectBuildPlan
 		var nodes = new List<ProjectBuildPlanNode>(graph.Nodes.Count);
 		foreach (var node in graph.Nodes)
 		{
-			var dependencyChanged = node.ProjectReferences.Any(reference => completed[reference].RequiresBuild);
-			var inputChanged = !MatchesRecordedState(node, buildKey, configuration);
+			var state = ReadState(node, configuration);
+			var inputChanged = state is null
+				|| state.Version != CurrentVersion
+				|| !string.Equals(state.LocalFingerprint, node.LocalFingerprint, StringComparison.Ordinal)
+				|| !string.Equals(state.BuildKey, buildKey, StringComparison.Ordinal);
+			var dependencyChanged = node.ProjectReferences.Any(reference => completed[reference].RequiresBuild)
+				|| (!inputChanged && !string.Equals(state!.Fingerprint, node.Fingerprint, StringComparison.Ordinal));
 			var planNode = new ProjectBuildPlanNode(node, inputChanged, dependencyChanged);
 			completed.Add(node.ProjectPath, planNode);
 			nodes.Add(planNode);
@@ -59,6 +64,16 @@ public sealed class ProjectBuildPlan
 			WriteState(node, buildKey, configuration);
 	}
 
+	public static void RecordSuccessful(
+		ProjectBuildNode node,
+		string buildKey,
+		string configuration = BuildOutputLayout.DefaultConfiguration)
+	{
+		ArgumentNullException.ThrowIfNull(node);
+		configuration = BuildOutputLayout.NormalizeConfiguration(configuration);
+		WriteState(node, buildKey, configuration);
+	}
+
 	public static string GetStatePath(
 		string projectDirectory,
 		string configuration = BuildOutputLayout.DefaultConfiguration)
@@ -67,23 +82,19 @@ public sealed class ProjectBuildPlan
 		return Path.Combine(projectDirectory, "obj", configuration, "cvolo.project-state.json");
 	}
 
-	private static bool MatchesRecordedState(ProjectBuildNode node, string buildKey, string configuration)
+	private static ProjectState? ReadState(ProjectBuildNode node, string configuration)
 	{
 		var statePath = GetStatePath(Path.GetDirectoryName(node.ProjectPath)!, configuration);
 		if (!File.Exists(statePath))
-			return false;
+			return null;
 
 		try
 		{
-			var state = JsonSerializer.Deserialize<ProjectState>(File.ReadAllText(statePath), JsonOptions);
-			return state is not null
-				&& state.Version == CurrentVersion
-				&& string.Equals(state.LocalFingerprint, node.LocalFingerprint, StringComparison.Ordinal)
-				&& string.Equals(state.BuildKey, buildKey, StringComparison.Ordinal);
+			return JsonSerializer.Deserialize<ProjectState>(File.ReadAllText(statePath), JsonOptions);
 		}
 		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
 		{
-			return false;
+			return null;
 		}
 	}
 
@@ -92,7 +103,7 @@ public sealed class ProjectBuildPlan
 		var projectDirectory = Path.GetDirectoryName(node.ProjectPath)!;
 		var statePath = GetStatePath(projectDirectory, configuration);
 		Directory.CreateDirectory(Path.GetDirectoryName(statePath)!);
-		var state = new ProjectState(CurrentVersion, node.LocalFingerprint, buildKey);
+		var state = new ProjectState(CurrentVersion, node.LocalFingerprint, node.Fingerprint, buildKey);
 		var json = JsonSerializer.Serialize(state, JsonOptions);
 		var temporaryPath = statePath + ".tmp_" + Guid.NewGuid().ToString("N");
 		try
@@ -110,6 +121,7 @@ public sealed class ProjectBuildPlan
 	private sealed record ProjectState(
 		[property: JsonPropertyName("version")] int Version,
 		[property: JsonPropertyName("localFingerprint")] string LocalFingerprint,
+		[property: JsonPropertyName("fingerprint")] string Fingerprint,
 		[property: JsonPropertyName("buildKey")] string BuildKey);
 
 	private static readonly JsonSerializerOptions JsonOptions = new()

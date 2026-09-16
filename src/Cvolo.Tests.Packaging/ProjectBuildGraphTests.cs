@@ -80,6 +80,29 @@ public sealed class ProjectBuildGraphTests : IDisposable
 	}
 
 	[Fact]
+	public void BuildPlan_DependencyChangeRemainsDirtyUntilConsumerStateIsRecorded()
+	{
+		var library = CreateProject("StateLibrary", "namespace StateLibrary; public int Value() { return 1; }");
+		var app = CreateProject("StateApp", "int main() { return 0; }", library);
+		const string buildKey = "build-v3|configuration=Debug";
+		var original = ProjectBuildGraph.Load(app);
+		ProjectBuildPlan.RecordSuccessful(original, buildKey);
+
+		File.WriteAllText(Path.Combine(Path.GetDirectoryName(library)!, "StateLibrary.cvl"),
+			"namespace StateLibrary; public int Value() { return 2; }");
+		var changed = ProjectBuildGraph.Load(app);
+		var firstPlan = ProjectBuildPlan.Create(changed, buildKey);
+		Assert.True(firstPlan.Root.DependencyChanged);
+
+		// A dependency can finish successfully before its consumer. If the consumer then
+		// fails, its previous transitive fingerprint must keep it dirty on the next build.
+		ProjectBuildPlan.RecordSuccessful(changed.Nodes[0], buildKey);
+		var retry = ProjectBuildPlan.Create(ProjectBuildGraph.Load(app), buildKey);
+		Assert.False(retry.Nodes[0].RequiresBuild);
+		Assert.True(retry.Root.DependencyChanged);
+	}
+
+	[Fact]
 	public void BuildPlan_ConfigurationAndBuildKeyHaveIndependentState()
 	{
 		var app = CreateProject("PlanConfig", "int main() { return 0; }");

@@ -22,7 +22,7 @@ public sealed class CompilationProject
 		ProjectReferences = projectReferences ?? [];
 	}
 
-	public static CompilationProject Load(string inputPath, string? compilerBaseDir = null, bool forceShared = false)
+	public static CompilationProject Load(string inputPath, string? compilerBaseDir = null, bool forceShared = false, bool mergeProjectReferences = true)
 	{
 		List<string> sourceFiles = [];
 		var outputName = "main";
@@ -70,13 +70,17 @@ public sealed class CompilationProject
 				var graph = ProjectGraph.Load(projectFilePath);
 				foreach (var node in graph.Nodes)
 				{
-					foreach (var sourceFile in node.SourceFiles)
+					var isRoot = string.Equals(node.ProjectPath, graph.RootProjectPath, StringComparison.OrdinalIgnoreCase);
+					if (isRoot || mergeProjectReferences)
 					{
-						if (!sourceFiles.Contains(sourceFile, StringComparer.OrdinalIgnoreCase))
-							sourceFiles.Add(sourceFile);
+						foreach (var sourceFile in node.SourceFiles)
+						{
+							if (!sourceFiles.Contains(sourceFile, StringComparer.OrdinalIgnoreCase))
+								sourceFiles.Add(sourceFile);
+						}
 					}
 
-					if (!string.Equals(node.ProjectPath, graph.RootProjectPath, StringComparison.OrdinalIgnoreCase))
+					if (!isRoot)
 						projectReferences.Add(node.ProjectPath);
 				}
 

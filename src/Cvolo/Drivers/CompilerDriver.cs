@@ -25,7 +25,7 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 {
 	private static readonly string[] _linkerCandidates = ["clang", "gcc", "g++"];
 
-	public int Compile(string path, bool llvmOnly, bool isShared, bool emitIr, string optLevel, bool checkOnly = false, bool runAfterCompile = false, bool verbose = false, bool emitLowered = false, string? noWarn = null, bool suppressWarnings = false, bool legacyVisibility = false, bool strictOption = false, bool noTbaa = false, string? targetOs = null, bool checkedFfiBounds = false, string format = "text", string configuration = BuildOutputLayout.DefaultConfiguration)
+	public int Compile(string path, bool llvmOnly, bool isShared, bool emitIr, string optLevel, bool checkOnly = false, bool runAfterCompile = false, bool verbose = false, bool emitLowered = false, string? noWarn = null, bool suppressWarnings = false, bool legacyVisibility = false, bool strictOption = false, bool noTbaa = false, string? targetOs = null, bool checkedFfiBounds = false, string format = "text", string configuration = BuildOutputLayout.DefaultConfiguration, bool useProjectReferencePackages = false)
 	{
 		configuration = BuildOutputLayout.NormalizeConfiguration(configuration);
 
@@ -44,7 +44,7 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 		CompilationProject project;
 		try
 		{
-			project = CompilationProject.Load(path, AppContext.BaseDirectory, isShared);
+			project = CompilationProject.Load(path, AppContext.BaseDirectory, isShared, mergeProjectReferences: !useProjectReferencePackages);
 		}
 		catch (Exception ex)
 		{
@@ -86,6 +86,33 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 			catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
 			{
 				reporter.ReportSynthetic(PackageDiagnosticIds.LockOutOfSync, "error", $"Failed to prepare package dependencies: {ex.Message}", path);
+				return 1;
+			}
+		}
+
+		if (!emitLowered && useProjectReferencePackages && project.ProjectReferences.Count > 0)
+		{
+			try
+			{
+				var projectReferenceArtifacts = ProjectReferenceArtifactLoader.Load(path, configuration);
+				packageArtifacts = packageArtifacts.Concat(projectReferenceArtifacts).ToArray();
+
+				if (verbose && !reporter.Exclusive)
+				{
+					Console.WriteLine("ProjectReference artifacts selected for build:");
+					foreach (var artifact in projectReferenceArtifacts)
+						Console.WriteLine($"  -> {artifact.PackageId}@{artifact.Version}: {artifact.BitcodePath}");
+					Console.WriteLine();
+				}
+			}
+			catch (PackageException ex)
+			{
+				reporter.ReportSynthetic(ex.Code, "error", ex.Message, path);
+				return 1;
+			}
+			catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
+			{
+				reporter.ReportSynthetic(null, "error", $"Failed to prepare ProjectReference artifacts: {ex.Message}", path);
 				return 1;
 			}
 		}

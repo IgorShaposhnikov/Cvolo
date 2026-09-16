@@ -84,6 +84,20 @@ internal sealed class BuildCommand : Command
 					return;
 				}
 
+				var useProjectReferenceArtifacts = false;
+				if (incremental is { } graphBuild && buildPlan is not null)
+				{
+					var projectReferences = ProjectReferenceBuildPipeline.Prepare(
+						graphBuild.Graph,
+						buildPlan,
+						graphBuild.BuildKey,
+						graphBuild.Configuration,
+						parseResult.GetValue(verboseOption));
+					useProjectReferenceArtifacts = projectReferences.UseArtifacts;
+					if (parseResult.GetValue(verboseOption) && projectReferences.UseArtifacts)
+						Console.WriteLine($"ProjectReference artifacts: {projectReferences.BuiltProjects} built, {projectReferences.ReusedProjects} reused.\n");
+				}
+
 				if (LibraryBuildPipeline.TryBuild(path, isShared, llvmOnly, emitIrVal, emitLoweredVal, parseResult.GetValue(verboseOption), configurationVal, out var packageResult))
 				{
 					if (incremental is { } libraryBuild)
@@ -91,12 +105,13 @@ internal sealed class BuildCommand : Command
 						IncrementalBuildState.Record(libraryBuild.Graph, libraryBuild.BuildKey, packageResult!.OutputPath, libraryBuild.Configuration);
 						ProjectBuildPlan.RecordSuccessful(libraryBuild.Graph, libraryBuild.BuildKey, libraryBuild.Configuration);
 					}
+
 					Console.WriteLine($"Built {packageResult!.PackageId} {packageResult.Version} -> {packageResult.OutputPath}");
 					Environment.Exit(0);
 					return;
 				}
 
-				var exitCode = _compilerDriver.Compile(path, llvmOnly, isShared, emitIrVal, optLevel, emitLowered: emitLoweredVal, noWarn: noWarnVal, legacyVisibility: legacyVisibilityVal, strictOption: strictOptionVal, noTbaa: noTbaaVal, targetOs: targetOsVal, checkedFfiBounds: checkedFfiBoundsVal, configuration: configurationVal);
+				var exitCode = _compilerDriver.Compile(path, llvmOnly, isShared, emitIrVal, optLevel, emitLowered: emitLoweredVal, noWarn: noWarnVal, legacyVisibility: legacyVisibilityVal, strictOption: strictOptionVal, noTbaa: noTbaaVal, targetOs: targetOsVal, checkedFfiBounds: checkedFfiBoundsVal, configuration: configurationVal, useProjectReferencePackages: useProjectReferenceArtifacts);
 				if (exitCode == 0 && incremental is { } compiledBuild)
 				{
 					IncrementalBuildState.Record(compiledBuild.Graph, compiledBuild.BuildKey, compiledBuild.OutputPath, compiledBuild.Configuration);
