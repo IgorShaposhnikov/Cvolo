@@ -123,6 +123,8 @@ internal static class PackCompilation
 		// 2. Parse.
 		var binder = new Binder();
 		var asts = new List<CompilationUnitSyntax>();
+		var projectUnits = new HashSet<CompilationUnitSyntax>();
+		var projectFileSet = projectFiles.ToHashSet(StringComparer.OrdinalIgnoreCase);
 		ISyntaxParser parser = new AntlrSyntaxParser();
 		CompilationContext? firstContext = null;
 
@@ -142,6 +144,8 @@ internal static class PackCompilation
 			}
 
 			asts.Add(ast!);
+			if (projectFileSet.Contains(file))
+				projectUnits.Add(ast!);
 			binder.Context.FileContexts[ast!] = context;
 		}
 
@@ -171,6 +175,9 @@ internal static class PackCompilation
 					binder.Context.FileContexts.Remove(ast);
 				}
 
+				if (projectUnits.Remove(ast))
+					projectUnits.Add(currentAst);
+
 				loweredAsts.Add(currentAst);
 			}
 		}
@@ -185,6 +192,14 @@ internal static class PackCompilation
 		binder.Context.LegacyVisibility = false;
 		binder.Context.StrictOption = effectiveStrictOption;
 		binder.Bind(asts);
+
+		// Capture ownership while symbol DeclaringUnit still points at the post-rewrite,
+		// pre-foreach units in projectUnits. The foreach lowering below replaces AST
+		// instances, so classifying package globals after that point would lose provenance.
+		var packageGlobalDefinitions = binder.Context.GlobalVariables
+			.Where(entry => entry.Symbol.DeclaringUnit is not null && projectUnits.Contains(entry.Symbol.DeclaringUnit))
+			.Select(entry => entry.Symbol.QualifiedGlobalName)
+			.ToHashSet(StringComparer.Ordinal);
 
 		if (binder.Diagnostics.HasErrors)
 		{
@@ -207,6 +222,9 @@ internal static class PackCompilation
 					binder.Context.FileContexts.Remove(ast);
 				}
 
+				if (projectUnits.Remove(ast))
+					projectUnits.Add(expanded);
+
 				expandedAsts.Add(expanded);
 			}
 
@@ -223,24 +241,38 @@ internal static class PackCompilation
 				"Program does not contain a static 'main' method suitable for an entry point.");
 		}
 
-		// 7. Emit LLVM IR.
+		// 7. Emit LLVM IR for the package's own units only. The standard library is
+		// present above for parsing/binding, but its definitions belong to the final
+		// consumer compilation. Emitting stdlib bodies into every .cvlib makes the
+		// linker see duplicate System.* symbols when package bitcode is combined with
+		// an application that also compiles the standard library.
+		var packagedProjectUnits = asts.Where(projectUnits.Contains).ToArray();
+		if (packagedProjectUnits.Length == 0)
+			throw new InvalidOperationException("No project compilation units remained after lowering.");
+
 		var targetLayout = new TargetLayout();
 		var optimizer = new IrOptimizer(targetLayout, OptimizationLevel.Os);
 		var irVerifier = new IRVerifier(Path.Combine(manifest.ProjectDirectory, "obj", "Debug"));
-		using var emitter = new CodeGenerator("cvolo_module", targetLayout, optimizer, irVerifier, enableTbaa: true, checkedFfiBounds: false);
-		var ir = emitter.Emit(asts, firstContext!, binder.Context);
+		using var emitter = new CodeGenerator(
+			"cvolo_module",
+			targetLayout,
+			optimizer,
+			irVerifier,
+			enableTbaa: true,
+			checkedFfiBounds: false,
+			definedGlobalNames: packageGlobalDefinitions);
 
-		var projectFileSet = projectFiles.ToHashSet(StringComparer.OrdinalIgnoreCase);
-		var projectUnits = asts
-			.Where(ast => binder.Context.FileContexts.TryGetValue(ast, out var context) && projectFileSet.Contains(context.FilePath))
-			.ToArray();
+		var emitContext = binder.Context.FileContexts.TryGetValue(packagedProjectUnits[0], out var projectContext)
+			? projectContext
+			: firstContext!;
+		var ir = emitter.Emit(packagedProjectUnits, emitContext, binder.Context);
 
 		// 8. Materialize the scratch workspace.
 		var workspace = Directory.CreateTempSubdirectory("cvolopack-").FullName;
 		var llPath = Path.Combine(workspace, "module.ll");
 		File.WriteAllText(llPath, ir, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 
-		return new PackCompileResult(ir, llPath, projectFiles, projectUnits, workspace);
+		return new PackCompileResult(ir, llPath, projectFiles, packagedProjectUnits, workspace);
 	}
 
 	private static IReadOnlyList<string> FindStdlibFiles()

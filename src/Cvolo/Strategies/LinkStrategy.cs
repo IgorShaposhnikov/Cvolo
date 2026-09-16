@@ -100,13 +100,16 @@ internal sealed class LinkStrategy(string binDirectory) : ICompilationStrategy
 			Console.WriteLine($"Linking using: {linkerName}...");
 		}
 
-		// Configure ProcessStartInfo to redirect and suppress standard output and standard error if not in verbose mode
+		// Always capture linker output, including verbose builds. Tests and IDE callers
+		// redirect Console.Out/Error, but cannot capture a child process that inherits the
+		// terminal directly. Keeping both pipes redirected also avoids losing the actual
+		// LLVM/linker diagnostic when a package bitcode link fails.
 		var psi = new ProcessStartInfo
 		{
 			FileName = linkerPath,
 			Arguments = $"-o \"{binaryPath}\" \"{llPath}\"{packageInputFlags}{typeFlag}{visibilityFlag}{optFlag}{libraryFlags}{subsystemFlag}",
-			RedirectStandardOutput = !verbose,
-			RedirectStandardError = !verbose,
+			RedirectStandardOutput = true,
+			RedirectStandardError = true,
 			UseShellExecute = false,
 			CreateNoWindow = !verbose
 		};
@@ -118,15 +121,10 @@ internal sealed class LinkStrategy(string binDirectory) : ICompilationStrategy
 			return 1;
 		}
 
-		Task<string>? stdoutTask = null;
-		Task<string>? stderrTask = null;
-		if (!verbose)
-		{
-			// Drain both redirected streams concurrently. Waiting before reading stderr can
-			// deadlock if clang fills its pipe while reporting a large LLVM/linker error.
-			stdoutTask = linkResult.StandardOutput.ReadToEndAsync();
-			stderrTask = linkResult.StandardError.ReadToEndAsync();
-		}
+		// Drain both redirected streams concurrently. Waiting before reading stderr can
+		// deadlock if clang fills its pipe while reporting a large LLVM/linker error.
+		var stdoutTask = linkResult.StandardOutput.ReadToEndAsync();
+		var stderrTask = linkResult.StandardError.ReadToEndAsync();
 
 		const int linkerTimeoutMilliseconds = 60_000;
 		if (!linkResult.WaitForExit(linkerTimeoutMilliseconds))
@@ -136,32 +134,47 @@ internal sealed class LinkStrategy(string binDirectory) : ICompilationStrategy
 			return 1;
 		}
 
-		if (stdoutTask is not null && stderrTask is not null)
-			Task.WaitAll(stdoutTask, stderrTask);
+		Task.WaitAll(stdoutTask, stderrTask);
+		var linkerStdout = stdoutTask.Result;
+		var linkerStderr = stderrTask.Result;
 
 		if (linkResult.ExitCode == 0)
 		{
 			if (verbose)
 			{
+				if (!string.IsNullOrWhiteSpace(linkerStdout))
+					Console.Write(linkerStdout);
+				if (!string.IsNullOrWhiteSpace(linkerStderr))
+					Console.Error.Write(linkerStderr);
 				Console.WriteLine($"Built: {binaryPath}");
 			}
 
 			return 0;
 		}
 
-		// Fallback: If linking failed, print Clang's actual errors even in silent mode so the developer knows what went wrong!
-		if (!verbose)
+		if (nativeLibraries is not null && nativeLibraries.Any() && LooksLikeMissingNativeLibrary(linkerStderr))
 		{
-			var errors = stderrTask?.Result ?? string.Empty;
-			if (nativeLibraries is not null && nativeLibraries.Any())
-			{
-				Console.Error.WriteLine($"Compile Error {DiagnosticIds.NativeLibraryUnresolved}: A native library requested via [LibraryImport] could not be resolved by the linker.");
-			}
-			Console.Error.WriteLine("Linking failed:");
-			Console.Error.WriteLine(errors);
+			Console.Error.WriteLine($"Compile Error {DiagnosticIds.NativeLibraryUnresolved}: A native library requested via [LibraryImport] could not be resolved by the linker.");
 		}
+		Console.Error.WriteLine("Linking failed:");
+		if (!string.IsNullOrWhiteSpace(linkerStdout))
+			Console.Error.Write(linkerStdout);
+		Console.Error.WriteLine(linkerStderr);
 
 		return 1;
+	}
+
+	private static bool LooksLikeMissingNativeLibrary(string stderr)
+	{
+		if (string.IsNullOrWhiteSpace(stderr))
+			return false;
+
+		return stderr.Contains("unable to find library", StringComparison.OrdinalIgnoreCase)
+			|| stderr.Contains("library not found", StringComparison.OrdinalIgnoreCase)
+			|| stderr.Contains("cannot find -l", StringComparison.OrdinalIgnoreCase)
+			|| stderr.Contains("could not open", StringComparison.OrdinalIgnoreCase)
+			|| stderr.Contains("cannot open file", StringComparison.OrdinalIgnoreCase)
+			|| stderr.Contains("no such file or directory", StringComparison.OrdinalIgnoreCase);
 	}
 
 	private static string ResolveTargetOs(string? targetOs)

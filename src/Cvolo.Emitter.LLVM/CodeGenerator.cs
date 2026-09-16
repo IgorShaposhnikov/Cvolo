@@ -52,6 +52,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	private int _typeofCounter;
 	private readonly HashSet<string> _exportedSymbols = [];
 	private readonly bool _checkedFfiBounds;
+	private readonly IReadOnlySet<string>? _definedGlobalNames;
 	private readonly Stack<LoopContext> _loopContextStack = [];
 
 	// Break targets for switch frames: an unlabeled `break;` inside a switch case exits the
@@ -87,7 +88,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		LLVMSharp.Interop.LLVM.InitializeAllAsmPrinters();
 	}
 
-	public CodeGenerator(string moduleName, TargetLayout targetLayout, ILLVMOptimizer? optimizer = null, IRVerifier? irVerifier = null, bool enableTbaa = true, bool checkedFfiBounds = false)
+	public CodeGenerator(string moduleName, TargetLayout targetLayout, ILLVMOptimizer? optimizer = null, IRVerifier? irVerifier = null, bool enableTbaa = true, bool checkedFfiBounds = false, IReadOnlySet<string>? definedGlobalNames = null)
 	{
 		_context = LLVMContextRef.Global;
 		_module = _context.CreateModuleWithName(moduleName);
@@ -96,6 +97,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		_irVerifier = irVerifier;
 		_enableTbaa = enableTbaa;
 		_checkedFfiBounds = checkedFfiBounds;
+		_definedGlobalNames = definedGlobalNames;
 
 		targetLayout.Apply(_module, LLVMTargetRef.DefaultTriple);
 	}
@@ -193,16 +195,32 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 			var llvmType = GetLLVMType(globalSymbol.Type);
 			var globalRef = _module.AddGlobal(llvmType, qualifiedName);
-			globalRef.IsGlobalConstant = !globalSymbol.IsMutable;
-			var isExternalPackageGlobal = globalSymbol.DeclaringUnit is not null
+			var importedPackageGlobal = globalSymbol.DeclaringUnit is not null
 				&& bindingContext.ExternalPackageUnits.Contains(globalSymbol.DeclaringUnit);
-			var isStandardLibraryGlobal = IsStandardLibraryUnit(globalSymbol.DeclaringUnit);
-			var isPackageTemplateGlobal = IsPackageTemplateUnit(globalSymbol.DeclaringUnit);
-			globalRef.Linkage = isExternalPackageGlobal || (globalSymbol.Visibility == Visibility.Public && !isStandardLibraryGlobal && !isPackageTemplateGlobal)
-				? LLVMLinkage.LLVMExternalLinkage
-				: LLVMLinkage.LLVMInternalLinkage;
-			if (!isExternalPackageGlobal)
+			var defineHere = !importedPackageGlobal
+				&& (_definedGlobalNames is null || _definedGlobalNames.Contains(qualifiedName));
+
+			globalRef.IsGlobalConstant = !globalSymbol.IsMutable;
+			if (defineHere)
+			{
+				// PackCompilation supplies _definedGlobalNames when producing Sector 3.
+				// Public package globals are part of the Cvolo package surface, so they
+				// must remain externally visible to the consumer module. Ordinary builds
+				// keep the historical internal linkage for their own data segment.
+				globalRef.Linkage = _definedGlobalNames is not null && globalSymbol.Visibility == Visibility.Public
+					? LLVMLinkage.LLVMExternalLinkage
+					: LLVMLinkage.LLVMInternalLinkage;
 				globalRef.Initializer = BuildGlobalInitializer(globalSymbol.Type, globalNode.Initializer, llvmType);
+			}
+			else
+			{
+				// Two kinds of globals are declarations only:
+				//  * stdlib globals while producing Sector 3 (the final consumer owns them), and
+				//  * globals imported from a package API in a consumer compilation (Sector 3 owns them).
+				// Neither may get a local zero initializer here, otherwise a package global such
+				// as Foo.Bias silently shadows the real definition from the linked package.
+				globalRef.Linkage = LLVMLinkage.LLVMExternalLinkage;
+			}
 			_globalVariables[qualifiedName] = globalRef;
 			_globalVariableTypes[qualifiedName] = globalSymbol.Type;
 
@@ -361,6 +379,8 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 		foreach (var unit in units)
 		{
+			// Package API units are declarations only. Their implementations live in
+			// Sector 3 bitcode and are linked after this module is emitted.
 			if (bindingContext.ExternalPackageUnits.Contains(unit))
 				continue;
 
@@ -650,15 +670,25 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 		var llvmFunc = _module.AddFunction(emitName, funcType);
 
-		if (emitName != "main" && declaredSymbol is FunctionSymbol functionSymbol
-			&& !IsPackageTemplateUnit(functionSymbol.DeclaringUnit)
-			&& !IsStandardLibraryUnit(functionSymbol.DeclaringUnit)
-			&& (functionSymbol.Visibility == Visibility.Public || functionSymbol.IsNeverInline))
+		if (emitName != "main" && !func.HasBody)
 		{
-			// Public Cvolo functions are package/module symbols. They need external LLVM
-			// linkage so a consumer module can bind an ordinary Cvolo call to Sector 3
-			// bitcode without introducing a C ABI wrapper. Standard-library symbols stay
-			// internal because every module already compiles its own stdlib copy.
+			// Bodyless Cvolo declarations imported from a package are resolved by the
+			// package's Sector 3 bitcode at link time. LLVM requires declarations
+			// without a body to have external (or weak) linkage.
+			llvmFunc.Linkage = LLVMLinkage.LLVMExternalLinkage;
+		}
+		else if (emitName != "main" && _definedGlobalNames is not null && func.Visibility == Visibility.Public)
+		{
+			// Sector 3 is linked as a separate LLVM module. Public Cvolo package
+			// definitions therefore need external linkage so consumer declarations
+			// (created from Sector 1 metadata) can resolve to these bodies. Internal
+			// package helpers stay internal and cannot collide with other packages.
+			llvmFunc.Linkage = LLVMLinkage.LLVMExternalLinkage;
+		}
+		else if (emitName != "main" && declaredSymbol is FunctionSymbol { IsNeverInline: true })
+		{
+			// External linkage keeps the [NeverInline] function itself from being
+			// inlined or stripped by LLVM's optimizers; the symbol export is harmless.
 			llvmFunc.Linkage = LLVMLinkage.LLVMExternalLinkage;
 		}
 		else if (emitName != "main")
@@ -705,21 +735,6 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 		_globals[emitName] = llvmFunc;
 		_functionTypes[emitName] = funcType;
-	}
-
-	private bool IsPackageTemplateUnit(CompilationUnitSyntax? unit) =>
-		unit is not null && _bindingContext is not null && _bindingContext.PackageTemplateUnits.Contains(unit);
-
-	private bool IsStandardLibraryUnit(CompilationUnitSyntax? unit)
-	{
-		if (unit is null)
-			return false;
-
-		var filePath = _bindingContext is not null && _bindingContext.FileContexts.TryGetValue(unit, out var context)
-			? context.FilePath
-			: unit.Context.FilePath;
-		var path = filePath.Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar);
-		return path.Contains($"{Path.DirectorySeparatorChar}libraries{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase);
 	}
 
 	/// <summary>

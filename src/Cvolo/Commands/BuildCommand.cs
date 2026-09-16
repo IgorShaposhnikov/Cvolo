@@ -1,5 +1,6 @@
 using System.CommandLine;
 using Cvolo.Drivers;
+using Cvolo.Packaging;
 
 namespace Cvolo.Commands;
 
@@ -53,8 +54,23 @@ internal sealed class BuildCommand : Command
 			var targetOsVal = parseResult.GetValue(targetOption);
 			var checkedFfiBoundsVal = parseResult.GetValue(checkedFfiBoundsOption);
 
-			var exitCode = _compilerDriver.Compile(path, llvmOnly, isShared, emitIrVal, optLevel, emitLowered: emitLoweredVal, noWarn: noWarnVal, legacyVisibility: legacyVisibilityVal, strictOption: strictOptionVal, noTbaa: noTbaaVal, targetOs: targetOsVal, checkedFfiBounds: checkedFfiBoundsVal);
-			Environment.Exit(exitCode);
+			try
+			{
+				if (LibraryBuildPipeline.TryBuild(path, isShared, llvmOnly, emitIrVal, emitLoweredVal, parseResult.GetValue(verboseOption), out var packageResult))
+				{
+					Console.WriteLine($"Built {packageResult!.PackageId} {packageResult.Version} -> {packageResult.OutputPath}");
+					Environment.Exit(0);
+					return;
+				}
+
+				var exitCode = _compilerDriver.Compile(path, llvmOnly, isShared, emitIrVal, optLevel, emitLowered: emitLoweredVal, noWarn: noWarnVal, legacyVisibility: legacyVisibilityVal, strictOption: strictOptionVal, noTbaa: noTbaaVal, targetOs: targetOsVal, checkedFfiBounds: checkedFfiBoundsVal);
+				Environment.Exit(exitCode);
+			}
+			catch (Exception ex)
+			{
+				Console.Error.WriteLine($"error: {ex.Message}");
+				Environment.Exit(1);
+			}
 		});
 	}
 }
