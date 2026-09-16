@@ -18,11 +18,11 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      - name: Build solution
-        run: dotnet build src/Cvolo.slnx -c Release --nologo
+      - name: Build tooling (and transitive dependencies)
+        run: dotnet build src/Cvolo.Compiler.Tooling/Cvolo.Compiler.Tooling.csproj -c Release --nologo
 
       - name: Run tooling tests (boundary, artifact, consumer)
-        run: dotnet test src/Cvolo.Tests.Tooling/Cvolo.Tests.Tooling.csproj -c Release --no-build --nologo
+        run: dotnet test src/Cvolo.Tests.Tooling/Cvolo.Tests.Tooling.csproj -c Release --nologo
 
       - name: Upload tooling artifact bundle
         uses: actions/upload-artifact@v4
