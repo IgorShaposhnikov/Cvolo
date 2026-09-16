@@ -407,6 +407,76 @@ public sealed class LocalPackageManagerTests : IDisposable
 	}
 
 	[Fact]
+	public void Restore_MissingLock_ResolvesWritesAndInstallsTransitives()
+	{
+		var feedDir = Dir("restore-feed");
+		CreateArchive(feedDir, "Foo", "1.0.0");
+		CreateArchive(feedDir, "Foo", "1.2.0", [new PackageReference("Bar", "^2.0.0")]);
+		CreateArchive(feedDir, "Bar", "2.3.0");
+		var manifest = CreateProject("restore-app", feedDir, [new PackageReference("Foo", "1.*")]);
+		var cache = new PackageCache(Path.Combine(_root, "restore-cache"));
+		using var output = new StringWriter();
+		using var error = new StringWriter();
+		var command = new RestoreCommand(
+			new PackageRestoreService(new PackageInstaller(cache)),
+			() => manifest.ProjectDirectory,
+			output,
+			error);
+
+		var exitCode = command.Parse("").Invoke();
+
+		Assert.Equal(0, exitCode);
+		Assert.Empty(error.ToString());
+		var lockFile = LockFile.Read(LockFile.GetPath(manifest));
+		Assert.Equal("1.2.0", lockFile.Packages["Foo"].Resolved);
+		Assert.Equal("2.3.0", lockFile.Packages["Bar"].Resolved);
+		Assert.True(new PackageInstaller(cache).IsInstalled("Foo", "1.2.0"));
+		Assert.True(new PackageInstaller(cache).IsInstalled("Bar", "2.3.0"));
+		Assert.Contains("updated cvolo.lock.json", output.ToString(), StringComparison.OrdinalIgnoreCase);
+	}
+
+	[Fact]
+	public void Restore_InSyncLock_PreservesPreviouslyResolvedFloatingVersion()
+	{
+		var feedDir = Dir("restore-stable-feed");
+		CreateArchive(feedDir, "Foo", "1.0.0");
+		var manifest = CreateProject("restore-stable-app", feedDir, [new PackageReference("Foo", "1.*")]);
+		var cache = new PackageCache(Path.Combine(_root, "restore-stable-cache"));
+		var service = new PackageRestoreService(new PackageInstaller(cache));
+
+		var first = service.Restore(manifest);
+		Assert.True(first.LockFileUpdated);
+		Assert.Equal("1.0.0", LockFile.Read(first.LockFilePath).Packages["Foo"].Resolved);
+
+		CreateArchive(feedDir, "Foo", "1.9.0");
+		var second = service.Restore(manifest);
+
+		Assert.False(second.LockFileUpdated);
+		Assert.Equal("1.0.0", LockFile.Read(second.LockFilePath).Packages["Foo"].Resolved);
+		Assert.False(new PackageInstaller(cache).IsInstalled("Foo", "1.9.0"));
+	}
+
+	[Fact]
+	public void Restore_OutOfSyncLock_ReResolvesProjectRequirements()
+	{
+		var feedDir = Dir("restore-resolve-feed");
+		CreateArchive(feedDir, "Foo", "1.0.0");
+		CreateArchive(feedDir, "Foo", "2.0.0");
+		var manifest = CreateProject("restore-resolve-app", feedDir, [new PackageReference("Foo", "1.*")]);
+		var cache = new PackageCache(Path.Combine(_root, "restore-resolve-cache"));
+		var service = new PackageRestoreService(new PackageInstaller(cache));
+		service.Restore(manifest);
+
+		ProjectManifestWriter.AddPackageReference(manifest, "Foo", "2.*");
+		manifest = ProjectManifest.Load(manifest.ProjectPath);
+		var result = service.Restore(manifest);
+
+		Assert.True(result.LockFileUpdated);
+		Assert.Equal("2.0.0", LockFile.Read(result.LockFilePath).Packages["Foo"].Resolved);
+		Assert.True(new PackageInstaller(cache).IsInstalled("Foo", "2.0.0"));
+	}
+
+	[Fact]
 	public void PackageLockValidator_RejectsUnsatisfiedTransitiveDependency()
 	{
 		var manifest = CreateProject("lock-app", Dir("feed"), [new PackageReference("Foo", "1.0.0")]);

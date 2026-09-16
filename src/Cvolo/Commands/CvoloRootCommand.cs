@@ -11,6 +11,7 @@ internal sealed class CvoloRootCommand : RootCommand
 		RunCommand runCommand,
 		CheckCommand checkCommand,
 		CleanCommand cleanCommand,
+		RestoreCommand restoreCommand,
 		PackCommand packCommand,
 		PkgCommand pkgCommand)
 		: base("Cvolo Compiler - compiles C# syntax elegance to native optimized machine binaries.")
@@ -20,6 +21,7 @@ internal sealed class CvoloRootCommand : RootCommand
 		Add(runCommand);
 		Add(checkCommand);
 		Add(cleanCommand);
+		Add(restoreCommand);
 		Add(packCommand);
 		Add(pkgCommand);
 	}

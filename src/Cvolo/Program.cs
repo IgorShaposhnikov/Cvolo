@@ -12,6 +12,8 @@ services.AddSingleton<NewCommand>();
 services.AddSingleton<RunCommand>();
 services.AddSingleton<CheckCommand>();
 services.AddSingleton<CleanCommand>();
+services.AddSingleton<PackageRestoreService>();
+services.AddSingleton<RestoreCommand>();
 services.AddSingleton<PackCommand>();
 services.AddSingleton<PkgCommand>();
 services.AddSingleton<PackageCache>();
