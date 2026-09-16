@@ -1,0 +1,141 @@
+<Project>
+
+	<!--
+		Builds the RID-neutral Tooling artifact bundle (spec §13):
+		  artifacts/tooling/<ToolingVersion>/
+		    <runtime dlls>
+		    docs/README.md
+		    tooling.manifest.json
+		    SHA256SUMS.txt
+		The versioned directory is regenerated on every build, so hashes are deterministic for
+		a given bundle. Disable with -p:GenerateToolingArtifact=false.
+	-->
+
+	<PropertyGroup>
+		<ToolingArtifactDir Condition="'$(ToolingArtifactDir)' == ''">$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\..\'))artifacts\tooling\$(ToolingVersion)\</ToolingArtifactDir>
+	</PropertyGroup>
+
+	<UsingTask TaskName="WriteToolingManifest" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
+		<ParameterGroup>
+			<FilePath ParameterType="System.String" Required="true" />
+			<ToolingVersion ParameterType="System.String" Required="true" />
+			<CompatibilityLine ParameterType="System.String" Required="true" />
+			<CompilerVersion ParameterType="System.String" Required="true" />
+			<TargetFramework ParameterType="System.String" Required="true" />
+			<Commit ParameterType="System.String" Required="true" />
+		</ParameterGroup>
+		<Task>
+			<Code Type="Fragment" Language="cs">
+				<![CDATA[
+					string Esc(string value) => value.Replace("\\", "\\\\").Replace("\"", "\\\"");
+					string Field(string key, string value) => "  " + key + ": \"" + Esc(value) + "\"";
+					var json = "{\n" +
+						Field("\"ToolingVersion\"", ToolingVersion) + ",\n" +
+						Field("\"CompilerCompatibilityLine\"", CompatibilityLine) + ",\n" +
+						Field("\"BuiltFromCompilerVersion\"", CompilerVersion) + ",\n" +
+						Field("\"TargetFramework\"", TargetFramework) + ",\n" +
+						"  \"RuntimeIdentifier\": null,\n" +
+						Field("\"Commit\"", Commit) + "\n" +
+						"}\n";
+					System.IO.File.WriteAllText(FilePath, json, new System.Text.UTF8Encoding(false));
+					Log.LogMessage(MessageImportance.Low, "Wrote manifest " + FilePath);
+				]]>
+			</Code>
+		</Task>
+	</UsingTask>
+
+	<UsingTask TaskName="WriteToolingSums" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
+		<ParameterGroup>
+			<ArtifactDir ParameterType="System.String" Required="true" />
+			<SumsFileName ParameterType="System.String" Required="true" />
+		</ParameterGroup>
+		<Task>
+			<Code Type="Fragment" Language="cs">
+				<![CDATA[
+					string Rel(string full, string root)
+					{
+						var rootParts = root.TrimEnd(new[] { '\\', '/' }).Split(new[] { '\\', '/' }, System.StringSplitOptions.RemoveEmptyEntries);
+						var fullParts = full.TrimEnd(new[] { '\\', '/' }).Split(new[] { '\\', '/' }, System.StringSplitOptions.RemoveEmptyEntries);
+						var i = 0;
+						while (i < rootParts.Length && i < fullParts.Length && System.String.Equals(rootParts[i], fullParts[i], System.StringComparison.OrdinalIgnoreCase))
+							i++;
+						var parts = new System.Collections.Generic.List<string>();
+						for (var k = i; k < rootParts.Length; k++)
+							parts.Add("..");
+						for (var k = i; k < fullParts.Length; k++)
+							parts.Add(fullParts[k]);
+						return System.String.Join("/", parts.ToArray());
+					}
+
+					var root = System.IO.Path.GetFullPath(ArtifactDir);
+					var files = System.IO.Directory.GetFiles(root, "*", System.IO.SearchOption.AllDirectories);
+					var entries = new System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, string>>();
+					using (var sha = System.Security.Cryptography.SHA256.Create())
+					{
+						foreach (var file in files)
+						{
+							if (System.String.Equals(System.IO.Path.GetFileName(file), SumsFileName, System.StringComparison.Ordinal))
+								continue;
+							var hash = System.BitConverter.ToString(sha.ComputeHash(System.IO.File.ReadAllBytes(file))).Replace("-", "").ToLowerInvariant();
+							entries.Add(new System.Collections.Generic.KeyValuePair<string, string>(Rel(file, root), hash));
+						}
+					}
+					entries.Sort((a, b) => System.StringComparer.Ordinal.Compare(a.Key, b.Key));
+					var lines = new System.Collections.Generic.List<string>();
+					foreach (var entry in entries)
+						lines.Add(entry.Value + "  " + entry.Key);
+					System.IO.File.WriteAllText(System.IO.Path.Combine(root, SumsFileName), System.String.Join("\n", lines.ToArray()) + "\n", new System.Text.UTF8Encoding(false));
+					Log.LogMessage(MessageImportance.Low, "Wrote " + SumsFileName + " with " + lines.Count + " entries");
+				]]>
+			</Code>
+		</Task>
+	</UsingTask>
+
+	<Target Name="GenerateToolingArtifact" AfterTargets="Build" Condition="'$(GenerateToolingArtifact)' != 'false'">
+		<PropertyGroup>
+			<_RepoRoot>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\..'))</_RepoRoot>
+			<_ToolingCommitExplicit>$(ToolingCommit)</_ToolingCommitExplicit>
+		</PropertyGroup>
+
+		<Exec Condition="'$(_ToolingCommitExplicit)' == ''"
+		      Command="git -C &quot;$(_RepoRoot)&quot; rev-parse HEAD"
+		      WorkingDirectory="$(_RepoRoot)"
+		      ConsoleToMSBuild="true"
+		      IgnoreExitCode="true"
+		      StandardOutputImportance="low">
+			<Output TaskParameter="ConsoleOutput" PropertyName="_ToolingCommitFromGit" />
+		</Exec>
+
+		<PropertyGroup>
+			<_ToolingCommitFinal Condition="'$(_ToolingCommitExplicit)' != ''">$(_ToolingCommitExplicit)</_ToolingCommitFinal>
+			<_ToolingCommitFinal Condition="'$(_ToolingCommitFinal)' == '' and '$(_ToolingCommitFromGit)' != ''">$(_ToolingCommitFromGit)</_ToolingCommitFinal>
+			<_ToolingCommitFinal Condition="'$(_ToolingCommitFinal)' == ''">unknown</_ToolingCommitFinal>
+		</PropertyGroup>
+
+		<RemoveDir Directories="$(ToolingArtifactDir)" />
+		<MakeDir Directories="$(ToolingArtifactDir)" />
+
+		<ItemGroup>
+			<_ToolingBuildDlls Include="$(TargetDir)*.dll" />
+		</ItemGroup>
+		<Copy SourceFiles="@(_ToolingBuildDlls)" DestinationFolder="$(ToolingArtifactDir)" />
+
+		<ItemGroup>
+			<_ToolingDocFiles Include="$(MSBuildThisFileDirectory)docs\**\*" />
+		</ItemGroup>
+		<Copy SourceFiles="@(_ToolingDocFiles)"
+		      DestinationFiles="@(_ToolingDocFiles->'$(ToolingArtifactDir)docs\%(RecursiveDir)%(Filename)%(Extension)')" />
+
+		<WriteToolingManifest FilePath="$(ToolingArtifactDir)tooling.manifest.json"
+		                      ToolingVersion="$(ToolingVersion)"
+		                      CompatibilityLine="$(CompilerCompatibilityLine)"
+		                      CompilerVersion="$(CvoloCompilerVersion)"
+		                      TargetFramework="$(TargetFramework)"
+		                      Commit="$(_ToolingCommitFinal)" />
+
+		<WriteToolingSums ArtifactDir="$(ToolingArtifactDir)" SumsFileName="SHA256SUMS.txt" />
+
+		<Message Importance="high" Text="Tooling artifact bundle generated -> $(ToolingArtifactDir)" />
+	</Target>
+
+</Project>

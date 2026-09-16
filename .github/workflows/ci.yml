@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  build-and-verify-tooling:
+    name: Build + Tooling boundary checks
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Build solution
+        run: dotnet build src/Cvolo.slnx -c Release --nologo
+
+      - name: Run tooling tests (boundary, artifact, consumer)
+        run: dotnet test src/Cvolo.Tests.Tooling/Cvolo.Tests.Tooling.csproj -c Release --no-build --nologo
+
+      - name: Upload tooling artifact bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: tooling-artifact
+          path: artifacts/tooling/**
+          if-no-files-found: error

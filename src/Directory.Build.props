@@ -4,4 +4,15 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
+
+  <PropertyGroup>
+    <!--
+      Tooling artifact version metadata (spec §13.2 / §14).
+      Patch increments only when a new Tooling artifact is released; the major/minor line
+      tracks the Cvolo compiler compatibility line. All values are overridable via -p:Name=...
+    -->
+    <ToolingVersion Condition="'$(ToolingVersion)' == ''">0.0.1</ToolingVersion>
+    <CompilerCompatibilityLine Condition="'$(CompilerCompatibilityLine)' == ''">0.0</CompilerCompatibilityLine>
+    <CvoloCompilerVersion Condition="'$(CvoloCompilerVersion)' == ''">0.0.4</CvoloCompilerVersion>
+  </PropertyGroup>
 </Project>

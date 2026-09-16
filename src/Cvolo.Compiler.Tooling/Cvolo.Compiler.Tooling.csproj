@@ -1,7 +1,8 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
 	<PropertyGroup>
 		<RootNamespace>Cvolo.Compiler.Tooling</RootNamespace>
+		<CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
 	</PropertyGroup>
 
 	<ItemGroup>
@@ -9,7 +10,9 @@
 		<ProjectReference Include="..\Cvolo.Syntax\Cvolo.Syntax.csproj" />
 		<ProjectReference Include="..\Cvolo.Syntax.Antlr\Cvolo.Syntax.Antlr.csproj" />
 		<ProjectReference Include="..\Cvolo.Analysis\Cvolo.Analysis.csproj" />
-		<ProjectReference Include="..\Cvolo.Packaging\Cvolo.Packaging.csproj" />
+		<PackageReference Include="Antlr4.Runtime.Standard" />
 	</ItemGroup>
+
+	<Import Project="Tooling.Artifact.targets" />
 
 </Project>

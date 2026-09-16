@@ -22,4 +22,8 @@
 	<ItemGroup>
 		<ProjectReference Include="..\Cvolo.Compiler.Tooling\Cvolo.Compiler.Tooling.csproj" />
 	</ItemGroup>
+
+	<ItemGroup>
+		<AssemblyMetadata Include="ToolingVersion" Value="$(ToolingVersion)" />
+	</ItemGroup>
 </Project>

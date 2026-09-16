@@ -1,10 +1,8 @@
-using Cvolo.Packaging;
-
 namespace Cvolo.Compiler.Tooling.Internal;
 
 /// <summary>
-/// Internal bridge over the packaging layer's project graph: resolves a project input path to
-/// the set of source documents while keeping compiler types out of the public boundary.
+/// Internal bridge over local project loading: resolves a project input path to
+/// the set of source documents while keeping compiler/packaging types out of the public boundary.
 /// </summary>
 internal static class CompilerProjectAdapter
 {
@@ -58,15 +56,6 @@ internal static class CompilerProjectAdapter
 
 	private static List<string> DiscoverFromProjectFile(string projectFilePath)
 	{
-		if (!ProjectGraph.TryLoad(projectFilePath, out var graph) || graph is null)
-			return [];
-
-		var files = new List<string>();
-		foreach (var node in graph.Nodes)
-		{
-			files.AddRange(node.SourceFiles);
-		}
-
-		return files.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+		return ProjectFileLoader.DiscoverSourceFiles(projectFilePath);
 	}
 }
