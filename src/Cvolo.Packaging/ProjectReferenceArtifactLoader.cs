@@ -92,6 +92,7 @@ public static class ProjectReferenceArtifactLoader
 				objectPath,
 				bitcodePath,
 				apiMetadata,
+				apiMetadata.NativeLibraries,
 				templateUnits,
 				[],
 				UsesSourceFallback: false);

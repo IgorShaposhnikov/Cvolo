@@ -84,7 +84,7 @@ public sealed class ProjectGraph
 				Visit(referencePath);
 			}
 
-			var node = new ProjectGraphNode(projectPath, EnumerateProjectSources(projectDirectory).ToArray(), references);
+			var node = new ProjectGraphNode(projectPath, EnumerateProjectSources(projectDirectory, references).ToArray(), references);
 			visited.Add(projectPath, node);
 			ordered.Add(node); // dependency-first because each ProjectReference is visited first.
 			stack.RemoveAt(stack.Count - 1);
@@ -110,14 +110,34 @@ public sealed class ProjectGraph
 		return candidates.SingleOrDefault();
 	}
 
-	private static IEnumerable<string> EnumerateProjectSources(string projectDirectory)
+	private static IEnumerable<string> EnumerateProjectSources(string projectDirectory, IReadOnlyList<string> projectReferences)
 	{
+		var referenceDirectories = projectReferences
+			.Select(Path.GetDirectoryName)
+			.Where(path => !string.IsNullOrWhiteSpace(path))
+			.Select(path => Path.GetFullPath(path!))
+			.ToArray();
+
 		return Directory.EnumerateFiles(projectDirectory, "*.*", SearchOption.AllDirectories)
 			.Where(path => string.Equals(Path.GetExtension(path), ".cvl", StringComparison.OrdinalIgnoreCase)
 				|| string.Equals(Path.GetExtension(path), ".cv", StringComparison.OrdinalIgnoreCase))
 			.Where(path => !IsGeneratedPath(projectDirectory, path))
+			.Where(path => !IsUnderProjectReference(path, referenceDirectories))
 			.Select(Path.GetFullPath)
 			.OrderBy(path => Normalize(Path.GetRelativePath(projectDirectory, path)), StringComparer.Ordinal);
+	}
+
+	private static bool IsUnderProjectReference(string path, IReadOnlyList<string> referenceDirectories)
+	{
+		var fullPath = Path.GetFullPath(path);
+		foreach (var referenceDirectory in referenceDirectories)
+		{
+			var relative = Path.GetRelativePath(referenceDirectory, fullPath);
+			if (relative.Length > 0 && relative[0] != '.' && !Path.IsPathRooted(relative))
+				return true;
+		}
+
+		return false;
 	}
 
 	private static bool IsGeneratedPath(string projectDirectory, string path)

@@ -1,4 +1,5 @@
 using Cvolo.Core.Packages;
+using Cvolo.Analysis.Symbols.FFI;
 
 namespace Cvolo.Packaging;
 
@@ -13,6 +14,7 @@ public sealed record ResolvedPackageArtifacts(
 	string? NativeObjectPath,
 	string? BitcodePath,
 	PackageApiMetadata ApiMetadata,
+	IReadOnlyList<NativeLibraryInfo> NativeLibraries,
 	IReadOnlyList<Cvolo.Core.AST.Base.CompilationUnitSyntax> TemplateUnits,
 	IReadOnlyList<Cvolo.Core.AST.Base.CompilationUnitSyntax> SourceFallbackUnits,
 	bool UsesSourceFallback);
@@ -22,16 +24,10 @@ public sealed record ResolvedPackageArtifacts(
 /// verifies it at build start, and extracts deterministic host artifacts into a
 /// project-local build directory.
 /// </summary>
-public sealed class PackageDependencyLoader
+public sealed class PackageDependencyLoader(PackageCache cache, PackageInstaller installer)
 {
-	private readonly PackageCache _cache;
-	private readonly PackageInstaller _installer;
-
-	public PackageDependencyLoader(PackageCache cache, PackageInstaller installer)
-	{
-		_cache = cache ?? throw new ArgumentNullException(nameof(cache));
-		_installer = installer ?? throw new ArgumentNullException(nameof(installer));
-	}
+	private readonly PackageCache _cache = cache ?? throw new ArgumentNullException(nameof(cache));
+	private readonly PackageInstaller _installer = installer ?? throw new ArgumentNullException(nameof(installer));
 
 	public IReadOnlyList<ResolvedPackageArtifacts> Load(ProjectManifest manifest, LockFile lockFile)
 	{
@@ -110,7 +106,7 @@ public sealed class PackageDependencyLoader
 				}
 
 				return new ResolvedPackageArtifacts(
-					packageId, locked.Resolved, null, null, new PackageApiMetadata(), [], fallbackUnits, UsesSourceFallback: true);
+					packageId, locked.Resolved, null, null, new PackageApiMetadata(), [], [], fallbackUnits, UsesSourceFallback: true);
 			}
 
 			var apiMetadata = PackageApiMetadata.Read(archive);
@@ -130,7 +126,7 @@ public sealed class PackageDependencyLoader
 			}
 
 			return new ResolvedPackageArtifacts(
-				packageId, locked.Resolved, objectPath, bitcodePath, apiMetadata, templateUnits, [], UsesSourceFallback: false);
+				packageId, locked.Resolved, objectPath, bitcodePath, apiMetadata, apiMetadata.NativeLibraries, templateUnits, [], UsesSourceFallback: false);
 		}
 		catch (CvlFormatException ex)
 		{

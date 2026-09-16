@@ -111,12 +111,13 @@ internal sealed class BuildCommand : Command
 					return;
 				}
 
-				var exitCode = _compilerDriver.Compile(path, llvmOnly, isShared, emitIrVal, optLevel, emitLowered: emitLoweredVal, noWarn: noWarnVal, legacyVisibility: legacyVisibilityVal, strictOption: strictOptionVal, noTbaa: noTbaaVal, targetOs: targetOsVal, checkedFfiBounds: checkedFfiBoundsVal, configuration: configurationVal, useProjectReferencePackages: useProjectReferenceArtifacts);
+				var exitCode = _compilerDriver.Compile(path, llvmOnly, isShared, emitIrVal, optLevel, emitLowered: emitLoweredVal, noWarn: noWarnVal, verbose: parseResult.GetValue(verboseOption), legacyVisibility: legacyVisibilityVal, strictOption: strictOptionVal, noTbaa: noTbaaVal, targetOs: targetOsVal, checkedFfiBounds: checkedFfiBoundsVal, configuration: configurationVal, useProjectReferencePackages: useProjectReferenceArtifacts);
 				if (exitCode == 0 && incremental is { } compiledBuild)
 				{
 					IncrementalBuildState.Record(compiledBuild.Graph, compiledBuild.BuildKey, compiledBuild.OutputPath, compiledBuild.Configuration);
 					ProjectBuildPlan.RecordSuccessful(compiledBuild.Graph, compiledBuild.BuildKey, compiledBuild.Configuration);
 				}
+
 				Environment.Exit(exitCode);
 			}
 			catch (PackageException ex)

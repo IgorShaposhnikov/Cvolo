@@ -117,6 +117,16 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 			}
 		}
 
+		if (packageArtifacts.Count > 1)
+		{
+			packageArtifacts = packageArtifacts
+				.DistinctBy(artifact => (
+					artifact.PackageId,
+					artifact.Version,
+					BitcodePath: artifact.BitcodePath is null ? string.Empty : Path.GetFullPath(artifact.BitcodePath)))
+				.ToArray();
+		}
+
 		// 2. Instrument compiled files list only under verbose logging rules.
 		// Machine reporters claim stdout, so verbose chatter is gated on !Exclusive.
 		if (verbose && !checkOnly && !reporter.Exclusive)
@@ -396,7 +406,9 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 			.Select(a => a.PackageId)
 			.ToHashSet(StringComparer.OrdinalIgnoreCase);
 		var nativeLibraries = binder.Context.NativeLibraries.Values
+			.Concat(packageArtifacts.SelectMany(artifact => artifact.NativeLibraries))
 			.Where(library => !packageIds.Contains(library.LibraryName))
+			.DistinctBy(library => library.LibraryName, StringComparer.OrdinalIgnoreCase)
 			.ToArray();
 
 		var linkResult = strategy.Execute(

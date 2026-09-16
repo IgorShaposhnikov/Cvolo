@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Cvolo.Analysis.Symbols.FFI;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
 using Cvolo.Core.AST.Directives;
@@ -19,6 +20,7 @@ public sealed class PackageApiMetadata
 
 	public string Format { get; init; } = FormatId;
 	public IReadOnlyList<PackageApiUnit> Units { get; init; } = [];
+	public IReadOnlyList<NativeLibraryInfo> NativeLibraries { get; init; } = [];
 
 	public static PackageApiMetadata FromCompilationUnits(IEnumerable<CompilationUnitSyntax> units)
 	{
@@ -96,8 +98,81 @@ public sealed class PackageApiMetadata
 			});
 		}
 
-		return new PackageApiMetadata { Units = apiUnits };
+		return new PackageApiMetadata
+		{
+			Units = NormalizeUnits(apiUnits),
+			NativeLibraries = CollectNativeLibraries(compilationUnits)
+		};
 	}
+
+	private static IReadOnlyList<NativeLibraryInfo> CollectNativeLibraries(IEnumerable<CompilationUnitSyntax> units)
+	{
+		var libraries = new Dictionary<string, NativeLibraryInfo>(StringComparer.Ordinal);
+		foreach (var unit in units)
+		{
+			var ns = unit.NamespaceDeclaration;
+			var members = ns is null ? unit.Members : ns.Members;
+			foreach (var block in members.OfType<ExternBlockSyntax>())
+			{
+				foreach (var attr in block.Attributes.Where(attribute => string.Equals(attribute.Name, "LibraryImport", StringComparison.Ordinal)))
+				{
+					var libraryName = ExtractStringArgument(attr, null);
+					if (string.IsNullOrWhiteSpace(libraryName))
+						continue;
+
+					libraries[libraryName] = new NativeLibraryInfo(
+						libraryName,
+						ExtractStringArgument(attr, "win"),
+						ExtractStringArgument(attr, "linux"),
+						ExtractStringArgument(attr, "mac"));
+				}
+			}
+		}
+
+		return libraries.Values.ToArray();
+	}
+
+	private static string? ExtractStringArgument(AttributeSyntax attr, string? name)
+	{
+		for (var i = 0; i < attr.Arguments.Count; i++)
+		{
+			var argumentName = attr.ArgumentNames.Count > i ? attr.ArgumentNames[i] : null;
+			if (!string.Equals(argumentName, name, StringComparison.Ordinal))
+				continue;
+
+			return attr.Arguments[i] is StringLiteralExpressionSyntax literal ? literal.Value : null;
+		}
+
+		return null;
+	}
+
+	private static IReadOnlyList<PackageApiUnit> NormalizeUnits(IReadOnlyList<PackageApiUnit> units) => units
+		.GroupBy(unit => (
+			unit.Namespace,
+			FileUsings: string.Join("\u001f", unit.FileUsings),
+			NamespaceUsings: string.Join("\u001f", unit.NamespaceUsings)))
+		.Select(group => new PackageApiUnit
+		{
+			Namespace = group.Key.Namespace,
+			FileUsings = group.First().FileUsings,
+			NamespaceUsings = group.First().NamespaceUsings,
+			Functions = group.SelectMany(unit => unit.Functions)
+				.DistinctBy(function => (
+					function.Name,
+					Parameters: string.Join("\u001f", function.Parameters.Select(parameter => parameter.Type)),
+					function.Modifier))
+				.ToArray(),
+			Structs = group.SelectMany(unit => unit.Structs)
+				.DistinctBy(type => type.Name)
+				.ToArray(),
+			Enums = group.SelectMany(unit => unit.Enums)
+				.DistinctBy(type => type.Name)
+				.ToArray(),
+			Globals = group.SelectMany(unit => unit.Globals)
+				.DistinctBy(global => global.Name)
+				.ToArray()
+		})
+		.ToArray();
 
 	public byte[] Serialize() => JsonSerializer.SerializeToUtf8Bytes(this);
 
