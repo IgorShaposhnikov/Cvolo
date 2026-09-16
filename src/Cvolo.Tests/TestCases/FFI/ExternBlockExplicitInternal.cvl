@@ -1,0 +1,5 @@
+namespace Test.Native;
+
+extern "C" {
+	internal int Init();
+}

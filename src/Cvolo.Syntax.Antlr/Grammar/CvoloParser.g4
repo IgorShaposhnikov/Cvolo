@@ -87,7 +87,7 @@ callingConvention
 	;
 
 externBlockFunction
-	: attributeList* returnType Identifier LPAREN externParameterList? RPAREN SEMI
+	: attributeList* visibilityModifier? returnType Identifier LPAREN externParameterList? RPAREN SEMI
 	;
 
 exposeExternExportDeclaration

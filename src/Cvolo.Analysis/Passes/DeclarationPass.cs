@@ -1544,7 +1544,8 @@ public sealed class DeclarationPass(BindingContext context)
 		if (libraryName is not null)
 			context.NativeLibraries[libraryName] = new NativeLibraryInfo(libraryName, winPath, linuxPath, macPath);
 
-		// Same visibility rule as standalone externs: the block's visibility propagates to its functions.
+		// Legacy block-level public externs are still rejected; function declarations inside
+		// the block use their own visibility, defaulting to internal.
 		if (!context.LegacyVisibility && block.Visibility == Visibility.Public)
 		{
 			ReportDeclarationDiagnostic(block,
@@ -1558,7 +1559,16 @@ public sealed class DeclarationPass(BindingContext context)
 
 	private void DeclareExternBlockFunction(ExternBlockSyntax block, ExternBlockFunctionSyntax fn, string convention, string? libraryName, string? winPath, string? linuxPath, string? macPath)
 	{
-		context.SymbolUnits[fn.Name] = context.CurrentUnit!;
+		var mangledName = context.GetMangledName(fn.Name, context.CurrentNamespace);
+
+		if (!context.LegacyVisibility && fn.SyntacticVisibility == Visibility.Public)
+		{
+			ReportDeclarationDiagnostic(fn,
+				"Extern block function declarations cannot be marked public. Wrap foreign symbols in a safe, standard public Cvolo routine to expose them across package boundaries.",
+				DiagnosticIds.PublicExtern);
+		}
+
+		context.SymbolUnits[mangledName] = context.CurrentUnit!;
 		var returnType = context.ResolveType(fn.ReturnType);
 		if (returnType is null)
 		{
@@ -1579,7 +1589,7 @@ public sealed class DeclarationPass(BindingContext context)
 			parameters.Add(new ParameterSymbol(param.Name, paramType));
 		}
 
-		var existing = context.Globals.Lookup(fn.Name);
+		var existing = context.Globals.Lookup(mangledName);
 		if (existing is not null)
 		{
 			// If the existing symbol is also an extern, we can safely ignore the duplicate declaration
@@ -1623,9 +1633,9 @@ public sealed class DeclarationPass(BindingContext context)
 
 		// Extern block functions are never name-mangled; their symbol name IS the native name
 		// unless [ImportName] overrides it (ImportName ?? Name).
-		var newSymbol = new FunctionSymbol(fn.Name, returnType, parameters, isExtern: true, isVariadic: fn.IsVariadic)
+		var newSymbol = new FunctionSymbol(mangledName, returnType, parameters, isExtern: true, isVariadic: fn.IsVariadic)
 		{
-			Visibility = block.Visibility,
+			Visibility = fn.Visibility,
 			DeclaringUnit = context.CurrentUnit,
 			ImportName = importName,
 			LibraryName = libraryName,
@@ -1637,10 +1647,10 @@ public sealed class DeclarationPass(BindingContext context)
 		context.Globals.Declare(newSymbol);
 
 		// Keep candidates registered for lookup under the unmangled name
-		if (!context.OverloadedFunctions.TryGetValue(fn.Name, out var candidates))
+		if (!context.OverloadedFunctions.TryGetValue(mangledName, out var candidates))
 		{
 			candidates = [];
-			context.OverloadedFunctions[fn.Name] = candidates;
+			context.OverloadedFunctions[mangledName] = candidates;
 		}
 
 		candidates.Add(newSymbol);

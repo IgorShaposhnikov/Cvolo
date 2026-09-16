@@ -1,0 +1,6 @@
+namespace Test.Native;
+
+extern "C" {
+	[ImportName("native_init")]
+	internal int Init();
+}

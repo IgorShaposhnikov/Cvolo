@@ -237,7 +237,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			}
 		}
 
-		return new ExternBlockFunctionSyntax(SpanOf(context), returnType, name, parameters, isVariadic, BuildAttributeList(context.attributeList()));
+		return new ExternBlockFunctionSyntax(SpanOf(context), returnType, name, parameters, isVariadic, BuildAttributeList(context.attributeList()), GetVisibilityModifier(context.visibilityModifier()));
 	}
 
 	private ExposeExternBlockSyntax BuildExposeExternBlockDeclaration(CvoloParser.ExposeExternBlockDeclarationContext context)

@@ -1,5 +1,5 @@
-using Cvolo.Core.Packages;
 using Cvolo.Analysis.Symbols.FFI;
+using Cvolo.Core.Packages;
 
 namespace Cvolo.Packaging;
 

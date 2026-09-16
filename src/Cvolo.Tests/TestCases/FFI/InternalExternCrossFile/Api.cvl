@@ -1,0 +1,5 @@
+namespace Test;
+
+internal int Add(int a, int b) {
+	return Test.Native.NativeAdd(a, b);
+}

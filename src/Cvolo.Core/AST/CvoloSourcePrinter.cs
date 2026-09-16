@@ -293,13 +293,15 @@ public sealed class CvoloSourcePrinter
 				var exbFns = string.Join("", exb.Functions.Select(fn =>
 				{
 					var fnParms = string.Join(", ", fn.Parameters.Select(Print)) + (fn.IsVariadic ? ", ..." : "");
-					return $"{ind}    {fn.ReturnType} {fn.Name}({fnParms});\n";
+					var visibility = fn.SyntacticVisibility is null ? "" : $"{fn.Visibility.ToString().ToLowerInvariant()} ";
+					return $"{ind}    {visibility}{fn.ReturnType} {fn.Name}({fnParms});\n";
 				}));
 				return $"{PrintAttributes(exb.Attributes, indent)}\n{ind}extern {(exb.CallingConvention != null ? $"{exb.CallingConvention} " : "")}{{\n{exbFns}{ind}}}\n";
 
 			case ExternBlockFunctionSyntax exbf:
 				var exbfParms = string.Join(", ", exbf.Parameters.Select(Print)) + (exbf.IsVariadic ? ", ..." : "");
-				return $"{ind}{exbf.ReturnType} {exbf.Name}({exbfParms});\n";
+				var exbfVisibility = exbf.SyntacticVisibility is null ? "" : $"{exbf.Visibility.ToString().ToLowerInvariant()} ";
+				return $"{ind}{exbfVisibility}{exbf.ReturnType} {exbf.Name}({exbfParms});\n";
 
 			case ExposeExternBlockSyntax expeb:
 				var expebFns = string.Join("", expeb.Functions.Select(fn => Print(fn, indent + 1)));

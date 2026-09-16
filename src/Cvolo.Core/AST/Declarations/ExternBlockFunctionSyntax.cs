@@ -13,7 +13,8 @@ public sealed class ExternBlockFunctionSyntax(
 	string name,
 	IReadOnlyList<ParameterSyntax> parameters,
 	bool isVariadic,
-	IReadOnlyList<AttributeSyntax> attributes) : SyntaxNode(span)
+	IReadOnlyList<AttributeSyntax> attributes,
+	Visibility? visibility = null) : SyntaxNode(span)
 {
 	public override SyntaxKind Kind => SyntaxKind.ExternBlockFunction;
 
@@ -22,6 +23,8 @@ public sealed class ExternBlockFunctionSyntax(
 	public IReadOnlyList<ParameterSyntax> Parameters { get; } = parameters;
 	public bool IsVariadic { get; } = isVariadic;
 	public IReadOnlyList<AttributeSyntax> Attributes { get; } = attributes;
+	public Visibility Visibility { get; } = visibility ?? Visibility.Internal;
+	public Visibility? SyntacticVisibility { get; } = visibility;
 
 	public override IEnumerable<SyntaxNode> GetChildren() => Parameters.Cast<SyntaxNode>().Concat(Attributes);
 }

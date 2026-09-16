@@ -252,10 +252,11 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 					case ExternBlockSyntax extBlock:
 						foreach (var fn in extBlock.Functions)
 						{
-							var funcSym = _bindingContext!.Globals.Lookup(fn.Name) as FunctionSymbol;
+							var sourceName = bindingContext.GetMangledName(fn.Name, ns);
+							var funcSym = _bindingContext!.Globals.Lookup(sourceName) as FunctionSymbol;
 							if (funcSym is null)
 								continue;
-							_astExternBlockFunctions[fn.Name] = fn;
+							_astExternBlockFunctions[sourceName] = fn;
 							DeclareExternBlockFunction(fn, funcSym);
 						}
 						break;
@@ -591,12 +592,12 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	private void DeclareExternBlockFunction(ExternBlockFunctionSyntax fn, FunctionSymbol symbol)
 	{
 		// Deduplicate: If this extern block function has already been declared, return early.
-		if (_globals.ContainsKey(fn.Name))
+		if (_globals.ContainsKey(symbol.Name))
 			return;
 
 		var returnTypeSymbol = _bindingContext!.ResolveType(fn.ReturnType)!;
 		var returnType = GetLLVMType(returnTypeSymbol);
-		_functionReturnTypes[fn.Name] = returnTypeSymbol;
+		_functionReturnTypes[symbol.Name] = returnTypeSymbol;
 
 		var paramTypes = new List<LLVMTypeRef>();
 		var paramSymbols = new List<TypeSymbol>();
@@ -607,7 +608,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			paramSymbols.Add(paramTypeSymbol);
 		}
 
-		_functionParameterTypes[fn.Name] = paramSymbols;
+		_functionParameterTypes[symbol.Name] = paramSymbols;
 
 		var funcType = fn.IsVariadic
 			? LLVMTypeRef.CreateFunction(returnType, [.. paramTypes], IsVarArg: true)
@@ -621,8 +622,8 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		func.FunctionCallConv = symbol.CallingConvention == "system"
 			? (uint)LLVMCallConv.LLVMX86StdcallCallConv
 			: (uint)LLVMCallConv.LLVMCCallConv;
-		_globals[fn.Name] = func;
-		_functionTypes[fn.Name] = funcType;
+		_globals[symbol.Name] = func;
+		_functionTypes[symbol.Name] = funcType;
 	}
 
 	private void DeclareFunction(FunctionDeclarationSyntax func, string emitName)
