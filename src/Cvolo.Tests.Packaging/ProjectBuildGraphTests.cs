@@ -25,6 +25,36 @@ public sealed class ProjectBuildGraphTests : IDisposable
 	}
 
 	[Fact]
+	public void ProjectGraph_ExposesCanonicalDependencyFirstTraversal()
+	{
+		var common = CreateProject("CommonGraph", "namespace CommonGraph; public int Value() { return 42; }");
+		var left = CreateProject("LeftGraph", "namespace LeftGraph; public int Value() { return 1; }", common);
+		var right = CreateProject("RightGraph", "namespace RightGraph; public int Value() { return 2; }", common);
+		var app = CreateProject("GraphApp", "int main() { return 0; }", left, right);
+
+		var graph = ProjectGraph.Load(app);
+
+		Assert.Equal(4, graph.Nodes.Count);
+		Assert.Equal(Path.GetFullPath(common), graph.Nodes[0].ProjectPath);
+		Assert.Equal(Path.GetFullPath(app), graph.Root.ProjectPath);
+		Assert.Equal(Path.GetFullPath(app), graph.Nodes[^1].ProjectPath);
+		Assert.Single(graph.Nodes.Where(node => string.Equals(node.ProjectPath, Path.GetFullPath(common), StringComparison.OrdinalIgnoreCase)));
+	}
+
+	[Fact]
+	public void ProjectBuildGraph_UsesCanonicalProjectGraphOrdering()
+	{
+		var library = CreateProject("CanonicalLib", "namespace CanonicalLib; public int Value() { return 7; }");
+		var app = CreateProject("CanonicalApp", "int main() { return 0; }", library);
+
+		var projectGraph = ProjectGraph.Load(app);
+		var buildGraph = ProjectBuildGraph.Load(app);
+
+		Assert.Equal(projectGraph.Nodes.Select(node => node.ProjectPath), buildGraph.Nodes.Select(node => node.ProjectPath));
+		Assert.Equal(projectGraph.Nodes.SelectMany(node => node.SourceFiles), buildGraph.Nodes.SelectMany(node => node.SourceFiles));
+	}
+
+	[Fact]
 	public void Fingerprint_ChangesWhenTransitiveProjectSourceChanges()
 	{
 		var library = CreateProject("Library", "namespace Library; public int Value() { return 1; }");

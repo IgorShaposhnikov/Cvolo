@@ -24,6 +24,24 @@ public sealed class ProjectReferenceIntegrationTests : IDisposable
 	}
 
 	[Fact]
+	public void CompilationProject_UsesCanonicalProjectGraphForReferencesAndSources()
+	{
+		var (appDirectory, _, _, _) = CreateTransitiveProjectGraph();
+		var graph = ProjectGraph.Load(appDirectory);
+		var project = CompilationProject.Load(appDirectory, compilerBaseDir: _root);
+
+		var expectedReferences = graph.Nodes
+			.Where(node => !string.Equals(node.ProjectPath, graph.RootProjectPath, StringComparison.OrdinalIgnoreCase))
+			.Select(node => node.ProjectPath)
+			.ToHashSet(StringComparer.OrdinalIgnoreCase);
+		Assert.Equal(expectedReferences.Count, project.ProjectReferences.Count);
+		Assert.All(project.ProjectReferences, reference => Assert.Contains(reference, expectedReferences));
+
+		var graphSources = graph.Nodes.SelectMany(node => node.SourceFiles).ToHashSet(StringComparer.OrdinalIgnoreCase);
+		Assert.All(graphSources, source => Assert.Contains(project.SourceFiles, candidate => string.Equals(candidate, source, StringComparison.OrdinalIgnoreCase)));
+	}
+
+	[Fact]
 	public void Build_AppWithDirectProjectReference_NeedsNoPackFeedCacheOrLock()
 	{
 		RequireClang();
