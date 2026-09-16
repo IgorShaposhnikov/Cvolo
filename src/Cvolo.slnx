@@ -8,6 +8,7 @@
   <Folder Name="/docs/">
     <File Path="../docs/COMPILATION.md" />
     <File Path="../docs/GRAMMAR.md" />
+    <File Path="../README.md" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="Cvolo.Tests.Packages/Cvolo.Tests.Packages.csproj" />
@@ -16,13 +17,13 @@
     <Project Path="Cvolo.Tests/Cvolo.Tests.csproj" Id="40873693-d69b-43fe-8615-aa2341c4fd06" />
   </Folder>
   <Project Path="Cvolo.Analysis/Cvolo.Analysis.csproj" />
-  <Project Path="Cvolo.Core/Cvolo.Core.csproj" />
-  <Project Path="Cvolo.Core.Packages/Cvolo.Core.Packages.csproj" />
-  <Project Path="Cvolo.Packaging/Cvolo.Packaging.csproj" />
-  <Project Path="Cvolo.Emitter.LLVM/Cvolo.Emitter.LLVM.csproj" />
-  <Project Path="Cvolo.Syntax/Cvolo.Syntax.csproj" />
-  <Project Path="Cvolo.Syntax.Antlr/Cvolo.Syntax.Antlr.csproj" />
-  <Project Path="Cvolo/Cvolo.csproj" />
-  <Project Path="Cvolo.CLI.Packages/Cvolo.CLI.Packages.csproj" />
   <Project Path="Cvolo.Benchmarks/Cvolo.Benchmarks.csproj" />
+  <Project Path="Cvolo.CLI.Packages/Cvolo.CLI.Packages.csproj" />
+  <Project Path="Cvolo.Core.Packages/Cvolo.Core.Packages.csproj" />
+  <Project Path="Cvolo.Core/Cvolo.Core.csproj" />
+  <Project Path="Cvolo.Emitter.LLVM/Cvolo.Emitter.LLVM.csproj" />
+  <Project Path="Cvolo.Packaging/Cvolo.Packaging.csproj" />
+  <Project Path="Cvolo.Syntax.Antlr/Cvolo.Syntax.Antlr.csproj" />
+  <Project Path="Cvolo.Syntax/Cvolo.Syntax.csproj" />
+  <Project Path="Cvolo/Cvolo.csproj" />
 </Solution>
