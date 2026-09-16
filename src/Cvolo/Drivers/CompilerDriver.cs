@@ -466,7 +466,7 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 		var lockPath = LockFile.GetPath(manifest);
 		if (!File.Exists(lockPath))
 		{
-			ReportLockOutOfSync(reporter, path, "cvolo.lock.json is missing; run 'cvolo pkg update' or 'cvolo pkg install'.");
+			ReportLockOutOfSync(reporter, path, "cvolo.lock.json is missing; run 'cvolo restore' or build/run without '--no-restore'.");
 			valid = false;
 			return null;
 		}
@@ -476,7 +476,7 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 			var lockFile = LockFile.Read(lockPath);
 			if (!PackageLockValidator.Validate(manifest, lockFile, out var message))
 			{
-				ReportLockOutOfSync(reporter, path, message);
+				ReportLockOutOfSync(reporter, path, $"{message} Run 'cvolo restore' or build/run without '--no-restore'.");
 				valid = false;
 				return null;
 			}

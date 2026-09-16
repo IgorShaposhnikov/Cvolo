@@ -8,9 +8,11 @@ namespace Cvolo.Commands;
 internal sealed class BuildCommand : Command
 {
 	private readonly ICompilerDriver _compilerDriver;
-	public BuildCommand(ICompilerDriver compilerDriver) : base("build", "Compiles Cvolo project files into target binaries.")
+	private readonly PackageBuildRestoreService _buildRestore;
+	public BuildCommand(ICompilerDriver compilerDriver, PackageBuildRestoreService buildRestore) : base("build", "Compiles Cvolo project files into target binaries.")
 	{
 		_compilerDriver = compilerDriver;
+		_buildRestore = buildRestore;
 
 		var pathArg = new Argument<string>("path") { Description = "The path to the Cvolo source file, directory, or .cvlproj file." };
 		var llvmOption = new Option<bool>("--llvm") { Description = "Generate .ll LLVM IR only (no linking)" };
@@ -26,6 +28,7 @@ internal sealed class BuildCommand : Command
 		var targetOption = new Option<string>("--target") { Description = "Target OS for native library resolution (host, windows, linux, macos). Controls which win:/linux:/mac: [LibraryImport] path is forwarded to the linker." };
 		var checkedFfiBoundsOption = new Option<bool>("--checked-ffi-bounds") { Description = "Generate explicit null-check prologues in expose extern functions for debug builds" };
 		var configurationOption = new Option<string>("--configuration", "-c", BuildOutputLayout.DefaultConfiguration) { Description = "Build configuration (Debug or Release)." };
+		var noRestoreOption = new Option<bool>("--no-restore") { Description = "Do not restore package dependencies before building; require an existing in-sync lock and cache." };
 
 		Add(pathArg);
 		Add(llvmOption);
@@ -41,6 +44,7 @@ internal sealed class BuildCommand : Command
 		Add(targetOption);
 		Add(checkedFfiBoundsOption);
 		Add(configurationOption);
+		Add(noRestoreOption);
 
 		SetAction((ParseResult parseResult) =>
 		{
@@ -57,9 +61,13 @@ internal sealed class BuildCommand : Command
 			var targetOsVal = parseResult.GetValue(targetOption);
 			var checkedFfiBoundsVal = parseResult.GetValue(checkedFfiBoundsOption);
 			var configurationVal = BuildOutputLayout.NormalizeConfiguration(parseResult.GetValue(configurationOption) ?? BuildOutputLayout.DefaultConfiguration);
+			var noRestoreVal = parseResult.GetValue(noRestoreOption);
 
 			try
 			{
+				var restore = _buildRestore.RestoreIfRequired(path, noRestoreVal);
+				PrintRestoreSummary(restore, parseResult.GetValue(verboseOption));
+
 				var incremental = TryPrepareIncrementalBuild(
 					path, isShared, llvmOnly, emitIrVal, emitLoweredVal, optLevel, noWarnVal,
 					legacyVisibilityVal, strictOptionVal, noTbaaVal, targetOsVal, checkedFfiBoundsVal, configurationVal);
@@ -84,12 +92,34 @@ internal sealed class BuildCommand : Command
 					IncrementalBuildState.Record(compiledBuild.Graph, compiledBuild.BuildKey, compiledBuild.OutputPath, compiledBuild.Configuration);
 				Environment.Exit(exitCode);
 			}
+			catch (PackageException ex)
+			{
+				Console.Error.WriteLine($"error {ex.Code}: {ex.Message}");
+				if (!string.IsNullOrWhiteSpace(ex.Detail))
+					Console.Error.WriteLine(ex.Detail);
+				Environment.Exit(1);
+			}
 			catch (Exception ex)
 			{
 				Console.Error.WriteLine($"error: {ex.Message}");
 				Environment.Exit(1);
 			}
 		});
+	}
+
+	private static void PrintRestoreSummary(RestoreResult? restore, bool verbose)
+	{
+		if (restore is null)
+			return;
+
+		if (restore.LockFileUpdated || restore.InstalledPackages > 0)
+		{
+			Console.WriteLine($"Restored packages: {restore.InstalledPackages} installed, {restore.CachedPackages} cached.");
+			return;
+		}
+
+		if (verbose)
+			Console.WriteLine("Restore up-to-date.");
 	}
 
 	private static IncrementalBuild? TryPrepareIncrementalBuild(
