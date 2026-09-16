@@ -30,3 +30,51 @@ jobs:
           name: tooling-artifact
           path: artifacts/tooling/**
           if-no-files-found: error
+
+  compiler-and-package-tests:
+    name: Compiler + package tests
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Ensure clang toolkit on PATH
+        shell: pwsh
+        run: |
+          if (-not (Get-Command clang -ErrorAction SilentlyContinue)) {
+            choco install llvm -y --no-progress
+            $llvm = Join-Path $env:ProgramFiles 'LLVM\bin'
+            Write-Output $llvm | Out-File -Append $env:GITHUB_PATH
+          }
+          clang --version
+
+      - name: Build solution (Release)
+        run: dotnet build src/Cvolo.slnx -c Release --nologo
+
+      - name: Run Cvolo.Tests
+        run: dotnet test src/Cvolo.Tests/Cvolo.Tests.csproj -c Release --no-build --nologo -- RunConfiguration.TestSessionTimeout=1800000
+
+      - name: Run Cvolo.Tests.Std
+        run: dotnet test src/Cvolo.Tests.Std/Cvolo.Tests.Std.csproj -c Release --no-build --nologo -- RunConfiguration.TestSessionTimeout=1800000
+
+      - name: Run Cvolo.Tests.Packaging
+        run: dotnet test src/Cvolo.Tests.Packaging/Cvolo.Tests.Packaging.csproj -c Release --no-build --nologo -- RunConfiguration.TestSessionTimeout=1800000
+
+      - name: Run Cvolo.Tests.Packages
+        run: dotnet test src/Cvolo.Tests.Packages/Cvolo.Tests.Packages.csproj -c Release --no-build --nologo -- RunConfiguration.TestSessionTimeout=1800000
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compiler-test-results
+          path: |
+            **/TestResults/**
+            **/*.trx
+          if-no-files-found: ignore

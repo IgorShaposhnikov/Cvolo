@@ -21,15 +21,19 @@
 	</ItemGroup>
 
 	<!-- Windows x64 Tooling (Only copied when building for Windows) -->
-	<ItemGroup Condition=" '$(RuntimeIdentifier)' == 'win-x64' Or '$(RuntimeIdentifier)' == '' ">
+	<ItemGroup Condition=" ('$(RuntimeIdentifier)' == 'win-x64' Or '$(RuntimeIdentifier)' == '') And Exists('tooling\win-x64\clang.exe') ">
 		<None Include="tooling\win-x64\clang.exe" CopyToOutputDirectory="PreserveNewest" Link="clang.exe" Visible="False" />
 		<None Include="tooling\win-x64\lld-link.exe" CopyToOutputDirectory="PreserveNewest" Link="lld-link.exe" Visible="False" />
+	</ItemGroup>
+	<ItemGroup Condition=" '$(RuntimeIdentifier)' == 'win-x64' Or '$(RuntimeIdentifier)' == '' ">
 		<None Include="..\..\libraries\**\*" CopyToOutputDirectory="PreserveNewest" Link="libraries\%(RecursiveDir)%(Filename)%(Extension)" Visible="False" />
 	</ItemGroup>
 	
 	<!-- Linux x64 Tooling (Only copied when building for Linux) -->
-	<ItemGroup Condition=" '$(RuntimeIdentifier)' == 'linux-x64' ">
+	<ItemGroup Condition=" '$(RuntimeIdentifier)' == 'linux-x64' And Exists('tooling\linux-x64\clang') ">
 		<None Include="tooling\linux-x64\clang" CopyToOutputDirectory="PreserveNewest" Link="clang" Visible="False" />
+	</ItemGroup>
+	<ItemGroup Condition=" '$(RuntimeIdentifier)' == 'linux-x64' ">
 		<None Include="..\..\libraries\**\*" CopyToOutputDirectory="PreserveNewest" Link="libraries\%(RecursiveDir)%(Filename)%(Extension)" Visible="False" />
 	</ItemGroup>
 
