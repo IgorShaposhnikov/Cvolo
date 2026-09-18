@@ -129,10 +129,21 @@ internal sealed class BuildCommand : Command
 			}
 			catch (Exception ex)
 			{
-				Console.Error.WriteLine($"error: {ex.Message}");
+				Console.Error.WriteLine($"error: {DescribeException(ex)}");
 				Environment.Exit(1);
 			}
 		});
+	}
+
+	private static string DescribeException(Exception exception)
+	{
+		var message = new System.Text.StringBuilder(exception.Message);
+		for (var inner = exception.InnerException; inner is not null; inner = inner.InnerException)
+		{
+			message.Append(" -> ").Append(inner.Message);
+		}
+
+		return message.ToString();
 	}
 
 	private static void PrintProjectBuildPlan(ProjectBuildPlan plan)
