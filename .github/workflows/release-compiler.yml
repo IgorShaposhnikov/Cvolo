@@ -202,7 +202,7 @@ jobs:
             if ($manifest.publishMode -cne 'native-aot-single-file') { throw "Manifest publishMode mismatch for $rid" }
             if ($manifest.compilerCompatibilityLine -cne '${{ needs.validate.outputs.compatibilityLine }}') { throw "Manifest compilerCompatibilityLine mismatch for $rid" }
             $expectedEntrypoint = if ($rid -eq 'win-x64') { 'Cvolo.exe' } else { 'Cvolo' }
-            if ($manifest.entrypoint -cne $expectedEntrypoint) { throw "Manifest entrypoint mismatch for $rid: expected '$expectedEntrypoint', got '$($manifest.entrypoint)'" }
+            if ($manifest.entrypoint -cne $expectedEntrypoint) { throw "Manifest entrypoint mismatch for ${rid}: expected '$expectedEntrypoint', got '$($manifest.entrypoint)'" }
             if ($null -eq $manifest.files -or @($manifest.files).Count -eq 0) { throw "Manifest files list is empty for $rid" }
 
             $archives += Get-Item -LiteralPath $archivePath
