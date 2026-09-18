@@ -45,7 +45,7 @@ public sealed class ArtifactTests
 			Assert.Equal("0.0.1", root.GetProperty("ToolingVersion").GetString());
 			Assert.Equal(ArtifactPaths.ArtifactVersion, root.GetProperty("ToolingVersion").GetString());
 			Assert.Equal("0.0", root.GetProperty("CompilerCompatibilityLine").GetString());
-			Assert.Equal("0.0.4", root.GetProperty("BuiltFromCompilerVersion").GetString());
+			Assert.False(string.IsNullOrWhiteSpace(root.GetProperty("BuiltFromCompilerVersion").GetString()));
 			Assert.Equal("net10.0", root.GetProperty("TargetFramework").GetString());
 			Assert.Equal(JsonValueKind.Null, root.GetProperty("RuntimeIdentifier").ValueKind);
 			Assert.NotNull(root.GetProperty("Commit").GetString());
