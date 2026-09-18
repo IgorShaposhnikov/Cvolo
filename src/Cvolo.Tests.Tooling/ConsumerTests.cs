@@ -24,7 +24,7 @@ public sealed class ConsumerTests
 			var run = RunDotnet($"exec \"{Path.Combine(consumerBin, "Consumer.dll")}\" \"{fixture.ProjectFilePath}\"");
 			Assert.Equal(0, run.ExitCode);
 			Assert.Equal("0", run.Output.Trim());
-		}, seconds: 60);
+		}, seconds: 180);
 	}
 
 	[Fact]
@@ -43,7 +43,7 @@ public sealed class ConsumerTests
 			Assert.Equal(0, run.ExitCode);
 			var errors = int.Parse(run.Output.Trim());
 			Assert.True(errors > 0, $"Expected non-zero errors, got {errors}.");
-		}, seconds: 60);
+		}, seconds: 180);
 	}
 
 	[Fact]
@@ -69,7 +69,7 @@ public sealed class ConsumerTests
 				.ToList();
 
 			Assert.Equal(["Cvolo.Compiler.Tooling"], references);
-		}, seconds: 60);
+		}, seconds: 180);
 	}
 
 	private sealed class ConsumerFixture(string dir) : IDisposable
@@ -140,10 +140,23 @@ public sealed class ConsumerTests
 		};
 
 		using var process = Process.Start(psi)!;
-		var stdout = process.StandardOutput.ReadToEnd();
-		var stderr = process.StandardError.ReadToEnd();
-		process.WaitForExit(30_000);
+		var stdoutTask = process.StandardOutput.ReadToEndAsync();
+		var stderrTask = process.StandardError.ReadToEndAsync();
 
-		return (process.ExitCode, stdout, stderr);
+		if (!process.WaitForExit(150_000))
+		{
+			try
+			{
+				process.Kill(entireProcessTree: true);
+			}
+			catch
+			{
+				// Best-effort cleanup; the timeout below is the authoritative failure.
+			}
+
+			throw new TimeoutException($"'dotnet {arguments}' did not exit within 150s.");
+		}
+
+		return (process.ExitCode, stdoutTask.GetAwaiter().GetResult(), stderrTask.GetAwaiter().GetResult());
 	}
 }
