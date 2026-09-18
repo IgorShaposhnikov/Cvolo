@@ -2,10 +2,15 @@
 
 	<PropertyGroup>
 		<OutputType>Exe</OutputType>
+		<InformationalVersion>$(Version)</InformationalVersion>
+		<IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
 	</PropertyGroup>
 
 	<ItemGroup>
-		<PackageReference Include="libLLVM.runtime.win-x64" />
+		<PackageReference Include="libLLVM.runtime.win-x64" Condition="'$(RuntimeIdentifier)' == 'win-x64' Or '$(RuntimeIdentifier)' == ''" />
+		<PackageReference Include="libLLVM.runtime.linux-x64" Condition="'$(RuntimeIdentifier)' == 'linux-x64'" />
+		<PackageReference Include="libLLVM.runtime.linux-arm64" Condition="'$(RuntimeIdentifier)' == 'linux-arm64'" />
+		<PackageReference Include="libLLVM.runtime.osx-arm64" Condition="'$(RuntimeIdentifier)' == 'osx-arm64'" />
 		<PackageReference Include="LLVMSharp" />
 		<PackageReference Include="Microsoft.Extensions.DependencyInjection" />
 		<PackageReference Include="System.CommandLine" />
@@ -20,21 +25,27 @@
 		<ProjectReference Include="..\Cvolo.CLI.Packages\Cvolo.CLI.Packages.csproj" />
 	</ItemGroup>
 
-	<!-- Windows x64 Tooling (Only copied when building for Windows) -->
-	<ItemGroup Condition=" ('$(RuntimeIdentifier)' == 'win-x64' Or '$(RuntimeIdentifier)' == '') And Exists('tooling\win-x64\clang.exe') ">
-		<None Include="tooling\win-x64\clang.exe" CopyToOutputDirectory="PreserveNewest" Link="clang.exe" Visible="False" />
-		<None Include="tooling\win-x64\lld-link.exe" CopyToOutputDirectory="PreserveNewest" Link="lld-link.exe" Visible="False" />
+	<!--
+		Release distribution contract: Cvolo ships the native clang driver it invokes.
+		That clang may use platform linker/SDK/runtime components supplied by the OS.
+		Copy the complete RID-specific tooling directory so support binaries added alongside
+		clang are not accidentally omitted from the release payload.
+	-->
+	<ItemGroup Condition="('$(RuntimeIdentifier)' == 'win-x64' Or '$(RuntimeIdentifier)' == '') And Exists('tooling\win-x64')">
+		<None Update="tooling\win-x64\**\*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Link="%(RecursiveDir)%(Filename)%(Extension)" Visible="False" />
 	</ItemGroup>
-	<ItemGroup Condition=" '$(RuntimeIdentifier)' == 'win-x64' Or '$(RuntimeIdentifier)' == '' ">
-		<None Include="..\..\libraries\**\*" CopyToOutputDirectory="PreserveNewest" Link="libraries\%(RecursiveDir)%(Filename)%(Extension)" Visible="False" />
+	<ItemGroup Condition="'$(RuntimeIdentifier)' == 'linux-x64' And Exists('tooling\linux-x64')">
+		<None Update="tooling\linux-x64\**\*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Link="%(RecursiveDir)%(Filename)%(Extension)" Visible="False" />
 	</ItemGroup>
-	
-	<!-- Linux x64 Tooling (Only copied when building for Linux) -->
-	<ItemGroup Condition=" '$(RuntimeIdentifier)' == 'linux-x64' And Exists('tooling\linux-x64\clang') ">
-		<None Include="tooling\linux-x64\clang" CopyToOutputDirectory="PreserveNewest" Link="clang" Visible="False" />
+	<ItemGroup Condition="'$(RuntimeIdentifier)' == 'linux-arm64' And Exists('tooling\linux-arm64')">
+		<None Update="tooling\linux-arm64\**\*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Link="%(RecursiveDir)%(Filename)%(Extension)" Visible="False" />
 	</ItemGroup>
-	<ItemGroup Condition=" '$(RuntimeIdentifier)' == 'linux-x64' ">
-		<None Include="..\..\libraries\**\*" CopyToOutputDirectory="PreserveNewest" Link="libraries\%(RecursiveDir)%(Filename)%(Extension)" Visible="False" />
+	<ItemGroup Condition="'$(RuntimeIdentifier)' == 'osx-arm64' And Exists('tooling\osx-arm64')">
+		<None Update="tooling\osx-arm64\**\*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Link="%(RecursiveDir)%(Filename)%(Extension)" Visible="False" />
+	</ItemGroup>
+
+	<ItemGroup Condition="'$(RuntimeIdentifier)' == 'win-x64' Or '$(RuntimeIdentifier)' == '' Or '$(RuntimeIdentifier)' == 'linux-x64' Or '$(RuntimeIdentifier)' == 'linux-arm64' Or '$(RuntimeIdentifier)' == 'osx-arm64'">
+		<None Include="..\..\libraries\**\*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Link="libraries\%(RecursiveDir)%(Filename)%(Extension)" Visible="False" />
 	</ItemGroup>
 
 </Project>

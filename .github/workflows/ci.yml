@@ -5,6 +5,9 @@ on:
     branches: ["**"]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   build-and-verify-tooling:
     name: Build + Tooling boundary checks
@@ -18,11 +21,14 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      - name: Build tooling (and transitive dependencies)
-        run: dotnet build src/Cvolo.Compiler.Tooling/Cvolo.Compiler.Tooling.csproj -c Release --nologo
+      - name: Restore tooling boundary projects
+        run: dotnet restore src/Cvolo.Tests.Tooling/Cvolo.Tests.Tooling.csproj --nologo
+
+      - name: Build tooling boundary projects (Release)
+        run: dotnet build src/Cvolo.Tests.Tooling/Cvolo.Tests.Tooling.csproj -c Release --no-restore --nologo
 
       - name: Run tooling tests (boundary, artifact, consumer)
-        run: dotnet test src/Cvolo.Tests.Tooling/Cvolo.Tests.Tooling.csproj -c Release --nologo
+        run: dotnet test src/Cvolo.Tests.Tooling/Cvolo.Tests.Tooling.csproj -c Release --no-build --nologo -- RunConfiguration.TestSessionTimeout=1800000
 
       - name: Upload tooling artifact bundle
         uses: actions/upload-artifact@v4
@@ -31,10 +37,19 @@ jobs:
           path: artifacts/tooling/**
           if-no-files-found: error
 
+      - name: Upload tooling test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tooling-test-results
+          path: |
+            **/TestResults/**
+            **/*.trx
+          if-no-files-found: ignore
+
   compiler-and-package-tests:
     name: Compiler + package tests
     runs-on: windows-latest
-    continue-on-error: true
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -54,8 +69,11 @@ jobs:
           }
           clang --version
 
+      - name: Restore solution
+        run: dotnet restore src/Cvolo.slnx --nologo
+
       - name: Build solution (Release)
-        run: dotnet build src/Cvolo.slnx -c Release --nologo
+        run: dotnet build src/Cvolo.slnx -c Release --no-restore --nologo
 
       - name: Run Cvolo.Tests
         run: dotnet test src/Cvolo.Tests/Cvolo.Tests.csproj -c Release --no-build --nologo -- RunConfiguration.TestSessionTimeout=1800000
@@ -69,7 +87,7 @@ jobs:
       - name: Run Cvolo.Tests.Packages
         run: dotnet test src/Cvolo.Tests.Packages/Cvolo.Tests.Packages.csproj -c Release --no-build --nologo -- RunConfiguration.TestSessionTimeout=1800000
 
-      - name: Upload test results
+      - name: Upload compiler test results
         if: always()
         uses: actions/upload-artifact@v4
         with:

@@ -3,6 +3,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <Version>0.0.4</Version>
   </PropertyGroup>
 
   <PropertyGroup>
@@ -13,6 +14,6 @@
     -->
     <ToolingVersion Condition="'$(ToolingVersion)' == ''">0.0.1</ToolingVersion>
     <CompilerCompatibilityLine Condition="'$(CompilerCompatibilityLine)' == ''">0.0</CompilerCompatibilityLine>
-    <CvoloCompilerVersion Condition="'$(CvoloCompilerVersion)' == ''">0.0.4</CvoloCompilerVersion>
+    <CvoloCompilerVersion Condition="'$(CvoloCompilerVersion)' == ''">$(Version)</CvoloCompilerVersion>
   </PropertyGroup>
 </Project>
