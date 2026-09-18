@@ -40,7 +40,8 @@ jobs:
         shell: pwsh
         run: |
           [xml]$props = Get-Content -LiteralPath src/Directory.Build.props
-          $version = $props.Project.PropertyGroup.ToolingVersion | Where-Object { $_ } | Select-Object -First 1
+          $versionNode = $props.SelectSingleNode('/Project/PropertyGroup/ToolingVersion')
+          $version = $versionNode.InnerText
           if ([string]::IsNullOrWhiteSpace($version)) { throw 'ToolingVersion not found in src/Directory.Build.props.' }
           "value=$version" >> $env:GITHUB_OUTPUT
 
