@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: Existing GitHub release tag to upload the tooling asset to
+        description: GitHub release tag to create or update.
         required: true
-        default: v0.0.4-alpha
+        default: v0.0.5-alpha.1
 
 permissions:
   contents: write
@@ -45,6 +45,27 @@ jobs:
           if ([string]::IsNullOrWhiteSpace($version)) { throw 'ToolingVersion not found in src/Directory.Build.props.' }
           "value=$version" >> $env:GITHUB_OUTPUT
 
+      - name: Resolve release tag
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $tag = "${{ inputs.release_tag }}".Trim()
+          if ([string]::IsNullOrWhiteSpace($tag)) {
+            $tag = gh release list --limit 1 --json tagName --jq '.[0].tagName'
+            if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($tag)) {
+              throw 'No release_tag was provided and no existing GitHub release was found.'
+            }
+            Write-Host "Using latest release tag $tag."
+          }
+
+          if (-not $tag.StartsWith('v')) {
+            throw "release_tag must start with 'v'. Got '$tag'."
+          }
+
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+
       - name: Package managed tooling asset
         shell: pwsh
         run: |
@@ -53,9 +74,29 @@ jobs:
             -Version "${{ steps.version.outputs.value }}" `
             -OutputDir "artifacts/release"
 
+      - name: Ensure release exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $tag = "${{ steps.release.outputs.tag }}"
+
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Release $tag already exists."
+            exit 0
+          }
+
+          Write-Host "Creating prerelease $tag at $env:GITHUB_SHA."
+          gh release create $tag `
+            --target $env:GITHUB_SHA `
+            --title $tag `
+            --notes "Managed language server tooling ${{ steps.version.outputs.value }}." `
+            --prerelease
+
       - name: Upload asset to release
         env:
           GH_TOKEN: ${{ github.token }}
         shell: pwsh
         run: |
-          gh release upload "${{ inputs.release_tag }}" artifacts/release/* --clobber
+          gh release upload "${{ steps.release.outputs.tag }}" artifacts/release/* --clobber
