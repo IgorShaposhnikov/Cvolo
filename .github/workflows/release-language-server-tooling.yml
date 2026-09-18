@@ -27,9 +27,9 @@ jobs:
         shell: pwsh
         run: dotnet restore src/Cvolo.slnx
 
-      - name: Build tooling artifact
+      - name: Build tooling tests and artifact
         shell: pwsh
-        run: dotnet build src/Cvolo.Compiler.Tooling/Cvolo.Compiler.Tooling.csproj -c Release --no-restore -p:ContinuousIntegrationBuild=true
+        run: dotnet build src/Cvolo.Tests.Tooling/Cvolo.Tests.Tooling.csproj -c Release --no-restore -p:ContinuousIntegrationBuild=true
 
       - name: Test tooling artifact contract
         shell: pwsh
