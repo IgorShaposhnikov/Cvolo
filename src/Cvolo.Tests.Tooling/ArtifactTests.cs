@@ -42,8 +42,9 @@ public sealed class ArtifactTests
 			using var doc = JsonDocument.Parse(File.ReadAllText(manifestPath));
 			var root = doc.RootElement;
 
-			Assert.Equal("0.0.1", root.GetProperty("ToolingVersion").GetString());
-			Assert.Equal(ArtifactPaths.ArtifactVersion, root.GetProperty("ToolingVersion").GetString());
+			var toolingVersion = root.GetProperty("ToolingVersion").GetString();
+			Assert.Equal(ArtifactPaths.ArtifactVersion, toolingVersion);
+			Assert.Matches(@"^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$", toolingVersion);
 			Assert.Equal("0.0", root.GetProperty("CompilerCompatibilityLine").GetString());
 			Assert.False(string.IsNullOrWhiteSpace(root.GetProperty("BuiltFromCompilerVersion").GetString()));
 			Assert.Equal("net10.0", root.GetProperty("TargetFramework").GetString());

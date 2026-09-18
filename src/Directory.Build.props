@@ -12,7 +12,7 @@
       Patch increments only when a new Tooling artifact is released; the major/minor line
       tracks the Cvolo compiler compatibility line. All values are overridable via -p:Name=...
     -->
-    <ToolingVersion Condition="'$(ToolingVersion)' == ''">0.0.1</ToolingVersion>
+    <ToolingVersion Condition="'$(ToolingVersion)' == ''">0.0.5</ToolingVersion>
     <CompilerCompatibilityLine Condition="'$(CompilerCompatibilityLine)' == ''">0.0</CompilerCompatibilityLine>
     <CvoloCompilerVersion Condition="'$(CvoloCompilerVersion)' == ''">$(Version)</CvoloCompilerVersion>
   </PropertyGroup>

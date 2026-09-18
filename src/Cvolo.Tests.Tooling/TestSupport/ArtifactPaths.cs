@@ -17,7 +17,17 @@ internal static class ArtifactPaths
 		}
 	}
 
-	public static string ArtifactDir => Path.Combine(RepoRoot, "artifacts", "tooling", ArtifactVersion);
+	public static string ArtifactDir
+	{
+		get
+		{
+			var overrideDir = Environment.GetEnvironmentVariable("CVOLO_TOOLING_ARTIFACT_DIR");
+
+			return string.IsNullOrWhiteSpace(overrideDir)
+				? Path.Combine(RepoRoot, "artifacts", "tooling", ArtifactVersion)
+				: Path.GetFullPath(overrideDir);
+		}
+	}
 
 	private static string FindRepoRoot()
 	{
