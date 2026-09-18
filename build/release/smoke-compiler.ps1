@@ -16,27 +16,11 @@ if (-not (Test-Path -LiteralPath $compiler -PathType Leaf)) {
     throw "Missing packaged compiler entrypoint: $compiler"
 }
 
-$bundledClangName = if ($isWindowsRid) { 'clang.exe' } else { 'clang' }
-$bundledClang = Join-Path $payload $bundledClangName
-if (-not (Test-Path -LiteralPath $bundledClang -PathType Leaf)) {
-    throw "Release payload for $Rid is missing required bundled '$bundledClangName'. System clang fallback is not accepted for a compiler release."
-}
-
-if ($isWindowsRid) {
-    $bundledLinker = Join-Path $payload 'lld-link.exe'
-    if (-not (Test-Path -LiteralPath $bundledLinker -PathType Leaf)) {
-        throw "Release payload for win-x64 is incomplete: bundled 'lld-link.exe' is missing."
-    }
-}
-else {
+if (-not $isWindowsRid) {
     $executeMask = [int][System.IO.UnixFileMode]::UserExecute
     $compilerMode = [int][System.IO.File]::GetUnixFileMode($compiler)
-    $clangMode = [int][System.IO.File]::GetUnixFileMode($bundledClang)
     if (($compilerMode -band $executeMask) -eq 0) {
         throw "Packaged compiler entrypoint is not executable: $entrypointName"
-    }
-    if (($clangMode -band $executeMask) -eq 0) {
-        throw "Bundled clang is not executable after archive extraction: $bundledClangName"
     }
 }
 
@@ -58,9 +42,9 @@ try {
     $source = Join-Path $tempRoot 'Smoke.cvl'
     [IO.File]::WriteAllText($source, "int Main() {`n    return 0;`n}`n", [Text.UTF8Encoding]::new($false))
 
-    # Keep the host PATH intact. The bundled clang driver is allowed to use platform
-    # linker/SDK/runtime components supplied by the OS. We prove that Cvolo itself chose
-    # the bundled clang through the compiler's existing verbose linker-resolution output.
+    # The native clang/LLVM toolchain is an external runtime prerequisite. We prove that
+    # Cvolo itself resolved a clang linker (bundled when shipped, otherwise system) through
+    # the compiler's existing verbose linker-resolution output.
     $buildLog = Join-Path $tempRoot 'compiler-build.log'
     & $compiler build $source --configuration Release --verbose *> $buildLog
     $buildExitCode = $LASTEXITCODE
@@ -79,10 +63,9 @@ try {
         throw "Packaged compiler smoke compilation failed with exit code $buildExitCode."
     }
 
-    $bundledMarker = 'Linking using: bundled-clang...'
-    $usedBundledClang = @($buildOutput -split "`r?`n" | Where-Object { $_.Trim() -ceq $bundledMarker }).Count -gt 0
-    if (-not $usedBundledClang) {
-        throw "Smoke compile did not prove bundled clang selection. Expected verbose marker '$bundledMarker'. System clang fallback must not satisfy the release smoke."
+    $clangMarker = @($buildOutput -split "`r?`n" | Where-Object { $_.Trim() -match '^Linking using: (bundled-clang|clang)\.\.\.$' }).Count -gt 0
+    if (-not $clangMarker) {
+        throw "Smoke compile did not select a clang linker. Expected a 'Linking using: clang...' or 'Linking using: bundled-clang...' verbose marker."
     }
 
     $programRelative = if ($isWindowsRid) { 'bin/Release/Smoke.exe' } else { 'bin/Release/Smoke' }

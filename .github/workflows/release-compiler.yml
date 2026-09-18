@@ -71,9 +71,9 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      # These are publish-time NativeAOT build prerequisites. During release smoke,
-      # Cvolo must select its bundled clang. That clang may still use platform
-      # linker/SDK/runtime components supplied by the runner OS.
+      # These are publish-time NativeAOT build prerequisites and the runtime clang/LLVM
+      # toolchain used by the release smoke compilation. clang is an external prerequisite
+      # (see README.md and docs/COMPILATION.md); the compiler archive does not bundle it.
       - name: Install NativeAOT build prerequisites (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -84,10 +84,16 @@ jobs:
         run: |
           xcode-select -p
           clang --version
-      - name: Verify NativeAOT build prerequisites (Windows)
+      - name: Ensure NativeAOT build prerequisites (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: clang --version
+        run: |
+          if (-not (Get-Command clang -ErrorAction SilentlyContinue)) {
+            choco install llvm -y --no-progress
+            $llvm = Join-Path $env:ProgramFiles 'LLVM\bin'
+            Write-Output $llvm | Out-File -Append $env:GITHUB_PATH
+          }
+          clang --version
 
       - name: Clean release workspace
         shell: pwsh

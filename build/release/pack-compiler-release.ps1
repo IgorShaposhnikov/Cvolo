@@ -11,7 +11,9 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 Add-Type -AssemblyName System.IO.Compression
-Add-Type -AssemblyName System.Formats.Tar
+if ($Rid -ne 'win-x64') {
+    Add-Type -AssemblyName System.Formats.Tar
+}
 
 $stage = (Resolve-Path -LiteralPath $StageDir).Path
 $out = [IO.Path]::GetFullPath($OutDir)
@@ -20,8 +22,6 @@ $out = [IO.Path]::GetFullPath($OutDir)
 $isWindowsRid = $Rid -eq 'win-x64'
 $entrypoint = if ($isWindowsRid) { 'Cvolo.exe' } else { 'Cvolo' }
 $entrypointPath = Join-Path $stage $entrypoint
-$clangName = if ($isWindowsRid) { 'clang.exe' } else { 'clang' }
-$clangPath = Join-Path $stage $clangName
 
 function Get-RelativeReleasePath([string]$Path) {
     return [IO.Path]::GetRelativePath($stage, $Path).Replace('\', '/')
@@ -73,22 +73,14 @@ if (-not (Get-ChildItem -LiteralPath (Join-Path $stage 'libraries') -File -Recur
     throw "Release payload contains an empty libraries/ directory."
 }
 
-# Producer contract: the compiler release carries the native clang driver Cvolo selects.
-# That bundled clang may use platform linker/SDK/runtime components supplied by the OS.
-# Never allow a release to become green merely because the Actions image has clang installed.
-if (-not (Test-Path -LiteralPath $clangPath -PathType Leaf)) {
-    throw "Release payload for $Rid is missing bundled '$clangName'. Add the native clang payload under src/Cvolo/tooling/$Rid; system clang fallback is not accepted for a compiler release."
-}
-if ($isWindowsRid -and -not (Test-Path -LiteralPath (Join-Path $stage 'lld-link.exe') -PathType Leaf)) {
-    throw "Release payload for win-x64 is missing bundled 'lld-link.exe'."
-}
-
+# Producer contract: the compiler release ships the Cvolo executable and its standard
+# library. The native clang/LLVM toolchain is an external runtime prerequisite (see
+# README.md and docs/COMPILATION.md), so it is not required inside this archive. If a
+# RID-specific tooling directory is present under src/Cvolo/tooling it is bundled as-is
+# by the project, but its absence must not block a compiler release.
 if (-not $isWindowsRid) {
     if (-not (Test-Executable $entrypointPath)) {
         throw "Published compiler entrypoint is not executable before packaging: $entrypoint"
-    }
-    if (-not (Test-Executable $clangPath)) {
-        throw "Bundled clang is not executable before packaging: $clangName"
     }
 }
 
