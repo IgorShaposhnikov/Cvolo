@@ -1,0 +1,60 @@
+name: Release Language Server Tooling
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing GitHub release tag to upload the tooling asset to
+        required: true
+        default: v0.0.4-alpha
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: windows-latest
+    env:
+      ContinuousIntegrationBuild: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        shell: pwsh
+        run: dotnet restore src/Cvolo.slnx
+
+      - name: Build tooling artifact
+        shell: pwsh
+        run: dotnet build src/Cvolo.Compiler.Tooling/Cvolo.Compiler.Tooling.csproj -c Release --no-restore -p:ContinuousIntegrationBuild=true
+
+      - name: Test tooling artifact contract
+        shell: pwsh
+        run: dotnet test src/Cvolo.Tests.Tooling/Cvolo.Tests.Tooling.csproj -c Release --no-build -p:ContinuousIntegrationBuild=true
+
+      - name: Read tooling version
+        id: version
+        shell: pwsh
+        run: |
+          [xml]$props = Get-Content -LiteralPath src/Directory.Build.props
+          $version = $props.Project.PropertyGroup.ToolingVersion | Where-Object { $_ } | Select-Object -First 1
+          if ([string]::IsNullOrWhiteSpace($version)) { throw 'ToolingVersion not found in src/Directory.Build.props.' }
+          "value=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Package managed tooling asset
+        shell: pwsh
+        run: |
+          ./build/release/pack-language-server-tooling.ps1 `
+            -ArtifactDir "artifacts/tooling/${{ steps.version.outputs.value }}" `
+            -Version "${{ steps.version.outputs.value }}" `
+            -OutputDir "artifacts/release"
+
+      - name: Upload asset to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          gh release upload "${{ inputs.release_tag }}" artifacts/release/* --clobber

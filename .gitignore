@@ -87,6 +87,9 @@ project.lock.json
 project.fragment.lock.json
 artifacts/
 .artifacts/
+!build/
+!build/release/
+!build/release/*.ps1
 
 # ASP.NET Scaffolding
 ScaffoldingReadMe.txt
