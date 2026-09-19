@@ -323,7 +323,7 @@ internal sealed class NavigationIndex
 			: new TextSpan(start + index, name.Length);
 	}
 
-	private static ToolingSymbolKind MapKind(ResolvedSymbolKind kind) => kind switch
+	internal static ToolingSymbolKind MapKind(ResolvedSymbolKind kind) => kind switch
 	{
 		ResolvedSymbolKind.Namespace => ToolingSymbolKind.Namespace,
 		ResolvedSymbolKind.Module => ToolingSymbolKind.Module,

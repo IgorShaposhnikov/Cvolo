@@ -108,4 +108,16 @@ public sealed class DocumentSnapshot
 
 		return NavigationService.GetDocumentSymbols(OwningSnapshot, Id);
 	}
+
+	/// <summary>
+	/// Returns the semantic tokens for this document from the owning snapshot's binding, in
+	/// ascending source order. Occurrences that cannot be classified reliably are omitted.
+	/// </summary>
+	public IReadOnlyList<SemanticTokenInfo> GetSemanticTokens()
+	{
+		if (OwningSnapshot is null)
+			return [];
+
+		return SemanticTokenService.Compute(OwningSnapshot, this);
+	}
 }
