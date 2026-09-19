@@ -13,11 +13,18 @@ public sealed class ConstructorDeclarationSyntax(
 	IReadOnlyList<ExpressionSyntax>? constructorArguments = null,
 	TextSpan? constructorInitializerSpan = null,
 	IReadOnlyList<AttributeSyntax>? attributes = null,
-	Visibility? visibility = null) : SyntaxNode(span)
+	Visibility? visibility = null,
+	TextSpan? nameSpan = null) : SyntaxNode(span)
 {
 	public override SyntaxKind Kind => SyntaxKind.ConstructorDeclaration;
 
 	public string StructName { get; } = structName;
+
+	/// <summary>
+	/// Span of just the constructor name token, for diagnostics that should highlight the name
+	/// rather than the whole declaration (falls back to <see cref="SyntaxNode.Span"/>).
+	/// </summary>
+	public TextSpan NameSpan { get; } = nameSpan ?? span;
 	public IReadOnlyList<ParameterSyntax> Parameters { get; } = parameters;
 	public BlockStatementSyntax Body { get; } = body;
 
@@ -51,5 +58,5 @@ public sealed class ConstructorDeclarationSyntax(
 	/// keeping diagnostics spans accurate.
 	/// </summary>
 	public FunctionDeclarationSyntax ToFunctionDeclaration() =>
-		new(Span, "void", StructName, [], Parameters, Body, Attributes, visibility: SyntacticVisibility);
+		new(Span, "void", StructName, [], Parameters, Body, Attributes, visibility: SyntacticVisibility, nameSpan: NameSpan);
 }

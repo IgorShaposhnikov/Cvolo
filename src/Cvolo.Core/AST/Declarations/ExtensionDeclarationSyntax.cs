@@ -12,11 +12,18 @@ public sealed class ExtensionDeclarationSyntax(
 	IReadOnlyList<string>? genericParameters = null,
 	string? conformsTo = null,
 	Visibility? visibility = null,
-	IReadOnlyDictionary<string, string>? genericParameterDefaults = null) : SyntaxNode(span)
+	IReadOnlyDictionary<string, string>? genericParameterDefaults = null,
+	TextSpan? nameSpan = null) : SyntaxNode(span)
 {
 	public override SyntaxKind Kind => SyntaxKind.ExtensionDeclaration;
 
 	public string ExtendedTypeName { get; } = extendedTypeName;
+
+	/// <summary>
+	/// Span of just the extended type-name token, for diagnostics that should highlight the name
+	/// rather than the whole extension block (falls back to <see cref="SyntaxNode.Span"/>).
+	/// </summary>
+	public TextSpan NameSpan { get; } = nameSpan ?? span;
 	public IReadOnlyList<FunctionDeclarationSyntax> Methods { get; } = methods;
 	public IReadOnlyList<DestructorDeclarationSyntax> Destructors { get; } = destructors ?? [];
 	public IReadOnlyList<ConstructorDeclarationSyntax> Constructors { get; } = constructors ?? [];

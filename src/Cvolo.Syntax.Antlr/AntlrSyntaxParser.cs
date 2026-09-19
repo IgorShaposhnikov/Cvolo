@@ -26,7 +26,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		var parser = new CvoloParser(tokenStream);
 
 		parser.RemoveErrorListeners();
-		parser.AddErrorListener(new SyntaxErrorListener(_diagnostics, context));
+		parser.AddErrorListener(new SyntaxErrorListener(_diagnostics, context, tokenStream));
 
 		var tree = parser.compilationUnit();
 
@@ -263,7 +263,9 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			context.Identifier().GetText(),
 			[],
 			BuildParameterList(context.parameterList()),
-			blockBody!);
+			blockBody!,
+			nameSpan: SpanOf(context.Identifier().Symbol),
+			returnTypeSpan: SpanOf(context.returnType()));
 
 		return new ExposeExternBlockSyntax(SpanOf(context), [], callingConvention, [function], null);
 	}
@@ -289,7 +291,9 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			BuildAttributeList(context.attributeList()),
 			null,
 			ReceiverContract.None,
-			GetVisibilityModifier(context.visibilityModifier()));
+			GetVisibilityModifier(context.visibilityModifier()),
+			nameSpan: SpanOf(context.Identifier().Symbol),
+			returnTypeSpan: SpanOf(context.returnType()));
 	}
 
 	private List<ParameterSyntax> BuildParameterList(CvoloParser.ParameterListContext? paramList)
@@ -363,7 +367,11 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		if (context.functionModifier() is { } modCtx)
 			modifier = modCtx.GetText() == "unsafe" ? SafetyTier.Unsafe : SafetyTier.Unbound;
 
-		return new FunctionDeclarationSyntax(SpanOf(context), returnType, name, generics, parameters, body, attributes, modifier, receiver, GetVisibilityModifier(context.visibilityModifier()));
+		return new FunctionDeclarationSyntax(
+			SpanOf(context), returnType, name, generics, parameters, body, attributes, modifier, receiver,
+			GetVisibilityModifier(context.visibilityModifier()),
+			nameSpan: SpanOf(context.Identifier().Symbol),
+			returnTypeSpan: SpanOf(context.returnType()));
 	}
 
 	private bool TryGetReceiverContract(CvoloParser.ParameterContext context, out ReceiverContract contract, out string receiverName)
@@ -1369,14 +1377,61 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		return GetTypeName(context.type());
 	}
 
-	private sealed class SyntaxErrorListener(DiagnosticBag diagnostics, CompilationContext context) : BaseErrorListener
+	private sealed class SyntaxErrorListener(DiagnosticBag diagnostics, CompilationContext context, CommonTokenStream tokenStream) : BaseErrorListener
 	{
+		private readonly HashSet<int> _cascadeLines = new();
+
 		public override void SyntaxError(TextWriter output, IRecognizer recognizer, IToken offendingSymbol, int line, int charPositionInLine, string msg, RecognitionException e)
 		{
 			var span = new TextSpan(offendingSymbol?.StartIndex ?? 0, offendingSymbol?.Text?.Length ?? 0);
 
+			// The lexer emits dedicated `Bad*` tokens for malformed literals. The parser may skip
+			// such a token and report the resulting cascade on a later token (e.g. the `:`/`)` in
+			// `n(1value: 0)`). Anchor that error on the malformed literal instead, and drop the
+			// remaining cascade errors on the same line so the red highlight lands on the real
+			// problem rather than on unrelated punctuation.
+			var anchor = FindPrecedingBadLiteral(offendingSymbol);
+			if (anchor is not null)
+			{
+				span = new TextSpan(anchor.StartIndex, anchor.Text!.Length);
+				_cascadeLines.Add(line);
+			}
+			else if (_cascadeLines.Contains(line))
+			{
+				return;
+			}
+
 			diagnostics.Report(context, span, $"({line},{charPositionInLine}): {msg}");
 		}
+
+		private IToken? FindPrecedingBadLiteral(IToken? offending)
+		{
+			if (offending is null)
+				return null;
+
+			var tokens = tokenStream.GetTokens();
+			for (var i = 0; i < tokens.Count; i++)
+			{
+				if (tokens[i].StartIndex != offending.StartIndex || tokens[i].Type != offending.Type)
+					continue;
+
+				for (var j = i - 1; j >= 0; j--)
+				{
+					var t = tokens[j];
+					if (t.Channel != Lexer.DefaultTokenChannel || t.Type == TokenConstants.EOF)
+						continue;
+
+					return IsBadLiteralToken(t.Type) ? t : null;
+				}
+
+				return null;
+			}
+
+			return null;
+		}
+
+		private static bool IsBadLiteralToken(int type) => type is
+			CvoloLexer.BadIntegerSuffix or CvoloLexer.BadDoubleLiteral or CvoloLexer.BadLeadingUnderscoreNumber or CvoloLexer.TrailingUnderInteger;
 	}
 
 	private UsingDirectiveSyntax BuildUsingDirective(CvoloParser.UsingDirectiveContext context)
@@ -1462,7 +1517,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				}
 			}
 
-			constructors.Add(new ConstructorDeclarationSyntax(SpanOf(ctorCtx), structName, ctorParams, BuildBlockStatement(ctorCtx.blockStatement()), ctorArgs, ctorInitSpan, ctorAttributes, GetVisibilityModifier(ctorCtx.visibilityModifier())));
+			constructors.Add(new ConstructorDeclarationSyntax(SpanOf(ctorCtx), structName, ctorParams, BuildBlockStatement(ctorCtx.blockStatement()), ctorArgs, ctorInitSpan, ctorAttributes, GetVisibilityModifier(ctorCtx.visibilityModifier()), nameSpan: SpanOf(ctorCtx.Identifier(0).Symbol)));
 		}
 
 		var generics = new List<string>();
@@ -1479,7 +1534,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		if (context.qualifiedName() is { } conformsCtx)
 			conformsTo = conformsCtx.GetText();
 
-		return new ExtensionDeclarationSyntax(SpanOf(context), extendedTypeName, methods, destructors, constructors, generics, conformsTo, GetVisibilityModifier(context.visibilityModifier()), defaults);
+		return new ExtensionDeclarationSyntax(SpanOf(context), extendedTypeName, methods, destructors, constructors, generics, conformsTo, GetVisibilityModifier(context.visibilityModifier()), defaults, nameSpan: SpanOf(context.Identifier().Symbol));
 	}
 
 	private InterfaceDeclarationSyntax BuildInterfaceDeclaration(CvoloParser.InterfaceDeclarationContext context)

@@ -189,7 +189,7 @@ public sealed class ValidationPass(BindingContext context)
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
 				context.Diagnostics.Report(
 					currentFileContext,
-					ctor.Span,
+					ctor.NameSpan,
 					$"Defensive initialization: constructor '{extendedTypeName}' does not initialize field '{field.Name}'."
 				);
 			}
@@ -251,7 +251,7 @@ public sealed class ValidationPass(BindingContext context)
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
 				context.Diagnostics.Report(
 					currentFileContext,
-					ctor.ConstructorInitializerSpan ?? ctor.Span,
+					ctor.ConstructorInitializerSpan ?? ctor.NameSpan,
 					$"Constructor '{ctor.StructName}' is not accessible from the current constructor.");
 			}
 
@@ -262,7 +262,7 @@ public sealed class ValidationPass(BindingContext context)
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
 				context.Diagnostics.Report(
 					currentFileContext,
-					ctor.ConstructorInitializerSpan ?? ctor.Span,
+					ctor.ConstructorInitializerSpan ?? ctor.NameSpan,
 					"Constructor initializer `this(...)` cannot call itself (cyclic delegation).",
 					DiagnosticIds.CyclicConstructorDelegation);
 				return;
@@ -274,7 +274,7 @@ public sealed class ValidationPass(BindingContext context)
 			var sigString = string.Join(", ", argTypes.Select(t => t.Name));
 			context.Diagnostics.Report(
 				currentFileContext,
-				ctor.ConstructorInitializerSpan ?? ctor.Span,
+				ctor.ConstructorInitializerSpan ?? ctor.NameSpan,
 				$"No constructor of '{extendedType.Name}' matches initializer argument types ({sigString}).");
 			return;
 		}
@@ -443,7 +443,7 @@ public sealed class ValidationPass(BindingContext context)
 		if (func.Visibility == Visibility.Public)
 		{
 			var retType = context.ResolveType(func.ReturnType);
-			CheckGenericVisibilityLeak(func.Span, retType, func.Name);
+			CheckGenericVisibilityLeak(func.NameSpan, retType, func.Name);
 
 			foreach (var param in func.Parameters)
 			{
@@ -462,7 +462,7 @@ public sealed class ValidationPass(BindingContext context)
 			if (!hasIntrinsic)
 			{
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
-				context.Diagnostics.Report(currentFileContext, func.Span, $"Function '{func.Name}' must declare a body unless decorated with '[Intrinsic]'.");
+				context.Diagnostics.Report(currentFileContext, func.NameSpan, $"Function '{func.Name}' must declare a body unless decorated with '[Intrinsic]'.");
 			}
 
 			return;
@@ -496,7 +496,7 @@ public sealed class ValidationPass(BindingContext context)
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
 			context.Diagnostics.Report(
 				currentFileContext,
-				func.Span,
+				func.NameSpan,
 				$"Function '{func.Name}' is declared to return '{func.ReturnType}' but is missing a return statement."
 			);
 		}
@@ -667,7 +667,7 @@ public sealed class ValidationPass(BindingContext context)
 		else
 		{
 			var typeName = underlyingType.Name;
-			var getEnumeratorFunc = ResolveForEachGetEnumerator(typeName, underlyingType, scope, forEach.Span);
+			var getEnumeratorFunc = ResolveForEachGetEnumerator(typeName, underlyingType, scope, forEach.Collection.Span);
 
 			if (getEnumeratorFunc is null)
 				return;
@@ -683,19 +683,19 @@ public sealed class ValidationPass(BindingContext context)
 
 			if (moveNextFunc is null)
 			{
-				ReportDiagnostics(forEach.Span, $"Iterator type '{enumeratorName}' returned by '{typeName}.GetEnumerator()' is invalid: missing a 'bool MoveNext()' method signature.", DiagnosticIds.ForeachMissingMoveNext);
+				ReportDiagnostics(forEach.Collection.Span, $"Iterator type '{enumeratorName}' returned by '{typeName}.GetEnumerator()' is invalid: missing a 'bool MoveNext()' method signature.", DiagnosticIds.ForeachMissingMoveNext);
 				return;
 			}
 
 			if (!moveNextFunc.ReturnType.Equals(TypeSymbol.Bool))
 			{
-				ReportDiagnostics(forEach.Span, $"Iterator type '{enumeratorName}' returned by '{typeName}.GetEnumerator()' is invalid: 'MoveNext()' must return a logical 'bool' type scalar.", DiagnosticIds.ForeachMoveNextNotBool);
+				ReportDiagnostics(forEach.Collection.Span, $"Iterator type '{enumeratorName}' returned by '{typeName}.GetEnumerator()' is invalid: 'MoveNext()' must return a logical 'bool' type scalar.", DiagnosticIds.ForeachMoveNextNotBool);
 				return;
 			}
 
 			if (currentFunc2 is null)
 			{
-				ReportDiagnostics(forEach.Span, $"Iterator type '{enumeratorName}' returned by '{typeName}.GetEnumerator()' is invalid: missing a 'Current' property or method getter.", DiagnosticIds.ForeachMissingCurrent);
+				ReportDiagnostics(forEach.Collection.Span, $"Iterator type '{enumeratorName}' returned by '{typeName}.GetEnumerator()' is invalid: missing a 'Current' property or method getter.", DiagnosticIds.ForeachMissingCurrent);
 				return;
 			}
 
@@ -716,9 +716,9 @@ public sealed class ValidationPass(BindingContext context)
 		{
 			var resolvedCurrentType = itemType is PointerTypeSymbol p ? p.ReferencedType.Name : itemType.Name;
 			if (itemType is PointerTypeSymbol { IsMutable: false })
-				ReportDiagnostics(forEach.Span, $"Cannot bind mutable reference 'refvar {resolvedCurrentType}': the iterator's 'Current' property returns a read-only 'ref T'.", DiagnosticIds.ForeachRefVarReadOnlyRef);
+				ReportDiagnostics(forEach.Collection.Span, $"Cannot bind mutable reference 'refvar {resolvedCurrentType}': the iterator's 'Current' property returns a read-only 'ref T'.", DiagnosticIds.ForeachRefVarReadOnlyRef);
 			else if (itemType is not PointerTypeSymbol)
-				ReportDiagnostics(forEach.Span, $"Cannot bind mutable reference 'refvar {resolvedCurrentType}': the iterator's 'Current' property returns by value, yielding no reference address.", DiagnosticIds.ForeachRefVarByValue);
+				ReportDiagnostics(forEach.Collection.Span, $"Cannot bind mutable reference 'refvar {resolvedCurrentType}': the iterator's 'Current' property returns by value, yielding no reference address.", DiagnosticIds.ForeachRefVarByValue);
 			else
 				currentReturnsRef = true;
 		}
@@ -732,7 +732,7 @@ public sealed class ValidationPass(BindingContext context)
 				if (!declaredType.Equals(actualItemType))
 				{
 					var currentFileContext = context.FileContexts[context.CurrentUnit!];
-					context.Diagnostics.Report(currentFileContext, forEach.Span, $"Explicit loop item type '{declaredType.Name}' does not match the iterator's underlying 'Current' yield type '{actualItemType.Name}'.", DiagnosticIds.ForeachItemTypeMismatch);
+					context.Diagnostics.Report(currentFileContext, forEach.Collection.Span, $"Explicit loop item type '{declaredType.Name}' does not match the iterator's underlying 'Current' yield type '{actualItemType.Name}'.", DiagnosticIds.ForeachItemTypeMismatch);
 				}
 			}
 		}
@@ -788,7 +788,7 @@ public sealed class ValidationPass(BindingContext context)
 		if (existing is not null)
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.Report(currentFileContext, forEach.Span, $"Variable '{forEach.ItemName}' is already declared in this scope");
+			context.Diagnostics.Report(currentFileContext, forEach.Collection.Span, $"Variable '{forEach.ItemName}' is already declared in this scope");
 		}
 
 		bool isMutable = forEach.BindingKind == ForEachVariableKind.Var || forEach.BindingKind == ForEachVariableKind.RefVar;
@@ -3396,7 +3396,7 @@ public sealed class ValidationPass(BindingContext context)
 			if (method.Receiver == ReceiverContract.None)
 			{
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
-				context.Diagnostics.Report(currentFileContext, method.Span,
+				context.Diagnostics.Report(currentFileContext, method.NameSpan,
 					$"Method '{method.Name}' must declare 'ref this' or 'refvar this' receiver in [StrictMutability] struct '{extendedTypeName}'.");
 			}
 		}
@@ -3413,7 +3413,7 @@ public sealed class ValidationPass(BindingContext context)
 			if (structType != null && DetectFieldMutation(method.Body, structType))
 			{
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
-				context.Diagnostics.Report(currentFileContext, method.Span,
+				context.Diagnostics.Report(currentFileContext, method.NameSpan,
 					$"Extension method '{method.Name}' declares read-only 'ref this' receiver but mutates field(s) of '{extendedTypeName}'.");
 			}
 		}
@@ -3436,7 +3436,7 @@ public sealed class ValidationPass(BindingContext context)
 
 				if (targetFuncSymbol == null || !targetFuncSymbol.SuppressedWarnings.Contains(DiagnosticIds.AutoInferMutationWarning))
 				{
-					context.Diagnostics.ReportWarning(context.FileContexts[context.CurrentUnit!], method.Span,
+					context.Diagnostics.ReportWarning(context.FileContexts[context.CurrentUnit!], method.NameSpan,
 						$"Auto-inference chose mutability for method '{method.Name}'. Explicitly mark 'refvar this' to silence this warning.",
 						DiagnosticIds.AutoInferMutationWarning);
 				}

@@ -14,12 +14,26 @@ public sealed class FunctionDeclarationSyntax(
 	IReadOnlyList<AttributeSyntax>? attributes = null,
 	SafetyTier? modifier = null,
 	ReceiverContract receiver = ReceiverContract.None,
-	Visibility? visibility = null) : SyntaxNode(span)
+	Visibility? visibility = null,
+	TextSpan? nameSpan = null,
+	TextSpan? returnTypeSpan = null) : SyntaxNode(span)
 {
 	public override SyntaxKind Kind => SyntaxKind.FunctionDeclaration;
 
 	public string ReturnType { get; } = returnType;
 	public string Name { get; } = name;
+
+	/// <summary>
+	/// Span of just the declared name token, for diagnostics that should highlight the name
+	/// rather than the whole declaration (falls back to <see cref="SyntaxNode.Span"/>).
+	/// </summary>
+	public TextSpan NameSpan { get; } = nameSpan ?? span;
+
+	/// <summary>
+	/// Span of just the return-type clause, for diagnostics that should highlight the type
+	/// rather than the whole declaration (falls back to <see cref="SyntaxNode.Span"/>).
+	/// </summary>
+	public TextSpan ReturnTypeSpan { get; } = returnTypeSpan ?? span;
 	public IReadOnlyList<string> GenericParameters { get; } = genericParameters;
 	public IReadOnlyList<ParameterSyntax> Parameters { get; } = parameters;
 	public BlockStatementSyntax Body { get; } = body;

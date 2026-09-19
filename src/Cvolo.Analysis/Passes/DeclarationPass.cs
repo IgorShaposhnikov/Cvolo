@@ -1000,7 +1000,7 @@ public sealed class DeclarationPass(BindingContext context)
 		// Receiver markers ('ref this' / 'refvar this') are only valid on extension methods.
 		if (func.Receiver != ReceiverContract.None)
 		{
-			context.Diagnostics.Report(context.FileContexts[context.CurrentUnit!], func.Span,
+			context.Diagnostics.Report(context.FileContexts[context.CurrentUnit!], func.NameSpan,
 				"Receiver parameter ('refvar this' / 'ref this') is only allowed on extension methods.");
 			return;
 		}
@@ -1027,7 +1027,7 @@ public sealed class DeclarationPass(BindingContext context)
 				if (returnType is null)
 				{
 					var currentFileContext = context.FileContexts[context.CurrentUnit!];
-					context.Diagnostics.Report(currentFileContext, func.Span, $"Unknown return type '{func.ReturnType}'");
+					context.Diagnostics.Report(currentFileContext, func.ReturnTypeSpan, $"Unknown return type '{func.ReturnType}'");
 					return;
 				}
 
@@ -1091,7 +1091,7 @@ public sealed class DeclarationPass(BindingContext context)
 		if (type is null)
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.Report(currentFileContext, func.Span, $"Unknown return type '{func.ReturnType}'");
+			context.Diagnostics.Report(currentFileContext, func.ReturnTypeSpan, $"Unknown return type '{func.ReturnType}'");
 			return;
 		}
 
@@ -1114,7 +1114,7 @@ public sealed class DeclarationPass(BindingContext context)
 		if (existing is not null)
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.Report(currentFileContext, func.Span, $"Duplicate definition of function '{func.Name}' with a matching parameter signature.");
+			context.Diagnostics.Report(currentFileContext, func.NameSpan, $"Duplicate definition of function '{func.Name}' with a matching parameter signature.");
 			return;
 		}
 
@@ -1139,7 +1139,7 @@ public sealed class DeclarationPass(BindingContext context)
 		if (newSymbol.IsUnsafeBody)
 			newSymbol.SafetyTier = SafetyTier.Unsafe;
 
-		WarnIfUnsafeBodyUnused(func.Span, func.Body, newSymbol, suppressedWarnings);
+		WarnIfUnsafeBodyUnused(func.NameSpan, func.Body, newSymbol, suppressedWarnings);
 
 		// [Inline] on a (directly) recursive function: LLVM may ignore the hint. Only a warning.
 		if (newSymbol.IsInline
@@ -1848,7 +1848,7 @@ public sealed class DeclarationPass(BindingContext context)
 		if (extendedType is null)
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.Report(currentFileContext, extDecl.Span, $"Unknown type '{extDecl.ExtendedTypeName}' inside extension block.");
+			context.Diagnostics.Report(currentFileContext, extDecl.NameSpan, $"Unknown type '{extDecl.ExtendedTypeName}' inside extension block.");
 			return;
 		}
 
@@ -1907,14 +1907,14 @@ public sealed class DeclarationPass(BindingContext context)
 			if (method.Name.StartsWith('~') && method.Name[1..] != extDecl.ExtendedTypeName)
 			{
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
-				context.Diagnostics.Report(currentFileContext, method.Span, $"Destructor name '{method.Name}' does not match extended type '{extDecl.ExtendedTypeName}'.");
+				context.Diagnostics.Report(currentFileContext, method.NameSpan, $"Destructor name '{method.Name}' does not match extended type '{extDecl.ExtendedTypeName}'.");
 				continue;
 			}
 
 			if (method.Name.StartsWith('~') && context.Destructors.ContainsKey(extDecl.ExtendedTypeName))
 			{
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
-				context.Diagnostics.Report(currentFileContext, method.Span, $"Duplicate destructor definition for type '{extDecl.ExtendedTypeName}'.");
+				context.Diagnostics.Report(currentFileContext, method.NameSpan, $"Duplicate destructor definition for type '{extDecl.ExtendedTypeName}'.");
 				continue;
 			}
 
@@ -1943,7 +1943,7 @@ public sealed class DeclarationPass(BindingContext context)
 			if (returnType is null)
 			{
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
-				context.Diagnostics.Report(currentFileContext, method.Span, $"Unknown return type '{method.ReturnType}'");
+				context.Diagnostics.Report(currentFileContext, method.ReturnTypeSpan, $"Unknown return type '{method.ReturnType}'");
 				return;
 			}
 
@@ -1954,7 +1954,7 @@ public sealed class DeclarationPass(BindingContext context)
 			if (!context.LegacyVisibility && method.SyntacticVisibility is { } memberVis && VisibilityRank(memberVis) > VisibilityRank(blockVisibility))
 			{
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
-				context.Diagnostics.Report(currentFileContext, method.Span,
+				context.Diagnostics.Report(currentFileContext, method.NameSpan,
 					$"Element '{method.Name}' cannot declare a wider visibility modifier than its enclosing extension block visibility level ({blockVisibility}).",
 					DiagnosticIds.VisibilityExpansionInExtension);
 			}
@@ -1970,7 +1970,7 @@ public sealed class DeclarationPass(BindingContext context)
 				newSymbol,
 				methodSuppressedWarnings,
 				method.Attributes);
-			WarnIfUnsafeBodyUnused(method.Span, method.Body, newSymbol, methodSuppressedWarnings);
+			WarnIfUnsafeBodyUnused(method.NameSpan, method.Body, newSymbol, methodSuppressedWarnings);
 
 			// COLLISION RULE: an extension may not re-declare a method the type already
 			// has with a matching signature (another extension block, the proto-default
@@ -1978,7 +1978,7 @@ public sealed class DeclarationPass(BindingContext context)
 			if (context.Globals.Lookup(overloadedName) is not null)
 			{
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
-				context.Diagnostics.Report(currentFileContext, method.Span,
+				context.Diagnostics.Report(currentFileContext, method.NameSpan,
 					$"Duplicate symbol '{method.Name}' on type '{extDecl.ExtendedTypeName}' in extension blocks.");
 				continue;
 			}
@@ -2006,14 +2006,14 @@ public sealed class DeclarationPass(BindingContext context)
 			if (ctorDecl.StructName != extDecl.ExtendedTypeName)
 			{
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
-				context.Diagnostics.Report(currentFileContext, ctorDecl.Span, $"Constructor name '{ctorDecl.StructName}' must match the extended type '{extDecl.ExtendedTypeName}'.");
+				context.Diagnostics.Report(currentFileContext, ctorDecl.NameSpan, $"Constructor name '{ctorDecl.StructName}' must match the extended type '{extDecl.ExtendedTypeName}'.");
 				continue;
 			}
 
 			if (extendedType is not StructTypeSymbol ctorStructType)
 			{
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
-				context.Diagnostics.Report(currentFileContext, ctorDecl.Span, $"Cannot define a constructor for non-struct type '{extDecl.ExtendedTypeName}'.");
+				context.Diagnostics.Report(currentFileContext, ctorDecl.NameSpan, $"Cannot define a constructor for non-struct type '{extDecl.ExtendedTypeName}'.");
 				continue;
 			}
 
@@ -2047,7 +2047,7 @@ public sealed class DeclarationPass(BindingContext context)
 			if (!context.LegacyVisibility && ctorDecl.SyntacticVisibility is { } ctorVis && VisibilityRank(ctorVis) > VisibilityRank(blockVisibility))
 			{
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
-				context.Diagnostics.Report(currentFileContext, ctorDecl.Span,
+				context.Diagnostics.Report(currentFileContext, ctorDecl.NameSpan,
 					$"Element '{ctorDecl.StructName}' cannot declare a wider visibility modifier than its enclosing extension block visibility level ({blockVisibility}).",
 					DiagnosticIds.VisibilityExpansionInExtension);
 			}
@@ -2059,13 +2059,13 @@ public sealed class DeclarationPass(BindingContext context)
 			};
 			var ctorSuppressedWarnings = new List<string>();
 			ApplyFunctionAttributes(VerifyAttributes(ctorDecl.Attributes, "Constructor", ctorSuppressedWarnings), ctorSymbol, ctorSuppressedWarnings);
-			WarnIfUnsafeBodyUnused(ctorDecl.Span, ctorDecl.Body, ctorSymbol, ctorSuppressedWarnings);
+			WarnIfUnsafeBodyUnused(ctorDecl.NameSpan, ctorDecl.Body, ctorSymbol, ctorSuppressedWarnings);
 
 			// COLLISION RULE: duplicate constructor signatures on the same type.
 			if (context.Globals.Lookup(ctorOverloadedName) is not null)
 			{
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
-				context.Diagnostics.Report(currentFileContext, ctorDecl.Span,
+				context.Diagnostics.Report(currentFileContext, ctorDecl.NameSpan,
 					$"Duplicate constructor signature for type '{extDecl.ExtendedTypeName}'.");
 				continue;
 			}
