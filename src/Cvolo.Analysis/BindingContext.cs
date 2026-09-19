@@ -1676,6 +1676,116 @@ public sealed class BindingContext
 		return [.. allUsings];
 	}
 
+	/// <summary>
+	/// Returns receiver-backed extension methods that are resolvable for <paramref name="baseType"/>
+	/// from <paramref name="unit"/>. This is the compiler authority for the extension lookup
+	/// key families shared by ordinary dotted calls, structural protocol checks, and completion.
+	/// </summary>
+	internal IReadOnlyList<(string MemberName, FunctionSymbol Function)> GetExtensionMethodCandidates(
+		TypeSymbol baseType,
+		CompilationUnitSyntax? unit,
+		string? memberName = null)
+	{
+		if (baseType is PointerTypeSymbol pointer)
+			baseType = pointer.ReferencedType;
+
+		var leafName = GetUnqualifiedTypeName(baseType.Name);
+		var prefixes = new List<string>();
+		var seenPrefixes = new HashSet<string>(StringComparer.Ordinal);
+
+		void AddPrefix(string prefix)
+		{
+			if (!string.IsNullOrEmpty(prefix) && seenPrefixes.Add(prefix))
+				prefixes.Add(prefix);
+		}
+
+		// Extension blocks may be registered under the concrete fully-qualified type,
+		// a global-namespace leaf type, the call-site namespace, or an imported namespace.
+		AddPrefix(baseType.Name);
+		AddPrefix(leafName);
+
+		var currentNamespace = unit?.NamespaceDeclaration?.Name;
+		if (!string.IsNullOrEmpty(currentNamespace))
+			AddPrefix(GetMangledName(leafName, currentNamespace));
+
+		foreach (var ns in GetActiveUsings(unit).OrderBy(n => n, StringComparer.Ordinal))
+			AddPrefix(GetMangledName(leafName, ns));
+
+		var results = new List<(string MemberName, FunctionSymbol Function)>();
+		var seenFunctions = new HashSet<FunctionSymbol>();
+
+		void AddFromEntry(string resolvedMemberName, IReadOnlyList<FunctionSymbol> functions)
+		{
+			foreach (var function in functions)
+			{
+				if (!IsExtensionReceiverFor(baseType, function) || !seenFunctions.Add(function))
+					continue;
+
+				results.Add((resolvedMemberName, function));
+			}
+		}
+
+		if (memberName is not null)
+		{
+			foreach (var prefix in prefixes)
+			{
+				if (OverloadedFunctions.TryGetValue($"{prefix}.{memberName}", out var functions))
+					AddFromEntry(memberName, functions);
+			}
+
+			return results;
+		}
+
+		var allowedPrefixes = new HashSet<string>(prefixes, StringComparer.Ordinal);
+		foreach (var entry in OverloadedFunctions.OrderBy(e => e.Key, StringComparer.Ordinal))
+		{
+			var separator = entry.Key.LastIndexOf('.');
+			if (separator < 0 || !allowedPrefixes.Contains(entry.Key[..separator]))
+				continue;
+
+			AddFromEntry(entry.Key[(separator + 1)..], entry.Value);
+		}
+
+		return results;
+	}
+
+	private static bool IsExtensionReceiverFor(TypeSymbol baseType, FunctionSymbol function)
+	{
+		if (function.Parameters.Count == 0 ||
+			!string.Equals(function.Parameters[0].Name, "this", StringComparison.Ordinal) ||
+			function.Parameters[0].Type is not PointerTypeSymbol receiver)
+		{
+			return false;
+		}
+
+		return string.Equals(receiver.ReferencedType.Name, baseType.Name, StringComparison.Ordinal);
+	}
+
+	private static string GetUnqualifiedTypeName(string name)
+	{
+		var genericDepth = 0;
+		var lastTopLevelDot = -1;
+
+		for (var i = 0; i < name.Length; i++)
+		{
+			switch (name[i])
+			{
+				case '<':
+					genericDepth++;
+					break;
+				case '>':
+					if (genericDepth > 0)
+						genericDepth--;
+					break;
+				case '.' when genericDepth == 0:
+					lastTopLevelDot = i;
+					break;
+			}
+		}
+
+		return lastTopLevelDot < 0 ? name : name[(lastTopLevelDot + 1)..];
+	}
+
 	private Visibility GetSymbolVisibility(TypeSymbol type)
 	{
 		if (type is StructTypeSymbol st) return st.Visibility;
@@ -1720,26 +1830,7 @@ public sealed class BindingContext
 		{
 			foreach (var member in proto.Members)
 			{
-				var qualifiedKey = $"{baseType.Name}.{member.Name}";
-				var shortName = baseType.Name.Contains('.')
-					? baseType.Name[(baseType.Name.LastIndexOf('.') + 1)..]
-					: baseType.Name;
-				var leafKey = $"{shortName}.{member.Name}";
-
-				var found = OverloadedFunctions.ContainsKey(qualifiedKey) || OverloadedFunctions.ContainsKey(leafKey);
-				if (!found && CurrentUnit is not null)
-				{
-					foreach (var ns in GetActiveUsings(CurrentUnit))
-					{
-						if (OverloadedFunctions.ContainsKey(GetMangledName(leafKey, ns)))
-						{
-							found = true;
-							break;
-						}
-					}
-				}
-
-				if (!found)
+				if (GetExtensionMethodCandidates(baseType, CurrentUnit, member.Name).Count == 0)
 					return false;
 			}
 

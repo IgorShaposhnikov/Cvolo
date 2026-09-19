@@ -13,6 +13,10 @@
 		<PackageReference Include="Antlr4.Runtime.Standard" />
 	</ItemGroup>
 
+	<ItemGroup>
+		<InternalsVisibleTo Include="Cvolo.Tests.Tooling" />
+	</ItemGroup>
+
 	<Import Project="Tooling.Artifact.targets" />
 
 </Project>

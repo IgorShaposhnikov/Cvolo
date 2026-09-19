@@ -1,0 +1,6 @@
+namespace ShapeLib;
+
+public struct Shape
+{
+    public int Sides;
+}

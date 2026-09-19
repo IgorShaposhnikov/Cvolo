@@ -10,7 +10,7 @@ namespace Cvolo.Compiler.Tooling;
 public sealed class ProjectSnapshot
 {
 	private readonly IReadOnlyDictionary<DocumentId, DocumentSnapshot> _documents;
-	private readonly Lazy<IReadOnlyList<Diagnostic>> _lazyAnalysis;
+	private readonly Lazy<AnalyzedProject> _lazyAnalysis;
 
 	/// <summary>
 	/// The identifier of the project this snapshot belongs to.
@@ -30,7 +30,7 @@ public sealed class ProjectSnapshot
 		ProjectId = projectId;
 		_documents = documents;
 		DocumentIds = [.. documents.Keys];
-		_lazyAnalysis = new Lazy<IReadOnlyList<Diagnostic>>(() => BinderAdapter.AnalyzeSnapshot(this));
+		_lazyAnalysis = new Lazy<AnalyzedProject>(() => BinderAdapter.AnalyzeSnapshot(this));
 	}
 
 	internal static ProjectSnapshot CreateOwned(ProjectId projectId, IReadOnlyDictionary<DocumentId, DocumentSnapshot> documents)
@@ -43,7 +43,7 @@ public sealed class ProjectSnapshot
 		return snapshot;
 	}
 
-	internal IReadOnlyList<Diagnostic> GetAnalysis()
+	internal AnalyzedProject GetAnalysis()
 	{
 		return _lazyAnalysis.Value;
 	}

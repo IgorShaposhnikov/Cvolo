@@ -1,0 +1,11 @@
+using ShapeLib;
+
+namespace ShapeExtLib;
+
+public extension Shape
+{
+    public int Area()
+	{
+        return 40;
+    }
+}

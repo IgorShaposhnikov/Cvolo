@@ -5,10 +5,10 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$tagPattern = '^tooling-(?<version>(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))$'
+$tagPattern = '^tooling-(?<version>(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:\.(?:0|[1-9]\d*))?)$'
 $match = [regex]::Match($Tag, $tagPattern)
 if (-not $match.Success) {
-    throw "Tooling release tag '$Tag' is invalid. Expected tooling-X.Y.Z (for example tooling-0.0.2)."
+    throw "Tooling release tag '$Tag' is invalid. Expected tooling-X.Y.Z (optionally tooling-X.Y.Z.W) (for example tooling-0.0.2)."
 }
 
 [xml]$props = Get-Content -LiteralPath $PropsPath

@@ -81,4 +81,33 @@ public sealed class ModularTests : CompilerTestBase
 		// Verifies UTF-8 string encoding worked (Borders/Header)
 		Assert.Contains("ACCOUNT INFORMATION", runStdout);
 	}
+
+	[Fact]
+	public void E2E_ImportedExtensionNamespace_Should_Resolve_Dotted_Call()
+	{
+		const string casePath = "Modular/ImportedExtension";
+
+		var (asts, context) = AnalyzeProject(casePath);
+		Assert.NotNull(asts);
+		Assert.False(context.Diagnostics.HasErrors,
+			"Imported and current-namespace extension methods should resolve through the same dotted-call lookup rules.");
+
+		var (compileCode, stdout, stderr) = RunCompiler(casePath);
+		AssertCompilationSucceeded(compileCode, stdout, stderr, casePath);
+
+		var (runCode, _) = ExecuteBinary("ImportedExtension", casePath);
+		Assert.Equal(0, runCode);
+	}
+
+	[Fact]
+	public void Compiler_UnimportedExtensionNamespace_Should_Not_Resolve_Dotted_Call()
+	{
+		const string casePath = "Modular/ImportedExtensionMissingUsing";
+
+		var (asts, context) = AnalyzeProject(casePath);
+		Assert.NotNull(asts);
+		Assert.True(context.Diagnostics.HasErrors);
+		Assert.Contains(context.Diagnostics.Diagnostics, diagnostic =>
+			diagnostic.Message.Contains("No overload of function 's.Area' matches", StringComparison.Ordinal));
+	}
 }

@@ -1,0 +1,11 @@
+using ShapeLib;
+
+namespace App;
+
+public extension Shape
+{
+    public int LocalValue()
+	{
+        return 2;
+    }
+}

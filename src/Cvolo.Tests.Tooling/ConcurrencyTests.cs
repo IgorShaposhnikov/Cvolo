@@ -108,4 +108,66 @@ public sealed class ConcurrencyTests
 			});
 		});
 	}
+	[Fact]
+	public void ConcurrentCompletions_OnDifferentNamespaceContexts_DoNotBleedAndRestoreBinderState()
+	{
+		Timed.Out(() =>
+		{
+			static (string Source, int Position) Split(string sourceWithMarker)
+			{
+				var position = sourceWithMarker.IndexOf('|');
+				Assert.True(position >= 0);
+				return (sourceWithMarker.Remove(position, 1), position);
+			}
+
+			var (sourceA, positionA) = Split(
+				"namespace AppA;\nusing LibA;\nint RunA() { return Alph|; }\n");
+			var (sourceB, positionB) = Split(
+				"namespace AppB;\nusing LibB;\nint RunB() { return Bet|; }\n");
+
+			using var fixture = TempProject.Create(
+				("A.cvl", sourceA),
+				("B.cvl", sourceB),
+				("LibA.cvl", "namespace LibA;\npublic int Alpha() { return 1; }\n"),
+				("LibB.cvl", "namespace LibB;\npublic int Beta() { return 2; }\n"));
+
+			var project = CvoloWorkspace.Create().OpenProject(fixture.ProjectFilePath);
+			var snapshot = project.InitialSnapshot;
+			var documentA = snapshot.GetDocument(project.GetDocumentId("A.cvl"));
+			var documentB = snapshot.GetDocument(project.GetDocumentId("B.cvl"));
+
+			var analysis = snapshot.GetAnalysis();
+			Assert.NotNull(analysis.BinderContext);
+			var binderContext = analysis.BinderContext!;
+			var baselineUnit = binderContext.CurrentUnit;
+			var baselineNamespace = binderContext.CurrentNamespace;
+
+			var expectedA = documentA.GetCompletions(positionA);
+			var expectedB = documentB.GetCompletions(positionB);
+
+			Assert.Contains(expectedA.Candidates, c => c.Label == "Alpha");
+			Assert.DoesNotContain(expectedA.Candidates, c => c.Label == "Beta");
+			Assert.Contains(expectedB.Candidates, c => c.Label == "Beta");
+			Assert.DoesNotContain(expectedB.Candidates, c => c.Label == "Alpha");
+
+			Parallel.For(0, 64, i =>
+			{
+				var actual = (i & 1) == 0
+					? documentA.GetCompletions(positionA)
+					: documentB.GetCompletions(positionB);
+				var expected = (i & 1) == 0 ? expectedA : expectedB;
+
+				Assert.Equal(expected.ReplacementRange, actual.ReplacementRange);
+				Assert.True(expected.Candidates.SequenceEqual(actual.Candidates));
+			});
+
+			var afterA = documentA.GetCompletions(positionA);
+			var afterB = documentB.GetCompletions(positionB);
+			Assert.True(expectedA.Candidates.SequenceEqual(afterA.Candidates));
+			Assert.True(expectedB.Candidates.SequenceEqual(afterB.Candidates));
+			Assert.Same(baselineUnit, binderContext.CurrentUnit);
+			Assert.Equal(baselineNamespace, binderContext.CurrentNamespace);
+		});
+	}
+
 }

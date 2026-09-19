@@ -2359,7 +2359,7 @@ public sealed class ValidationPass(BindingContext context)
 		foreach (var member in proto.Members)
 		{
 			var matched = false;
-			foreach (var candidate in GatherProtocolMemberCandidates(baseType, member.Name))
+			foreach (var (_, candidate) in context.GetExtensionMethodCandidates(baseType, context.CurrentUnit, member.Name))
 			{
 				if (MemberStructurallyMatches(member, candidate, proto, baseType))
 				{
@@ -2448,39 +2448,6 @@ public sealed class ValidationPass(BindingContext context)
 		if (context.GenericUnionTemplates.TryGetValue(baseName, out var unionTemplate))
 			return unionTemplate.GenericParameters.Count;
 		return 0;
-	}
-
-	/// <summary>
-	/// The "3-key walk": locate a concrete type's extension methods in every place
-	/// an implementation could be declared — fully-qualified type name, leaf name
-	/// (global-namespace extension blocks), and the call-site namespace/usings —
-	/// mirroring how ordinary extension calls resolve.
-	/// </summary>
-	private List<FunctionSymbol> GatherProtocolMemberCandidates(TypeSymbol baseType, string memberName)
-	{
-		var results = new List<FunctionSymbol>();
-		var leafName = baseType.Name.Contains('.')
-			? baseType.Name[(baseType.Name.LastIndexOf('.') + 1)..]
-			: baseType.Name;
-
-		if (context.OverloadedFunctions.TryGetValue($"{baseType.Name}.{memberName}", out var qualified))
-			results.AddRange(qualified);
-
-		if (context.OverloadedFunctions.TryGetValue($"{leafName}.{memberName}", out var leaf))
-			results.AddRange(leaf);
-
-		if (context.CurrentUnit is not null)
-		{
-			var activeUsings = context.GetActiveUsings(context.CurrentUnit);
-
-			foreach (var ns in activeUsings)
-			{
-				if (context.OverloadedFunctions.TryGetValue(context.GetMangledName($"{leafName}.{memberName}", ns), out var viaUsing))
-					results.AddRange(viaUsing);
-			}
-		}
-
-		return results;
 	}
 
 	private bool MemberStructurallyMatches(ProtocolMethodDeclarationSyntax member, FunctionSymbol candidate, ProtocolTypeSymbol proto, TypeSymbol baseType)
@@ -2743,7 +2710,8 @@ public sealed class ValidationPass(BindingContext context)
 		var currentFileContext = context.FileContexts[context.CurrentUnit!];
 		foreach (var member in proto.Members)
 		{
-			var matches = GatherProtocolMemberCandidates(concrete, member.Name)
+			var matches = context.GetExtensionMethodCandidates(concrete, context.CurrentUnit, member.Name)
+				.Select(candidate => candidate.Function)
 				.Where(candidate => MemberStructurallyMatches(member, candidate, proto, concrete))
 				.Distinct()
 				.Count();
@@ -3112,6 +3080,8 @@ public sealed class ValidationPass(BindingContext context)
 		var adjustedArgTypes = new List<TypeSymbol>(argTypes);
 
 		var isDottedExtension = false;
+		TypeSymbol? dottedReceiverType = null;
+		string? dottedMemberName = null;
 
 		// Detect dotted extension method call
 		if (name.Contains('.'))
@@ -3131,7 +3101,9 @@ public sealed class ValidationPass(BindingContext context)
 				if (receiverType is StructTypeSymbol or UnionTypeSymbol or EnumTypeSymbol)
 				{
 					isDottedExtension = true;
-					// Resolve using "Option<int>.IsSome" as the base name
+					dottedReceiverType = receiverType;
+					dottedMemberName = methodName;
+					// Keep the canonical receiver-qualified name for diagnostics/debugging.
 					baseName = $"{receiverType.Name}.{methodName}";
 
 					// Prepend the receiver's reference type as the first argument!
@@ -3185,8 +3157,19 @@ public sealed class ValidationPass(BindingContext context)
 			}
 		}
 
-		// 1. Gather all candidates matching the resolved base name
-		GatherOverloadCandidates(baseName, candidates);
+		// 1. Gather candidates through the same extension lookup authority used by
+		// protocol matching and completion. Non-extension calls keep the ordinary
+		// function/constructor namespace lookup path.
+		if (isDottedExtension && dottedReceiverType is not null && dottedMemberName is not null)
+		{
+			candidates.AddRange(context
+				.GetExtensionMethodCandidates(dottedReceiverType, context.CurrentUnit, dottedMemberName)
+				.Select(candidate => candidate.Function));
+		}
+		else
+		{
+			GatherOverloadCandidates(baseName, candidates);
+		}
 
 		// 2. Select the candidate with the best signature match score
 		FunctionSymbol? bestMatch = null;

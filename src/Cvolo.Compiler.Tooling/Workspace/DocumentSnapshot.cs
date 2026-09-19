@@ -1,3 +1,6 @@
+using Cvolo.Compiler.Tooling.Completion;
+using Cvolo.Compiler.Tooling.Internal;
+
 namespace Cvolo.Compiler.Tooling;
 
 /// <summary>
@@ -41,7 +44,7 @@ public sealed class DocumentSnapshot
 			return [];
 		}
 
-		var all = OwningSnapshot.GetAnalysis();
+		var all = OwningSnapshot.GetAnalysis().ResultDiagnostics;
 		var result = new List<Diagnostic>();
 
 		foreach (var diagnostic in all)
@@ -51,5 +54,26 @@ public sealed class DocumentSnapshot
 		}
 
 		return result;
+	}
+
+	/// <summary>
+	/// Computes the completion items at the given zero-based UTF-16 <paramref name="position"/> within
+	/// this document, using the owning snapshot's parsed and bound analysis. The result carries the
+	/// replacement range (covering the identifier or keyword being typed, or a zero-length span) and
+	/// an ordered, deduplicated candidate list.
+	/// Throws <see cref="ArgumentOutOfRangeException"/> when <paramref name="position"/> falls outside
+	/// [0, <see cref="Text.Length"/>].
+	/// </summary>
+	public CompletionResult GetCompletions(int position)
+	{
+		ArgumentOutOfRangeException.ThrowIfNegative(position);
+
+		if (position > Text.Length)
+			throw new ArgumentOutOfRangeException(nameof(position));
+
+		if (OwningSnapshot is null)
+			return new CompletionResult(new TextSpan(position, 0), []);
+
+		return CompletionService.Compute(OwningSnapshot, this, position);
 	}
 }

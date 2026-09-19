@@ -1,0 +1,10 @@
+using ShapeLib;
+using ShapeExtLib;
+
+namespace App;
+
+int main()
+{
+    var Shape s(Sides: 4);
+    return s.Area() + s.LocalValue() - 42;
+}

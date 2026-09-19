@@ -12,11 +12,13 @@ internal static class ParserAdapter
 {
 	/// <summary>
 	/// Parses all <paramref name="documents"/> (one parser instance per document).
-	/// Returns the non-null AST units plus the combined parse diagnostics across all documents.
+	/// Returns the non-null AST units, the per-document unit map (null where a document failed to
+	/// parse), and the combined parse diagnostics across all documents.
 	/// </summary>
-	public static (IReadOnlyList<CompilationUnitSyntax> Units, IReadOnlyList<Diagnostic> Diagnostics) ParseAll(IReadOnlyDictionary<DocumentId, DocumentSnapshot> documents)
+	public static (IReadOnlyList<CompilationUnitSyntax> Units, IReadOnlyDictionary<DocumentId, CompilationUnitSyntax?> UnitsByDocument, IReadOnlyList<Diagnostic> Diagnostics) ParseAll(IReadOnlyDictionary<DocumentId, DocumentSnapshot> documents)
 	{
 		var units = new List<CompilationUnitSyntax>();
+		var unitsByDocument = new Dictionary<DocumentId, CompilationUnitSyntax?>();
 		var allDiagnostics = new List<Diagnostic>();
 		var docByFilePath = new Dictionary<string, DocumentId>(StringComparer.OrdinalIgnoreCase);
 
@@ -31,6 +33,8 @@ internal static class ParserAdapter
 			var parser = new AntlrSyntaxParser();
 			var unit = parser.Parse(context);
 
+			unitsByDocument[docId] = unit;
+
 			if (unit is not null)
 				units.Add(unit);
 
@@ -38,6 +42,6 @@ internal static class ParserAdapter
 				parser.Diagnostics, docByFilePath));
 		}
 
-		return (units, allDiagnostics);
+		return (units, unitsByDocument, allDiagnostics);
 	}
 }
