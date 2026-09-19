@@ -190,7 +190,10 @@ public sealed class DiagnosticsTests
 		var docId = project.GetDocumentId("Main.cvl");
 		var document = project.InitialSnapshot.GetDocument(docId);
 
-		var diagnostic = Assert.Single(document.GetDiagnostics());
+		// Recovery now also builds the tree, so the precise CVL1903 bad-suffix diagnostic is emitted
+		// (in addition to the anchored ANTLR cascade error) - both land on `1value`.
+		var diagnostics = document.GetDiagnostics();
+		var diagnostic = Assert.Single(diagnostics, d => d.Id == "CVL1903");
 
 		var expectedStart = source.IndexOf("1value", StringComparison.Ordinal);
 		Assert.Equal(new TextSpan(expectedStart, "1value".Length), diagnostic.Location.Span);

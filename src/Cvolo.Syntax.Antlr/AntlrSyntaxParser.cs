@@ -76,10 +76,18 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				DiagnosticIds.DeferRequiresBody);
 		}
 
-		if (_diagnostics.HasErrors)
+		// Parse errors do not prevent tree recovery: ANTLR still produces a (partial) tree, and
+		// consumers that tolerate partial syntax (the tooling) can analyze the declarations they can
+		// recover. The compiler driver independently aborts on parser diagnostics, so compilation is
+		// unchanged. Only if recovery cannot build a coherent unit do we return null as before.
+		try
+		{
+			return BuildCompilationUnit(tree, context);
+		}
+		catch (Exception) when (_diagnostics.HasErrors)
+		{
 			return null;
-
-		return BuildCompilationUnit(tree, context);
+		}
 	}
 
 	// First index after <paramref name="startIndex"/> whose token is on the default channel
