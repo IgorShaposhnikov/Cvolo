@@ -124,29 +124,49 @@ jobs:
           $compilerVersion = '${{ needs.validate.outputs.compilerVersion }}'
           $releaseNotesPath = Join-Path $env:RUNNER_TEMP 'tooling-release-notes.md'
 
-          @"
-          ## What this release is
+          @'
+          `Cvolo Compiler Tooling` is the managed tooling layer used by the Cvolo Language Server and editor integrations.
 
-          Tooling $version is the Cvolo language-server tooling release. It contains the RID-neutral managed tooling bundle used by editor and language-server integrations, not the Cvolo compiler/runtime release assets.
+          It exposes compiler-backed features such as diagnostics, project/document snapshots, semantic queries, and code completion without forcing editors to depend directly on compiler internals.
 
-          This release exists separately from the main Cvolo $version release line so tooling can be versioned, validated, and published independently while still declaring the compiler compatibility line it was built against.
+          > This is **not** a compiler/runtime release.
+          >
+          > If you only want to build and run Cvolo programs, use the regular Cvolo release.
 
-          ## Compatibility
+          ## Why Tooling exists
 
-          - Tooling version: $version
-          - Compiler compatibility line: $compatibilityLine
-          - Built from compiler version: $compilerVersion
-          - Source tag: $tag
+          Editor features need the same language semantics as the compiler: scope lookup, visibility, member resolution, extension methods, types, and completion ranges.
+
+          Tooling provides a small supported boundary around the compiler so the Language Server can reuse those rules instead of reimplementing them.
+
+          ```text
+          Editor / IDE
+              ↓
+          Cvolo Language Server
+              ↓
+          Cvolo Compiler Tooling
+              ↓
+          Cvolo Compiler
+          ```
+
+          ## Versioning
+
+          Tooling is versioned independently so editor/tooling fixes can be released without publishing a new compiler build.
+
+          * Tooling: `{0}`
+          * Compiler compatibility line: `{1}`
+          * Built from compiler: `{2}`
+          * Tag: `{3}`
+
+          Tooling revisions such as `{1}.1`, `{1}.2`, etc. are tooling revisions for the same compiler compatibility line, not new compiler versions.
 
           ## Assets
 
-          - CvoloLanguageServerTooling-$version.zip: verified tooling bundle
-          - CvoloLanguageServerTooling-$version.zip.sha256: SHA-256 checksum for the bundle
+          * `CvoloLanguageServerTooling-{0}.zip` - verified tooling bundle
+          * `CvoloLanguageServerTooling-{0}.zip.sha256` - SHA-256 checksum
 
-          ## Verification
-
-          The CI release pipeline restores and builds the tooling boundary projects, runs the tooling boundary/artifact/consumer contract tests, packages the verified bundle, smokes the final archive, validates the exact release asset set, uploads the assets to a draft GitHub Release, then publishes it only after every step succeeds.
-          "@ -replace '(?m)^          ', '' | Set-Content -LiteralPath $releaseNotesPath -NoNewline -Encoding utf8
+          The release pipeline builds, tests, packages, and smoke-tests the bundle before publication.
+          '@ -f $version, $compatibilityLine, $compilerVersion, $tag -replace '(?m)^          ', '' | Set-Content -LiteralPath $releaseNotesPath -NoNewline -Encoding utf8
 
           gh release view $tag *> $null
           if ($LASTEXITCODE -eq 0) {
