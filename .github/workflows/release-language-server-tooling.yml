@@ -120,6 +120,33 @@ jobs:
         run: |
           $tag = '${{ github.ref_name }}'
           $version = '${{ needs.validate.outputs.version }}'
+          $compatibilityLine = '${{ needs.validate.outputs.compatibilityLine }}'
+          $compilerVersion = '${{ needs.validate.outputs.compilerVersion }}'
+          $releaseNotesPath = Join-Path $env:RUNNER_TEMP 'tooling-release-notes.md'
+
+          @"
+          ## What this release is
+
+          Tooling $version is the Cvolo language-server tooling release. It contains the RID-neutral managed tooling bundle used by editor and language-server integrations, not the Cvolo compiler/runtime release assets.
+
+          This release exists separately from the main Cvolo $version release line so tooling can be versioned, validated, and published independently while still declaring the compiler compatibility line it was built against.
+
+          ## Compatibility
+
+          - Tooling version: $version
+          - Compiler compatibility line: $compatibilityLine
+          - Built from compiler version: $compilerVersion
+          - Source tag: $tag
+
+          ## Assets
+
+          - CvoloLanguageServerTooling-$version.zip: verified tooling bundle
+          - CvoloLanguageServerTooling-$version.zip.sha256: SHA-256 checksum for the bundle
+
+          ## Verification
+
+          The CI release pipeline restores and builds the tooling boundary projects, runs the tooling boundary/artifact/consumer contract tests, packages the verified bundle, smokes the final archive, validates the exact release asset set, uploads the assets to a draft GitHub Release, then publishes it only after every step succeeds.
+          "@ -replace '(?m)^          ', '' | Set-Content -LiteralPath $releaseNotesPath -NoNewline -Encoding utf8
 
           gh release view $tag *> $null
           if ($LASTEXITCODE -eq 0) {
@@ -128,7 +155,7 @@ jobs:
 
           $created = $false
           try {
-            gh release create $tag --verify-tag --draft --title "Cvolo Language Server Tooling $version" --generate-notes
+            gh release create $tag --verify-tag --draft --title "Tooling $version" --notes-file $releaseNotesPath
             if ($LASTEXITCODE -ne 0) { throw 'Failed to create draft Tooling release.' }
             $created = $true
 
