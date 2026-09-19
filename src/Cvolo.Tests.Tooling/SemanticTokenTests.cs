@@ -191,4 +191,16 @@ public sealed class SemanticTokenTests
 			}
 		}
 	}
+
+	[Fact]
+	public void CallWithMemberArgument_IsClassified()
+	{
+		const string s = "struct Point { int x; }\nint Twice(int value) { return value + value; }\nint main() {\n    val Point p = Point { x: 1 };\n    val int local = Twice(p.x);\n    return local;\n}\n";
+		var x = Open(s);
+		using (x.Fixture)
+		{
+			var tokens = WithText(x.Document, x.Document.GetSemanticTokens(), "Twice");
+			Assert.Equal(2, tokens.Count);
+		}
+	}
 }
