@@ -4,17 +4,20 @@ namespace Cvolo.Tests.Tooling;
 
 /// <summary>
 /// Proves that the tooling observes the same standard-library universe as the compiler:
-/// completion, member completion and symbol lookup resolve imported std symbols through the
-/// real project model (no hardcoded std catalog).
+/// symbol lookup, diagnostics and namespace-receiver completion resolve std symbols through the
+/// real project model (no hardcoded std catalog, no second namespace resolver).
 /// </summary>
 public sealed class StandardLibraryTests
 {
-	private static (CvoloProject Project, ProjectSnapshot Snapshot, DocumentSnapshot Document, TempProject Fixture) Open(string source)
+	private static (CvoloProject Project, ProjectSnapshot Snapshot, DocumentSnapshot Document, TempProject Fixture, int Position) Open(string marked)
 	{
+		var position = marked.IndexOf('|');
+		var source = position >= 0 ? marked.Remove(position, 1) : marked;
+
 		var fixture = TempProject.Create(("Main.cvl", source));
 		var project = CvoloWorkspace.Create().OpenProject(fixture.ProjectFilePath);
 		var snapshot = project.InitialSnapshot;
-		return (project, snapshot, snapshot.GetDocument(project.GetDocumentId("Main.cvl")), fixture);
+		return (project, snapshot, snapshot.GetDocument(project.GetDocumentId("Main.cvl")), fixture, position);
 	}
 
 	[Fact]
@@ -60,6 +63,56 @@ public sealed class StandardLibraryTests
 		using (x.Fixture)
 		{
 			Assert.DoesNotContain(x.Document.GetDiagnostics(), d => d.Message.Contains("Console.WriteLine", StringComparison.Ordinal));
+		}
+	}
+
+	[Fact]
+	public void NamespaceReceiverCompletion_ResolvesThroughUsing()
+	{
+		const string s = "using System;\nint main() { return Console.|; }\n";
+		var x = Open(s);
+		using (x.Fixture)
+		{
+			var result = x.Document.GetCompletions(x.Position);
+			Assert.Contains(result.Candidates, c => c.Label == "WriteLine");
+		}
+	}
+
+	[Fact]
+	public void NestedNamespaceReceiverCompletion_ResolvesFullyQualified()
+	{
+		const string s = "int main() { return System.Console.|; }\n";
+		var x = Open(s);
+		using (x.Fixture)
+		{
+			var result = x.Document.GetCompletions(x.Position);
+			Assert.Contains(result.Candidates, c => c.Label == "WriteLine");
+		}
+	}
+
+	[Fact]
+	public void PartialNamespaceMember_ReplacesPrefixAndOffersMatch()
+	{
+		const string s = "using System;\nint main() { return Console.Wr|; }\n";
+		var x = Open(s);
+		using (x.Fixture)
+		{
+			var result = x.Document.GetCompletions(x.Position);
+			Assert.Contains(result.Candidates, c => c.Label == "WriteLine");
+			Assert.Equal(x.Position, result.ReplacementRange.End);
+			Assert.Equal(2, result.ReplacementRange.Length);
+		}
+	}
+
+	[Fact]
+	public void UnresolvedNamespaceReceiver_YieldsNoMembersOrFallback()
+	{
+		const string s = "int main() { return NonexistentNs.|; }\n";
+		var x = Open(s);
+		using (x.Fixture)
+		{
+			var result = x.Document.GetCompletions(x.Position);
+			Assert.Empty(result.Candidates);
 		}
 	}
 

@@ -554,25 +554,33 @@ public static class CompletionQuery
 		var receiver = memberNode.Expression;
 		TypeSymbol? type = null;
 		var isEnumTypeNameReceiver = false;
+		string? dotted = null;
 
-		if (ExpressionTypeResolver.GetDottedName(receiver) is { } dotted)
+		if (ExpressionTypeResolver.GetDottedName(receiver) is { } dottedName)
 		{
-			var dotIndex = dotted.LastIndexOf('.');
+			dotted = dottedName;
+			var dotIndex = dottedName.LastIndexOf('.');
 			if (dotIndex >= 0)
 			{
-				type = state.Context.ResolveQualifiedGlobal(dotted[..dotIndex], dotted[(dotIndex + 1)..])?.Type;
+				type = state.Context.ResolveQualifiedGlobal(dottedName[..dotIndex], dottedName[(dotIndex + 1)..])?.Type;
 			}
 			else
 			{
-				type = state.Context.ResolveGlobalReference(dotted, out _)?.Type;
+				type = state.Context.ResolveGlobalReference(dottedName, out _)?.Type;
 			}
 
-			if (type is null && state.Context.ResolveType(dotted) is EnumTypeSymbol enumType)
+			if (type is null && state.Context.ResolveType(dottedName) is EnumTypeSymbol enumType)
 			{
 				type = enumType;
 				isEnumTypeNameReceiver = true;
 			}
 		}
+
+		// A namespace receiver completes to the namespace's own declarations (free functions,
+		// types, nested namespaces) using the compiler's namespace/using semantics. An
+		// unresolved namespace yields no members - never a global/keyword fallback.
+		if (type is null && !isEnumTypeNameReceiver && dotted is not null && TryResolveNamespace(state, dotted, out var namespaceName))
+			return EnumerateNamespaceMembers(namespaceName, state);
 
 		if (type is null)
 			type = ExpressionTypeResolver.Resolve(state.Context, visible, receiver);
@@ -628,6 +636,139 @@ public static class CompletionQuery
 		}
 
 		return candidates;
+	}
+
+	/// <summary>
+	/// Resolves a (possibly dotted) receiver name to a declared namespace, first as written and
+	/// then through the current unit's active <c>using</c> namespaces. Returns false when the name
+	/// does not denote a namespace.
+	/// </summary>
+	private static bool TryResolveNamespace(QueryState state, string dotted, out string namespaceName)
+	{
+		if (IsNamespace(state, dotted))
+		{
+			namespaceName = dotted;
+			return true;
+		}
+
+		foreach (var active in state.Context.GetActiveUsings(state.Unit))
+		{
+			var candidate = active + "." + dotted;
+			if (IsNamespace(state, candidate))
+			{
+				namespaceName = candidate;
+				return true;
+			}
+		}
+
+		namespaceName = string.Empty;
+		return false;
+	}
+
+	/// <summary>
+	/// Whether <paramref name="candidate"/> denotes a namespace: it is declared, or it is the
+	/// dotted prefix of a declared global/function-template/type. Uses the compiler's own tables.
+	/// </summary>
+	private static bool IsNamespace(QueryState state, string candidate)
+	{
+		if (state.Context.DeclaredNamespaces.Contains(candidate))
+			return true;
+
+		var prefix = candidate + ".";
+		return state.Context.OverloadedFunctions.Keys.Any(k => k.StartsWith(prefix, StringComparison.Ordinal))
+			|| state.Context.GenericFunctionTemplates.Keys.Any(k => k.StartsWith(prefix, StringComparison.Ordinal))
+			|| state.Context.InterfaceFunctionTemplates.Keys.Any(k => k.StartsWith(prefix, StringComparison.Ordinal))
+			|| state.Context.ProtocolFunctionTemplates.Keys.Any(k => k.StartsWith(prefix, StringComparison.Ordinal))
+			|| state.Context.StructTypes.Keys.Any(k => k.StartsWith(prefix, StringComparison.Ordinal))
+			|| state.Context.UnionTypes.Keys.Any(k => k.StartsWith(prefix, StringComparison.Ordinal))
+			|| state.Context.EnumTypes.Keys.Any(k => k.StartsWith(prefix, StringComparison.Ordinal))
+			|| state.Context.InterfaceTypes.Keys.Any(k => k.StartsWith(prefix, StringComparison.Ordinal))
+			|| state.Context.ProtocolTypes.Keys.Any(k => k.StartsWith(prefix, StringComparison.Ordinal));
+	}
+
+	/// <summary>
+	/// Enumerates the declarations directly inside a namespace: free functions, function
+	/// templates, named types and nested namespaces. Uses the compiler's own symbol tables and
+	/// visibility rules; no name is hardcoded.
+	/// </summary>
+	private static IReadOnlyList<CompletionCandidate> EnumerateNamespaceMembers(string namespaceName, QueryState state)
+	{
+		var candidates = new List<CompletionCandidate>();
+		var seen = new HashSet<(string Label, CompletionKind Kind)>();
+		var prefix = namespaceName + ".";
+
+		foreach (var (key, overloads) in state.Context.OverloadedFunctions)
+		{
+			if (!IsDirectNamespaceChild(key, prefix))
+				continue;
+			if (!overloads.Any(fn => IsVisible(state, fn.Visibility, fn.DeclaringUnit)))
+				continue;
+			AddCandidate(candidates, seen, key[prefix.Length..], CompletionKind.Function);
+		}
+
+		foreach (var (key, declaration) in state.Context.GenericFunctionTemplates)
+			AddNamespaceFunctionTemplate(candidates, seen, key, prefix, declaration, state);
+		foreach (var (key, declaration) in state.Context.InterfaceFunctionTemplates)
+			AddNamespaceFunctionTemplate(candidates, seen, key, prefix, declaration, state);
+		foreach (var (key, declaration) in state.Context.ProtocolFunctionTemplates)
+			AddNamespaceFunctionTemplate(candidates, seen, key, prefix, declaration, state);
+
+		AddNamespaceTypeCandidates(candidates, seen, prefix, state.Context.StructTypes, state);
+		AddNamespaceTypeCandidates(candidates, seen, prefix, state.Context.UnionTypes, state);
+		AddNamespaceTypeCandidates(candidates, seen, prefix, state.Context.EnumTypes, state);
+		AddNamespaceTypeCandidates(candidates, seen, prefix, state.Context.InterfaceTypes, state);
+		AddNamespaceTypeCandidates(candidates, seen, prefix, state.Context.ProtocolTypes, state);
+
+		foreach (var declared in state.Context.DeclaredNamespaces)
+		{
+			if (IsDirectNamespaceChild(declared, prefix))
+				AddCandidate(candidates, seen, declared[prefix.Length..], CompletionKind.Namespace);
+		}
+
+		return candidates;
+	}
+
+	private static void AddNamespaceFunctionTemplate(
+		List<CompletionCandidate> candidates,
+		HashSet<(string Label, CompletionKind Kind)> seen,
+		string key,
+		string prefix,
+		FunctionDeclarationSyntax declaration,
+		QueryState state)
+	{
+		if (!IsDirectNamespaceChild(key, prefix))
+			return;
+
+		var declaringUnit = state.Context.SymbolUnits.TryGetValue(key, out var unit) ? unit : null;
+		if (!IsVisible(state, declaration.Visibility, declaringUnit))
+			return;
+
+		AddCandidate(candidates, seen, key[prefix.Length..], CompletionKind.Function);
+	}
+
+	private static void AddNamespaceTypeCandidates<T>(
+		List<CompletionCandidate> candidates,
+		HashSet<(string Label, CompletionKind Kind)> seen,
+		string prefix,
+		IReadOnlyDictionary<string, T> types,
+		QueryState state) where T : TypeSymbol
+	{
+		foreach (var (key, symbol) in types)
+		{
+			if (!IsDirectNamespaceChild(key, prefix))
+				continue;
+			if (!IsVisible(state, symbol.Visibility, GetDeclaringUnit(state, symbol)))
+				continue;
+			AddCandidate(candidates, seen, key[prefix.Length..], CompletionKind.Type);
+		}
+	}
+
+	private static bool IsDirectNamespaceChild(string mangledName, string prefix)
+	{
+		if (!mangledName.StartsWith(prefix, StringComparison.Ordinal))
+			return false;
+
+		return mangledName.IndexOf('.', prefix.Length) < 0;
 	}
 
 	private static void AddExtensionMethods(List<CompletionCandidate> candidates, TypeSymbol type, QueryState state)
