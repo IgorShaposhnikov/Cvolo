@@ -118,9 +118,9 @@ function Assert-ToolingChecksums {
         }
     }
 
-    $expected = @(Get-ToolingBundleFiles -BundleDir $root | Where-Object { $_ -ne 'SHA256SUMS.txt' })
+    [string[]]$expected = @(Get-ToolingBundleFiles -BundleDir $root | Where-Object { $_ -ne 'SHA256SUMS.txt' })
     [Array]::Sort($expected, [System.StringComparer]::Ordinal)
-    $listed = @($entries | ForEach-Object { $_.RelativePath })
+    [string[]]$listed = @($entries | ForEach-Object { $_.RelativePath })
 
     if ($expected.Count -ne $listed.Count) {
         throw "SHA256SUMS.txt must list every bundle file exactly once (expected $($expected.Count), listed $($listed.Count))."
