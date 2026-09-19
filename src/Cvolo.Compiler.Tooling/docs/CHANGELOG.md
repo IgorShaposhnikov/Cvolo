@@ -20,6 +20,7 @@ hover, go-to-definition, document symbols).
 | `ProjectSnapshot.GetDefinitions(SymbolId)` | Source declarations of a symbol within the snapshot. |
 | `DocumentSnapshot.GetSymbolAtPosition(int)` | Resolves the symbol at a UTF-16 offset. |
 | `DocumentSnapshot.GetDocumentSymbols()` | Hierarchical declaration outline for the document. |
+| `CvoloWorkspace.Create(bool includeStandardLibrary = false)` | When true, opened projects also compile the discovered standard library (`libraries/`) alongside their own sources, mirroring the compiler. The bundle ships `libraries/` beside the tooling assembly. |
 
 ### Semantics
 
@@ -38,6 +39,9 @@ hover, go-to-definition, document symbols).
   the declaring file, including for cross-file definitions.
 * All queries are pinned to the supplied immutable snapshot: no disk reread, no project reopen,
   and no cross-snapshot leakage. Concurrent queries are deterministic.
+* With `includeStandardLibrary: true`, standard-library declarations (e.g. `System.Console`) are
+  part of the snapshot, so stdlib/package APIs resolve instead of producing false overload
+  errors. Closed standard-library documents participate in navigation but are never edited.
 
 ### Internal (compiler)
 

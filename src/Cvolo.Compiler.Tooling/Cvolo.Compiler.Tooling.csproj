@@ -17,6 +17,16 @@
 		<InternalsVisibleTo Include="Cvolo.Tests.Tooling" />
 	</ItemGroup>
 
+	<!-- Ship the standard library beside the tooling so the loader can resolve stdlib APIs,
+	     mirroring the compiler (src/Cvolo/Cvolo.csproj). -->
+	<ItemGroup>
+		<None Include="..\..\libraries\**\*"
+		      CopyToOutputDirectory="PreserveNewest"
+		      CopyToPublishDirectory="PreserveNewest"
+		      Link="libraries\%(RecursiveDir)%(Filename)%(Extension)"
+		      Visible="False" />
+	</ItemGroup>
+
 	<Import Project="Tooling.Artifact.targets" />
 
 </Project>

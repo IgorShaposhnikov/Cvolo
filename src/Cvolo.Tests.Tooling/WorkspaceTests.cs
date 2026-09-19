@@ -137,4 +137,23 @@ public sealed class WorkspaceTests
 			Directory.Delete(root, recursive: true);
 		}
 	}
+
+	[Fact]
+	public void StandardLibrary_IsLoaded_OnlyWhenRequested()
+	{
+		using var fixture = TempProject.Create(
+			("Main.cvl", "using System;\nint main() { Console.WriteLine(\"hi\"); return 0; }\n"));
+
+		// Default: only the project's own files; the stdlib API is unresolved.
+		var withoutStdlib = CvoloWorkspace.Create().OpenProject(fixture.ProjectFilePath);
+		Assert.Single(withoutStdlib.InitialSnapshot.DocumentIds);
+		var withoutDoc = withoutStdlib.InitialSnapshot.GetDocument(withoutStdlib.GetDocumentId("Main.cvl"));
+		Assert.Contains(withoutDoc.GetDiagnostics(), d => d.Message.Contains("Console.WriteLine", StringComparison.Ordinal));
+
+		// Opt-in: the standard library is compiled alongside the project and resolves the call.
+		var withStdlib = CvoloWorkspace.Create(includeStandardLibrary: true).OpenProject(fixture.ProjectFilePath);
+		Assert.True(withStdlib.InitialSnapshot.DocumentIds.Count > 1);
+		var withDoc = withStdlib.InitialSnapshot.GetDocument(withStdlib.GetDocumentId("Main.cvl"));
+		Assert.DoesNotContain(withDoc.GetDiagnostics(), d => d.Message.Contains("Console.WriteLine", StringComparison.Ordinal));
+	}
 }

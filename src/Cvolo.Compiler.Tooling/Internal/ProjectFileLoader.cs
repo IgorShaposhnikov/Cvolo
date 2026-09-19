@@ -10,7 +10,7 @@ namespace Cvolo.Compiler.Tooling.Internal;
 /// </summary>
 internal static class ProjectFileLoader
 {
-	public static List<string> DiscoverSourceFiles(string projectFilePath)
+	public static List<string> DiscoverSourceFiles(string projectFilePath, bool includeStandardLibrary = false)
 	{
 		var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 		var active = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -18,7 +18,26 @@ internal static class ProjectFileLoader
 		var allFiles = new List<string>();
 
 		Visit(Path.GetFullPath(projectFilePath));
-		return [.. allFiles.Distinct(StringComparer.OrdinalIgnoreCase)];
+
+		var files = allFiles.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+
+		// When requested, compile the standard library alongside the project (mirroring
+		// CompilationProject.Load) so standard-library APIs resolve instead of reporting false
+		// 'no overload' errors. Hosts that want the raw project file set keep the default.
+		if (includeStandardLibrary)
+		{
+			var standardLibrary = FindStandardLibraryPath(Path.GetDirectoryName(Path.GetFullPath(projectFilePath))!);
+			if (standardLibrary is not null)
+			{
+				foreach (var file in EnumerateLibrarySources(standardLibrary))
+				{
+					if (!files.Contains(file, StringComparer.OrdinalIgnoreCase))
+						files.Add(file);
+				}
+			}
+		}
+
+		return files;
 
 		void Visit(string projectPath)
 		{
@@ -94,4 +113,40 @@ internal static class ProjectFileLoader
 	}
 
 	private static string Normalize(string path) => path.Replace('\\', '/');
+
+	/// <summary>
+	/// Locates the standard-library directory the same way the compiler does: a 'libraries'
+	/// folder beside the tooling assembly (shipped in the tooling bundle), else the nearest
+	/// 'libraries' folder walking up from the assembly directory or the project directory.
+	/// </summary>
+	internal static string? FindStandardLibraryPath(string projectDirectory)
+	{
+		var beside = Path.Combine(AppContext.BaseDirectory, "libraries");
+		if (Directory.Exists(beside))
+			return beside;
+
+		foreach (var start in new[] { AppContext.BaseDirectory, projectDirectory })
+		{
+			var dir = new DirectoryInfo(start);
+			while (dir is not null)
+			{
+				var libPath = Path.Combine(dir.FullName, "libraries");
+				if (Directory.Exists(libPath))
+					return libPath;
+
+				dir = dir.Parent;
+			}
+		}
+
+		return null;
+	}
+
+	private static IEnumerable<string> EnumerateLibrarySources(string libraryDirectory)
+	{
+		return Directory.EnumerateFiles(libraryDirectory, "*.*", SearchOption.AllDirectories)
+			.Where(path => string.Equals(Path.GetExtension(path), ".cvl", StringComparison.OrdinalIgnoreCase)
+				|| string.Equals(Path.GetExtension(path), ".cv", StringComparison.OrdinalIgnoreCase))
+			.Select(Path.GetFullPath)
+			.OrderBy(path => Normalize(path), StringComparer.Ordinal);
+	}
 }

@@ -11,9 +11,9 @@ internal static class CompilerProjectAdapter
 	/// or a single .cvl file), reads each into a <see cref="SourceText"/>, and allocates a
 	/// <see cref="DocumentId"/> per document via <paramref name="allocateDocumentId"/>.
 	/// </summary>
-	public static IReadOnlyDictionary<DocumentId, DocumentSnapshot> DiscoverDocuments(string projectPath, Func<DocumentId> allocateDocumentId)
+	public static IReadOnlyDictionary<DocumentId, DocumentSnapshot> DiscoverDocuments(string projectPath, Func<DocumentId> allocateDocumentId, bool includeStandardLibrary = false)
 	{
-		var sourceFiles = DiscoverSourceFiles(projectPath);
+		var sourceFiles = DiscoverSourceFiles(projectPath, includeStandardLibrary);
 		var documents = new Dictionary<DocumentId, DocumentSnapshot>();
 
 		foreach (var file in sourceFiles)
@@ -28,11 +28,11 @@ internal static class CompilerProjectAdapter
 		return documents;
 	}
 
-	private static List<string> DiscoverSourceFiles(string inputPath)
+	private static List<string> DiscoverSourceFiles(string inputPath, bool includeStandardLibrary)
 	{
 		if (File.Exists(inputPath) && inputPath.EndsWith(".cvlproj", StringComparison.OrdinalIgnoreCase))
 		{
-			return DiscoverFromProjectFile(inputPath);
+			return DiscoverFromProjectFile(inputPath, includeStandardLibrary);
 		}
 
 		if (Directory.Exists(inputPath))
@@ -41,7 +41,7 @@ internal static class CompilerProjectAdapter
 			if (projectFiles.Length > 1)
 				throw new InvalidOperationException($"Multiple .cvlproj files found in '{inputPath}'. Pass the project file explicitly.");
 			if (projectFiles.Length == 1)
-				return DiscoverFromProjectFile(projectFiles[0]);
+				return DiscoverFromProjectFile(projectFiles[0], includeStandardLibrary);
 
 			return Directory.GetFiles(inputPath, "*.cvl", SearchOption.AllDirectories).ToList();
 		}
@@ -54,8 +54,8 @@ internal static class CompilerProjectAdapter
 		throw new FileNotFoundException($"Input path '{inputPath}' not found");
 	}
 
-	private static List<string> DiscoverFromProjectFile(string projectFilePath)
+	private static List<string> DiscoverFromProjectFile(string projectFilePath, bool includeStandardLibrary)
 	{
-		return ProjectFileLoader.DiscoverSourceFiles(projectFilePath);
+		return ProjectFileLoader.DiscoverSourceFiles(projectFilePath, includeStandardLibrary);
 	}
 }

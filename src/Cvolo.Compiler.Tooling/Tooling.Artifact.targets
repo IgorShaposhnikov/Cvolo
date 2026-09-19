@@ -126,6 +126,12 @@
 		<Copy SourceFiles="@(_ToolingDocFiles)"
 		      DestinationFiles="@(_ToolingDocFiles->'$(ToolingArtifactDir)docs\%(RecursiveDir)%(Filename)%(Extension)')" />
 
+		<ItemGroup>
+			<_ToolingLibraryFiles Include="$(_RepoRoot)\libraries\**\*" />
+		</ItemGroup>
+		<Copy SourceFiles="@(_ToolingLibraryFiles)"
+		      DestinationFiles="@(_ToolingLibraryFiles->'$(ToolingArtifactDir)libraries\%(RecursiveDir)%(Filename)%(Extension)')" />
+
 		<WriteToolingManifest FilePath="$(ToolingArtifactDir)tooling.manifest.json"
 		                      ToolingVersion="$(ToolingVersion)"
 		                      CompatibilityLine="$(CompilerCompatibilityLine)"
