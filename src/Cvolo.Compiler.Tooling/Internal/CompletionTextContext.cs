@@ -6,15 +6,18 @@ namespace Cvolo.Compiler.Tooling.Internal;
 /// <summary>
 /// Lexical context of a completion request: whether the cursor is inside a comment or string/char
 /// literal (which suppresses candidates), the replacement span covering the identifier or keyword
-/// being typed (or a zero-length span), the typed prefix, and whether the previous significant token
-/// indicates a type-only position.
+/// being typed (or a zero-length span), the typed prefix, whether the previous significant token
+/// indicates a type-only position, and whether the cursor is lexically in a member-access slot.
 /// Offsets and spans are UTF-16 based, matching <see cref="SourceText"/> and the lexer.
 /// </summary>
 internal sealed record CompletionTextContext(
 	bool IsCommentOrLiteral,
 	TextSpan ReplacementSpan,
 	string Prefix,
-	bool IsTypeContext)
+	bool IsTypeContext,
+	bool IsMemberAccessContext,
+	bool IsDestructorContext,
+	string DestructorTypeName)
 {
 	internal static CompletionTextContext Analyze(SourceText text, int position)
 	{
@@ -29,15 +32,23 @@ internal sealed record CompletionTextContext(
 			{
 				var start = BackscanWordStart(source, position - 1, token.StartIndex);
 				return new CompletionTextContext(true, new TextSpan(start, position - start),
-					source.Substring(start, position - start), false);
+					source.Substring(start, position - start), false, false, false, string.Empty);
 			}
 
 			if (IsWordToken(token.Type))
 			{
+				if (TryBuildDestructor(tokens, FindPreviousTildeIndex(tokens, tokenIndex), position, out var destructorSpan, out var destructorName))
+				{
+					return new CompletionTextContext(false, destructorSpan,
+						source.Substring(destructorSpan.Start, position - destructorSpan.Start),
+						false, false, true, destructorName);
+				}
+
 				var prefix = source.Substring(token.StartIndex, position - token.StartIndex);
 				var tokenLength = token.StopIndex - token.StartIndex + 1;
 				return new CompletionTextContext(false, new TextSpan(token.StartIndex, tokenLength),
-					prefix, PreviousSignificantTokenIsTypeMarker(tokens, tokenIndex));
+					prefix, PreviousSignificantTokenIsTypeMarker(tokens, tokenIndex),
+					PreviousSignificantTokenIsDot(tokens, tokenIndex), false, string.Empty);
 			}
 		}
 		else
@@ -48,10 +59,18 @@ internal sealed record CompletionTextContext(
 			var (prev, prevIndex) = FindPreviousToken(tokens, position);
 			if (prev is not null && IsWordToken(prev.Type))
 			{
+				if (TryBuildDestructor(tokens, FindPreviousTildeIndex(tokens, prevIndex), position, out var destructorSpan, out var destructorName))
+				{
+					return new CompletionTextContext(false, destructorSpan,
+						source.Substring(destructorSpan.Start, position - destructorSpan.Start),
+						false, false, true, destructorName);
+				}
+
 				var prefix = source.Substring(prev.StartIndex, position - prev.StartIndex);
 				var tokenLength = prev.StopIndex - prev.StartIndex + 1;
 				return new CompletionTextContext(false, new TextSpan(prev.StartIndex, tokenLength),
-					prefix, PreviousSignificantTokenIsTypeMarker(tokens, prevIndex));
+					prefix, PreviousSignificantTokenIsTypeMarker(tokens, prevIndex),
+					PreviousSignificantTokenIsDot(tokens, prevIndex), false, string.Empty);
 			}
 
 			var (nextWord, nextWordIndex) = FindWordTokenStartingAt(tokens, position);
@@ -59,12 +78,134 @@ internal sealed record CompletionTextContext(
 			{
 				var tokenLength = nextWord.StopIndex - nextWord.StartIndex + 1;
 				return new CompletionTextContext(false, new TextSpan(nextWord.StartIndex, tokenLength),
-					string.Empty, PreviousSignificantTokenIsTypeMarker(tokens, nextWordIndex));
+					string.Empty, PreviousSignificantTokenIsTypeMarker(tokens, nextWordIndex),
+					PreviousSignificantTokenIsDot(tokens, nextWordIndex), false, string.Empty);
 			}
 		}
 
+		// Cursor immediately after a bare `~` (the destructor marker in an extension body).
+		if (TryBuildDestructor(tokens, FindLastTildeIndex(tokens, position), position, out var bareSpan, out var bareName))
+		{
+			return new CompletionTextContext(false, bareSpan, string.Empty, false, false, true, bareName);
+		}
+
 		return new CompletionTextContext(false, new TextSpan(position, 0), string.Empty,
-			LastSignificantTokenIsTypeMarker(tokens, position));
+			LastSignificantTokenIsTypeMarker(tokens, position),
+			LastSignificantTokenIsDot(tokens, position), false, string.Empty);
+	}
+
+	/// <summary>
+	/// Builds the destructor replacement span (from the <c>~</c> through the cursor) and resolves the
+	/// extended type name, when <paramref name="tildeIndex"/> is a real destructor marker inside an
+	/// extension body. Returns false for a bitwise-not <c>~</c> (no enclosing extension).
+	/// </summary>
+	private static bool TryBuildDestructor(IList<IToken> tokens, int tildeIndex, int position, out TextSpan span, out string typeName)
+	{
+		if (tildeIndex < 0 || !TryGetEnclosingExtensionName(tokens, tildeIndex, out typeName))
+		{
+			span = default;
+			typeName = string.Empty;
+			return false;
+		}
+
+		var tilde = tokens[tildeIndex];
+		span = new TextSpan(tilde.StartIndex, position - tilde.StartIndex);
+		return true;
+	}
+
+	private static int FindPreviousTildeIndex(IList<IToken> tokens, int beforeIndex)
+	{
+		for (var i = beforeIndex - 1; i >= 0; i--)
+		{
+			var t = tokens[i];
+			if (t.Channel != Lexer.DefaultTokenChannel || t.Type == TokenConstants.EOF)
+				continue;
+			if (t.Type == CvoloLexer.WS)
+				continue;
+
+			return t.Type == CvoloLexer.TILDE ? i : -1;
+		}
+
+		return -1;
+	}
+
+	private static int FindLastTildeIndex(IList<IToken> tokens, int position)
+	{
+		for (var i = tokens.Count - 1; i >= 0; i--)
+		{
+			var t = tokens[i];
+			if (t.Channel != Lexer.DefaultTokenChannel || t.Type == TokenConstants.EOF)
+				continue;
+			if (t.StopIndex >= position)
+				continue;
+
+			return t.Type == CvoloLexer.TILDE ? i : -1;
+		}
+
+		return -1;
+	}
+
+	/// <summary>
+	/// Resolves the name of the extension whose body encloses <paramref name="tildeIndex"/>. Scans back
+	/// to the matching <c>{</c> (tracking nested braces) and then to the nearest preceding
+	/// <c>extension</c> keyword, whose following identifier is the extended type name.
+	/// </summary>
+	private static bool TryGetEnclosingExtensionName(IList<IToken> tokens, int tildeIndex, out string name)
+	{
+		var brace = -1;
+		var depth = 0;
+		for (var i = tildeIndex - 1; i >= 0; i--)
+		{
+			var t = tokens[i];
+			if (t.Type == CvoloLexer.RBRACE)
+			{
+				depth++;
+			}
+			else if (t.Type == CvoloLexer.LBRACE)
+			{
+				if (depth == 0)
+				{
+					brace = i;
+					break;
+				}
+
+				depth--;
+			}
+		}
+
+		if (brace < 0)
+		{
+			name = string.Empty;
+			return false;
+		}
+
+		for (var i = brace - 1; i >= 0; i--)
+		{
+			var t = tokens[i];
+			if (t.Type == CvoloLexer.SEMI || t.Type == CvoloLexer.RBRACE || t.Type == CvoloLexer.LBRACE)
+				break;
+			if (t.Type != CvoloLexer.EXTENSION)
+				continue;
+
+			for (var j = i + 1; j < tokens.Count; j++)
+			{
+				var next = tokens[j];
+				if (next.Channel != Lexer.DefaultTokenChannel || next.Type == TokenConstants.EOF)
+					continue;
+				if (next.Type == CvoloLexer.WS)
+					continue;
+				if (next.Type == CvoloLexer.Identifier)
+				{
+					name = next.Text;
+					return true;
+				}
+
+				break;
+			}
+		}
+
+		name = string.Empty;
+		return false;
 	}
 
 	internal const string MemberProbeIdentifier = "__cvoloCompletionProbe";
@@ -78,10 +219,15 @@ internal sealed record CompletionTextContext(
 		}
 
 		var source = text.ToString();
+		var tokens = Lex(source);
 
-		if (position > 0 && source[position - 1] == '.')
+		if (LastSignificantTokenIsDot(tokens, position))
 		{
-			probeText = source.Insert(position, MemberProbeIdentifier);
+			var insertion = MemberProbeIdentifier;
+			if (NeedsStatementTerminator(source, position))
+				insertion += ";";
+
+			probeText = source.Insert(position, insertion);
 			return true;
 		}
 
@@ -91,7 +237,6 @@ internal sealed record CompletionTextContext(
 			return true;
 		}
 
-		var tokens = Lex(source);
 		if (LastSignificantTokenIsTypeMarker(tokens, position))
 		{
 			probeText = source.Insert(position, MemberProbeIdentifier);
@@ -100,6 +245,48 @@ internal sealed record CompletionTextContext(
 
 		probeText = string.Empty;
 		return false;
+	}
+
+	/// <summary>
+	/// Probe (text, position) candidates for a document whose primary parse failed, tried in order by
+	/// the completion recovery path. The first is the standard probe from <see cref="TryGetProbeText"/>;
+	/// the second removes a half-typed word so a top-level partial keyword (which otherwise makes the
+	/// whole file unparseable) leaves a parseable file whose context at the word start still describes
+	/// the position being typed.
+	/// </summary>
+	internal static IReadOnlyList<(string Text, int Position)> GetProbeTexts(SourceText text, int position)
+	{
+		var source = text.ToString();
+		var probes = new List<(string Text, int Position)>();
+
+		if (TryGetProbeText(text, position, out var primary))
+			probes.Add((primary, position));
+
+		var wordStart = position;
+		while (wordStart > 0 && IsWordChar(source[wordStart - 1]))
+			wordStart--;
+
+		if (wordStart < position)
+			probes.Add((source.Remove(wordStart, position - wordStart), wordStart));
+
+		return probes;
+	}
+
+	/// <summary>
+	/// Probe texts for a trailing member-access dot, tried in order by the completion recovery path:
+	/// the bare probe identifier (a nested expression such as <c>f(receiver.)</c>) and the probe with a
+	/// statement terminator (a standalone statement such as <c>receiver.</c> before a following
+	/// statement, <c>}</c>, or end of file). The correct form depends on the surrounding parse, so the
+	/// caller tries each and keeps the first that yields a member context.
+	/// </summary>
+	internal static IReadOnlyList<string> GetMemberProbeTexts(SourceText text, int position)
+	{
+		var source = text.ToString();
+		return
+		[
+			source.Insert(position, MemberProbeIdentifier),
+			source.Insert(position, MemberProbeIdentifier + ";"),
+		];
 	}
 
 	private static bool IsWordChar(char ch)
@@ -157,6 +344,51 @@ internal sealed record CompletionTextContext(
 		}
 
 		return (null, -1);
+	}
+
+	private static bool NeedsStatementTerminator(string source, int position)
+	{
+		for (var i = position; i < source.Length; i++)
+		{
+			if (char.IsWhiteSpace(source[i]))
+				continue;
+
+			return source[i] == '}';
+		}
+
+		return true;
+	}
+
+	private static bool PreviousSignificantTokenIsDot(IList<IToken> tokens, int beforeIndex)
+	{
+		for (var i = beforeIndex - 1; i >= 0; i--)
+		{
+			var t = tokens[i];
+			if (t.Channel != Lexer.DefaultTokenChannel || t.Type == TokenConstants.EOF)
+				continue;
+			if (t.Type == CvoloLexer.WS)
+				continue;
+
+			return t.Type == CvoloLexer.DOT;
+		}
+
+		return false;
+	}
+
+	private static bool LastSignificantTokenIsDot(IList<IToken> tokens, int position)
+	{
+		for (var i = tokens.Count - 1; i >= 0; i--)
+		{
+			var t = tokens[i];
+			if (t.Channel != Lexer.DefaultTokenChannel || t.Type == TokenConstants.EOF)
+				continue;
+			if (t.StopIndex >= position)
+				continue;
+
+			return t.Type == CvoloLexer.DOT;
+		}
+
+		return false;
 	}
 
 	private static bool PreviousSignificantTokenIsTypeMarker(IList<IToken> tokens, int beforeIndex)

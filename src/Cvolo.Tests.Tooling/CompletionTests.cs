@@ -642,6 +642,94 @@ public sealed class CompletionTests
 	}
 
 	[Fact]
+	public void BareDot_WithoutFollowingSemicolon_RecoversMemberContext()
+	{
+		var result = Complete(
+			"struct Node { int value; int other; }\n" +
+			"int main() {\n" +
+			"    val Node n;\n" +
+			"    n.|\n" +
+			"}\n");
+
+		Assert.True(Contains(result, "value", CompletionKind.StructField));
+		Assert.True(Contains(result, "other", CompletionKind.StructField));
+		Assert.DoesNotContain(result.Candidates, c => c.Kind == CompletionKind.Keyword);
+		Assert.Equal(0, result.ReplacementRange.Length);
+	}
+
+	[Fact]
+	public void BareDot_InIncompleteReturn_RecoversMemberContext()
+	{
+		var result = Complete(
+			"struct Node { int value; }\n" +
+			"int main() {\n" +
+			"    val Node n;\n" +
+			"    return n.|\n" +
+			"}\n");
+
+		Assert.True(Contains(result, "value", CompletionKind.StructField));
+		Assert.DoesNotContain(result.Candidates, c => c.Kind == CompletionKind.Keyword);
+	}
+
+	[Fact]
+	public void BareDot_WithWhitespaceBeforeCursor_RecoversMemberContext()
+	{
+		var result = Complete(
+			"struct Node { int value; }\n" +
+			"int main() {\n" +
+			"    val Node n;\n" +
+			"    n.   |\n" +
+			"}\n");
+
+		Assert.True(Contains(result, "value", CompletionKind.StructField));
+		Assert.DoesNotContain(result.Candidates, c => c.Kind == CompletionKind.Keyword);
+		Assert.Equal(0, result.ReplacementRange.Length);
+	}
+
+	[Fact]
+	public void PartialMember_WithoutFollowingSemicolon_RecoversMemberContext()
+	{
+		var result = Complete(
+			"struct Node { int value; int other; }\n" +
+			"int main() {\n" +
+			"    val Node n;\n" +
+			"    n.v|\n" +
+			"}\n");
+
+		Assert.True(Contains(result, "value", CompletionKind.StructField));
+		Assert.DoesNotContain(result.Candidates, c => c.Label == "other");
+		Assert.DoesNotContain(result.Candidates, c => c.Kind == CompletionKind.Keyword);
+		Assert.Equal(1, result.ReplacementRange.Length);
+	}
+
+	[Fact]
+	public void UnknownReceiver_BareDot_DoesNotFallBackToGlobalsOrKeywords()
+	{
+		var result = Complete(
+			"global int value = 1;\n" +
+			"int main() {\n" +
+			"    v.|\n" +
+			"}\n");
+
+		Assert.Empty(result.Candidates);
+	}
+
+	[Fact]
+	public void UnknownReceiver_PartialMember_DoesNotSuggestValueOrVar()
+	{
+		var result = Complete(
+			"global int value = 1;\n" +
+			"int main() {\n" +
+			"    v.v|\n" +
+			"}\n");
+
+		Assert.DoesNotContain(result.Candidates, c => c.Label == "value");
+		Assert.DoesNotContain(result.Candidates, c => c.Label == "var");
+		Assert.DoesNotContain(result.Candidates, c => c.Kind == CompletionKind.Keyword);
+		Assert.Empty(result.Candidates);
+	}
+
+	[Fact]
 	public void BareDot_NestedMemberReceiver_OffersFields()
 	{
 		var result = Complete(
@@ -707,5 +795,126 @@ public sealed class CompletionTests
 		Assert.Equal(new TextSpan(source.IndexOf("ret", StringComparison.Ordinal), "return".Length), result.ReplacementRange);
 		Assert.True(Contains(result, "return", CompletionKind.Keyword));
 		Assert.Equal(source.Replace("|", string.Empty, StringComparison.Ordinal), ApplyCandidate(source, "return", CompletionKind.Keyword));
+	}
+
+	[Fact]
+	public void TopLevelPartialDeclarationKeyword_OffersDeclarationKeywords()
+	{
+		var result = Complete("struct A { int x; }\nali|");
+
+		Assert.True(Contains(result, "alias", CompletionKind.Keyword));
+	}
+
+	[Fact]
+	public void TopLevelPartialDeclarationKeyword_Struct()
+	{
+		var result = Complete("global int g;\nstr|");
+
+		Assert.True(Contains(result, "struct", CompletionKind.Keyword));
+	}
+
+	[Fact]
+	public void TopLevelPartialDeclarationKeyword_Namespace()
+	{
+		var result = Complete("struct A { int x; }\nname|");
+
+		Assert.True(Contains(result, "namespace", CompletionKind.Keyword));
+	}
+
+	[Fact]
+	public void TopLevelPartialDeclarationKeyword_DoesNotLeakStatementKeywords()
+	{
+		var result = Complete("struct A { int x; }\nali|");
+
+		Assert.DoesNotContain(result.Candidates, c => c.Label == "return" && c.Kind == CompletionKind.Keyword);
+	}
+
+	[Fact]
+	public void BareDot_BeforeFollowingStatement_RecoversMemberContext()
+	{
+		// The realistic editor buffer: `n.` on its own line followed by a later
+		// statement. The probe must terminate the statement to bind the receiver.
+		var result = Complete(
+			"struct Name { int value; }\n" +
+			"int Subtract(int left, int right) {\n" +
+			"    val Name n;\n" +
+			"    n.|\n" +
+			"    return left - right;\n" +
+			"}\n");
+
+		Assert.True(Contains(result, "value", CompletionKind.StructField));
+		Assert.DoesNotContain(result.Candidates, c => c.Kind == CompletionKind.Keyword);
+		Assert.Equal(0, result.ReplacementRange.Length);
+	}
+
+	[Fact]
+	public void BareDot_BeforeFollowingDeclaration_RecoversMemberContext()
+	{
+		var result = Complete(
+			"struct Name { int value; }\n" +
+			"int main() {\n" +
+			"    val Name n;\n" +
+			"    n.|\n" +
+			"    val int later = 1;\n" +
+			"}\n");
+
+		Assert.True(Contains(result, "value", CompletionKind.StructField));
+		Assert.DoesNotContain(result.Candidates, c => c.Kind == CompletionKind.Keyword);
+	}
+
+	[Fact]
+	public void BareDot_AfterReturnKeyword_RecoversMemberContext()
+	{
+		var result = Complete(
+			"struct Name { int value; }\n" +
+			"int main() {\n" +
+			"    val Name n;\n" +
+			"    return n.|\n" +
+			"}\n");
+
+		Assert.True(Contains(result, "value", CompletionKind.StructField));
+		Assert.DoesNotContain(result.Candidates, c => c.Kind == CompletionKind.Keyword);
+	}
+
+	[Fact]
+	public void ExtensionDestructor_BareTilde_OffersSnippet()
+	{
+		var result = Complete("struct Name { int value; }\nextension Name {\n    ~|\n}\n");
+
+		var candidate = Assert.Single(result.Candidates);
+		Assert.Equal("~Name()", candidate.Label);
+		Assert.True(candidate.IsSnippet);
+		Assert.Contains("~Name()", candidate.InsertText, StringComparison.Ordinal);
+		// The bare `~` is part of the replaced range so the snippet supplies it.
+		Assert.Equal(new TextSpan("struct Name { int value; }\nextension Name {\n    ".Length, 1), result.ReplacementRange);
+	}
+
+	[Fact]
+	public void ExtensionDestructor_PartialName_ReplacesTildeAndPrefix()
+	{
+		const string marked = "struct Name { int value; }\nextension Name {\n    ~Na|\n}\n";
+		var (_, position) = SplitCursor(marked);
+		var result = Complete(marked);
+
+		var candidate = Assert.Single(result.Candidates);
+		Assert.Equal("~Name()", candidate.Label);
+		Assert.Equal(new TextSpan(position - 3, 3), result.ReplacementRange);
+	}
+
+	[Fact]
+	public void ExtensionDestructor_GenericExtension_UsesExtendedTypeName()
+	{
+		var result = Complete("struct Box<T> { T item; }\nextension Box {\n    ~|\n}\n");
+
+		var candidate = Assert.Single(result.Candidates);
+		Assert.Equal("~Box()", candidate.Label);
+	}
+
+	[Fact]
+	public void BitwiseNot_OutsideExtension_IsNotDestructor()
+	{
+		var result = Complete("int main() {\n    var int x = ~|\n}\n");
+
+		Assert.DoesNotContain(result.Candidates, c => c.Label.StartsWith("~", StringComparison.Ordinal));
 	}
 }

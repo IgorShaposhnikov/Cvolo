@@ -61,9 +61,10 @@ public enum CompletionKind
 
 /// <summary>
 /// A single completion item: the <see cref="Label"/> to display, the text to insert, and its
-/// <see cref="Kind"/>.
+/// <see cref="Kind"/>. When <see cref="IsSnippet"/> is true, <see cref="InsertText"/> is an LSP
+/// snippet body (with tab stops such as <c>$0</c>) rather than plain text.
 /// </summary>
-public sealed record CompletionCandidate(string Label, string InsertText, CompletionKind Kind);
+public sealed record CompletionCandidate(string Label, string InsertText, CompletionKind Kind, bool IsSnippet = false);
 
 /// <summary>
 /// The result of a completion query: the range of source that a pending edit replaces (the typed
