@@ -805,7 +805,11 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 							args.Add(BuildExpression(arg));
 					}
 
-					return new CallExpressionSyntax(SpanOf(callCtx), funcName, typeArgs, args);
+					TextSpan? argumentListSpan = null;
+					if (callCtx.LPAREN() is { } leftParen && callCtx.RPAREN() is { } rightParen)
+						argumentListSpan = TextSpan.FromBounds(leftParen.Symbol.StartIndex, rightParen.Symbol.StopIndex + 1);
+
+					return new CallExpressionSyntax(SpanOf(callCtx), funcName, typeArgs, args, argumentListSpan);
 				}
 
 			case CvoloParser.UnaryMinusExpressionContext unaryMinus:

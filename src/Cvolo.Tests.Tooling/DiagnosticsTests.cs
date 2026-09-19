@@ -376,4 +376,21 @@ public sealed class DiagnosticsTests
 			Assert.Equal(first, second);
 		});
 	}
+
+	[Fact]
+	public void NoOverload_DiagnosticPointsAtArgumentList_NotWholeCall()
+	{
+		using var fixture = TempProject.Create(("Main.cvl", "using System;\nint main() { Console.Write(); return 0; }\n"));
+		var project = CvoloWorkspace.Create().OpenProject(fixture.ProjectFilePath);
+		var document = project.InitialSnapshot.GetDocument(project.GetDocumentId("Main.cvl"));
+		var text = document.Text.ToString();
+
+		var diagnostic = Assert.Single(
+			document.GetDiagnostics(),
+			d => d.Message.Contains("No overload of function 'Console.Write'", StringComparison.Ordinal));
+
+		// The offending span is the empty argument list "()", not the whole call expression.
+		var span = diagnostic.Location.Span;
+		Assert.Equal("()", text.Substring(span.Start, span.Length));
+	}
 }

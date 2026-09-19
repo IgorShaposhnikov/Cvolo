@@ -1232,7 +1232,7 @@ public sealed class ValidationPass(BindingContext context)
 					{
 						var currentFileContext = context.FileContexts[context.CurrentUnit!];
 						var sigString = string.Join(", ", argTypes.Select(t => t.Name));
-						context.Diagnostics.Report(currentFileContext, call.Span, $"No overload of function '{call.FunctionName}' matches argument types ({sigString})");
+						context.Diagnostics.Report(currentFileContext, call.ArgumentListSpan, $"No overload of function '{call.FunctionName}' matches argument types ({sigString})");
 						return;
 					}
 
@@ -1264,14 +1264,14 @@ public sealed class ValidationPass(BindingContext context)
 					if (!isVariadic && argCount != expectedParamCount)
 					{
 						var currentFileContext = context.FileContexts[context.CurrentUnit!];
-						context.Diagnostics.Report(currentFileContext, call.Span, $"Function '{call.FunctionName}' expects {expectedParamCount} arguments but received {argCount}");
+						context.Diagnostics.Report(currentFileContext, call.ArgumentListSpan, $"Function '{call.FunctionName}' expects {expectedParamCount} arguments but received {argCount}");
 						return;
 					}
 
 					if (isVariadic && argCount < paramCount)
 					{
 						var currentFileContext = context.FileContexts[context.CurrentUnit!];
-						context.Diagnostics.Report(currentFileContext, call.Span, $"Function '{call.FunctionName}' expects at least {paramCount} arguments but received {argCount}");
+						context.Diagnostics.Report(currentFileContext, call.ArgumentListSpan, $"Function '{call.FunctionName}' expects at least {paramCount} arguments but received {argCount}");
 						return;
 					}
 
@@ -2940,7 +2940,7 @@ public sealed class ValidationPass(BindingContext context)
 					return substituted;
 				}).ToList();
 				var newArgs = call.Arguments.Select(a => SubstituteExpressionGenerics(a, substitutionMap)).ToList();
-				return new CallExpressionSyntax(call.Span, call.FunctionName, newTypeArgs, newArgs);
+				return new CallExpressionSyntax(call.Span, call.FunctionName, newTypeArgs, newArgs, call.ArgumentListSpan);
 
 			case StructInitializationExpressionSyntax structInit:
 				var newTypeName = structInit.StructTypeName;
