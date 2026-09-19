@@ -40,11 +40,31 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 			.Select(id => id.ToUpperInvariant())
 			.ToHashSet();
 
-		// 1. Load the project configuration (automatically walks up directory tree to locate standard libraries)
-		CompilationProject project;
+		// 1. Build the semantic project universe (project sources + standard library + merged
+		// ProjectReference sources + package/.cvlib API units + compiler configuration). The same
+		// loader is used by the language-server tooling, so both observe one authoritative universe.
+		ProjectUniverse universe;
 		try
 		{
-			project = CompilationProject.Load(path, AppContext.BaseDirectory, isShared, mergeProjectReferences: !useProjectReferencePackages);
+			universe = ProjectUniverseLoader.Load(new ProjectUniverseRequest(
+				path,
+				CompilerBaseDir: AppContext.BaseDirectory,
+				ForceShared: isShared,
+				MergeProjectReferences: !useProjectReferencePackages,
+				UseProjectReferencePackages: useProjectReferencePackages,
+				LoadPackages: !emitLowered,
+				Configuration: configuration,
+				PackageCache: packageCache));
+		}
+		catch (PackageException ex)
+		{
+			reporter.ReportSynthetic(ex.Code, "error", ex.Message, path);
+			return 1;
+		}
+		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or JsonException)
+		{
+			reporter.ReportSynthetic(PackageDiagnosticIds.LockOutOfSync, "error", $"Failed to prepare project dependencies: {ex.Message}", path);
+			return 1;
 		}
 		catch (Exception ex)
 		{
@@ -52,79 +72,20 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 			return 1;
 		}
 
-		var packageState = ValidatePackageLock(path, reporter, out var packageLockValid);
-		if (!packageLockValid)
-			return 1;
+		var project = universe.Project;
+		var packageArtifacts = universe.PackageArtifacts;
 
-		IReadOnlyList<ResolvedPackageArtifacts> packageArtifacts = [];
-		if (!emitLowered && packageState is { } validatedPackages)
+		if (verbose && !reporter.Exclusive && packageArtifacts.Count > 0)
 		{
-			try
+			Console.WriteLine("Package dependencies selected for build:");
+			foreach (var artifact in packageArtifacts)
 			{
-				var installer = new PackageInstaller(packageCache);
-				packageArtifacts = new PackageDependencyLoader(packageCache, installer)
-					.Load(validatedPackages.Manifest, validatedPackages.LockFile);
-
-				if (verbose && !reporter.Exclusive)
-				{
-					Console.WriteLine("Package dependencies selected for build:");
-					foreach (var artifact in packageArtifacts)
-					{
-						var input = artifact.UsesSourceFallback
-							? $"Sector 5 source fallback ({artifact.SourceFallbackUnits.Count} file(s))"
-							: artifact.BitcodePath;
-						Console.WriteLine($"  -> {artifact.PackageId}@{artifact.Version}: {input}");
-					}
-					Console.WriteLine();
-				}
+				var input = artifact.UsesSourceFallback
+					? $"Sector 5 source fallback ({artifact.SourceFallbackUnits.Count} file(s))"
+					: artifact.BitcodePath;
+				Console.WriteLine($"  -> {artifact.PackageId}@{artifact.Version}: {input}");
 			}
-			catch (PackageException ex)
-			{
-				reporter.ReportSynthetic(ex.Code, "error", ex.Message, path);
-				return 1;
-			}
-			catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
-			{
-				reporter.ReportSynthetic(PackageDiagnosticIds.LockOutOfSync, "error", $"Failed to prepare package dependencies: {ex.Message}", path);
-				return 1;
-			}
-		}
-
-		if (!emitLowered && useProjectReferencePackages && project.ProjectReferences.Count > 0)
-		{
-			try
-			{
-				var projectReferenceArtifacts = ProjectReferenceArtifactLoader.Load(path, configuration);
-				packageArtifacts = packageArtifacts.Concat(projectReferenceArtifacts).ToArray();
-
-				if (verbose && !reporter.Exclusive)
-				{
-					Console.WriteLine("ProjectReference artifacts selected for build:");
-					foreach (var artifact in projectReferenceArtifacts)
-						Console.WriteLine($"  -> {artifact.PackageId}@{artifact.Version}: {artifact.BitcodePath}");
-					Console.WriteLine();
-				}
-			}
-			catch (PackageException ex)
-			{
-				reporter.ReportSynthetic(ex.Code, "error", ex.Message, path);
-				return 1;
-			}
-			catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
-			{
-				reporter.ReportSynthetic(null, "error", $"Failed to prepare ProjectReference artifacts: {ex.Message}", path);
-				return 1;
-			}
-		}
-
-		if (packageArtifacts.Count > 1)
-		{
-			packageArtifacts = packageArtifacts
-				.DistinctBy(artifact => (
-					artifact.PackageId,
-					artifact.Version,
-					BitcodePath: artifact.BitcodePath is null ? string.Empty : Path.GetFullPath(artifact.BitcodePath)))
-				.ToArray();
+			Console.WriteLine();
 		}
 
 		// 2. Instrument compiled files list only under verbose logging rules.
@@ -164,40 +125,16 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 			binder.Context.FileContexts[ast!] = context;
 		}
 
-		// Installed packages contribute public Cvolo declarations to semantic analysis.
-		// These synthetic units have no bodies; Sector 3 bitcode remains the sole implementation.
-		foreach (var artifact in packageArtifacts)
+		// External package/artifact units contribute declarations to semantic analysis. They were
+		// classified by the shared universe loader exactly as binding expects.
+		foreach (var external in universe.ExternalUnits)
 		{
-			if (artifact.UsesSourceFallback)
-			{
-				// No host bitcode is usable. Compile the verified Sector 5 sources as consumer-local
-				// implementation units. Marking them as package-template units keeps public symbols
-				// internal to this final module and avoids manufacturing a cross-package ABI.
-				foreach (var sourceUnit in artifact.SourceFallbackUnits)
-				{
-					asts.Add(sourceUnit);
-					binder.Context.FileContexts[sourceUnit] = sourceUnit.Context;
-					binder.Context.PackageTemplateUnits.Add(sourceUnit);
-				}
-				continue;
-			}
-
-			foreach (var packageUnit in artifact.ApiMetadata.CreateCompilationUnits(artifact.PackageId, artifact.Version))
-			{
-				asts.Add(packageUnit);
-				binder.Context.FileContexts[packageUnit] = packageUnit.Context;
-				binder.Context.ExternalPackageUnits.Add(packageUnit);
-			}
-
-			// Generic package declarations keep their bodies in Sector 5 so the consumer can
-			// monomorphize them after concrete type arguments are known. These units are not
-			// external stubs: they participate in normal lowering/codegen as templates.
-			foreach (var templateUnit in artifact.TemplateUnits)
-			{
-				asts.Add(templateUnit);
-				binder.Context.FileContexts[templateUnit] = templateUnit.Context;
-				binder.Context.PackageTemplateUnits.Add(templateUnit);
-			}
+			asts.Add(external.Unit);
+			binder.Context.FileContexts[external.Unit] = external.Unit.Context;
+			if (external.Kind == ExternalSemanticUnitKind.ExternalPackageApi)
+				binder.Context.ExternalPackageUnits.Add(external.Unit);
+			else
+				binder.Context.PackageTemplateUnits.Add(external.Unit);
 		}
 
 		// Cross-file declaration index feeding the try/catch lowering (function

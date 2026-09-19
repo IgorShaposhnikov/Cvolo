@@ -69,8 +69,9 @@ public sealed class ConcurrencyTests
 		Timed.Out(() =>
 		{
 			using var fixture = TempProject.Create(("Main.cvl", BaseText));
-			var baseSnapshot = CvoloWorkspace.Create().OpenProject(fixture.ProjectFilePath).InitialSnapshot;
-			var docId = baseSnapshot.DocumentIds[0];
+			var project = CvoloWorkspace.Create().OpenProject(fixture.ProjectFilePath);
+			var baseSnapshot = project.InitialSnapshot;
+			var docId = project.GetDocumentId("Main.cvl");
 			var results = new ConcurrentBag<(int Index, string Text)>();
 
 			Parallel.For(0, 32, i =>

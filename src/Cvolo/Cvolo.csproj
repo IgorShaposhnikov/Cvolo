@@ -23,6 +23,7 @@
 		<ProjectReference Include="..\Cvolo.Analysis\Cvolo.Analysis.csproj" />
 		<ProjectReference Include="..\Cvolo.Emitter.LLVM\Cvolo.Emitter.LLVM.csproj" />
 		<ProjectReference Include="..\Cvolo.CLI.Packages\Cvolo.CLI.Packages.csproj" />
+		<ProjectReference Include="..\Cvolo.Projects\Cvolo.Projects.csproj" />
 	</ItemGroup>
 
 	<!--

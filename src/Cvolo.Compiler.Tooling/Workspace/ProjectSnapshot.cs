@@ -1,4 +1,5 @@
 using Cvolo.Compiler.Tooling.Internal;
+using Cvolo.Projects;
 
 namespace Cvolo.Compiler.Tooling;
 
@@ -10,6 +11,7 @@ namespace Cvolo.Compiler.Tooling;
 public sealed class ProjectSnapshot
 {
 	private readonly IReadOnlyDictionary<DocumentId, DocumentSnapshot> _documents;
+	private readonly IReadOnlyList<ExternalSemanticUnit> _externalUnits;
 	private readonly Lazy<AnalyzedProject> _lazyAnalysis;
 	private readonly Lazy<NavigationIndex> _lazyNavigation;
 
@@ -26,18 +28,19 @@ public sealed class ProjectSnapshot
 	/// </summary>
 	public IReadOnlyDictionary<DocumentId, DocumentSnapshot> Documents => _documents;
 
-	private ProjectSnapshot(ProjectId projectId, IReadOnlyDictionary<DocumentId, DocumentSnapshot> documents)
+	private ProjectSnapshot(ProjectId projectId, IReadOnlyDictionary<DocumentId, DocumentSnapshot> documents, IReadOnlyList<ExternalSemanticUnit> externalUnits)
 	{
 		ProjectId = projectId;
 		_documents = documents;
+		_externalUnits = externalUnits;
 		DocumentIds = [.. documents.Keys];
 		_lazyAnalysis = new Lazy<AnalyzedProject>(() => BinderAdapter.AnalyzeSnapshot(this));
 		_lazyNavigation = new Lazy<NavigationIndex>(() => NavigationIndex.Build(this));
 	}
 
-	internal static ProjectSnapshot CreateOwned(ProjectId projectId, IReadOnlyDictionary<DocumentId, DocumentSnapshot> documents)
+	internal static ProjectSnapshot CreateOwned(ProjectId projectId, IReadOnlyDictionary<DocumentId, DocumentSnapshot> documents, IReadOnlyList<ExternalSemanticUnit>? externalUnits = null)
 	{
-		var snapshot = new ProjectSnapshot(projectId, documents);
+		var snapshot = new ProjectSnapshot(projectId, documents, externalUnits ?? []);
 
 		foreach (var document in snapshot.Documents.Values)
 			document.OwningSnapshot = snapshot;
@@ -54,6 +57,13 @@ public sealed class ProjectSnapshot
 	{
 		return _lazyNavigation.Value;
 	}
+
+	/// <summary>
+	/// The non-file semantic units (package/artifact API units) that participate in this
+	/// snapshot's binding. They have no <see cref="DocumentId"/> and never appear in
+	/// <see cref="Documents"/>.
+	/// </summary>
+	internal IReadOnlyList<ExternalSemanticUnit> ExternalUnits => _externalUnits;
 
 	/// <summary>
 	/// Returns the source declarations of <paramref name="symbol"/> within this snapshot. A symbol
@@ -107,6 +117,6 @@ public sealed class ProjectSnapshot
 			newDocuments[id] = new DocumentSnapshot(id, old.FilePath, text, null);
 		}
 
-		return CreateOwned(ProjectId, newDocuments);
+		return CreateOwned(ProjectId, newDocuments, _externalUnits);
 	}
 }

@@ -10,23 +10,19 @@ namespace Cvolo.Compiler.Tooling;
 public sealed class CvoloWorkspace
 {
 	private readonly Guid _sessionId = Guid.NewGuid();
-	private readonly bool _includeStandardLibrary;
 	private int _nextProjectId;
 	private int _nextDocumentId;
 
-	private CvoloWorkspace(bool includeStandardLibrary)
+	private CvoloWorkspace()
 	{
-		_includeStandardLibrary = includeStandardLibrary;
 	}
 
 	/// <summary>
-	/// Creates a new, empty workspace session. When <paramref name="includeStandardLibrary"/> is
-	/// true, opened projects also compile the discovered standard library alongside their own
-	/// sources (mirroring the compiler); otherwise only the project's own files are loaded.
+	/// Creates a new, empty workspace session.
 	/// </summary>
-	public static CvoloWorkspace Create(bool includeStandardLibrary = false)
+	public static CvoloWorkspace Create()
 	{
-		return new(includeStandardLibrary);
+		return new();
 	}
 
 	/// <summary>
@@ -40,8 +36,8 @@ public sealed class CvoloWorkspace
 
 		var absolutePath = Path.GetFullPath(projectPath);
 		var projectId = AllocateProjectId();
-		var documents = CompilerProjectAdapter.DiscoverDocuments(absolutePath, AllocateDocumentId, _includeStandardLibrary);
-		var snapshot = ProjectSnapshot.CreateOwned(projectId, documents);
+		var (documents, externalUnits) = CompilerProjectAdapter.DiscoverDocuments(absolutePath, AllocateDocumentId);
+		var snapshot = ProjectSnapshot.CreateOwned(projectId, documents, externalUnits);
 
 		return new CvoloProject(this, projectId, absolutePath, snapshot);
 	}

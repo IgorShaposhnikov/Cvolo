@@ -123,7 +123,7 @@ public sealed class SnapshotTests
 		using var fixture = TempProject.Create(("Main.cvl", OriginalText));
 		var project = CvoloWorkspace.Create().OpenProject(fixture.ProjectFilePath);
 		var s0 = project.InitialSnapshot;
-		var docId = s0.DocumentIds[0];
+		var docId = project.GetDocumentId("Main.cvl");
 
 		var s1 = s0.WithDocument(docId, SourceText.From(EditedText));
 		var s2 = s1.WithDocument(docId, SourceText.From("int main() { return 123; }\n"));

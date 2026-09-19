@@ -24,7 +24,7 @@ public sealed class DiagnosticsTests
 	{
 		using var fixture = TempProject.Create(("Main.cvl", source));
 		var project = CvoloWorkspace.Create().OpenProject(fixture.ProjectFilePath);
-		var docId = project.InitialSnapshot.DocumentIds[0];
+		var docId = project.GetDocumentId("Main.cvl");
 		var document = project.InitialSnapshot.GetDocument(docId);
 
 		var diagnostic = Assert.Single(document.GetDiagnostics(), d => d.Id == diagnosticId);
@@ -65,7 +65,7 @@ public sealed class DiagnosticsTests
 		const string source = "refint Subtract(int left, int right) {\n    return left - right;\n}\n";
 		using var fixture = TempProject.Create(("Main.cvl", source));
 		var project = CvoloWorkspace.Create().OpenProject(fixture.ProjectFilePath);
-		var docId = project.InitialSnapshot.DocumentIds[0];
+		var docId = project.GetDocumentId("Main.cvl");
 		var document = project.InitialSnapshot.GetDocument(docId);
 
 		var diagnostic = Assert.Single(document.GetDiagnostics(), d => d.Message.Contains("Unknown return type", StringComparison.Ordinal));
@@ -83,7 +83,7 @@ public sealed class DiagnosticsTests
 			"int Main() { return 0; }\n";
 		using var fixture = TempProject.Create(("Main.cvl", source));
 		var project = CvoloWorkspace.Create().OpenProject(fixture.ProjectFilePath);
-		var docId = project.InitialSnapshot.DocumentIds[0];
+		var docId = project.GetDocumentId("Main.cvl");
 		var document = project.InitialSnapshot.GetDocument(docId);
 
 		var diagnostic = Assert.Single(document.GetDiagnostics(), d => d.Message.Contains("Duplicate definition of function", StringComparison.Ordinal));
@@ -104,7 +104,7 @@ public sealed class DiagnosticsTests
 			"int Main() { return 0; }\n";
 		using var fixture = TempProject.Create(("Main.cvl", source));
 		var project = CvoloWorkspace.Create().OpenProject(fixture.ProjectFilePath);
-		var docId = project.InitialSnapshot.DocumentIds[0];
+		var docId = project.GetDocumentId("Main.cvl");
 		var document = project.InitialSnapshot.GetDocument(docId);
 
 		var diagnostic = Assert.Single(document.GetDiagnostics(), d => d.Id == "CVL1011");
@@ -125,7 +125,7 @@ public sealed class DiagnosticsTests
 			"int main() { return 0; }\n";
 		using var fixture = TempProject.Create(("Main.cvl", source));
 		var project = CvoloWorkspace.Create().OpenProject(fixture.ProjectFilePath);
-		var docId = project.InitialSnapshot.DocumentIds[0];
+		var docId = project.GetDocumentId("Main.cvl");
 		var document = project.InitialSnapshot.GetDocument(docId);
 
 		var diagnostic = Assert.Single(document.GetDiagnostics(), d => d.Message.Contains("Duplicate constructor signature", StringComparison.Ordinal));
@@ -146,7 +146,7 @@ public sealed class DiagnosticsTests
 			"int main() { return 0; }\n";
 		using var fixture = TempProject.Create(("Main.cvl", source));
 		var project = CvoloWorkspace.Create().OpenProject(fixture.ProjectFilePath);
-		var docId = project.InitialSnapshot.DocumentIds[0];
+		var docId = project.GetDocumentId("Main.cvl");
 		var document = project.InitialSnapshot.GetDocument(docId);
 
 		var diagnostic = Assert.Single(document.GetDiagnostics(), d => d.Message.Contains("Defensive initialization", StringComparison.Ordinal));
@@ -165,7 +165,7 @@ public sealed class DiagnosticsTests
 			"int main() { return 0; }\n";
 		using var fixture = TempProject.Create(("Main.cvl", source));
 		var project = CvoloWorkspace.Create().OpenProject(fixture.ProjectFilePath);
-		var docId = project.InitialSnapshot.DocumentIds[0];
+		var docId = project.GetDocumentId("Main.cvl");
 		var document = project.InitialSnapshot.GetDocument(docId);
 
 		var diagnostic = Assert.Single(document.GetDiagnostics(), d => d.Message.Contains("inside extension block", StringComparison.Ordinal));
@@ -187,7 +187,7 @@ public sealed class DiagnosticsTests
 			"}\n";
 		using var fixture = TempProject.Create(("Main.cvl", source));
 		var project = CvoloWorkspace.Create().OpenProject(fixture.ProjectFilePath);
-		var docId = project.InitialSnapshot.DocumentIds[0];
+		var docId = project.GetDocumentId("Main.cvl");
 		var document = project.InitialSnapshot.GetDocument(docId);
 
 		var diagnostic = Assert.Single(document.GetDiagnostics());
@@ -203,7 +203,7 @@ public sealed class DiagnosticsTests
 		{
 			using var fixture = TempProject.Create(("Main.cvl", "int main( {\n    return 0;\n}\n"));
 			var project = CvoloWorkspace.Create().OpenProject(fixture.ProjectFilePath);
-			var docId = project.InitialSnapshot.DocumentIds[0];
+			var docId = project.GetDocumentId("Main.cvl");
 			var document = project.InitialSnapshot.GetDocument(docId);
 
 			var diagnostics = document.GetDiagnostics();
@@ -320,7 +320,7 @@ public sealed class DiagnosticsTests
 			using var fixture = TempProject.Create(("Main.cvl", "int main() {\n    val int x = \"boom\";\n    return 0;\n}\n"));
 			var project = CvoloWorkspace.Create().OpenProject(fixture.ProjectFilePath);
 			var baseSnapshot = project.InitialSnapshot;
-			var docId = baseSnapshot.DocumentIds[0];
+			var docId = project.GetDocumentId("Main.cvl");
 			var before = baseSnapshot.GetDocument(docId).GetDiagnostics().ToArray();
 
 			var branch = baseSnapshot.WithDocument(docId, SourceText.From("int main() { return 1; }\n"));
@@ -341,7 +341,7 @@ public sealed class DiagnosticsTests
 			using var fixture = TempProject.Create(("Main.cvl", "int main() {\n    val int x = \"boom\";\n    return 0;\n}\n"));
 			var project = CvoloWorkspace.Create().OpenProject(fixture.ProjectFilePath);
 			var baseSnapshot = project.InitialSnapshot;
-			var docId = baseSnapshot.DocumentIds[0];
+			var docId = project.GetDocumentId("Main.cvl");
 
 			var baseText = baseSnapshot.GetDocument(docId).Text.ToString();
 			var savedDiagnostics = baseSnapshot.GetDocument(docId).GetDiagnostics();
@@ -367,7 +367,7 @@ public sealed class DiagnosticsTests
 		{
 			using var fixture = TempProject.Create(("Main.cvl", "int main() {\n    val int x = \"boom\";\n    return 0;\n}\n"));
 			var project = CvoloWorkspace.Create().OpenProject(fixture.ProjectFilePath);
-			var docId = project.InitialSnapshot.DocumentIds[0];
+			var docId = project.GetDocumentId("Main.cvl");
 
 			var first = project.InitialSnapshot.GetDocument(docId).GetDiagnostics();
 			var second = project.InitialSnapshot.GetDocument(docId).GetDiagnostics();

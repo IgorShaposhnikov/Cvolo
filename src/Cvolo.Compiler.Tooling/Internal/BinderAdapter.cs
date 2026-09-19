@@ -1,5 +1,6 @@
 using Cvolo.Analysis;
 using Cvolo.Core.AST.Base;
+using Cvolo.Projects;
 
 namespace Cvolo.Compiler.Tooling.Internal;
 
@@ -60,7 +61,7 @@ internal static class BinderAdapter
 
 		BindingContext? binderContext = null;
 
-		if (units.Count > 0)
+		if (units.Count > 0 || snapshot.ExternalUnits.Count > 0)
 		{
 			var binder = new Binder();
 
@@ -71,7 +72,20 @@ internal static class BinderAdapter
 					binder.Context.FileContexts[unit] = unit.Context;
 			}
 
-			binder.Bind(units);
+			// Package/artifact units carry the same declarations the compiler binds. Add them to
+			// the bound unit set and classify them exactly as the compiler driver does.
+			var allUnits = new List<CompilationUnitSyntax>(units);
+			foreach (var external in snapshot.ExternalUnits)
+			{
+				allUnits.Add(external.Unit);
+				binder.Context.FileContexts[external.Unit] = external.Unit.Context;
+				if (external.Kind == ExternalSemanticUnitKind.ExternalPackageApi)
+					binder.Context.ExternalPackageUnits.Add(external.Unit);
+				else
+					binder.Context.PackageTemplateUnits.Add(external.Unit);
+			}
+
+			binder.Bind(allUnits);
 			binderContext = binder.Context;
 
 			// Bind diagnostics are surfaced only when every document parsed cleanly, matching the

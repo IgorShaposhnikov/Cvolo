@@ -13,8 +13,11 @@ public sealed class WorkspaceTests
 		var project = CvoloWorkspace.Create().OpenProject(fixture.ProjectFilePath);
 
 		Assert.Equal(Path.GetFullPath(fixture.ProjectFilePath), project.ProjectPath);
-		Assert.Equal(2, project.InitialSnapshot.DocumentIds.Count);
-		Assert.Equal(2, project.InitialSnapshot.Documents.Count);
+		// The universe includes the project files and the standard library.
+		Assert.True(project.InitialSnapshot.DocumentIds.Count >= 2);
+		Assert.Equal(project.InitialSnapshot.DocumentIds.Count, project.InitialSnapshot.Documents.Count);
+		Assert.True(project.TryGetDocumentId("Main.cvl", out _));
+		Assert.True(project.TryGetDocumentId("Lib.cvl", out _));
 
 		foreach (var document in project.InitialSnapshot.Documents.Values)
 		{
@@ -95,7 +98,7 @@ public sealed class WorkspaceTests
 		using var fixture = TempProject.Create(("Main.cvl", "int main() { return 0; }\n"));
 		var project = CvoloWorkspace.Create().OpenProject(Path.GetDirectoryName(fixture.ProjectFilePath)!);
 
-		Assert.Single(project.InitialSnapshot.DocumentIds);
+		Assert.True(project.TryGetDocumentId("Main.cvl", out _));
 	}
 
 	[Fact]
@@ -109,7 +112,6 @@ public sealed class WorkspaceTests
 
 			var project = CvoloWorkspace.Create().OpenProject(root);
 
-			Assert.Single(project.InitialSnapshot.DocumentIds);
 			Assert.True(project.TryGetDocumentId("A.cvl", out _));
 		}
 		finally
@@ -130,7 +132,7 @@ public sealed class WorkspaceTests
 
 			var project = CvoloWorkspace.Create().OpenProject(file);
 
-			Assert.Single(project.InitialSnapshot.DocumentIds);
+			Assert.True(project.TryGetDocumentId("Single.cvl", out _));
 		}
 		finally
 		{
@@ -139,21 +141,16 @@ public sealed class WorkspaceTests
 	}
 
 	[Fact]
-	public void StandardLibrary_IsLoaded_OnlyWhenRequested()
+	public void StandardLibrary_IsLoaded_ByDefault()
 	{
 		using var fixture = TempProject.Create(
 			("Main.cvl", "using System;\nint main() { Console.WriteLine(\"hi\"); return 0; }\n"));
 
-		// Default: only the project's own files; the stdlib API is unresolved.
-		var withoutStdlib = CvoloWorkspace.Create().OpenProject(fixture.ProjectFilePath);
-		Assert.Single(withoutStdlib.InitialSnapshot.DocumentIds);
-		var withoutDoc = withoutStdlib.InitialSnapshot.GetDocument(withoutStdlib.GetDocumentId("Main.cvl"));
-		Assert.Contains(withoutDoc.GetDiagnostics(), d => d.Message.Contains("Console.WriteLine", StringComparison.Ordinal));
+		var project = CvoloWorkspace.Create().OpenProject(fixture.ProjectFilePath);
 
-		// Opt-in: the standard library is compiled alongside the project and resolves the call.
-		var withStdlib = CvoloWorkspace.Create(includeStandardLibrary: true).OpenProject(fixture.ProjectFilePath);
-		Assert.True(withStdlib.InitialSnapshot.DocumentIds.Count > 1);
-		var withDoc = withStdlib.InitialSnapshot.GetDocument(withStdlib.GetDocumentId("Main.cvl"));
-		Assert.DoesNotContain(withDoc.GetDiagnostics(), d => d.Message.Contains("Console.WriteLine", StringComparison.Ordinal));
+		// The standard library is part of the project universe by default, and its API resolves.
+		Assert.True(project.InitialSnapshot.DocumentIds.Count > 1);
+		var document = project.InitialSnapshot.GetDocument(project.GetDocumentId("Main.cvl"));
+		Assert.DoesNotContain(document.GetDiagnostics(), d => d.Message.Contains("Console.WriteLine", StringComparison.Ordinal));
 	}
 }

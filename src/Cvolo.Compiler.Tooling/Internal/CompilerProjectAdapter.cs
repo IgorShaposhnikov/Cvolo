@@ -1,22 +1,32 @@
+using Cvolo.Projects;
+
 namespace Cvolo.Compiler.Tooling.Internal;
 
 /// <summary>
-/// Internal bridge over local project loading: resolves a project input path to
-/// the set of source documents while keeping compiler/packaging types out of the public boundary.
+/// Internal bridge over the shared compiler project/universe loader: resolves a project input path
+/// to the same semantic universe the compiler sees (project sources + standard library +
+/// ProjectReference sources + package/.cvlib API units) while keeping compiler/packaging types out
+/// of the public boundary. File-backed sources become <see cref="DocumentSnapshot"/>s; package
+/// units are carried separately as <see cref="ExternalSemanticUnit"/>s.
 /// </summary>
 internal static class CompilerProjectAdapter
 {
 	/// <summary>
-	/// Discovers the source files for <paramref name="projectPath"/> (a .cvlproj file, a directory,
-	/// or a single .cvl file), reads each into a <see cref="SourceText"/>, and allocates a
-	/// <see cref="DocumentId"/> per document via <paramref name="allocateDocumentId"/>.
+	/// Builds the snapshot documents and the external (non-file) semantic units for
+	/// <paramref name="projectPath"/> using the compiler's own universe rules.
 	/// </summary>
-	public static IReadOnlyDictionary<DocumentId, DocumentSnapshot> DiscoverDocuments(string projectPath, Func<DocumentId> allocateDocumentId, bool includeStandardLibrary = false)
+	public static (IReadOnlyDictionary<DocumentId, DocumentSnapshot> Documents, IReadOnlyList<ExternalSemanticUnit> ExternalUnits) DiscoverDocuments(
+		string projectPath,
+		Func<DocumentId> allocateDocumentId)
 	{
-		var sourceFiles = DiscoverSourceFiles(projectPath, includeStandardLibrary);
+		var universe = ProjectUniverseLoader.Load(new ProjectUniverseRequest(
+			projectPath,
+			CompilerBaseDir: AppContext.BaseDirectory,
+			LoadPackages: true));
+
 		var documents = new Dictionary<DocumentId, DocumentSnapshot>();
 
-		foreach (var file in sourceFiles)
+		foreach (var file in universe.SourceFiles)
 		{
 			var fullPath = Path.GetFullPath(file);
 			var text = File.ReadAllText(fullPath);
@@ -25,37 +35,6 @@ internal static class CompilerProjectAdapter
 			documents[docId] = new DocumentSnapshot(docId, fullPath, sourceText, null);
 		}
 
-		return documents;
-	}
-
-	private static List<string> DiscoverSourceFiles(string inputPath, bool includeStandardLibrary)
-	{
-		if (File.Exists(inputPath) && inputPath.EndsWith(".cvlproj", StringComparison.OrdinalIgnoreCase))
-		{
-			return DiscoverFromProjectFile(inputPath, includeStandardLibrary);
-		}
-
-		if (Directory.Exists(inputPath))
-		{
-			var projectFiles = Directory.GetFiles(inputPath, "*.cvlproj", SearchOption.TopDirectoryOnly);
-			if (projectFiles.Length > 1)
-				throw new InvalidOperationException($"Multiple .cvlproj files found in '{inputPath}'. Pass the project file explicitly.");
-			if (projectFiles.Length == 1)
-				return DiscoverFromProjectFile(projectFiles[0], includeStandardLibrary);
-
-			return Directory.GetFiles(inputPath, "*.cvl", SearchOption.AllDirectories).ToList();
-		}
-
-		if (File.Exists(inputPath) && Path.GetExtension(inputPath).Equals(".cvl", StringComparison.OrdinalIgnoreCase))
-		{
-			return [Path.GetFullPath(inputPath)];
-		}
-
-		throw new FileNotFoundException($"Input path '{inputPath}' not found");
-	}
-
-	private static List<string> DiscoverFromProjectFile(string projectFilePath, bool includeStandardLibrary)
-	{
-		return ProjectFileLoader.DiscoverSourceFiles(projectFilePath, includeStandardLibrary);
+		return (documents, universe.ExternalUnits);
 	}
 }
