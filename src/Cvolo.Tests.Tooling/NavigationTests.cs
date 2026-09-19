@@ -1,0 +1,292 @@
+using Cvolo.Compiler.Tooling;
+
+namespace Cvolo.Tests.Tooling;
+
+public sealed class NavigationTests
+{
+	private static (CvoloProject Project, ProjectSnapshot Snapshot, DocumentSnapshot Document, TempProject Fixture) Open(params (string File, string Source)[] files)
+	{
+		var fixture = TempProject.Create(files);
+		var project = CvoloWorkspace.Create().OpenProject(fixture.ProjectFilePath);
+		var snapshot = project.InitialSnapshot;
+		return (project, snapshot, snapshot.GetDocument(project.GetDocumentId(files[0].File)), fixture);
+	}
+
+	private static int At(string source, string needle, int delta = 0) => source.IndexOf(needle, StringComparison.Ordinal) + delta;
+
+	[Fact]
+	public void ParameterReference_ResolvesWithExactIdentityAndDefinition()
+	{
+		const string s = "int Twice(int value) { return value + value; }\n";
+		var x = Open(("Main.cvl", s));
+		using (x.Fixture)
+		{
+			var a = x.Document.GetSymbolAtPosition(At(s, "value +"));
+			var b = x.Document.GetSymbolAtPosition(s.LastIndexOf("value", StringComparison.Ordinal));
+			Assert.NotNull(a);
+			Assert.NotNull(b);
+			Assert.Equal(ToolingSymbolKind.Parameter, a!.Kind);
+			Assert.Equal(a.SymbolId, b!.SymbolId);
+			Assert.Equal("int value", a.DisplayText);
+			var defs = x.Snapshot.GetDefinitions(a.SymbolId);
+			Assert.Single(defs);
+			Assert.Equal("value", x.Document.Text.GetText(defs[0].SelectionSpan));
+		}
+	}
+
+	[Fact]
+	public void LocalShadowing_UsesNearestDeclaration()
+	{
+		const string s = "global var int value = 1;\nint main() { val int value = 2; return value; }\n";
+		var x = Open(("Main.cvl", s));
+		using (x.Fixture)
+		{
+			var use = x.Document.GetSymbolAtPosition(s.LastIndexOf("value", StringComparison.Ordinal));
+			Assert.NotNull(use);
+			Assert.Equal(ToolingSymbolKind.Local, use!.Kind);
+			var global = x.Document.GetSymbolAtPosition(At(s, "value = 1"));
+			Assert.NotNull(global);
+			Assert.NotEqual(global!.SymbolId, use.SymbolId);
+		}
+	}
+
+	[Fact]
+	public void CrossFileFunction_DefinitionTargetsOtherSnapshotDocument()
+	{
+		const string main = "int main() { return Helper(); }\n";
+		const string lib = "int Helper() { return 42; }\n";
+		var x = Open(("Main.cvl", main), ("Lib.cvl", lib));
+		using (x.Fixture)
+		{
+			var symbol = x.Document.GetSymbolAtPosition(At(main, "Helper"));
+			Assert.NotNull(symbol);
+			var def = Assert.Single(x.Snapshot.GetDefinitions(symbol!.SymbolId));
+			Assert.Equal(x.Project.GetDocumentId("Lib.cvl"), def.DocumentId);
+			Assert.Equal("Helper", x.Snapshot.GetDocument(def.DocumentId).Text.GetText(def.SelectionSpan));
+		}
+	}
+
+	[Fact]
+	public void StructFieldMember_ResolvesToFieldDeclaration()
+	{
+		const string s = "struct Node { public int value; }\nint main() { val Node n = Node { value: 1 }; return n.value; }\n";
+		var x = Open(("Main.cvl", s));
+		using (x.Fixture)
+		{
+			var symbol = x.Document.GetSymbolAtPosition(s.LastIndexOf("value", StringComparison.Ordinal));
+			Assert.NotNull(symbol);
+			Assert.Equal(ToolingSymbolKind.Field, symbol!.Kind);
+			Assert.Equal("int value", symbol.DisplayText);
+			Assert.Single(x.Snapshot.GetDefinitions(symbol.SymbolId));
+		}
+	}
+
+	[Fact]
+	public void ForeignSnapshotSymbolId_DoesNotResolve()
+	{
+		const string s = "int Helper() { return 1; }\nint main() { return Helper(); }\n";
+		var x = Open(("Main.cvl", s));
+		using (x.Fixture)
+		{
+			var symbol = x.Document.GetSymbolAtPosition(s.LastIndexOf("Helper", StringComparison.Ordinal));
+			Assert.NotNull(symbol);
+			var derived = x.Snapshot.WithDocument(x.Document.Id, SourceText.From(s.Replace("return 1", "return 2")));
+			Assert.Empty(derived.GetDefinitions(symbol!.SymbolId));
+			Assert.Single(x.Snapshot.GetDefinitions(symbol.SymbolId));
+		}
+	}
+
+	[Fact]
+	public void DocumentSymbols_AreHierarchicalAndExcludeLocals()
+	{
+		const string s = "struct Node { public int value; }\nextension Node { int Get() { val int local = value; return local; } }\nint main() { return 0; }\n";
+		var x = Open(("Main.cvl", s));
+		using (x.Fixture)
+		{
+			var symbols = x.Document.GetDocumentSymbols();
+			Assert.Equal(3, symbols.Count);
+			var node = Assert.Single(symbols.Where(z => z.Name == "Node" && z.Kind == ToolingSymbolKind.Struct));
+			Assert.Contains(node.Children, c => c.Name == "value");
+			Assert.DoesNotContain(symbols.SelectMany(Flatten), z => z.Name == "local");
+		}
+	}
+
+	private static IEnumerable<DocumentSymbolInfo> Flatten(DocumentSymbolInfo s)
+	{
+		yield return s;
+		foreach (var c in s.Children)
+		foreach (var n in Flatten(c))
+			yield return n;
+	}
+
+	[Fact]
+	public void InvalidPosition_ThrowsAndUnresolvedNameReturnsNull()
+	{
+		const string s = "int main() { return Missing; }\n";
+		var x = Open(("Main.cvl", s));
+		using (x.Fixture)
+		{
+			Assert.Throws<ArgumentOutOfRangeException>(() => x.Document.GetSymbolAtPosition(-1));
+			Assert.Throws<ArgumentOutOfRangeException>(() => x.Document.GetSymbolAtPosition(s.Length + 1));
+			Assert.Null(x.Document.GetSymbolAtPosition(At(s, "Missing")));
+		}
+	}
+
+	[Fact]
+	public async Task ParallelQueries_AreDeterministic()
+	{
+		const string s = "int Helper(int x) { return x; }\nint main() { return Helper(1); }\n";
+		var x = Open(("Main.cvl", s));
+		using (x.Fixture)
+		{
+			var pos = s.LastIndexOf("Helper", StringComparison.Ordinal);
+			var tasks = Enumerable.Range(0, 32).Select(_ => Task.Run(() => x.Document.GetSymbolAtPosition(pos))).ToArray();
+			var all = await Task.WhenAll(tasks);
+			Assert.All(all, r => Assert.NotNull(r));
+			Assert.Single(all.Select(r => r!.SymbolId).Distinct());
+		}
+	}
+
+	[Fact]
+	public void EnumVariant_ResolvesToVariantDeclaration()
+	{
+		const string s = "enum Color { Red, Green }\nint main() { return Color.Red; }\n";
+		var x = Open(("Main.cvl", s));
+		using (x.Fixture)
+		{
+			var symbol = x.Document.GetSymbolAtPosition(At(s, "Red"));
+			Assert.NotNull(symbol);
+			Assert.Equal(ToolingSymbolKind.EnumMember, symbol!.Kind);
+			var def = Assert.Single(x.Snapshot.GetDefinitions(symbol.SymbolId));
+			Assert.Equal("Red", x.Document.Text.GetText(def.SelectionSpan));
+		}
+	}
+
+	[Fact]
+	public void ExtensionMethodCall_ResolvesToMethodDeclaration()
+	{
+		const string s = "struct Node { public int value; }\nextension Node { int Twice() { return value + value; } }\nint main() { val Node n = Node { value: 1 }; return n.Twice(); }\n";
+		var x = Open(("Main.cvl", s));
+		using (x.Fixture)
+		{
+			var symbol = x.Document.GetSymbolAtPosition(s.LastIndexOf("Twice", StringComparison.Ordinal));
+			Assert.NotNull(symbol);
+			Assert.Equal(ToolingSymbolKind.ExtensionMethod, symbol!.Kind);
+			var def = Assert.Single(x.Snapshot.GetDefinitions(symbol.SymbolId));
+			Assert.Equal("Twice", x.Document.Text.GetText(def.SelectionSpan));
+		}
+	}
+
+	[Fact]
+	public void TypeReference_ResolvesToTypeDeclaration()
+	{
+		const string s = "struct Node { public int value; }\nint main() { val Node n = Node { value: 1 }; return 0; }\n";
+		var x = Open(("Main.cvl", s));
+		using (x.Fixture)
+		{
+			var symbol = x.Document.GetSymbolAtPosition(At(s, "Node n"));
+			Assert.NotNull(symbol);
+			Assert.Equal(ToolingSymbolKind.Struct, symbol!.Kind);
+			Assert.Equal("struct Node", symbol.DisplayText);
+			var def = Assert.Single(x.Snapshot.GetDefinitions(symbol.SymbolId));
+			Assert.Equal("Node", x.Document.Text.GetText(def.SelectionSpan));
+		}
+	}
+
+	[Fact]
+	public void OverlayDefinition_UsesEditedTargetSpan()
+	{
+		const string main = "int main() { return Helper(); }\n";
+		const string lib = "int Helper() { return 1; }\n";
+		var x = Open(("Main.cvl", main), ("Lib.cvl", lib));
+		using (x.Fixture)
+		{
+			var libId = x.Project.GetDocumentId("Lib.cvl");
+			var edited = x.Snapshot.WithDocument(libId, SourceText.From("\n\nint Helper() { return 2; }\n"));
+
+			var symbol = edited.GetDocument(x.Document.Id).GetSymbolAtPosition(At(main, "Helper"));
+			Assert.NotNull(symbol);
+			var def = Assert.Single(edited.GetDefinitions(symbol!.SymbolId));
+			Assert.Equal(libId, def.DocumentId);
+			Assert.Equal("Helper", edited.GetDocument(libId).Text.GetText(def.SelectionSpan));
+		}
+	}
+
+	[Fact]
+	public void SnapshotIsolation_OldSnapshotResolvesOldText()
+	{
+		const string s = "int Helper() { return 1; }\nint main() { return Helper(); }\n";
+		var x = Open(("Main.cvl", s));
+		using (x.Fixture)
+		{
+			var oldSymbol = x.Document.GetSymbolAtPosition(s.LastIndexOf("Helper", StringComparison.Ordinal));
+			Assert.NotNull(oldSymbol);
+
+			var editedText = s.Replace("Helper", "Renamed");
+			var edited = x.Snapshot.WithDocument(x.Document.Id, SourceText.From(editedText));
+
+			Assert.Single(x.Snapshot.GetDefinitions(oldSymbol!.SymbolId));
+
+			var newSymbol = edited.GetDocument(x.Document.Id).GetSymbolAtPosition(editedText.LastIndexOf("Renamed", StringComparison.Ordinal));
+			Assert.NotNull(newSymbol);
+			Assert.Equal("Renamed", newSymbol!.Name);
+			Assert.Empty(edited.GetDefinitions(oldSymbol.SymbolId));
+		}
+	}
+
+	[Fact]
+	public void ForeignSnapshotIds_AreRejected()
+	{
+		const string s = "int main() { return 0; }\n";
+		var x = Open(("Main.cvl", s));
+		var other = Open(("Other.cvl", s));
+		using (x.Fixture)
+		using (other.Fixture)
+		{
+			Assert.Empty(x.Snapshot.GetDefinitions(default));
+			Assert.Throws<KeyNotFoundException>(() => x.Snapshot.GetDocument(other.Document.Id));
+		}
+	}
+
+	[Fact]
+	public void SameSymbolSharesId_DistinctSymbolsDiffer()
+	{
+		const string s = "int Helper() { return 1; }\nint Other() { return 2; }\nint main() { return Helper() + Other() + Helper(); }\n";
+		var x = Open(("Main.cvl", s));
+		using (x.Fixture)
+		{
+			var firstHelper = x.Document.GetSymbolAtPosition(At(s, "Helper() +"));
+			var lastHelper = x.Document.GetSymbolAtPosition(s.LastIndexOf("Helper", StringComparison.Ordinal));
+			var other = x.Document.GetSymbolAtPosition(At(s, "Other() +"));
+			Assert.NotNull(firstHelper);
+			Assert.NotNull(lastHelper);
+			Assert.NotNull(other);
+			Assert.Equal(firstHelper!.SymbolId, lastHelper!.SymbolId);
+			Assert.NotEqual(firstHelper.SymbolId, other!.SymbolId);
+		}
+	}
+
+	[Fact]
+	public void Documentation_IsExtractedFromTheDeclaringFile()
+	{
+		const string main =
+			"/// <summary>\n" +
+			"/// Doubles the value.\n" +
+			"/// </summary>\n" +
+			"int Twice(int value) { return value + value; }\n" +
+			"int main() { return Twice(1) + LibHelper(); }\n";
+		const string lib = "/// Returns a constant.\nint LibHelper() { return 7; }\n";
+		var x = Open(("Main.cvl", main), ("Lib.cvl", lib));
+		using (x.Fixture)
+		{
+			var local = x.Document.GetSymbolAtPosition(At(main, "Twice(1)"));
+			Assert.NotNull(local);
+			Assert.Equal("Doubles the value.", local!.Documentation);
+
+			// Cross-file: documentation is read from Lib.cvl, not the requesting document.
+			var crossFile = x.Document.GetSymbolAtPosition(At(main, "LibHelper()"));
+			Assert.NotNull(crossFile);
+			Assert.Equal("Returns a constant.", crossFile!.Documentation);
+		}
+	}
+}

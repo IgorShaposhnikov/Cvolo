@@ -6,3 +6,5 @@ LSP Boundary Extraction spec.
 
 This file ships inside the Tooling artifact bundle under `docs/` as a nested,
 auxiliary file used to prove recursive hashing of `SHA256SUMS.txt`.
+
+See [CHANGELOG.md](CHANGELOG.md) for the public tooling surface history.

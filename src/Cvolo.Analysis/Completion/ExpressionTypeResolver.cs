@@ -212,4 +212,4 @@ internal static class ExpressionTypeResolver
 /// <summary>
 /// A completion-scoped local or parameter binding: name, origin, and resolved type.
 /// </summary>
-internal readonly record struct ScopedVariable(string Name, OriginKind Origin, TypeSymbol? Type);
+internal readonly record struct ScopedVariable(string Name, OriginKind Origin, TypeSymbol? Type, SyntaxNode? Declaration = null);

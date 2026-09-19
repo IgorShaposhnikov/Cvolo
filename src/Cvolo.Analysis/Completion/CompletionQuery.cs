@@ -1,3 +1,4 @@
+using Cvolo.Analysis.Semantics;
 using Cvolo.Analysis.Symbols;
 using Cvolo.Analysis.Symbols.Base;
 using Cvolo.Analysis.Symbols.Collections;
@@ -85,6 +86,41 @@ public static class CompletionQuery
 		}
 	}
 
+	/// <summary>
+	/// Resolves the semantic symbol bound at <paramref name="position"/> using the same binding
+	/// state as completion. Returns null when no trustworthy symbol is resolved.
+	/// </summary>
+	public static ResolvedSymbol? ResolveSymbol(BindingContext context, CompilationUnitSyntax unit, int position)
+	{
+		ArgumentNullException.ThrowIfNull(context);
+		ArgumentNullException.ThrowIfNull(unit);
+		ArgumentOutOfRangeException.ThrowIfNegative(position);
+
+		var previousUnit = context.CurrentUnit;
+		var previousNamespace = context.CurrentNamespace;
+		context.CurrentUnit = unit;
+		context.CurrentNamespace = unit.NamespaceDeclaration?.Name;
+
+		try
+		{
+			var state = new QueryState(context, unit, position);
+			var visible = BuildVisibleScopeMap(state);
+			return SymbolResolver.Resolve(context, unit, position, visible);
+		}
+		finally
+		{
+			context.CurrentUnit = previousUnit;
+			context.CurrentNamespace = previousNamespace;
+		}
+	}
+
+	/// <summary>
+	/// Returns a compiler-owned display string for a declaration node, used by the tooling
+	/// document-symbol outline. The node must come from the same compiler analysis.
+	/// </summary>
+	public static string DescribeDeclaration(SyntaxNode declaration, string fallback = "")
+		=> SymbolResolver.Describe(declaration, fallback);
+
 	private static CompletionQueryContext Classify(CompilationUnitSyntax unit, int position, out MemberAccessExpressionSyntax? member)
 	{
 		member = null;
@@ -153,7 +189,7 @@ public static class CompletionQuery
 			foreach (var param in fn.Parameters)
 			{
 				if (param.Type is not null)
-					root.Add(new ScopedVariable(param.Name, OriginKind.Parameter, ResolveTypeOrNull(state, param.Type)));
+					root.Add(new ScopedVariable(param.Name, OriginKind.Parameter, ResolveTypeOrNull(state, param.Type), param));
 			}
 
 			if (fn.Body is not null)
@@ -211,7 +247,7 @@ public static class CompletionQuery
 	private static void DeclareFromStatement(SyntaxNode statement, List<ScopedVariable> frame, QueryState state)
 	{
 		if (statement is VariableDeclarationSyntax v && v.Span.End <= state.Position)
-			frame.Add(new ScopedVariable(v.Name, OriginKind.Local, ResolveVariableType(state, v)));
+			frame.Add(new ScopedVariable(v.Name, OriginKind.Local, ResolveVariableType(state, v), v));
 	}
 
 	private static void EnterStatement(
@@ -224,7 +260,7 @@ public static class CompletionQuery
 		{
 			case VariableDeclarationSyntax v:
 				if (v.Span.End <= state.Position)
-					frame.Add(new ScopedVariable(v.Name, OriginKind.Local, ResolveVariableType(state, v)));
+					frame.Add(new ScopedVariable(v.Name, OriginKind.Local, ResolveVariableType(state, v), v));
 				break;
 
 			case BlockStatementSyntax block:
@@ -256,7 +292,7 @@ public static class CompletionQuery
 					var child = new List<ScopedVariable>();
 					frames.Add(child);
 					if (forStatement.Initializer is not null && forStatement.Initializer.Span.End <= state.Position)
-						child.Add(new ScopedVariable(forStatement.Initializer.Name, OriginKind.Local, ResolveVariableType(state, forStatement.Initializer)));
+						child.Add(new ScopedVariable(forStatement.Initializer.Name, OriginKind.Local, ResolveVariableType(state, forStatement.Initializer), forStatement.Initializer));
 					WalkBody(forStatement.Condition, child, state, frames);
 					WalkBody(forStatement.Increment, child, state, frames);
 					WalkBody(forStatement.Body, child, state, frames);
@@ -270,7 +306,7 @@ public static class CompletionQuery
 					if (forEach.Collection.Span.End <= state.Position && state.Position >= forEach.Body.Span.Start)
 					{
 						var itemType = ResolveTypeOrNull(state, forEach.ItemTypeName ?? forEach.ExplicitItemType);
-						child.Add(new ScopedVariable(forEach.ItemName, OriginKind.Local, itemType));
+						child.Add(new ScopedVariable(forEach.ItemName, OriginKind.Local, itemType, forEach));
 					}
 
 					WalkBody(forEach.Body, child, state, frames);
@@ -296,7 +332,7 @@ public static class CompletionQuery
 					var child = new List<ScopedVariable>();
 					frames.Add(child);
 					if (!caseSyntax.IsDefault && caseSyntax.VariableName is not null)
-						child.Add(new ScopedVariable(caseSyntax.VariableName, OriginKind.Local, null));
+						child.Add(new ScopedVariable(caseSyntax.VariableName, OriginKind.Local, null, caseSyntax));
 					ProcessStatements(caseSyntax.Body, child, state, frames);
 					break;
 				}
@@ -313,7 +349,7 @@ public static class CompletionQuery
 					var child = new List<ScopedVariable>();
 					frames.Add(child);
 					if (clause.BindingName is not null)
-						child.Add(new ScopedVariable(clause.BindingName, OriginKind.Local, ResolveTypeOrNull(state, clause.ErrorTypeName)));
+						child.Add(new ScopedVariable(clause.BindingName, OriginKind.Local, ResolveTypeOrNull(state, clause.ErrorTypeName), clause));
 					ProcessStatements(clause.Body.Statements, child, state, frames);
 					break;
 				}

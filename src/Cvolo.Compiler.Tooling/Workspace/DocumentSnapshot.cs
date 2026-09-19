@@ -76,4 +76,36 @@ public sealed class DocumentSnapshot
 
 		return CompletionService.Compute(OwningSnapshot, this, position);
 	}
+
+	/// <summary>
+	/// Resolves the semantic symbol at the given zero-based UTF-16 <paramref name="position"/>
+	/// within this document using the owning snapshot's binding. Returns null when no trustworthy
+	/// symbol is bound there.
+	/// Throws <see cref="ArgumentOutOfRangeException"/> when <paramref name="position"/> falls
+	/// outside [0, <see cref="Text.Length"/>].
+	/// </summary>
+	public SymbolLookupResult? GetSymbolAtPosition(int position)
+	{
+		ArgumentOutOfRangeException.ThrowIfNegative(position);
+
+		if (position > Text.Length)
+			throw new ArgumentOutOfRangeException(nameof(position));
+
+		if (OwningSnapshot is null)
+			return null;
+
+		return NavigationService.GetSymbol(OwningSnapshot, this, position);
+	}
+
+	/// <summary>
+	/// Returns the semantic declaration outline for this document in deterministic source order.
+	/// Local variables, parameters, and anonymous syntax are not part of the outline.
+	/// </summary>
+	public IReadOnlyList<DocumentSymbolInfo> GetDocumentSymbols()
+	{
+		if (OwningSnapshot is null)
+			return [];
+
+		return NavigationService.GetDocumentSymbols(OwningSnapshot, Id);
+	}
 }

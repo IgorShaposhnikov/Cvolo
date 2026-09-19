@@ -11,6 +11,7 @@ public sealed class ProjectSnapshot
 {
 	private readonly IReadOnlyDictionary<DocumentId, DocumentSnapshot> _documents;
 	private readonly Lazy<AnalyzedProject> _lazyAnalysis;
+	private readonly Lazy<NavigationIndex> _lazyNavigation;
 
 	/// <summary>
 	/// The identifier of the project this snapshot belongs to.
@@ -31,6 +32,7 @@ public sealed class ProjectSnapshot
 		_documents = documents;
 		DocumentIds = [.. documents.Keys];
 		_lazyAnalysis = new Lazy<AnalyzedProject>(() => BinderAdapter.AnalyzeSnapshot(this));
+		_lazyNavigation = new Lazy<NavigationIndex>(() => NavigationIndex.Build(this));
 	}
 
 	internal static ProjectSnapshot CreateOwned(ProjectId projectId, IReadOnlyDictionary<DocumentId, DocumentSnapshot> documents)
@@ -46,6 +48,20 @@ public sealed class ProjectSnapshot
 	internal AnalyzedProject GetAnalysis()
 	{
 		return _lazyAnalysis.Value;
+	}
+
+	internal NavigationIndex GetNavigationIndex()
+	{
+		return _lazyNavigation.Value;
+	}
+
+	/// <summary>
+	/// Returns the source declarations of <paramref name="symbol"/> within this snapshot. A symbol
+	/// id obtained from a different snapshot yields an empty result.
+	/// </summary>
+	public IReadOnlyList<SymbolDefinition> GetDefinitions(SymbolId symbol)
+	{
+		return NavigationService.GetDefinitions(this, symbol);
 	}
 
 	/// <summary>
