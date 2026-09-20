@@ -44,6 +44,13 @@ public sealed class DeclarationPass(BindingContext context)
 		["ExposeName"] = (["Function"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
 	};
 
+	/// <summary>
+	/// The compiler's built-in attribute names, without the optional <c>Attribute</c> suffix, in
+	/// declaration order. Tooling surfaces (attribute completion) use this to offer the canonical
+	/// spelling.
+	/// </summary>
+	public static IReadOnlyCollection<string> IntrinsicAttributeNames => IntrinsicAttributes.Keys;
+
 	private static readonly HashSet<string> KnownWarningIds =
 	[
 		DiagnosticIds.UnsafeBodyNoEffect, DiagnosticIds.UnknownAttribute, DiagnosticIds.UnboundNoRefParams, DiagnosticIds.AutoInferMutationWarning, DiagnosticIds.MustUseIgnoredWarning, DiagnosticIds.InlineOnRecursiveFunction

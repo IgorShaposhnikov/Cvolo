@@ -31,6 +31,29 @@ internal sealed class DeclarationIndex
 	public SyntaxNode? FindType(string mangledName)
 		=> Lookup(_types, mangledName);
 
+	/// <summary>
+	/// Finds a named type by its unqualified leaf name regardless of namespace, used for
+	/// compiler-global constructs (attributes) that do not depend on the active usings.
+	/// </summary>
+	public SyntaxNode? FindTypeByLeafName(string leafName)
+	{
+		foreach (var (name, node) in _types)
+		{
+			if (string.Equals(LeafName(name), leafName, StringComparison.Ordinal))
+				return node;
+		}
+
+		return null;
+	}
+
+	private static string LeafName(string mangledName)
+	{
+		var generic = mangledName.IndexOf('<');
+		var name = generic > 0 ? mangledName[..generic] : mangledName;
+		var dot = name.LastIndexOf('.');
+		return dot < 0 ? name : name[(dot + 1)..];
+	}
+
 	private static SyntaxNode? Lookup(Dictionary<string, SyntaxNode> map, string mangledName)
 	{
 		if (map.TryGetValue(mangledName, out var node))

@@ -3,6 +3,7 @@ using AnalysisContext = Cvolo.Analysis.Completion.CompletionQueryContext;
 
 using Cvolo.Compiler.Tooling.Completion;
 using Cvolo.Analysis;
+using Cvolo.Analysis.Passes;
 using Cvolo.Core.AST.Base;
 using Cvolo.Analysis.Completion;
 
@@ -47,6 +48,23 @@ internal static class CompletionService
 			}
 
 			return new CompletionResult(span, destructorCandidates);
+		}
+
+		// Inside an attribute list `[...]` offer the compiler's built-in attribute names using the
+		// canonical suffix-stripped spelling (`Error`, not `ErrorAttribute`). The attribute surface
+		// replaces the general declaration/keyword list, which is noise there.
+		if (textContext.IsAttributeContext)
+		{
+			var attributeCandidates = new List<Completion.CompletionCandidate>();
+			foreach (var name in DeclarationPass.IntrinsicAttributeNames)
+			{
+				if (!name.StartsWith(textContext.Prefix, StringComparison.Ordinal))
+					continue;
+
+				attributeCandidates.Add(new Completion.CompletionCandidate(name, name, Completion.CompletionKind.Type));
+			}
+
+			return new CompletionResult(span, attributeCandidates);
 		}
 
 		var analysis = project.GetAnalysis();

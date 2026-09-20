@@ -402,4 +402,24 @@ public sealed class NavigationTests
 			Assert.Equal(At(s, "Start;"), def.SelectionSpan.Start);
 		}
 	}
+
+	[Fact]
+	public void AttributeName_ResolvesToMarkerTypeInStandardLibrary()
+	{
+		const string s =
+			"[Error]\n" +
+			"struct MyError { public int Code; }\n" +
+			"int main() { return 0; }\n";
+		var x = Open(("Main.cvl", s));
+		using (x.Fixture)
+		{
+			var symbol = x.Document.GetSymbolAtPosition(s.IndexOf("[Error]", StringComparison.Ordinal) + 2);
+			Assert.NotNull(symbol);
+			Assert.Equal(ToolingSymbolKind.Struct, symbol!.Kind);
+			var def = Assert.Single(x.Snapshot.GetDefinitions(symbol.SymbolId));
+			var declaring = x.Snapshot.GetDocument(def.DocumentId);
+			Assert.EndsWith("ErrorAttribute.cvl", declaring.FilePath, StringComparison.OrdinalIgnoreCase);
+			Assert.Equal("ErrorAttribute", declaring.Text.GetText(def.SelectionSpan));
+		}
+	}
 }

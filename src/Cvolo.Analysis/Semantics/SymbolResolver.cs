@@ -32,7 +32,9 @@ internal static class SymbolResolver
 			return null;
 
 		ResolvedSymbol? result;
-		if (node is MemberAccessExpressionSyntax memberAccess && position >= memberAccess.Expression.Span.End)
+		if (FindAttributeAt(unit, position) is { } attribute)
+			result = ResolveAttribute(context, index, source, attribute, position);
+		else if (node is MemberAccessExpressionSyntax memberAccess && position >= memberAccess.Expression.Span.End)
 			result = ResolveMember(context, visible, index, source, memberAccess);
 		else if (node is CallExpressionSyntax call && IsOnCallName(source, call, position))
 			result = ResolveCall(context, index, source, call);
@@ -226,6 +228,86 @@ internal static class SymbolResolver
 
 		return false;
 	}
+
+	/// <summary>
+	/// Finds the attribute (if any) whose span contains <paramref name="position"/>. Attributes are
+	/// not part of <see cref="SyntaxNode.GetChildren"/>, so they are located by walking declaration
+	/// nodes directly.
+	/// </summary>
+	private static AttributeSyntax? FindAttributeAt(SyntaxNode node, int position)
+	{
+		foreach (var attribute in AttributesOf(node))
+		{
+			if (Contains(attribute.Span, position))
+				return attribute;
+		}
+
+		foreach (var child in node.GetChildren())
+		{
+			if (FindAttributeAt(child, position) is { } found)
+				return found;
+		}
+
+		return null;
+	}
+
+	private static IReadOnlyList<AttributeSyntax> AttributesOf(SyntaxNode node) => node switch
+	{
+		FunctionDeclarationSyntax function => function.Attributes,
+		ConstructorDeclarationSyntax constructor => constructor.Attributes,
+		DestructorDeclarationSyntax destructor => destructor.Attributes,
+		StructDeclarationSyntax structDeclaration => structDeclaration.Attributes,
+		UnionDeclarationSyntax unionDeclaration => unionDeclaration.Attributes,
+		EnumDeclarationSyntax enumDeclaration => enumDeclaration.Attributes,
+		InterfaceDeclarationSyntax interfaceDeclaration => interfaceDeclaration.Attributes,
+		ProtocolDeclarationSyntax protocolDeclaration => protocolDeclaration.Attributes,
+		TypeAliasDeclarationSyntax typeAlias => typeAlias.Attributes,
+		ParameterSyntax parameter => parameter.Attributes,
+		_ => [],
+	};
+
+	/// <summary>
+	/// Resolves an attribute name to the marker type it denotes. Cvolo normalizes an optional
+	/// <c>Attribute</c> suffix away (so <c>[Error]</c> and <c>[ErrorAttribute]</c> are the same
+	/// attribute), so both spellings are tried as type names.
+	/// </summary>
+	private static ResolvedSymbol? ResolveAttribute(BindingContext context, DeclarationIndex index, string source, AttributeSyntax attribute, int position)
+	{
+		var span = NameSpan(source, attribute.Span, attribute.Name, fromEnd: false);
+		if (position < span.Start || position > span.End)
+			return null;
+
+		var name = attribute.Name;
+		var leaf = Leaf(name);
+		var candidates = name.EndsWith("Attribute", StringComparison.Ordinal)
+			? new[] { name }
+			: new[] { name + "Attribute", name };
+
+		foreach (var candidate in candidates)
+		{
+			var type = context.ResolveType(context.NormalizeGenericName(candidate));
+			if (type is not null && index.FindType(type.Name) is { } declaration)
+				return new ResolvedSymbol(KindOf(type), leaf, null, span, declaration, Display(declaration, type.Name));
+
+			// Attributes are compiler-global: fall back to any namespace when no active using
+			// imports the marker type's namespace.
+			if (index.FindTypeByLeafName(Leaf(candidate)) is { } fallback)
+				return new ResolvedSymbol(KindOfDeclaration(fallback), leaf, null, span, fallback, Display(fallback, Leaf(candidate)));
+		}
+
+		return null;
+	}
+
+	private static ResolvedSymbolKind KindOfDeclaration(SyntaxNode node) => node switch
+	{
+		StructDeclarationSyntax => ResolvedSymbolKind.Struct,
+		UnionDeclarationSyntax => ResolvedSymbolKind.Union,
+		EnumDeclarationSyntax => ResolvedSymbolKind.Enum,
+		InterfaceDeclarationSyntax => ResolvedSymbolKind.Interface,
+		ProtocolDeclarationSyntax => ResolvedSymbolKind.Protocol,
+		TypeAliasDeclarationSyntax => ResolvedSymbolKind.TypeAlias,
+		_ => ResolvedSymbolKind.OtherType,
+	};
 
 	private static ResolvedSymbol? ResolveCall(BindingContext context, DeclarationIndex index, string source, CallExpressionSyntax call)
 	{

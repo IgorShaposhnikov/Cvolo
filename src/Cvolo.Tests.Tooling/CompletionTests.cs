@@ -931,4 +931,24 @@ public sealed class CompletionTests
 
 		Assert.DoesNotContain(result.Candidates, c => c.Label.StartsWith("~", StringComparison.Ordinal));
 	}
+
+	[Fact]
+	public void AttributeContext_OffersCanonicalSuffixStrippedName()
+	{
+		var result = Complete("[Err|]\nstruct MyError { public int Code; }\n");
+
+		Assert.True(Contains(result, "Error", CompletionKind.Type));
+		Assert.DoesNotContain(result.Candidates, c => c.Label == "ErrorAttribute");
+	}
+
+	[Fact]
+	public void AttributeContext_EmptyPrefix_ListsAttributesNotDeclarations()
+	{
+		var result = Complete("[|]\nstruct MyError { public int Code; }\n");
+
+		Assert.True(Contains(result, "Error", CompletionKind.Type));
+		Assert.True(Contains(result, "Flags", CompletionKind.Type));
+		Assert.True(Contains(result, "MustUse", CompletionKind.Type));
+		Assert.DoesNotContain(result.Candidates, c => c.Label == "MyError");
+	}
 }

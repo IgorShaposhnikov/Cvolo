@@ -17,12 +17,14 @@ internal sealed record CompletionTextContext(
 	bool IsTypeContext,
 	bool IsMemberAccessContext,
 	bool IsDestructorContext,
-	string DestructorTypeName)
+	string DestructorTypeName,
+	bool IsAttributeContext = false)
 {
 	internal static CompletionTextContext Analyze(SourceText text, int position)
 	{
 		var source = text.ToString();
 		var tokens = Lex(source);
+		var isAttributeContext = DetectAttributeContext(source, tokens, position);
 
 		var (token, tokenIndex) = FindCoveringToken(tokens, position);
 
@@ -48,7 +50,7 @@ internal sealed record CompletionTextContext(
 				var tokenLength = token.StopIndex - token.StartIndex + 1;
 				return new CompletionTextContext(false, new TextSpan(token.StartIndex, tokenLength),
 					prefix, PreviousSignificantTokenIsTypeMarker(tokens, tokenIndex),
-					PreviousSignificantTokenIsDot(tokens, tokenIndex), false, string.Empty);
+					PreviousSignificantTokenIsDot(tokens, tokenIndex), false, string.Empty, isAttributeContext);
 			}
 		}
 		else
@@ -70,7 +72,7 @@ internal sealed record CompletionTextContext(
 				var tokenLength = prev.StopIndex - prev.StartIndex + 1;
 				return new CompletionTextContext(false, new TextSpan(prev.StartIndex, tokenLength),
 					prefix, PreviousSignificantTokenIsTypeMarker(tokens, prevIndex),
-					PreviousSignificantTokenIsDot(tokens, prevIndex), false, string.Empty);
+					PreviousSignificantTokenIsDot(tokens, prevIndex), false, string.Empty, isAttributeContext);
 			}
 
 			var (nextWord, nextWordIndex) = FindWordTokenStartingAt(tokens, position);
@@ -79,7 +81,7 @@ internal sealed record CompletionTextContext(
 				var tokenLength = nextWord.StopIndex - nextWord.StartIndex + 1;
 				return new CompletionTextContext(false, new TextSpan(nextWord.StartIndex, tokenLength),
 					string.Empty, PreviousSignificantTokenIsTypeMarker(tokens, nextWordIndex),
-					PreviousSignificantTokenIsDot(tokens, nextWordIndex), false, string.Empty);
+					PreviousSignificantTokenIsDot(tokens, nextWordIndex), false, string.Empty, isAttributeContext);
 			}
 		}
 
@@ -91,7 +93,82 @@ internal sealed record CompletionTextContext(
 
 		return new CompletionTextContext(false, new TextSpan(position, 0), string.Empty,
 			LastSignificantTokenIsTypeMarker(tokens, position),
-			LastSignificantTokenIsDot(tokens, position), false, string.Empty);
+			LastSignificantTokenIsDot(tokens, position), false, string.Empty, isAttributeContext);
+	}
+
+	/// <summary>
+	/// True when the cursor sits inside an attribute list (<c>[...]</c>) that opens a declaration,
+	/// rather than an array index. An attribute list's <c>[</c> is either the first token on its
+	/// line or follows a declaration terminator (<c>;</c>, <c>{</c>, <c>}</c>); an array index's
+	/// <c>[</c> follows an expression.
+	/// </summary>
+	private static bool DetectAttributeContext(string source, IList<IToken> tokens, int position)
+	{
+		var bracketDepth = 0;
+		var parenDepth = 0;
+		for (var i = tokens.Count - 1; i >= 0; i--)
+		{
+			var t = tokens[i];
+			if (t.Channel != Lexer.DefaultTokenChannel || t.Type == TokenConstants.EOF)
+				continue;
+			if (t.StopIndex >= position)
+				continue;
+
+			switch (t.Type)
+			{
+				case CvoloLexer.RPAREN:
+					parenDepth++;
+					continue;
+				case CvoloLexer.LPAREN:
+					if (parenDepth > 0)
+					{
+						parenDepth--;
+						continue;
+					}
+
+					// An unclosed '(' before any '[' means the cursor is inside arguments,
+					// not the attribute name itself.
+					return false;
+				case CvoloLexer.RBRACK:
+					bracketDepth++;
+					continue;
+				case CvoloLexer.LBRACK:
+					if (bracketDepth > 0)
+					{
+						bracketDepth--;
+						continue;
+					}
+
+					return parenDepth == 0 && OpensDeclaration(source, tokens, i);
+				default:
+					continue;
+			}
+		}
+
+		return false;
+	}
+
+	private static bool OpensDeclaration(string source, IList<IToken> tokens, int bracketIndex)
+	{
+		var bracket = tokens[bracketIndex];
+
+		// Only whitespace between the start of the line and the '['?
+		var i = bracket.StartIndex - 1;
+		while (i >= 0 && (source[i] == ' ' || source[i] == '\t'))
+			i--;
+		if (i < 0 || source[i] == '\n' || source[i] == '\r')
+			return true;
+
+		for (var j = bracketIndex - 1; j >= 0; j--)
+		{
+			var t = tokens[j];
+			if (t.Channel != Lexer.DefaultTokenChannel || t.Type == TokenConstants.EOF || t.Type == CvoloLexer.WS)
+				continue;
+
+			return t.Type is CvoloLexer.SEMI or CvoloLexer.LBRACE or CvoloLexer.RBRACE;
+		}
+
+		return true;
 	}
 
 	/// <summary>
