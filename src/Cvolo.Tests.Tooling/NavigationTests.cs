@@ -365,4 +365,41 @@ public sealed class NavigationTests
 			Assert.Equal(At(s, "S {"), def.SelectionSpan.Start);
 		}
 	}
+
+	[Fact]
+	public void ExtensionName_ResolvesToExtendedTypeDeclaration()
+	{
+		const string s =
+			"struct NonBoolRange { public int Start; public int End; }\n" +
+			"extension NonBoolRange { int Count() { return 0; } }\n";
+		var x = Open(("Main.cvl", s));
+		using (x.Fixture)
+		{
+			var extensionAt = s.IndexOf("extension", StringComparison.Ordinal);
+			var symbol = x.Document.GetSymbolAtPosition(s.IndexOf("NonBoolRange", extensionAt, StringComparison.Ordinal) + 1);
+			Assert.NotNull(symbol);
+			Assert.Equal(ToolingSymbolKind.Struct, symbol!.Kind);
+			var def = Assert.Single(x.Snapshot.GetDefinitions(symbol.SymbolId));
+			Assert.Equal("NonBoolRange", x.Document.Text.GetText(def.SelectionSpan));
+			Assert.Equal(At(s, "NonBoolRange {"), def.SelectionSpan.Start);
+		}
+	}
+
+	[Fact]
+	public void ImplicitExtensionFieldReference_ResolvesToFieldDeclaration()
+	{
+		const string s =
+			"struct NonBoolRange { public int Start; public int End; }\n" +
+			"extension NonBoolRange { int Count() { return Start - 1; } }\n";
+		var x = Open(("Main.cvl", s));
+		using (x.Fixture)
+		{
+			var symbol = x.Document.GetSymbolAtPosition(s.LastIndexOf("Start", StringComparison.Ordinal) + 1);
+			Assert.NotNull(symbol);
+			Assert.Equal(ToolingSymbolKind.Field, symbol!.Kind);
+			var def = Assert.Single(x.Snapshot.GetDefinitions(symbol.SymbolId));
+			Assert.Equal("Start", x.Document.Text.GetText(def.SelectionSpan));
+			Assert.Equal(At(s, "Start;"), def.SelectionSpan.Start);
+		}
+	}
 }

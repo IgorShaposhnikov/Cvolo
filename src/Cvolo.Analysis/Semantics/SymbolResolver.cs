@@ -37,7 +37,8 @@ internal static class SymbolResolver
 		else if (node is CallExpressionSyntax call && IsOnCallName(source, call, position))
 			result = ResolveCall(context, index, source, call);
 		else if (node is IdentifierExpressionSyntax identifier)
-			result = ResolveIdentifier(context, visible, index, source, identifier);
+			result = ResolveIdentifier(context, visible, index, source, identifier)
+				?? ResolveImplicitExtensionField(context, unit, index, identifier);
 		else
 			result = ResolveDeclarationName(context, unit, index, source, node, position);
 
@@ -169,6 +170,63 @@ internal static class SymbolResolver
 		return null;
 	}
 
+	/// <summary>
+	/// Resolves a bare identifier that names a field of the type an enclosing extension method
+	/// extends — the compiler's flat/implicit receiver access (for example <c>Start</c> inside
+	/// <c>extension Range { ... Start ... }</c>). Only consulted after locals, parameters,
+	/// globals and named types have failed to claim the name.
+	/// </summary>
+	private static ResolvedSymbol? ResolveImplicitExtensionField(
+		BindingContext context,
+		CompilationUnitSyntax unit,
+		DeclarationIndex index,
+		IdentifierExpressionSyntax identifier)
+	{
+		foreach (var member in Members(unit))
+		{
+			if (member is not ExtensionDeclarationSyntax extension || !EnclosesExtensionMember(extension, identifier.Span.Start))
+				continue;
+
+			var type = context.ResolveType(context.NormalizeGenericName(extension.ExtendedTypeName));
+			if (type is null || index.FindType(type.Name) is not { } typeDeclaration)
+				return null;
+
+			return typeDeclaration switch
+			{
+				StructDeclarationSyntax structDeclaration when structDeclaration.Fields.FirstOrDefault(f => f.Name == identifier.Name) is { } structField
+					=> new ResolvedSymbol(ResolvedSymbolKind.Field, identifier.Name, Leaf(type.Name), identifier.Span, structField, $"{structField.Type} {structField.Name}"),
+				UnionDeclarationSyntax unionDeclaration when unionDeclaration.Fields.FirstOrDefault(f => f.Name == identifier.Name) is { } unionField
+					=> new ResolvedSymbol(ResolvedSymbolKind.Field, identifier.Name, Leaf(type.Name), identifier.Span, unionField, $"{unionField.Type} {unionField.Name}"),
+				_ => null,
+			};
+		}
+
+		return null;
+	}
+
+	private static bool EnclosesExtensionMember(ExtensionDeclarationSyntax extension, int position)
+	{
+		foreach (var method in extension.Methods)
+		{
+			if (method.Body is not null && Contains(method.Body.Span, position))
+				return true;
+		}
+
+		foreach (var constructor in extension.Constructors)
+		{
+			if (Contains(constructor.Body.Span, position))
+				return true;
+		}
+
+		foreach (var destructor in extension.Destructors)
+		{
+			if (Contains(destructor.Body.Span, position))
+				return true;
+		}
+
+		return false;
+	}
+
 	private static ResolvedSymbol? ResolveCall(BindingContext context, DeclarationIndex index, string source, CallExpressionSyntax call)
 	{
 		if (!context.ResolvedCalls.TryGetValue(call, out var function))
@@ -268,6 +326,7 @@ internal static class SymbolResolver
 				return OnName(NameSpan(source, destructor.Span, destructor.StructName, fromEnd: false), destructor.StructName, position, ResolvedSymbolKind.Destructor, destructor, Display(destructor, destructor.StructName), destructor.StructName);
 			case ExtensionDeclarationSyntax extension:
 				return ResolveConformance(context, index, source, extension, position)
+					?? ResolveTypeReference(context, index, source, extension.NameSpan, extension.ExtendedTypeName, position)
 					?? OnName(NameSpan(source, extension.Span, Leaf(extension.ExtendedTypeName), fromEnd: false), Leaf(extension.ExtendedTypeName), position, ResolvedSymbolKind.ExtensionMethod, extension, Display(extension, extension.ExtendedTypeName));
 			case StructDeclarationSyntax structDeclaration:
 				return OnName(NameSpan(source, structDeclaration.Span, structDeclaration.Name, fromEnd: false), structDeclaration.Name, position, ResolvedSymbolKind.Struct, structDeclaration, Display(structDeclaration, structDeclaration.Name));
@@ -458,6 +517,8 @@ internal static class SymbolResolver
 		var dot = name.LastIndexOf('.');
 		return dot < 0 ? name : name[(dot + 1)..];
 	}
+
+	private static bool Contains(TextSpan span, int position) => span.Start <= position && position <= span.End;
 
 	private static bool StrictContains(TextSpan span, int position) => span.Start <= position && position < span.End;
 }
