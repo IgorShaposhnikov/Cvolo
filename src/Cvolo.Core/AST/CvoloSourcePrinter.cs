@@ -265,7 +265,10 @@ public sealed class CvoloSourcePrinter
 					return $"{ind}    catch ({patternStr}\n{clausesBodyStr}{ind}    }}\n";
 				}));
 				var tryBodyStr = string.Join("", t.Body.Statements.Select(s => Print(s, indent + 1)));
-				return $"{ind}try {{\n{tryBodyStr}{ind}}} {catchStr}\n";
+				var finallyStr = t.FinallyBody is { } finallyBody
+					? $"{ind}finally {{\n{string.Join("", finallyBody.Statements.Select(s => Print(s, indent + 1)))}{ind}}}\n"
+					: "";
+				return $"{ind}try {{\n{tryBodyStr}{ind}}} {catchStr}{finallyStr}\n";
 
 			case CatchClauseSyntax cc:
 				var ccPattern = cc.IsBare

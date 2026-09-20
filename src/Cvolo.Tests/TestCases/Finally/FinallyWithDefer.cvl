@@ -1,0 +1,26 @@
+using System;
+
+[Error]
+enum ErrorCodes : int
+{
+	NotFound = 1,
+	NetworkTimeout = 2
+}
+
+int main()
+{
+	try
+	{
+		defer Console.Write('D');
+		Console.Write('T');
+	}
+	catch (ErrorCodes.NotFound) { }
+	catch (ErrorCodes.NetworkTimeout) { }
+	finally
+	{
+		Console.Write('F');
+	}
+
+	Console.Write('A');
+	return 0;
+}

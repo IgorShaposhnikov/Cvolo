@@ -1,0 +1,54 @@
+using System;
+
+[Error]
+enum ErrorCodes : int
+{
+	NotFound = 1,
+	NetworkTimeout = 2
+}
+
+Result<int, ErrorCodes> Divide(int a, int b)
+{
+	if (b == 0)
+		return Result<int, ErrorCodes> { Err: ErrorCodes.NotFound };
+	return Result<int, ErrorCodes> { Ok: a / b };
+}
+
+Result<int, ErrorCodes> Flaky(int a)
+{
+	return Result<int, ErrorCodes> { Err: ErrorCodes.NetworkTimeout };
+}
+
+int main()
+{
+	var int x = 0;
+
+	try
+	{
+		var int r = Divide(10, 0);
+		x = r;
+	}
+	catch (ErrorCodes.NotFound)
+	{
+		x = 111;
+	}
+	catch (ErrorCodes.NetworkTimeout) { }
+	finally
+	{
+		Console.Write('G');
+		try
+		{
+			var int q = Flaky(1);
+			x = q;
+		}
+		catch (ErrorCodes.NetworkTimeout)
+		{
+			x = 222;
+			Console.Write('H');
+		}
+		catch (ErrorCodes.NotFound) { }
+	}
+
+	Console.Write(x);
+	return 0;
+}

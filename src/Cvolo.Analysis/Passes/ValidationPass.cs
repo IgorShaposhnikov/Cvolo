@@ -600,6 +600,31 @@ public sealed class ValidationPass(BindingContext context)
 			case SwitchStatementSyntax sw:
 				CheckSwitchStatement(sw, scope, currentFunc);
 				break;
+			case TryStatementSyntax tryStmt:
+				{
+					// The compiler driver lowers try/catch/finally before binding, so this case is
+					// only reached by the language-server tooling, which binds the original AST.
+					CheckBlock(tryStmt.Body, new SymbolTable(scope), currentFunc);
+					foreach (var clause in tryStmt.CatchClauses)
+					{
+						var clauseScope = new SymbolTable(scope);
+						if (clause.BindingName is not null && clause.ErrorTypeName is not null &&
+							context.ResolveType(clause.ErrorTypeName) is { } bindingType)
+						{
+							clauseScope.Declare(new VariableSymbol(clause.BindingName, bindingType, isMutable: false)
+							{
+								IsInitialized = true,
+								Origin = OriginKind.Local,
+							});
+						}
+
+						CheckBlock(clause.Body, clauseScope, currentFunc);
+					}
+
+					if (tryStmt.FinallyBody is not null)
+						CheckBlock(tryStmt.FinallyBody, new SymbolTable(scope), currentFunc);
+					break;
+				}
 			case BreakStatementSyntax brk:
 				CheckControlExit(brk.TargetLabel, brk.Span, isBreak: true);
 				break;
@@ -2989,9 +3014,10 @@ public sealed class ValidationPass(BindingContext context)
 
 	private static bool EndsWithReturn(SyntaxNode s) => s switch
 	{
-		BlockStatementSyntax b => b.Statements.Count > 0 && b.Statements[^1] is ReturnStatementSyntax,
-		LabeledBlockStatementSyntax lb => lb.Body.Statements.Count > 0 && lb.Body.Statements[^1] is ReturnStatementSyntax,
+		BlockStatementSyntax b => b.Statements.Count > 0 && EndsWithReturn(b.Statements[^1]),
+		LabeledBlockStatementSyntax lb => lb.Body.Statements.Count > 0 && EndsWithReturn(lb.Body.Statements[^1]),
 		ReturnStatementSyntax => true,
+		TryStatementSyntax t => EndsWithReturn(t.Body) && t.CatchClauses.All(c => EndsWithReturn(c.Body)),
 		_ => false,
 	};
 

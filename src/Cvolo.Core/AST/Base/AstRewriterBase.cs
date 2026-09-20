@@ -114,7 +114,8 @@ public abstract class AstRewriterBase
 		{
 			var rewrittenBody = (BlockStatementSyntax)Rewrite(tryStmt.Body);
 			var rewrittenClauses = tryStmt.CatchClauses.Select(c => new CatchClauseSyntax(c.Span, c.ErrorTypeName, c.VariantName, c.BindingName, c.IsBare, (BlockStatementSyntax)Rewrite(c.Body))).ToList();
-			return new TryStatementSyntax(tryStmt.Span, rewrittenBody, rewrittenClauses);
+			var rewrittenFinally = tryStmt.FinallyBody is { } finallyBody ? (BlockStatementSyntax)Rewrite(finallyBody) : null;
+			return new TryStatementSyntax(tryStmt.Span, rewrittenBody, rewrittenClauses, rewrittenFinally);
 		}
 
 		if (node is CatchExpressionSyntax catchExpr)

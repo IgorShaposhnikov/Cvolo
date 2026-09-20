@@ -1,0 +1,46 @@
+using System;
+
+[Error]
+enum ErrorCodes : int
+{
+	NotFound = 1,
+	NetworkTimeout = 2
+}
+
+Result<int, ErrorCodes> Divide(int a, int b)
+{
+	if (b == 0)
+		return Result<int, ErrorCodes> { Err: ErrorCodes.NotFound };
+	return Result<int, ErrorCodes> { Ok: a / b };
+}
+
+int Compute()
+{
+	try
+	{
+		Console.Write('B');
+		return 7;
+	}
+	catch (ErrorCodes.NotFound)
+	{
+		return -1;
+	}
+	catch (ErrorCodes.NetworkTimeout)
+	{
+		return -2;
+	}
+	finally
+	{
+		Console.Write('F');
+	}
+
+	return 0;
+}
+
+int main()
+{
+	var int v = Compute();
+	Console.Write('A');
+	Console.Write(v);
+	return 0;
+}

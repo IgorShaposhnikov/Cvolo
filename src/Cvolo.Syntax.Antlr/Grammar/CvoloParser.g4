@@ -248,7 +248,11 @@ deferStatement
 	;
 
 tryStatement
-	: TRY blockStatement catchClause+
+	: TRY blockStatement catchClause* finallyClause?
+	;
+
+finallyClause
+	: FINALLY blockStatement
 	;
 
 catchClause

@@ -284,15 +284,30 @@ public sealed class DeferRewriter(DiagnosticBag diagnostics, CompilationContext 
 			}
 		}
 
-		ValidateDeferBody(defer.Body);
+		// The synthesized `finally` defer is compiler-internal: its body is the already-lowered
+		// finally block (nested try/catch/finally carry internal `break __try_N;` jumps and
+		// nested cleanup defers that a source-body walk would misreport). Control-flow
+		// restrictions were already validated against the raw source body by TryCatchRewriter.
+		if (!defer.IsLexicalCapture)
+			ValidateDeferBody(defer.Body);
 
 		// Capture free variables by value. The `val __defer_cap_N = x;` bindings are emitted
 		// at the defer's original position (they run at registration time); the body reads
 		// the snapshots, so later mutations of the originals are invisible to the action.
-		var captureRewriter = new CaptureRewriter(declaredNames: CollectDeclaredNames(defer.Body),
-			nextCaptureName: () => $"__defer_cap_{_tempCounter++}", captureDecls: []);
-		var substitutedBody = (SyntaxNode)captureRewriter.Rewrite(defer.Body);
-		result.AddRange(captureRewriter.CaptureDeclarations);
+		// The synthesized `finally` defer opts out (spec §4.4): it keeps plain lexical
+		// references and observes the bindings' live state when the cleanup actually runs.
+		SyntaxNode substitutedBody;
+		if (defer.IsLexicalCapture)
+		{
+			substitutedBody = defer.Body;
+		}
+		else
+		{
+			var captureRewriter = new CaptureRewriter(declaredNames: CollectDeclaredNames(defer.Body),
+				nextCaptureName: () => $"__defer_cap_{_tempCounter++}", captureDecls: []);
+			substitutedBody = (SyntaxNode)captureRewriter.Rewrite(defer.Body);
+			result.AddRange(captureRewriter.CaptureDeclarations);
+		}
 
 		_registryStack[anchorIndex].Defers.Add(substitutedBody);
 	}

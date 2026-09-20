@@ -69,6 +69,7 @@ FOREACH: 'foreach';
 IN: 'in';
 TRY: 'try';
 CATCH: 'catch';
+FINALLY: 'finally';
 
 // Punctuation
 LPAREN: '(';

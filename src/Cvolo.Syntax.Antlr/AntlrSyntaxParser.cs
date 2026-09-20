@@ -629,7 +629,8 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 					break;
 			}
 		}
-		return new TryStatementSyntax(SpanOf(context), body, clauses);
+		return new TryStatementSyntax(SpanOf(context), body, clauses,
+			context.finallyClause() is { } finallyCtx ? BuildBlockStatement(finallyCtx.blockStatement()) : null);
 	}
 
 	private ExpressionSyntax BuildExpression(CvoloParser.ExpressionContext context)
@@ -1319,8 +1320,12 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 	{
 		if (context is null || context.Start is null)
 			return new TextSpan(0, 0);
-		var start = context.Start.StartIndex;
-		var end = context.Stop?.StopIndex + 1 ?? start;
+
+		// Error recovery can synthesize tokens with StartIndex/StopIndex -1 (a "missing"
+		// identifier, an EOF stop). Never let those leak into a span: clamp to the file start.
+		var start = Math.Max(context.Start.StartIndex, 0);
+		var stop = context.Stop?.StopIndex ?? -1;
+		var end = stop >= start ? stop + 1 : start;
 		return TextSpan.FromBounds(start, end);
 	}
 
@@ -1328,7 +1333,10 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 	{
 		if (token is null)
 			return new TextSpan(0, 0);
-		return TextSpan.FromBounds(token.StartIndex, token.StopIndex + 1);
+
+		var start = Math.Max(token.StartIndex, 0);
+		var end = token.StopIndex >= start ? token.StopIndex + 1 : start;
+		return TextSpan.FromBounds(start, end);
 	}
 
 	private string GetTypeName(CvoloParser.TypeContext context)

@@ -144,9 +144,13 @@ public sealed class TryCatchRewriter(
 		var patterns = AnalyzePatterns(tryStmt, span);
 		if (patterns.Count == 0)
 		{
-			// No usable clause; report and leave the node for the binder to judge.
+			// No usable clause; report. A `finally` (grammar currently allows it without a
+			// catch) still lowers to a cleanup scope so its semantics are not silently dropped.
 			Report(span, CatchRequiresResultMessage, DiagnosticIds.CatchRequiresResult);
-			return new BlockStatementSyntax(span, [RewriteBlock(tryStmt.Body)]);
+			var bodyOnly = new BlockStatementSyntax(span, [RewriteBlock(tryStmt.Body)]);
+			return tryStmt.FinallyBody is { } finallyOnlyBody
+				? WrapInFinallyScope(span, bodyOnly, finallyOnlyBody)
+				: bodyOnly;
 		}
 
 		// 1. Coverage: every error type the steps can emit must appear in a clause (CVL1057).
@@ -205,11 +209,101 @@ public sealed class TryCatchRewriter(
 		var labeledBlock = new LabeledBlockStatementSyntax(span, tryLabel, new BlockStatementSyntax(span, bodyStatements));
 		var cascade = BuildCascade(span, failName, tagName, slotNames, tagIndices, patterns);
 
-		var statements = new List<SyntaxNode>();
-		statements.AddRange(scalarDecls);
-		statements.Add(labeledBlock);
-		statements.Add(cascade);
-		return new BlockStatementSyntax(span, statements);
+		var dispatchStatements = new List<SyntaxNode>();
+		dispatchStatements.AddRange(scalarDecls);
+		dispatchStatements.Add(labeledBlock);
+		dispatchStatements.Add(cascade);
+
+		// Lower a finally block as a compiler-internal defer anchored to an outer scope that
+		// encloses the whole dispatch site (spec §4.1). Error `break __try_N;` exits only the
+		// inner labeled block, so the cleanup runs after catch dispatch has completed; returns
+		// crossing the outer scope splice it through the defer rewriter's LIFO registry.
+		return tryStmt.FinallyBody is { } finallyBody
+			? WrapInFinallyScope(span, new BlockStatementSyntax(span, dispatchStatements), finallyBody)
+			: new BlockStatementSyntax(span, dispatchStatements);
+	}
+
+	/// <summary>
+	/// Wraps the lowered try/dispatch body in an outer labeled scope whose deferred cleanup is
+	/// the <c>finally</c> block. The synthesized defer is compiler-internal: it opts out of
+	/// value capture at registration (plain lexical references observe live state) and keeps
+	/// <see cref="DeferStatementSyntax.IsBoundaryAware"/> set so inner scopes' cleanups always
+	/// complete before it runs. The dispatch scope sits inside the finally scope, so the
+	/// error <c>break</c> never triggers cleanup before catch dispatch.
+	/// </summary>
+	private SyntaxNode WrapInFinallyScope(TextSpan span, BlockStatementSyntax dispatchScopeBody, BlockStatementSyntax finallyBody)
+	{
+		// The finally body becomes a defer body, so it must obey the same control-flow
+		// restrictions; enforcement happens on the raw source form before lowering (the
+		// rewriter's own output is full of internal `break __try_N;` / nested defers that a
+		// later walk would misreport).
+		ValidateFinallyBody(finallyBody);
+
+		var finallyLabel = Fresh("__try_finally_scope_");
+		var dispatchLabel = Fresh("__try_dispatch_scope_");
+
+		var dispatchScope = new LabeledBlockStatementSyntax(span, dispatchLabel, dispatchScopeBody);
+		var finallyDefer = new DeferStatementSyntax(span, RewriteBlock(finallyBody), null, lexicalCapture: true, boundaryAware: true);
+		var finallyScopeBody = new BlockStatementSyntax(span, [finallyDefer, dispatchScope]);
+
+		return new BlockStatementSyntax(span,
+		[
+			new LabeledBlockStatementSyntax(span, finallyLabel, finallyScopeBody),
+		]);
+	}
+
+	/// <summary>
+	/// Mirrors <see cref="DeferRewriter"/>'s body validation for the <c>finally</c> block,
+	/// which is lowered into a defer body: control flow may not leave it and <c>defer</c>
+	/// cannot be nested inside it (reusing CVL1063/CVL1064, the defer diagnostics family).
+	/// </summary>
+	private void ValidateFinallyBody(SyntaxNode body)
+	{
+		switch (body)
+		{
+			case ReturnStatementSyntax ret:
+				Report(ret.Span, "Control flow cannot leave a `finally` block.", DiagnosticIds.DeferControlFlowLeak);
+				break;
+			case BreakStatementSyntax brk:
+			case ContinueStatementSyntax cont:
+				Report(body.Span, "Control flow cannot leave a `finally` block.", DiagnosticIds.DeferControlFlowLeak);
+				break;
+			case DeferStatementSyntax nestedDefer:
+				Report(body.Span, "`defer` cannot be nested inside a `finally` block.", DiagnosticIds.NestedDefer);
+				ValidateFinallyBody(nestedDefer.Body);
+				break;
+			case BlockStatementSyntax block:
+				foreach (var child in block.Statements)
+					ValidateFinallyBody(child);
+				break;
+			case IfStatementSyntax ifStmt:
+				ValidateFinallyBody(ifStmt.ThenStatement);
+				if (ifStmt.ElseClause is { } elseClause)
+					ValidateFinallyBody(elseClause.Body);
+				break;
+			case WhileStatementSyntax whileStmt:
+				ValidateFinallyBody(whileStmt.Body);
+				break;
+			case ForStatementSyntax forStmt:
+				ValidateFinallyBody(forStmt.Body);
+				break;
+			case ForEachStatementSyntax forEach:
+				ValidateFinallyBody(forEach.Body);
+				break;
+			case UnsafeBlockStatementSyntax unsafeBlock:
+				ValidateFinallyBody(unsafeBlock.Body);
+				break;
+			case SwitchStatementSyntax sw:
+				foreach (var c in sw.Cases)
+				{
+					foreach (var child in c.Body)
+						ValidateFinallyBody(child);
+				}
+				break;
+			case LabeledBlockStatementSyntax labeled:
+				ValidateFinallyBody(labeled.Body);
+				break;
+		}
 	}
 
 	/// <summary>
