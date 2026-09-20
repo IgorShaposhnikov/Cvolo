@@ -289,4 +289,80 @@ public sealed class NavigationTests
 			Assert.Equal("Returns a constant.", crossFile!.Documentation);
 		}
 	}
+
+	[Fact]
+	public void ExtensionMethodImplementingInterface_DefinitionTargetsInterfaceMember()
+	{
+		const string s =
+			"interface S { int Sum(); }\n" +
+			"struct Point { public int x; }\n" +
+			"extension Point : S { int Sum() { return 1; } }\n";
+		var x = Open(("Main.cvl", s));
+		using (x.Fixture)
+		{
+			var extensionAt = s.IndexOf("extension", StringComparison.Ordinal);
+			var symbol = x.Document.GetSymbolAtPosition(s.IndexOf("Sum()", extensionAt, StringComparison.Ordinal) + 1);
+			Assert.NotNull(symbol);
+			Assert.Equal(ToolingSymbolKind.ExtensionMethod, symbol!.Kind);
+
+			var def = Assert.Single(x.Snapshot.GetDefinitions(symbol.SymbolId));
+			Assert.Equal("Sum", x.Document.Text.GetText(def.SelectionSpan));
+			Assert.True(def.SelectionSpan.Start < extensionAt, "the definition must be the interface member, not the extension method");
+		}
+	}
+
+	[Fact]
+	public void ExtensionMethodCall_StillTargetsImplementation_NotInterface()
+	{
+		const string s =
+			"interface S { int Sum(); }\n" +
+			"struct Point { public int x; }\n" +
+			"extension Point : S { int Sum() { return 1; } }\n" +
+			"int Caller() { val Point p = Point { x: 1 }; return p.Sum(); }\n";
+		var x = Open(("Main.cvl", s));
+		using (x.Fixture)
+		{
+			var extensionAt = s.IndexOf("extension", StringComparison.Ordinal);
+			var symbol = x.Document.GetSymbolAtPosition(s.LastIndexOf("Sum", StringComparison.Ordinal));
+			Assert.NotNull(symbol);
+			Assert.Equal(ToolingSymbolKind.ExtensionMethod, symbol!.Kind);
+
+			var def = Assert.Single(x.Snapshot.GetDefinitions(symbol.SymbolId));
+			Assert.True(def.SelectionSpan.Start > extensionAt, "a call must target the implementing method, not the interface member");
+		}
+	}
+
+	[Fact]
+	public void InterfaceMember_ResolvesToItsOwnDeclaration()
+	{
+		const string s = "interface S { int Sum(); }\nint main() { return 0; }\n";
+		var x = Open(("Main.cvl", s));
+		using (x.Fixture)
+		{
+			var symbol = x.Document.GetSymbolAtPosition(At(s, "Sum"));
+			Assert.NotNull(symbol);
+			Assert.Equal(ToolingSymbolKind.Method, symbol!.Kind);
+			var def = Assert.Single(x.Snapshot.GetDefinitions(symbol.SymbolId));
+			Assert.Equal("Sum", x.Document.Text.GetText(def.SelectionSpan));
+		}
+	}
+
+	[Fact]
+	public void ExtensionConformanceName_ResolvesToInterfaceDeclaration()
+	{
+		const string s =
+			"interface S { int Sum(); }\n" +
+			"struct Point { public int x; }\n" +
+			"extension Point : S { int Sum() { return 1; } }\n";
+		var x = Open(("Main.cvl", s));
+		using (x.Fixture)
+		{
+			var symbol = x.Document.GetSymbolAtPosition(s.IndexOf(": S", StringComparison.Ordinal) + 2);
+			Assert.NotNull(symbol);
+			Assert.Equal(ToolingSymbolKind.Interface, symbol!.Kind);
+			var def = Assert.Single(x.Snapshot.GetDefinitions(symbol.SymbolId));
+			Assert.Equal("S", x.Document.Text.GetText(def.SelectionSpan));
+			Assert.Equal(At(s, "S {"), def.SelectionSpan.Start);
+		}
+	}
 }

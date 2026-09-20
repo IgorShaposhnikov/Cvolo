@@ -13,7 +13,8 @@ public sealed class ExtensionDeclarationSyntax(
 	string? conformsTo = null,
 	Visibility? visibility = null,
 	IReadOnlyDictionary<string, string>? genericParameterDefaults = null,
-	TextSpan? nameSpan = null) : SyntaxNode(span)
+	TextSpan? nameSpan = null,
+	TextSpan? conformsToSpan = null) : SyntaxNode(span)
 {
 	public override SyntaxKind Kind => SyntaxKind.ExtensionDeclaration;
 
@@ -31,6 +32,12 @@ public sealed class ExtensionDeclarationSyntax(
 
 	/// <summary>The nominal interface this extension makes its type conform to, if any.</summary>
 	public string? ConformsTo { get; } = conformsTo;
+
+	/// <summary>
+	/// Span of just the conformance interface-name token, for diagnostics and navigation that
+	/// target the name rather than the whole extension block (falls back to <see cref="SyntaxNode.Span"/>).
+	/// </summary>
+	public TextSpan ConformsToSpan { get; } = conformsToSpan ?? span;
 
 	/// <summary>Baseline visibility inherited by all members of this block; null means unspecified (defaults to internal).</summary>
 	public Visibility Visibility { get; } = visibility ?? Visibility.Internal;

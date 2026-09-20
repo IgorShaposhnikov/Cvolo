@@ -1546,7 +1546,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		if (context.qualifiedName() is { } conformsCtx)
 			conformsTo = conformsCtx.GetText();
 
-		return new ExtensionDeclarationSyntax(SpanOf(context), extendedTypeName, methods, destructors, constructors, generics, conformsTo, GetVisibilityModifier(context.visibilityModifier()), defaults, nameSpan: SpanOf(context.Identifier().Symbol));
+		return new ExtensionDeclarationSyntax(SpanOf(context), extendedTypeName, methods, destructors, constructors, generics, conformsTo, GetVisibilityModifier(context.visibilityModifier()), defaults, nameSpan: SpanOf(context.Identifier().Symbol), conformsToSpan: context.qualifiedName() is { } conformsSpanCtx ? SpanOf(conformsSpanCtx) : null);
 	}
 
 	private InterfaceDeclarationSyntax BuildInterfaceDeclaration(CvoloParser.InterfaceDeclarationContext context)

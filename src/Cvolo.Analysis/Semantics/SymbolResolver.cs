@@ -267,7 +267,8 @@ internal static class SymbolResolver
 			case DestructorDeclarationSyntax destructor:
 				return OnName(NameSpan(source, destructor.Span, destructor.StructName, fromEnd: false), destructor.StructName, position, ResolvedSymbolKind.Destructor, destructor, Display(destructor, destructor.StructName), destructor.StructName);
 			case ExtensionDeclarationSyntax extension:
-				return OnName(NameSpan(source, extension.Span, Leaf(extension.ExtendedTypeName), fromEnd: false), Leaf(extension.ExtendedTypeName), position, ResolvedSymbolKind.ExtensionMethod, extension, Display(extension, extension.ExtendedTypeName));
+				return ResolveConformance(context, index, source, extension, position)
+					?? OnName(NameSpan(source, extension.Span, Leaf(extension.ExtendedTypeName), fromEnd: false), Leaf(extension.ExtendedTypeName), position, ResolvedSymbolKind.ExtensionMethod, extension, Display(extension, extension.ExtendedTypeName));
 			case StructDeclarationSyntax structDeclaration:
 				return OnName(NameSpan(source, structDeclaration.Span, structDeclaration.Name, fromEnd: false), structDeclaration.Name, position, ResolvedSymbolKind.Struct, structDeclaration, Display(structDeclaration, structDeclaration.Name));
 			case UnionDeclarationSyntax unionDeclaration:
@@ -276,8 +277,14 @@ internal static class SymbolResolver
 				return OnName(NameSpan(source, enumDeclaration.Span, enumDeclaration.Name, fromEnd: false), enumDeclaration.Name, position, ResolvedSymbolKind.Enum, enumDeclaration, Display(enumDeclaration, enumDeclaration.Name));
 			case InterfaceDeclarationSyntax interfaceDeclaration:
 				return OnName(NameSpan(source, interfaceDeclaration.Span, interfaceDeclaration.Name, fromEnd: false), interfaceDeclaration.Name, position, ResolvedSymbolKind.Interface, interfaceDeclaration, Display(interfaceDeclaration, interfaceDeclaration.Name));
+			case InterfaceMethodDeclarationSyntax interfaceMember:
+				return ResolveTypeReference(context, index, source, interfaceMember.Span, interfaceMember.ReturnType, position)
+					?? OnName(NameSpan(source, interfaceMember.Span, interfaceMember.Name, fromEnd: false), interfaceMember.Name, position, ResolvedSymbolKind.Method, interfaceMember, $"{interfaceMember.ReturnType} {interfaceMember.Name}({ParameterList(interfaceMember.Parameters)})");
 			case ProtocolDeclarationSyntax protocolDeclaration:
 				return OnName(NameSpan(source, protocolDeclaration.Span, protocolDeclaration.Name, fromEnd: false), protocolDeclaration.Name, position, ResolvedSymbolKind.Protocol, protocolDeclaration, Display(protocolDeclaration, protocolDeclaration.Name));
+			case ProtocolMethodDeclarationSyntax protocolMember:
+				return ResolveTypeReference(context, index, source, protocolMember.Span, protocolMember.ReturnType, position)
+					?? OnName(NameSpan(source, protocolMember.Span, protocolMember.Name, fromEnd: false), protocolMember.Name, position, ResolvedSymbolKind.Method, protocolMember, $"{protocolMember.ReturnType} {protocolMember.Name}({ParameterList(protocolMember.Parameters)})");
 			case TypeAliasDeclarationSyntax typeAlias:
 				return OnName(NameSpan(source, typeAlias.Span, typeAlias.Name, fromEnd: false), typeAlias.Name, position, ResolvedSymbolKind.TypeAlias, typeAlias, Display(typeAlias, typeAlias.Name));
 			case GlobalVariableDeclarationSyntax global:
@@ -300,6 +307,26 @@ internal static class SymbolResolver
 			default:
 				return null;
 		}
+	}
+
+	private static ResolvedSymbol? ResolveConformance(BindingContext context, DeclarationIndex index, string source, ExtensionDeclarationSyntax extension, int position)
+	{
+		if (extension.ConformsTo is null)
+			return null;
+
+		var leaf = LeafType(extension.ConformsTo);
+		if (leaf.Length == 0)
+			return null;
+
+		var span = NameSpan(source, extension.ConformsToSpan, leaf, fromEnd: true);
+		if (position < span.Start || position > span.End)
+			return null;
+
+		var type = context.ResolveType(context.NormalizeGenericName(extension.ConformsTo));
+		if (type is null || index.FindType(type.Name) is not { } declaration)
+			return null;
+
+		return new ResolvedSymbol(KindOf(type), leaf, null, span, declaration, Display(declaration, type.Name));
 	}
 
 	private static ResolvedSymbol? ResolveTypeReference(BindingContext context, DeclarationIndex index, string source, TextSpan range, string? typeName, int position)

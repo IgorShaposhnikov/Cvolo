@@ -1,6 +1,7 @@
 using Cvolo.Analysis;
 using Cvolo.Analysis.Completion;
 using Cvolo.Analysis.Semantics;
+using Cvolo.Analysis.Symbols.Structs;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
 using Cvolo.Core.AST.Statements;
@@ -38,6 +39,7 @@ internal sealed class NavigationIndex
 	private readonly Dictionary<SyntaxNode, Entry> _byDeclaration = new(ReferenceEqualityComparer.Instance);
 	private readonly Dictionary<int, Entry> _byId = new();
 	private readonly Dictionary<DocumentId, IReadOnlyList<DocumentSymbolInfo>> _outlines = new();
+	private readonly Dictionary<Entry, Entry> _conformanceTargets = new();
 	private int _nextId;
 
 	private NavigationIndex(ProjectSnapshot snapshot)
@@ -46,6 +48,7 @@ internal sealed class NavigationIndex
 		_analysis = snapshot.GetAnalysis();
 		_binderContext = _analysis.BinderContext;
 		BuildDeclarations();
+		BuildConformanceRedirects();
 		BuildOutlines();
 	}
 
@@ -67,6 +70,16 @@ internal sealed class NavigationIndex
 
 		if (resolved is null || !_byDeclaration.TryGetValue(resolved.Declaration, out var entry))
 			return null;
+
+		// An extension method that implements an interface member navigates to the interface's
+		// declaration (F12). Calls to the method keep the implementation: only the declaration
+		// name itself, which is inside the method's own name span, is redirected.
+		if (resolved.Declaration is FunctionDeclarationSyntax method &&
+			position >= method.NameSpan.Start && position <= method.NameSpan.End &&
+			_conformanceTargets.TryGetValue(entry, out var interfaceEntry))
+		{
+			entry = interfaceEntry;
+		}
 
 		return new SymbolLookupResult(
 			entry.Id,
@@ -104,6 +117,84 @@ internal sealed class NavigationIndex
 			foreach (var member in Members(unit))
 				IndexMember(documentId, source, member);
 		}
+	}
+
+	/// <summary>
+	/// Links each extension method that satisfies an interface conformance to the interface
+	/// member declaration it implements, so go-to-definition on the method name lands on the
+	/// contract. The match mirrors the compiler's own conformance check (name, return type and
+	/// parameter types); unresolved or structural matches are skipped.
+	/// </summary>
+	private void BuildConformanceRedirects()
+	{
+		if (_binderContext is null)
+			return;
+
+		foreach (var (_, unit) in _analysis.UnitsByDocument)
+		{
+			if (unit is null)
+				continue;
+
+			foreach (var member in Members(unit))
+			{
+				if (member is not ExtensionDeclarationSyntax extension || string.IsNullOrEmpty(extension.ConformsTo))
+					continue;
+
+				if (ResolveInterfaceDeclaration(unit, extension.ConformsTo!) is not { } interfaceDeclaration)
+					continue;
+
+				foreach (var method in extension.Methods)
+				{
+					if (!_byDeclaration.TryGetValue(method, out var methodEntry))
+						continue;
+
+					var interfaceMember = interfaceDeclaration.Members.FirstOrDefault(candidate => Implements(method, candidate));
+					if (interfaceMember is not null && _byDeclaration.TryGetValue(interfaceMember, out var interfaceEntry))
+						_conformanceTargets[methodEntry] = interfaceEntry;
+				}
+			}
+		}
+	}
+
+	private InterfaceDeclarationSyntax? ResolveInterfaceDeclaration(CompilationUnitSyntax unit, string conformsTo)
+	{
+		var context = _binderContext!;
+		lock (context)
+		{
+			var previousUnit = context.CurrentUnit;
+			var previousNamespace = context.CurrentNamespace;
+			context.CurrentUnit = unit;
+			context.CurrentNamespace = unit.NamespaceDeclaration?.Name;
+			try
+			{
+				if (context.ResolveType(context.NormalizeGenericName(conformsTo)) is not InterfaceTypeSymbol interfaceSymbol)
+					return null;
+
+				return context.InterfaceTemplates.TryGetValue(interfaceSymbol.Name, out var declaration) ? declaration : null;
+			}
+			finally
+			{
+				context.CurrentUnit = previousUnit;
+				context.CurrentNamespace = previousNamespace;
+			}
+		}
+	}
+
+	private static bool Implements(FunctionDeclarationSyntax method, InterfaceMethodDeclarationSyntax member)
+	{
+		if (method.Name != member.Name || method.ReturnType != member.ReturnType)
+			return false;
+
+		if (method.Parameters.Count != member.Parameters.Count)
+			return false;
+
+		for (var i = 0; i < method.Parameters.Count; i++)
+		{
+			if (method.Parameters[i].Type != member.Parameters[i].Type)
+				return false;
+		}
+
+		return true;
 	}
 
 	private void IndexMember(DocumentId documentId, string source, SyntaxNode node)
