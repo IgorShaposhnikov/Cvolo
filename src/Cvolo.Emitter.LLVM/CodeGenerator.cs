@@ -18,6 +18,8 @@ namespace Cvolo.Emitter.LLVM;
 public sealed class CodeGenerator : IEmitter, IDisposable
 {
 	private readonly CodegenContext _codegen;
+	private readonly DeclarationEmitter _declarations;
+	private readonly GlobalEmitter _globalEmitter;
 	private readonly CleanupEmitter _cleanup;
 	private readonly MemoryEmitter _memory;
 	private readonly AggregateEmitter _aggregates;
@@ -25,6 +27,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	private readonly DelegateEmitter _delegates;
 	private readonly ValueCoercion _coercion;
 	private readonly StatementEmitter _statements;
+	private readonly FunctionEmitter _functions;
 	private readonly ExpressionEmitter _expressions;
 	private readonly ILLVMOptimizer? _optimizer;
 	private readonly IRVerifier? _irVerifier;
@@ -37,8 +40,6 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	private LlvmTypeLowering _types => _codegen.Types;
 	private Dictionary<string, LLVMValueRef> _globals => _codegen.Globals;
 	private Dictionary<string, LLVMTypeRef> _functionTypes => _codegen.FunctionTypes;
-	private Dictionary<string, LLVMTypeRef> _llvmStructTypes => _codegen.LlvmStructTypes;
-	private Dictionary<string, List<TypeSymbol>> _functionParameterTypes => _codegen.FunctionParameterTypes;
 	private Dictionary<string, TypeSymbol> _functionReturnTypes => _codegen.FunctionReturnTypes;
 	private Dictionary<string, LLVMValueRef> _globalVariables => _codegen.GlobalVariables;
 	private Dictionary<string, TypeSymbol> _globalVariableTypes => _codegen.GlobalVariableTypes;
@@ -49,16 +50,10 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 	private FunctionCodegenContext _function = new();
 	private readonly Dictionary<string, StructDeclarationSyntax> _astStructs = [];
-	private readonly Dictionary<string, ExternDeclarationSyntax> _astExterns = [];
-	private readonly Dictionary<string, ExternBlockFunctionSyntax> _astExternBlockFunctions = [];
 	private readonly bool _enableTbaa;
 	private TbaaMetadata? _tbaa;
 	private (LLVMTypeRef Type, LLVMValueRef Func)? _llvmTrap;
 	private readonly Dictionary<string, LLVMValueRef> _enumValuesGlobals = [];
-	private readonly Dictionary<string, ConstructorDeclarationSyntax> _constructorInitializers = [];
-	private readonly HashSet<string> _exportedSymbols = [];
-	private readonly bool _checkedFfiBounds;
-	private readonly IReadOnlySet<string>? _definedGlobalNames;
 
 	static CodeGenerator()
 	{
@@ -76,6 +71,8 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		var builder = llvmContext.CreateBuilder();
 		targetLayout.Apply(module, LLVMTargetRef.DefaultTriple);
 		_codegen = new CodegenContext(llvmContext, module, builder, targetLayout);
+		_declarations = new DeclarationEmitter(_codegen, GetFFIType, GetByteSize, definedGlobalNames);
+		_globalEmitter = new GlobalEmitter(_codegen, definedGlobalNames);
 		_cleanup = new CleanupEmitter(_codegen);
 		_memory = new MemoryEmitter(_codegen);
 		_coercion = new ValueCoercion(_codegen);
@@ -90,8 +87,8 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			_coercion,
 			Load,
 			GetByteSize,
-			_astExterns,
-			_astExternBlockFunctions);
+			_declarations.ExternDeclarations,
+			_declarations.ExternBlockFunctions);
 		_statements = new StatementEmitter(
 			_codegen,
 			_cleanup,
@@ -105,6 +102,19 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			GetFieldPointer,
 			IsConstructorCall,
 			EmitEnumSwitchTrapDefault);
+		_functions = new FunctionEmitter(
+			_codegen,
+			_cleanup,
+			() => _function,
+			function => _function = function,
+			GetFFIType,
+			ResolveGlobalKey,
+			TypeEscapesHeap,
+			(call, thisPointer) => _calls.Emit(call, thisPointer),
+			_statements.EmitBlock,
+			EmitEnumSwitchTrapDefault,
+			_declarations.ConstructorInitializers,
+			checkedFfiBounds);
 		_delegates = new DelegateEmitter(
 			_codegen,
 			() => _function,
@@ -141,8 +151,6 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		_optimizer = optimizer;
 		_irVerifier = irVerifier;
 		_enableTbaa = enableTbaa;
-		_checkedFfiBounds = checkedFfiBounds;
-		_definedGlobalNames = definedGlobalNames;
 	}
 
 	public LLVMModuleRef Module => _module;
@@ -152,274 +160,13 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		_bindingContext = bindingContext;
 		_compilationContext = context;
 
-		// Inject standard safe memory management system declarations
-		var mallocType = LLVMTypeRef.CreateFunction(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), [LLVMTypeRef.Int64]);
-		_functionTypes["malloc"] = mallocType;
-		_globals["malloc"] = _module.AddFunction("malloc", mallocType);
-
-		var freeType = LLVMTypeRef.CreateFunction(LLVMTypeRef.Void, [LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0)]);
-		_functionTypes["free"] = freeType;
-		_globals["free"] = _module.AddFunction("free", freeType);
-
-		var putsType = LLVMTypeRef.CreateFunction(LLVMTypeRef.Int32, [LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0)]);
-		_functionTypes["puts"] = putsType;
-		_globals["puts"] = _module.AddFunction("puts", putsType);
-
-		var exitType = LLVMTypeRef.CreateFunction(LLVMTypeRef.Void, [LLVMTypeRef.Int32]);
-		_functionTypes["exit"] = exitType;
-		_globals["exit"] = _module.AddFunction("exit", exitType);
-
-		// Register return-type symbols for the built-in runtime functions so the call
-		// emitter knows not to name void returns (void calls must have no instruction name).
-		_functionReturnTypes["malloc"] = TypeSymbol.String;
-		_functionReturnTypes["free"] = TypeSymbol.Void;
-		_functionReturnTypes["puts"] = TypeSymbol.Int;
-		_functionReturnTypes["exit"] = TypeSymbol.Void;
-		_functionReturnTypes["memset"] = TypeSymbol.String;
-
-		// Register parameter-type symbols so call emission sees correct widths for built-ins
-		_functionParameterTypes["malloc"] = [TypeSymbol.ULong];
-		_functionParameterTypes["free"] = [TypeSymbol.String];
-		_functionParameterTypes["puts"] = [TypeSymbol.String];
-		_functionParameterTypes["exit"] = [TypeSymbol.Int];
-		_functionParameterTypes["memset"] = [TypeSymbol.String, TypeSymbol.Int, TypeSymbol.ULong];
-
-		// memset(void* dest, int value, size_t count) -> void* â€” used for `{}` zero-init arrays
-		var memsetType = LLVMTypeRef.CreateFunction(
-			LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0),
-			[LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), LLVMTypeRef.Int32, LLVMTypeRef.Int64]);
-		_functionTypes["memset"] = memsetType;
-		_globals["memset"] = _module.AddFunction("memset", memsetType);
-
-		// Pass A: Declare all Nominal and Instantiated Structs as Opaque Shells
-		foreach (var structType in bindingContext.StructTypes.Values)
-		{
-			if (!_llvmStructTypes.ContainsKey(structType.Name))
-			{
-				_llvmStructTypes[structType.Name] = _context.CreateNamedStruct(structType.Name);
-			}
-		}
-
-		foreach (var unionType in bindingContext.UnionTypes.Values)
-		{
-			if (!_llvmStructTypes.ContainsKey(unionType.Name))
-			{
-				_llvmStructTypes[unionType.Name] = _context.CreateNamedStruct(unionType.Name);
-			}
-		}
-
-		// Pass B: Define Struct Bodies recursively
-		foreach (var structType in bindingContext.StructTypes.Values)
-		{
-			var llvmStruct = _llvmStructTypes[structType.Name];
-			var fieldTypes = structType.Fields.Select(f => GetLLVMType(f.Type)).ToArray();
-			llvmStruct.StructSetBody(fieldTypes, false);
-		}
-
-		foreach (var unionType in bindingContext.UnionTypes.Values)
-		{
-			// Null-Pointer Optimization: an Option whose payload is a ref/refvar compiles to a
-			// single flat 8-byte pointer (Some = non-zero address, None = 0) with zero size/tag
-			// overhead. A flat pointer needs no named struct body.
-			if (unionType.IsNpoEligible)
-				continue;
-
-			var llvmUnion = _llvmStructTypes[unionType.Name];
-			var maxPayloadSize = unionType.Fields.Where(f => !f.IsVoidVariant).Select(f => GetByteSize(f.Type)).DefaultIfEmpty(0).Max();
-			llvmUnion.StructSetBody([LLVMTypeRef.Int8, LLVMTypeRef.CreateArray(LLVMTypeRef.Int8, (uint)maxPayloadSize)], false);
-		}
-
-		// Pass B2: Emit data-segment globals ('global T name = <const>;')
-		foreach (var (globalNode, globalSymbol) in bindingContext.GlobalVariables)
-		{
-			var qualifiedName = globalSymbol.QualifiedGlobalName;
-			if (_globalVariables.ContainsKey(qualifiedName))
-				continue;
-
-			var llvmType = GetLLVMType(globalSymbol.Type);
-			var globalRef = _module.AddGlobal(llvmType, qualifiedName);
-			var importedPackageGlobal = globalSymbol.DeclaringUnit is not null
-				&& bindingContext.ExternalPackageUnits.Contains(globalSymbol.DeclaringUnit);
-			var defineHere = !importedPackageGlobal
-				&& (_definedGlobalNames is null || _definedGlobalNames.Contains(qualifiedName));
-
-			globalRef.IsGlobalConstant = !globalSymbol.IsMutable;
-			if (defineHere)
-			{
-				// PackCompilation supplies _definedGlobalNames when producing Sector 3.
-				// Public package globals are part of the Cvolo package surface, so they
-				// must remain externally visible to the consumer module. Ordinary builds
-				// keep the historical internal linkage for their own data segment.
-				globalRef.Linkage = _definedGlobalNames is not null && globalSymbol.Visibility == Visibility.Public
-					? LLVMLinkage.LLVMExternalLinkage
-					: LLVMLinkage.LLVMInternalLinkage;
-				globalRef.Initializer = BuildGlobalInitializer(globalSymbol.Type, globalNode.Initializer, llvmType);
-			}
-			else
-			{
-				// Two kinds of globals are declarations only:
-				//  * stdlib globals while producing Sector 3 (the final consumer owns them), and
-				//  * globals imported from a package API in a consumer compilation (Sector 3 owns them).
-				// Neither may get a local zero initializer here, otherwise a package global such
-				// as Foo.Bias silently shadows the real definition from the linked package.
-				globalRef.Linkage = LLVMLinkage.LLVMExternalLinkage;
-			}
-			_globalVariables[qualifiedName] = globalRef;
-			_globalVariableTypes[qualifiedName] = globalSymbol.Type;
-
-			if (!_globalShortNames.TryGetValue(globalSymbol.Name, out var shortCandidates))
-				_globalShortNames[globalSymbol.Name] = shortCandidates = [];
-			shortCandidates.Add(qualifiedName);
-		}
-
-		// Pass C: Declare Extern functions and custom user-defined function signatures.
-		// External package units may be omitted from the emission unit list (package builds emit
-		// only their own definitions), but their bodyless API declarations are still required.
-		var declarationUnits = units.Concat(bindingContext.ExternalPackageUnits.Where(unit => !units.Contains(unit)));
-		foreach (var unit in declarationUnits)
-		{
-			var ns = unit.NamespaceDeclaration?.Name;
-			bindingContext.CurrentUnit = unit;
-			bindingContext.CurrentNamespace = ns;
-			var isExternalPackageUnit = bindingContext.ExternalPackageUnits.Contains(unit);
-			var members = ns != null ? unit.NamespaceDeclaration!.Members : unit.Members;
-
-			foreach (var member in members)
-			{
-				switch (member)
-				{
-					case ExternDeclarationSyntax ext:
-						_astExterns[ext.Name] = ext;
-						DeclareExternFunction(ext);
-						break;
-					case ExternBlockSyntax extBlock:
-						foreach (var fn in extBlock.Functions)
-						{
-							var sourceName = bindingContext.GetMangledName(fn.Name, ns);
-							var funcSym = _bindingContext!.Globals.Lookup(sourceName) as FunctionSymbol;
-							if (funcSym is null)
-								continue;
-							_astExternBlockFunctions[sourceName] = fn;
-							DeclareExternBlockFunction(fn, funcSym);
-						}
-						break;
-					case FunctionDeclarationSyntax func when func.GenericParameters.Count == 0 && !func.Name.Contains('<'):
-						// Skip abstract interface/protocol templates and bodyless intrinsic functions
-						var ifaceTemplateName = bindingContext.GetMangledName(func.Name, ns);
-						if (bindingContext.InterfaceFunctionTemplates.ContainsKey(ifaceTemplateName) ||
-							bindingContext.ProtocolFunctionTemplates.ContainsKey(ifaceTemplateName) ||
-							(!func.HasBody && !isExternalPackageUnit) ||
-							func.Attributes.Any(a => a.Name is "Intrinsic" or "System.Intrinsic" or "IntrinsicAttribute"))
-						{
-							continue;
-						}
-
-						var mangledName = (func.Name == "main" || func.Name == "Main")
-							? "main"
-							: bindingContext.GetMangledName(func.Name, ns);
-
-						var paramTypes = func.Parameters.Select(p => bindingContext.ResolveType(p.Type)!).ToList();
-						var overloadedMangledName = bindingContext.GetOverloadedMangledName(mangledName, paramTypes);
-						DeclareFunction(func, overloadedMangledName);
-						break;
-					case ExposeExternBlockSyntax exportBlock:
-						foreach (var exportFunc in exportBlock.Functions)
-						{
-							// Skip abstract interface/protocol templates and bodyless intrinsic functions
-							var exportIfaceTemplateName = bindingContext.GetMangledName(exportFunc.Name, ns);
-							if (bindingContext.InterfaceFunctionTemplates.ContainsKey(exportIfaceTemplateName) ||
-								bindingContext.ProtocolFunctionTemplates.ContainsKey(exportIfaceTemplateName) ||
-								!exportFunc.HasBody ||
-								exportFunc.Attributes.Any(a => a.Name is "Intrinsic" or "System.Intrinsic" or "IntrinsicAttribute"))
-							{
-								continue;
-							}
-
-							var exportedMangledName = (exportFunc.Name == "main" || exportFunc.Name == "Main")
-								? "main"
-								: bindingContext.GetMangledName(exportFunc.Name, ns);
-
-							var exportedParamTypes = exportFunc.Parameters.Select(p => bindingContext.ResolveType(p.Type)!).ToList();
-							var exportedOverloadedName = bindingContext.GetOverloadedMangledName(exportedMangledName, exportedParamTypes);
-							DeclareFunction(exportFunc, exportedOverloadedName);
-
-							// Synthesize the exported alias if the binder tagged this function for export.
-							if (bindingContext.Globals.Lookup(exportedOverloadedName) is FunctionSymbol exportFuncSym
-								&& exportFuncSym.IsExported
-								&& _exportedSymbols.Add(exportFuncSym.ExposeName ?? exportFunc.Name)
-								&& _globals.TryGetValue(exportedOverloadedName, out var exportedTarget)
-								&& _functionTypes.TryGetValue(exportedOverloadedName, out var exportedFuncType))
-							{
-								CreateExportAlias(exportFuncSym.ExposeName ?? exportFunc.Name, exportedTarget, exportedFuncType);
-							}
-						}
-						break;
-					case ExtensionDeclarationSyntax extDecl:
-						// Skip protocol extension defaults in Pass C (they are materialized onto concrete conformers)
-						if (bindingContext.ResolveType(extDecl.ExtendedTypeName) is ProtocolTypeSymbol)
-							continue;
-
-						foreach (var method in extDecl.Methods
-							.Concat(extDecl.Destructors.Select(static d => d.ToFunctionDeclaration())))
-						{
-							var baseMangledName = bindingContext.GetMangledName($"{extDecl.ExtendedTypeName}.{method.Name}", ns);
-							if (bindingContext.OverloadedFunctions.TryGetValue(baseMangledName, out var candidates))
-							{
-								foreach (var candidate in candidates)
-								{
-									DeclareFunction(method, candidate.Name);
-								}
-							}
-						}
-
-						foreach (var ctorDecl in extDecl.Constructors)
-						{
-							var ctorBaseMangledName = bindingContext.GetMangledName(extDecl.ExtendedTypeName, ns);
-							if (bindingContext.OverloadedFunctions.TryGetValue(ctorBaseMangledName, out var ctorCandidates))
-							{
-								foreach (var candidate in ctorCandidates)
-								{
-									var matchingDecl = FindCtorDeclaration(extDecl.Constructors, candidate) ?? ctorDecl;
-									DeclareFunction(matchingDecl.ToFunctionDeclaration(), candidate.Name);
-
-									if (matchingDecl.HasConstructorInitializer)
-										_constructorInitializers[candidate.Name] = matchingDecl;
-								}
-							}
-						}
-
-						break;
-				}
-			}
-		}
-
-		// Pass D: Declare Monomorphized and Explicit Generic Specializations
-		foreach (var instDecl in bindingContext.MonomorphizedFunctionDecls)
-		{
-			var baseMangledName = instDecl.Name.Split('<')[0];
-			var originalUnit = (bindingContext.SymbolUnits.TryGetValue(baseMangledName, out var u) ? u : null) ?? units[0];
-			bindingContext.CurrentUnit = originalUnit;
-			bindingContext.CurrentNamespace = originalUnit?.NamespaceDeclaration?.Name;
-
-			DeclareFunction(instDecl, instDecl.Name);
-		}
-
-		// Pass D2: Declare Monomorphized Extension Methods and Constructors
-		foreach (var decl in bindingContext.MonomorphizedExtensionDecls)
-		{
-			var emitName = bindingContext.MonomorphizedExtensionNames[decl];
-			if (decl is FunctionDeclarationSyntax func)
-			{
-				DeclareFunction(func, emitName);
-			}
-			else if (decl is ConstructorDeclarationSyntax ctor)
-			{
-				DeclareFunction(ctor.ToFunctionDeclaration(), emitName);
-
-				if (ctor.HasConstructorInitializer)
-					_constructorInitializers[emitName] = ctor;
-			}
-		}
+		// Preserve the existing declaration order while delegating module-level work to
+		// dedicated emitters. Function definitions are still orchestrated below.
+		_declarations.DeclareRuntimeSupport();
+		_declarations.DeclareAggregateTypes();
+		_globalEmitter.EmitGlobals();
+		_declarations.DeclareSourceSignatures(units);
+		_declarations.DeclareGenericSpecializations(units);
 
 		// Pass E: Generate bodies of Regular and Monomorphized functions
 		var emittedFunctionNames = new HashSet<string>();
@@ -463,7 +210,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 					if (emittedFunctionNames.Add(overloadedMangledName))
 					{
-						EmitFunctionBody(func, overloadedMangledName);
+						_functions.EmitBody(func, overloadedMangledName);
 					}
 				}
 				else if (member is ExposeExternBlockSyntax exportBlock)
@@ -487,7 +234,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 						if (emittedFunctionNames.Add(exportedOverloadedName))
 						{
-							EmitFunctionBody(exportFunc, exportedOverloadedName);
+							_functions.EmitBody(exportFunc, exportedOverloadedName);
 						}
 					}
 				}
@@ -509,7 +256,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 							{
 								if (emittedFunctionNames.Add(candidate.Name))
 								{
-									EmitFunctionBody(method, candidate.Name);
+									_functions.EmitBody(method, candidate.Name);
 								}
 							}
 						}
@@ -522,9 +269,9 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 						{
 							if (emittedFunctionNames.Add(candidate.Name))
 							{
-								var ctorDecl = FindCtorDeclaration(extDecl.Constructors, candidate);
+								var ctorDecl = _declarations.FindConstructorDeclaration(extDecl.Constructors, candidate);
 								if (ctorDecl is not null)
-									EmitFunctionBody(ctorDecl.ToFunctionDeclaration(), candidate.Name);
+									_functions.EmitBody(ctorDecl.ToFunctionDeclaration(), candidate.Name);
 							}
 						}
 					}
@@ -543,7 +290,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				bindingContext.CurrentNamespace = originalUnit?.NamespaceDeclaration?.Name;
 				_currentUnit = originalUnit;
 
-				EmitFunctionBody(instDecl, instDecl.Name);
+				_functions.EmitBody(instDecl, instDecl.Name);
 			}
 		}
 
@@ -560,11 +307,11 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 				if (decl is FunctionDeclarationSyntax func)
 				{
-					EmitFunctionBody(func, emitName);
+					_functions.EmitBody(func, emitName);
 				}
 				else if (decl is ConstructorDeclarationSyntax ctor)
 				{
-					EmitFunctionBody(ctor.ToFunctionDeclaration(), emitName);
+					_functions.EmitBody(ctor.ToFunctionDeclaration(), emitName);
 				}
 			}
 		}
@@ -584,439 +331,6 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		return _module.PrintToString();
 	}
 
-	private void DeclareExternFunction(ExternDeclarationSyntax ext)
-	{
-		// Deduplicate: If this extern function has already been declared, return early
-		if (_globals.ContainsKey(ext.Name))
-		{
-			if (!_functionParameterTypes.ContainsKey(ext.Name))
-			{
-				var pSymbols = new List<TypeSymbol>();
-				foreach (var param in ext.Parameters)
-				{
-					var paramTypeSymbol = _bindingContext!.ResolveType(param.Type)!;
-					pSymbols.Add(paramTypeSymbol);
-				}
-				_functionParameterTypes[ext.Name] = pSymbols;
-			}
-
-			if (!_functionReturnTypes.ContainsKey(ext.Name))
-			{
-				_functionReturnTypes[ext.Name] = _bindingContext!.ResolveType(ext.ReturnType)!;
-			}
-
-			return;
-		}
-
-		var returnTypeSymbol = _bindingContext!.ResolveType(ext.ReturnType)!;
-		var returnType = GetLLVMType(returnTypeSymbol);
-		_functionReturnTypes[ext.Name] = returnTypeSymbol;
-
-		var paramTypes = new List<LLVMTypeRef>();
-		var paramSymbols = new List<TypeSymbol>();
-		foreach (var param in ext.Parameters)
-		{
-			var paramTypeSymbol = _bindingContext.ResolveType(param.Type)!;
-			paramTypes.Add(GetLLVMType(paramTypeSymbol));
-			paramSymbols.Add(paramTypeSymbol);
-		}
-
-		_functionParameterTypes[ext.Name] = paramSymbols;
-
-		var funcType = ext.IsVariadic
-			? LLVMTypeRef.CreateFunction(returnType, [.. paramTypes], IsVarArg: true)
-			: LLVMTypeRef.CreateFunction(returnType, [.. paramTypes]);
-
-		var func = _module.AddFunction(ext.Name, funcType);
-		_globals[ext.Name] = func;
-		_functionTypes[ext.Name] = funcType;
-	}
-
-	private void DeclareExternBlockFunction(ExternBlockFunctionSyntax fn, FunctionSymbol symbol)
-	{
-		// Deduplicate: If this extern block function has already been declared, return early.
-		if (_globals.ContainsKey(symbol.Name))
-			return;
-
-		var returnTypeSymbol = _bindingContext!.ResolveType(fn.ReturnType)!;
-		var returnType = GetLLVMType(returnTypeSymbol);
-		_functionReturnTypes[symbol.Name] = returnTypeSymbol;
-
-		var paramTypes = new List<LLVMTypeRef>();
-		var paramSymbols = new List<TypeSymbol>();
-		foreach (var param in fn.Parameters)
-		{
-			var paramTypeSymbol = _bindingContext.ResolveType(param.Type)!;
-			paramTypes.Add(GetLLVMType(paramTypeSymbol));
-			paramSymbols.Add(paramTypeSymbol);
-		}
-
-		_functionParameterTypes[symbol.Name] = paramSymbols;
-
-		var funcType = fn.IsVariadic
-			? LLVMTypeRef.CreateFunction(returnType, [.. paramTypes], IsVarArg: true)
-			: LLVMTypeRef.CreateFunction(returnType, [.. paramTypes]);
-
-		// Extern block functions are declared under their native symbol name ([ImportName] ?? source
-		// name); the _globals cache stays keyed by the Cvolo-level name so call-site resolution
-		// (_globals[resolvedFunc.Name]) keeps working unchanged. "C" -> cdecl (ccc), "system" -> stdcall.
-		var nativeName = symbol.ImportName ?? fn.Name;
-		var func = _module.AddFunction(nativeName, funcType);
-		func.FunctionCallConv = symbol.CallingConvention == "system"
-			? (uint)LLVMCallConv.LLVMX86StdcallCallConv
-			: (uint)LLVMCallConv.LLVMCCallConv;
-		_globals[symbol.Name] = func;
-		_functionTypes[symbol.Name] = funcType;
-	}
-
-	private void DeclareFunction(FunctionDeclarationSyntax func, string emitName)
-	{
-		// Deduplicate: If this function has already been declared, return early
-		if (_globals.ContainsKey(emitName))
-			return;
-
-		var returnTypeSymbol = _bindingContext!.ResolveType(func.ReturnType)!;
-		var declaredSymbol = emitName == "main" ? null : _bindingContext!.Globals.Lookup(emitName);
-		var isExported = declaredSymbol is FunctionSymbol { IsExported: true };
-
-		// FFI boundary: bool â†’ i8 (unsigned 1-byte) instead of i1 to match C ABI.
-		var returnType = isExported ? GetFFIType(returnTypeSymbol) : GetLLVMType(returnTypeSymbol);
-		_functionReturnTypes[emitName] = returnTypeSymbol;
-
-		var paramTypes = new List<LLVMTypeRef>();
-		var paramSymbols = new List<TypeSymbol>();
-		if (isExported && declaredSymbol is FunctionSymbol exportSym)
-		{
-			foreach (var p in exportSym.Parameters)
-			{
-				paramTypes.Add(GetFFIType(p.Type));
-				paramSymbols.Add(p.Type);
-			}
-		}
-		else if (_bindingContext.Globals.Lookup(emitName) is FunctionSymbol sym)
-		{
-			foreach (var p in sym.Parameters)
-			{
-				paramTypes.Add(GetLLVMType(p.Type));
-				paramSymbols.Add(p.Type);
-			}
-		}
-		else // Fallback for standard declarations
-		{
-			foreach (var param in func.Parameters)
-			{
-				var paramTypeSymbol = _bindingContext.ResolveType(param.Type)!;
-				paramTypes.Add(GetLLVMType(paramTypeSymbol));
-				paramSymbols.Add(paramTypeSymbol);
-			}
-		}
-
-		_functionParameterTypes[emitName] = paramSymbols;
-
-		var funcType = LLVMTypeRef.CreateFunction(returnType, [.. paramTypes]);
-
-		var llvmFunc = _module.AddFunction(emitName, funcType);
-
-		if (emitName != "main" && !func.HasBody)
-		{
-			// Bodyless Cvolo declarations imported from a package are resolved by the
-			// package's Sector 3 bitcode at link time. LLVM requires declarations
-			// without a body to have external (or weak) linkage.
-			llvmFunc.Linkage = LLVMLinkage.LLVMExternalLinkage;
-		}
-		else if (emitName != "main" && _definedGlobalNames is not null && func.Visibility == Visibility.Public)
-		{
-			// Sector 3 is linked as a separate LLVM module. Public Cvolo package
-			// definitions therefore need external linkage so consumer declarations
-			// (created from Sector 1 metadata) can resolve to these bodies. Internal
-			// package helpers stay internal and cannot collide with other packages.
-			llvmFunc.Linkage = LLVMLinkage.LLVMExternalLinkage;
-		}
-		else if (emitName != "main" && declaredSymbol is FunctionSymbol { IsNeverInline: true })
-		{
-			// External linkage keeps the [NeverInline] function itself from being
-			// inlined or stripped by LLVM's optimizers; the symbol export is harmless.
-			llvmFunc.Linkage = LLVMLinkage.LLVMExternalLinkage;
-		}
-		else if (emitName != "main")
-		{
-			llvmFunc.Linkage = LLVMLinkage.LLVMInternalLinkage;
-		}
-
-		// Attach noalias attributes if [NoAlias] is present on the function or individual parameters
-		if (declaredSymbol is FunctionSymbol funcSym)
-		{
-			for (var i = 0; i < funcSym.Parameters.Count; i++)
-			{
-				if (funcSym.IsNoAlias || funcSym.Parameters[i].IsNoAlias)
-				{
-					if (funcSym.Parameters[i].Type is PointerTypeSymbol or RawPointerTypeSymbol)
-					{
-						var nameBytes = System.Text.Encoding.UTF8.GetBytes("noalias\0");
-						var emptyBytes = System.Text.Encoding.UTF8.GetBytes("\0");
-						unsafe
-						{
-							fixed (byte* namePtr = nameBytes)
-							fixed (byte* valPtr = emptyBytes)
-							{
-								var noAliasAttr = LLVMSharp.Interop.LLVM.CreateStringAttribute(_context, (sbyte*)namePtr, 7, (sbyte*)valPtr, 0);
-								llvmFunc.AddAttributeAtIndex((LLVMAttributeIndex)(i + 1), noAliasAttr);
-							}
-						}
-					}
-				}
-			}
-
-			// [Inline] / [NeverInline] -> LLVM alwaysinline / noinline function attributes
-			// (applied before the body is emitted, matching the noalias pattern above).
-			if (funcSym.IsInline)
-				AddFunctionStringAttribute(llvmFunc, "alwaysinline");
-			else if (funcSym.IsNeverInline)
-				AddFunctionStringAttribute(llvmFunc, "noinline");
-
-			// Functions inside expose extern "C" blocks are hardened with a strong stack
-			// canary (sspstrong) since they intercept uncontrolled external threads.
-			if (funcSym.IsExported)
-				AddFunctionStringAttribute(llvmFunc, "sspstrong");
-		}
-
-		_globals[emitName] = llvmFunc;
-		_functionTypes[emitName] = funcType;
-	}
-
-	/// <summary>
-	/// Attaches a function-level string attribute (e.g. "alwaysinline" / "noinline") to the given LLVM function.
-	/// Well-known names are canonicalized to their enum attribute kind by LLVM.
-	/// </summary>
-	private void AddFunctionStringAttribute(LLVMValueRef llvmFunc, string name)
-	{
-		var nameBytes = System.Text.Encoding.UTF8.GetBytes(name + "\0");
-		var emptyBytes = System.Text.Encoding.UTF8.GetBytes("\0");
-		unsafe
-		{
-			fixed (byte* namePtr = nameBytes)
-			fixed (byte* valPtr = emptyBytes)
-			{
-				var attr = LLVMSharp.Interop.LLVM.CreateStringAttribute(_context, (sbyte*)namePtr, (uint)name.Length, (sbyte*)valPtr, 0);
-				llvmFunc.AddAttributeAtIndex((LLVMAttributeIndex)(-1), attr);
-			}
-		}
-	}
-
-	/// <summary>Maps a registered constructor candidate back to its corresponding source
-	/// declaration (matching by parameter count/types, ignoring the implicit 'this').</summary>
-	private ConstructorDeclarationSyntax? FindCtorDeclaration(
-		IReadOnlyList<ConstructorDeclarationSyntax> ctors, FunctionSymbol candidate)
-	{
-		var candParams = candidate.Parameters[0].Type is PointerTypeSymbol
-			? candidate.Parameters.Skip(1).Select(p => p.Type.Name).ToList()
-			: candidate.Parameters.Select(p => p.Type.Name).ToList();
-		foreach (var ctorDecl in ctors)
-		{
-			if (ctorDecl.Parameters.Count != candParams.Count)
-				continue;
-
-			var match = true;
-			for (var i = 0; i < candParams.Count; i++)
-			{
-				// Compare the source parameter's resolved type name against the candidate.
-				var resolved = _bindingContext?.ResolveType(ctorDecl.Parameters[i].Type)?.Name;
-				if ((resolved ?? ctorDecl.Parameters[i].Type) != candParams[i])
-				{
-					match = false;
-					break;
-				}
-			}
-
-			if (match)
-				return ctorDecl;
-		}
-
-		return null;
-	}
-
-	private void EmitFunctionBody(FunctionDeclarationSyntax func, string mangledName)
-	{
-		// Bodyless intrinsic functions don't generate function bodies (calls are lowered directly to LLVM instructions)
-		if (!func.HasBody)
-			return;
-
-		if (!_globals.TryGetValue(mangledName, out var llvmFunc))
-			return;
-
-		var entry = llvmFunc.AppendBasicBlock("entry");
-		_builder.PositionAtEnd(entry);
-
-		_function = new FunctionCodegenContext();
-
-		var funcSymbol = _bindingContext!.Globals.Lookup(mangledName) as FunctionSymbol
-			?? (_bindingContext.MonomorphizedFunctions.TryGetValue(mangledName, out var monoSymbol) ? monoSymbol : null);
-		_function.UnsafeDepth = funcSymbol is not null && (funcSymbol.SafetyTier == SafetyTier.Unsafe || funcSymbol.IsUnsafeBody) ? 1 : 0;
-
-		// An 'unbound' factory that returns a heap-escaping graph handle transfers ownership of
-		// its heap allocations to the caller ('heap-relative provenance'), so inner-block scopes
-		// must NOT free them (that would sever the self-referential graph mid-construction).
-		_function.OwnershipTransferFunction = funcSymbol is not null
-			&& funcSymbol.SafetyTier == SafetyTier.Unbound
-			&& _functionReturnTypes.TryGetValue(mangledName, out var retType)
-			&& TypeEscapesHeap(retType);
-
-		// Seed data-segment globals into the local symbol table: a GlobalVariable IS a pointer,
-		// so loads/stores/field GEPs work through the ordinary machinery (locals shadow on redeclare).
-		foreach (var (globalName, globalRef) in _globalVariables)
-		{
-			if (!_function.Locals.ContainsKey(globalName))
-				_function.Locals[globalName] = globalRef;
-		}
-
-		foreach (var (globalName, globalType) in _globalVariableTypes)
-		{
-			if (!_function.VariableTypes.ContainsKey(globalName))
-				_function.VariableTypes[globalName] = globalType;
-		}
-
-		// Also seed the bare short name for unqualified references, resolved against the
-		// current namespace context (mirrors the binder's ambiguity rules; ambiguous
-		// references never reach codegen because the binder reports CVL1077 first).
-		foreach (var (shortName, _) in _globalShortNames)
-		{
-			if (_function.Locals.ContainsKey(shortName))
-				continue;
-
-			var resolvedKey = ResolveGlobalKey(shortName);
-			if (resolvedKey is null)
-				continue;
-
-			_function.Locals[shortName] = _globalVariables[resolvedKey];
-			_function.VariableTypes[shortName] = _globalVariableTypes[resolvedKey];
-		}
-
-		if (_bindingContext!.Globals.Lookup(mangledName) is FunctionSymbol sym)
-		{
-			var isExported = sym.IsExported;
-
-			// --checked-ffi-bounds: insert explicit null-check prologues for pointer params
-			if (isExported && _checkedFfiBounds && sym.Parameters.Count > 0)
-			{
-				var bodyBlock = llvmFunc.AppendBasicBlock("ffi.body");
-
-				// Build a combined i1 "is_null" flag by AND-ing all pointer-param null checks.
-				LLVMValueRef? anyNull = null;
-				for (var i = 0; i < sym.Parameters.Count; i++)
-				{
-					if (sym.Parameters[i].Type is PointerTypeSymbol or RawPointerTypeSymbol)
-					{
-						var param = llvmFunc.GetParam((uint)i);
-						var isNull = _builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, param, LLVMValueRef.CreateConstPointerNull(param.TypeOf), $"null.{sym.Parameters[i].Name}");
-						anyNull = anyNull is null ? isNull : _builder.BuildOr(anyNull.Value, isNull, "any_null");
-					}
-				}
-
-				if (anyNull is not null)
-				{
-					var trapBlock = llvmFunc.AppendBasicBlock("ffi.trap");
-					_builder.BuildCondBr(anyNull.Value, trapBlock, bodyBlock);
-
-					_builder.PositionAtEnd(trapBlock);
-					if (_llvmTrap is null)
-					{
-						var trapFnType = LLVMTypeRef.CreateFunction(LLVMTypeRef.Void, []);
-						_llvmTrap = (trapFnType, _module.AddFunction("llvm.trap", trapFnType));
-					}
-					_builder.BuildCall2(_llvmTrap.Value.Type, _llvmTrap.Value.Func, new LLVMValueRef[] { }, "");
-					_builder.BuildUnreachable();
-				}
-				else
-				{
-					_builder.BuildBr(bodyBlock);
-				}
-
-				_builder.PositionAtEnd(bodyBlock);
-			}
-
-			for (var i = 0; i < sym.Parameters.Count; i++)
-			{
-				var param = llvmFunc.GetParam((uint)i);
-				var paramName = sym.Parameters[i].Name;
-				param.Name = paramName;
-
-				var typeSymbol = sym.Parameters[i].Type;
-				var llvmType = isExported ? GetFFIType(typeSymbol) : GetLLVMType(typeSymbol);
-
-				var alloca = _builder.BuildAlloca(llvmType, paramName);
-
-				// FFI bool lowering: the parameter arrives as i8 (1-byte C ABI bool);
-				// truncate it back to i1 for the internal boolean logic.
-				if (isExported && typeSymbol is not null && typeSymbol.Name == "bool")
-				{
-					param = _builder.BuildTrunc(param, LLVMTypeRef.Int1, "bool.trunc");
-				}
-
-				_builder.BuildStore(param, alloca);
-
-				_function.Locals[paramName] = alloca;
-				_function.VariableTypes[paramName] = typeSymbol;
-			}
-		}
-		else // Fallback
-		{
-			for (var i = 0; i < func.Parameters.Count; i++)
-			{
-				var param = llvmFunc.GetParam((uint)i);
-				var paramName = func.Parameters[i].Name;
-				param.Name = paramName;
-
-				var typeSymbol = _bindingContext!.ResolveType(func.Parameters[i].Type)!;
-				var llvmType = GetLLVMType(typeSymbol);
-
-				var alloca = _builder.BuildAlloca(llvmType, paramName);
-				_builder.BuildStore(param, alloca);
-
-				_function.Locals[paramName] = alloca;
-				_function.VariableTypes[paramName] = typeSymbol;
-			}
-		}
-
-		// Constructor chaining: a delegating constructor (`T(args) : this(...)`) invokes
-		// the target constructor on the same destination storage before its own body runs.
-		if (_constructorInitializers.TryGetValue(mangledName, out var chainedCtor)
-			&& _function.Locals.TryGetValue("this", out var thisStorage)
-			&& _bindingContext!.ConstructorDelegationTargets.TryGetValue(mangledName, out var chainTarget))
-		{
-			// 'this' holds the alloca of the destination-storage pointer; load the pointer value.
-			var thisPtr = _builder.BuildLoad2(
-				LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0),
-				thisStorage,
-				"chained_this");
-
-			var chainCall = new CallExpressionSyntax(
-				chainedCtor.ConstructorInitializerSpan ?? chainedCtor.Span,
-				chainedCtor.StructName,
-				[],
-				chainedCtor.ConstructorArguments!);
-
-			_bindingContext.ResolvedCalls[chainCall] = chainTarget;
-			_calls.Emit(chainCall, thisPtr);
-		}
-
-		_statements.EmitBlock(func.Body);
-
-		if (func.ReturnType == "void" && !StatementEmitter.EndsWithReturn(func.Body))
-		{
-			_cleanup.EmitScopeCleanup(_function, [.. _function.Locals.Keys], skipHeapFree: _function.OwnershipTransferFunction);
-			_builder.BuildRetVoid();
-		}
-
-		_function.UnsafeDepth = 0;
-	}
-
-	/// <summary>
-	/// True when the current function is an <c>unbound</c> factory whose return type is a
-	/// heap-escaping graph handle (a type transitively carrying <c>ref</c>/<c>refvar</c>
-	/// reference fields). In that case the local heap allocations that form the self-referential
-	/// graph must NOT be freed on the return path, because ownership transfers to the caller
-	/// ('heap-relative provenance'): the references it returns point back into those blocks.
-	/// </summary>
 	private bool ComputeOwnershipTransfer(TypeSymbol returnType)
 	{
 		if (!TypeEscapesHeap(returnType))
@@ -1075,30 +389,6 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	/// </summary>
 	private bool IsConstructorCall(CallExpressionSyntax call, TypeSymbol targetType)
 		=> _expressions.IsConstructorCall(call, targetType);
-
-	private void CreateExportAlias(string exportName, LLVMValueRef target, LLVMTypeRef funcType)
-	{
-		// An exported entry forward-declares nothing new: it is a weak-free alias over the
-		// internal (mangled) function, exposed to the host binary's dynamic linker.
-		var alias = _module.AddAlias2(funcType, 0, target, exportName);
-		if (OperatingSystem.IsWindows())
-			alias.DLLStorageClass = LLVMDLLStorageClass.LLVMDLLExportStorageClass;
-		else
-			alias.Visibility = LLVMVisibility.LLVMProtectedVisibility;
-	}
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 	private void EmitEnumSwitchTrapDefault()
 	{
@@ -1526,152 +816,6 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		// Passed "" instead of "exit_call" to ensure no void register is assigned
 		_builder.BuildCall2(exitType, exitFunc, new LLVMValueRef[] { LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1) }, "");
 		_builder.BuildUnreachable();
-	}
-
-	private LLVMValueRef BuildGlobalInitializer(TypeSymbol typeSymbol, ExpressionSyntax? initializer, LLVMTypeRef llvmType)
-	{
-		if (initializer is null)
-			return LLVMValueRef.CreateConstNull(llvmType);
-
-		switch (initializer)
-		{
-			case IntegerLiteralExpressionSyntax intLit:
-				return LLVMValueRef.CreateConstInt(llvmType, unchecked((ulong)intLit.Value));
-			case DoubleLiteralExpressionSyntax dblLit:
-				return LLVMValueRef.CreateConstReal(llvmType, dblLit.Value);
-			case BooleanLiteralExpressionSyntax boolLit:
-				return LLVMValueRef.CreateConstInt(LLVMTypeRef.Int1, boolLit.Value ? 1UL : 0UL);
-			case CharacterLiteralExpressionSyntax charLit:
-				return LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, charLit.Value);
-			case UnaryExpressionSyntax { Operator: "-" } unary:
-				switch (unary.Operand)
-				{
-					case IntegerLiteralExpressionSyntax negInt:
-						return LLVMValueRef.CreateConstInt(llvmType, 0UL - negInt.Value);
-					case DoubleLiteralExpressionSyntax negDbl:
-						return LLVMValueRef.CreateConstReal(llvmType, -negDbl.Value);
-					default:
-						return LLVMValueRef.CreateConstNull(llvmType);
-				}
-			case StructInitializationExpressionSyntax structInit when typeSymbol is StructTypeSymbol initStruct
-				&& _llvmStructTypes.TryGetValue(initStruct.Name, out var namedStruct):
-				{
-					var fieldValues = new List<LLVMValueRef>();
-					foreach (var field in initStruct.Fields)
-					{
-						var memberInit = structInit.Initializers.FirstOrDefault(m => m.MemberName == field.Name);
-						if (memberInit is not null && IsSimpleConstant(memberInit.Expression))
-							fieldValues.Add(BuildGlobalInitializer(field.Type, memberInit.Expression, GetLLVMType(field.Type)));
-						else
-							fieldValues.Add(LLVMValueRef.CreateConstNull(GetLLVMType(field.Type)));
-					}
-
-					return LLVMValueRef.CreateConstNamedStruct(namedStruct, [.. fieldValues]);
-				}
-			case BinaryExpressionSyntax bin when bin.Operator is "+" or "-" or "*" or "/":
-				if (TryEvaluateConstBinary(bin, out var isDoubleResult, out var dblResult, out var intResult))
-				{
-					var isFloatType = llvmType.Kind is LLVMTypeKind.LLVMDoubleTypeKind or LLVMTypeKind.LLVMFloatTypeKind;
-					return isFloatType
-						? LLVMValueRef.CreateConstReal(llvmType, isDoubleResult ? dblResult : intResult)
-						: LLVMValueRef.CreateConstInt(llvmType, unchecked((ulong)intResult));
-				}
-
-				return LLVMValueRef.CreateConstNull(llvmType);
-			default:
-				return LLVMValueRef.CreateConstNull(llvmType);
-		}
-	}
-
-	private static bool IsSimpleConstant(ExpressionSyntax expr) =>
-		expr is IntegerLiteralExpressionSyntax or DoubleLiteralExpressionSyntax or BooleanLiteralExpressionSyntax or CharacterLiteralExpressionSyntax;
-
-	/// <summary>
-	/// Recursively evaluates a global constant initializer expression tree down to a single
-	/// value. Supports integer/double literals, unary minus and binary +, -, *, / (IEEE semantics).
-	/// Returns false on unrecognised nodes or integer division by zero.
-	/// </summary>
-	private static bool TryEvaluateConstBinary(ExpressionSyntax expr, out bool isDouble, out double dbl, out long integer)
-	{
-		switch (expr)
-		{
-			case IntegerLiteralExpressionSyntax intLit:
-				isDouble = false;
-				dbl = intLit.Value;
-				integer = unchecked((long)intLit.Value);
-				return true;
-			case DoubleLiteralExpressionSyntax dblLit:
-				isDouble = true;
-				dbl = dblLit.Value;
-				integer = 0;
-				return true;
-			case BooleanLiteralExpressionSyntax boolLit:
-				isDouble = false;
-				dbl = boolLit.Value ? 1.0 : 0.0;
-				integer = boolLit.Value ? 1 : 0;
-				return true;
-			case CharacterLiteralExpressionSyntax charLit:
-				isDouble = false;
-				dbl = charLit.Value;
-				integer = charLit.Value;
-				return true;
-			case UnaryExpressionSyntax { Operator: "-" } unary:
-				if (!TryEvaluateConstBinary(unary.Operand, out isDouble, out dbl, out integer))
-					return false;
-				dbl = -dbl;
-				integer = -integer;
-				return true;
-			case BinaryExpressionSyntax bin:
-				if (!TryEvaluateConstBinary(bin.Left, out var lIsDouble, out var lDbl, out var lInt) ||
-					!TryEvaluateConstBinary(bin.Right, out var rIsDouble, out var rDbl, out var rInt))
-				{
-					isDouble = false;
-					dbl = 0;
-					integer = 0;
-					return false;
-				}
-
-				isDouble = lIsDouble || rIsDouble;
-				if (isDouble)
-				{
-					var left = lIsDouble ? lDbl : lInt;
-					var right = rIsDouble ? rDbl : rInt;
-					dbl = bin.Operator switch
-					{
-						"+" => left + right,
-						"-" => left - right,
-						"*" => left * right,
-						"/" => left / right, // IEEE: 0.0/0.0=NaN (no division-by-zero trap)
-						_ => 0,
-					};
-					integer = 0;
-				}
-				else
-				{
-					switch (bin.Operator)
-					{
-						case "+": integer = lInt + rInt; break;
-						case "-": integer = lInt - rInt; break;
-						case "*": integer = lInt * rInt; break;
-						case "/":
-							if (rInt == 0) { isDouble = false; dbl = 0; integer = 0; return false; }
-							integer = lInt / rInt;
-							break;
-						case "%":
-							if (rInt == 0) { isDouble = false; dbl = 0; integer = 0; return false; }
-							integer = lInt % rInt;
-							break;
-						default: isDouble = false; dbl = 0; integer = 0; return false;
-					}
-					dbl = integer;
-				}
-				return true;
-			default:
-				isDouble = false;
-				dbl = 0;
-				integer = 0;
-				return false;
-		}
 	}
 
 	private LLVMTypeRef GetLLVMType(TypeSymbol t)
