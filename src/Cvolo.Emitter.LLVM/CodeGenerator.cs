@@ -27,6 +27,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	private readonly CallEmitter _calls;
 	private readonly DelegateEmitter _delegates;
 	private readonly ValueCoercion _coercion;
+	private readonly StatementEmitter _statements;
 	private readonly ILLVMOptimizer? _optimizer;
 	private readonly IRVerifier? _irVerifier;
 
@@ -106,6 +107,18 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			GetByteSize,
 			_astExterns,
 			_astExternBlockFunctions);
+		_statements = new StatementEmitter(
+			_codegen,
+			_cleanup,
+			_memory,
+			() => _function,
+			EmitExpression,
+			GetExprType,
+			GetFieldPointer,
+			EmitStatement,
+			EmitBlock,
+			EmitVariableDeclaration,
+			EmitEnumSwitchTrapDefault);
 
 		_optimizer = optimizer;
 		_irVerifier = irVerifier;
@@ -1043,19 +1056,19 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				EmitLabeledBlockStatement(labeledBlock);
 				break;
 			case IfStatementSyntax ifStmt:
-				EmitIfStatement(ifStmt);
+				_statements.EmitIfStatement(ifStmt);
 				break;
 			case SwitchStatementSyntax sw:
-				EmitSwitchStatement(sw);
+				_statements.EmitSwitchStatement(sw);
 				break;
 			case WhileStatementSyntax whileStmt:
-				EmitWhileStatement(whileStmt);
+				_statements.EmitWhileStatement(whileStmt);
 				break;
 			case ForStatementSyntax forStmt:
-				EmitForStatement(forStmt);
+				_statements.EmitForStatement(forStmt);
 				break;
 			case ForEachStatementSyntax fe:
-				EmitForEachStatement(fe);
+				_statements.EmitForEachStatement(fe);
 				break;
 			case UnsafeBlockStatementSyntax unsafeBlock:
 				_function.UnsafeDepth++;
@@ -1063,10 +1076,10 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				_function.UnsafeDepth--;
 				break;
 			case BreakStatementSyntax brk:
-				EmitBreakStatement(brk);
+				_statements.EmitBreakStatement(brk);
 				break;
 			case ContinueStatementSyntax cont:
-				EmitContinueStatement(cont);
+				_statements.EmitContinueStatement(cont);
 				break;
 		}
 	}
@@ -2605,392 +2618,17 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		}
 	}
 
-	private void EmitIfStatement(IfStatementSyntax ifStmt)
+	private void EmitEnumSwitchTrapDefault()
 	{
-		var condition = EmitExpression(ifStmt.Condition);
+		if (_llvmTrap is null)
+		{
+			var trapFnType = LLVMTypeRef.CreateFunction(LLVMTypeRef.Void, []);
+			_llvmTrap = (trapFnType, _module.AddFunction("llvm.trap", trapFnType));
+		}
 
-		var currentFunc = _builder.InsertBlock.Parent;
-		var thenBlock = currentFunc.AppendBasicBlock("then");
-		var elseBlock = currentFunc.AppendBasicBlock("else");
-		var mergeBlock = currentFunc.AppendBasicBlock("ifend");
-
-		_builder.BuildCondBr(condition, thenBlock, elseBlock);
-
-		_builder.PositionAtEnd(thenBlock);
-		EmitStatement(ifStmt.ThenStatement);
-		if (_builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
-			_builder.BuildBr(mergeBlock);
-
-		_builder.PositionAtEnd(elseBlock);
-		if (ifStmt.ElseClause is not null)
-			EmitStatement(ifStmt.ElseClause.Body);
-		if (_builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
-			_builder.BuildBr(mergeBlock);
-
-		_builder.PositionAtEnd(mergeBlock);
+		_builder.BuildCall2(_llvmTrap.Value.Type, _llvmTrap.Value.Func, new LLVMValueRef[] { }, "");
+		_builder.BuildUnreachable();
 	}
-
-	private void EmitWhileStatement(WhileStatementSyntax whileStmt)
-	{
-		var currentFunc = _builder.InsertBlock.Parent;
-		var prefix = !string.IsNullOrEmpty(whileStmt.Label) ? whileStmt.Label + "." : "";
-		var condBlock = currentFunc.AppendBasicBlock(prefix + "whilecond");
-		var bodyBlock = currentFunc.AppendBasicBlock(prefix + "whilebody");
-		var endBlock = currentFunc.AppendBasicBlock(prefix + "whileend");
-
-		var ctx = new LoopCodegenFrame(whileStmt.Label, endBlock, condBlock);
-		_function.LoopContexts.Push(ctx);
-		if (!string.IsNullOrEmpty(whileStmt.Label))
-			_function.LabeledBreaks.Push(new LabeledBreakCodegenFrame(whileStmt.Label!, endBlock));
-
-		_builder.BuildBr(condBlock);
-
-		_builder.PositionAtEnd(condBlock);
-		var condition = EmitExpression(whileStmt.Condition);
-		_builder.BuildCondBr(condition, bodyBlock, endBlock);
-
-		_builder.PositionAtEnd(bodyBlock);
-		EmitStatement(whileStmt.Body);
-		if (_builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
-		{
-			_builder.BuildBr(condBlock);
-		}
-
-		_function.LoopContexts.Pop();
-		if (!string.IsNullOrEmpty(whileStmt.Label))
-			_function.LabeledBreaks.Pop();
-		_builder.PositionAtEnd(endBlock);
-	}
-
-	private void EmitForStatement(ForStatementSyntax forStmt)
-	{
-		EmitVariableDeclaration(forStmt.Initializer);
-
-		var currentFunc = _builder.InsertBlock.Parent;
-		var prefix = !string.IsNullOrEmpty(forStmt.Label) ? forStmt.Label + "." : "";
-		var condBlock = currentFunc.AppendBasicBlock(prefix + "forcond");
-		var bodyBlock = currentFunc.AppendBasicBlock(prefix + "forbody");
-		var incBlock = currentFunc.AppendBasicBlock(prefix + "forinc");
-		var endBlock = currentFunc.AppendBasicBlock(prefix + "forend");
-
-		var ctx = new LoopCodegenFrame(forStmt.Label, endBlock, incBlock);
-		_function.LoopContexts.Push(ctx);
-		if (!string.IsNullOrEmpty(forStmt.Label))
-			_function.LabeledBreaks.Push(new LabeledBreakCodegenFrame(forStmt.Label!, endBlock));
-
-		_builder.BuildBr(condBlock);
-
-		_builder.PositionAtEnd(condBlock);
-		var condition = EmitExpression(forStmt.Condition);
-		_builder.BuildCondBr(condition, bodyBlock, endBlock);
-
-		_builder.PositionAtEnd(bodyBlock);
-		EmitStatement(forStmt.Body);
-		if (_builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
-		{
-			_builder.BuildBr(incBlock);
-		}
-
-		_function.LoopContexts.Pop();
-		if (!string.IsNullOrEmpty(forStmt.Label))
-			_function.LabeledBreaks.Pop();
-
-		_builder.PositionAtEnd(incBlock);
-		EmitExpression(forStmt.Increment);
-		_builder.BuildBr(condBlock);
-
-		_builder.PositionAtEnd(endBlock);
-	}
-
-	private void EmitForEachStatement(ForEachStatementSyntax fe)
-	{
-		var rawCollectionType = GetExprType(fe.Collection);
-		var underlyingCollectionType = rawCollectionType;
-		if (underlyingCollectionType is PointerTypeSymbol colPtr)
-			underlyingCollectionType = colPtr.ReferencedType;
-
-		var itemTypeName = fe.ItemTypeName;
-		var itemType = itemTypeName is not null ? _bindingContext!.ResolveType(itemTypeName) ?? TypeSymbol.Int : TypeSymbol.Int;
-
-		var currentFunc = _builder.InsertBlock.Parent;
-		var prefix = !string.IsNullOrEmpty(fe.Label) ? fe.Label + "." : "";
-
-		if (underlyingCollectionType is ArrayTypeSymbol arrayType)
-		{
-			EmitForEachArray(fe, arrayType, itemType, currentFunc, prefix);
-		}
-		else if (underlyingCollectionType is SliceTypeSymbol sliceType)
-		{
-			EmitForEachSlice(fe, sliceType, itemType, currentFunc, prefix);
-		}
-		else
-		{
-			EmitForEachEnumerator(fe, underlyingCollectionType, itemType, currentFunc, prefix);
-		}
-	}
-
-	private void EmitForEachArray(ForEachStatementSyntax fe, ArrayTypeSymbol arrayType, TypeSymbol itemType, LLVMValueRef currentFunc, string prefix)
-	{
-		var (collectionAlloca, _, _, _) = GetFieldPointer(fe.Collection);
-
-		var counterAlloca = _memory.BuildEntryAlloca(LLVMTypeRef.Int32, "__fe_i");
-		_builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0), counterAlloca);
-
-		var itemSlotTy = fe.IsReferenceBinding ? LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0) : GetLLVMType(itemType);
-		var itemAlloca = _memory.BuildEntryAlloca(itemSlotTy, fe.ItemName);
-		_function.Locals[fe.ItemName] = itemAlloca;
-		_function.VariableTypes[fe.ItemName] = fe.IsReferenceBinding ? new PointerTypeSymbol(itemType, isMutable: fe.BindingKind == ForEachVariableKind.RefVar) : itemType;
-
-		var condBlock = currentFunc.AppendBasicBlock(prefix + "fecond");
-		var bodyBlock = currentFunc.AppendBasicBlock(prefix + "febody");
-		var incBlock = currentFunc.AppendBasicBlock(prefix + "feinc");
-		var endBlock = currentFunc.AppendBasicBlock(prefix + "feend");
-
-		var ctx = new LoopCodegenFrame(fe.Label, endBlock, incBlock);
-		_function.LoopContexts.Push(ctx);
-		if (!string.IsNullOrEmpty(fe.Label))
-			_function.LabeledBreaks.Push(new LabeledBreakCodegenFrame(fe.Label!, endBlock));
-
-		_builder.BuildBr(condBlock);
-
-		_builder.PositionAtEnd(condBlock);
-		var iVal = _builder.BuildLoad2(LLVMTypeRef.Int32, counterAlloca, "__fe_i_val");
-		var length = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (ulong)arrayType.Size);
-		var cmp = _builder.BuildICmp(LLVMIntPredicate.LLVMIntSLT, iVal, length, "__fe_cmp");
-		_builder.BuildCondBr(cmp, bodyBlock, endBlock);
-
-		_builder.PositionAtEnd(bodyBlock);
-		var arrayLayout = GetLLVMType(arrayType);
-		var elemPtr = _builder.BuildGEP2(arrayLayout, collectionAlloca, new LLVMValueRef[] {
-			LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0), iVal
-		}, "__fe_elem_ptr");
-		if (fe.IsReferenceBinding)
-		{
-			_builder.BuildStore(elemPtr, itemAlloca);
-		}
-		else
-		{
-			var elemVal = _builder.BuildLoad2(GetLLVMType(itemType), elemPtr, "__fe_elem");
-			_builder.BuildStore(elemVal, itemAlloca);
-		}
-
-		EmitStatement(fe.Body);
-		if (_builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
-		{
-			_builder.BuildBr(incBlock);
-		}
-
-		_function.LoopContexts.Pop();
-		if (!string.IsNullOrEmpty(fe.Label))
-			_function.LabeledBreaks.Pop();
-
-		_builder.PositionAtEnd(incBlock);
-		var newI = _builder.BuildAdd(iVal, LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1), "__fe_new_i");
-		_builder.BuildStore(newI, counterAlloca);
-		_builder.BuildBr(condBlock);
-
-		_builder.PositionAtEnd(endBlock);
-	}
-
-	private void EmitForEachSlice(ForEachStatementSyntax fe, SliceTypeSymbol sliceType, TypeSymbol itemType, LLVMValueRef currentFunc, string prefix)
-	{
-		var (collectionAlloca, _, _, _) = GetFieldPointer(fe.Collection);
-		var sliceLayout = GetLLVMType(sliceType);
-
-		var lenPtrField = _builder.BuildGEP2(sliceLayout, collectionAlloca, new LLVMValueRef[] {
-			LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
-			LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1)
-		}, "__fe_len_field");
-		var length = _builder.BuildLoad2(LLVMTypeRef.Int32, lenPtrField, "__fe_len");
-
-		var counterAlloca = _memory.BuildEntryAlloca(LLVMTypeRef.Int32, "__fe_i");
-		_builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0), counterAlloca);
-
-		var itemSlotTy = fe.IsReferenceBinding ? LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0) : GetLLVMType(itemType);
-		var itemAlloca = _memory.BuildEntryAlloca(itemSlotTy, fe.ItemName);
-		_function.Locals[fe.ItemName] = itemAlloca;
-		_function.VariableTypes[fe.ItemName] = fe.IsReferenceBinding ? new PointerTypeSymbol(itemType, isMutable: fe.BindingKind == ForEachVariableKind.RefVar) : itemType;
-
-		var condBlock = currentFunc.AppendBasicBlock(prefix + "fecond");
-		var bodyBlock = currentFunc.AppendBasicBlock(prefix + "febody");
-		var incBlock = currentFunc.AppendBasicBlock(prefix + "feinc");
-		var endBlock = currentFunc.AppendBasicBlock(prefix + "feend");
-
-		var ctx = new LoopCodegenFrame(fe.Label, endBlock, incBlock);
-		_function.LoopContexts.Push(ctx);
-		if (!string.IsNullOrEmpty(fe.Label))
-			_function.LabeledBreaks.Push(new LabeledBreakCodegenFrame(fe.Label!, endBlock));
-
-		_builder.BuildBr(condBlock);
-
-		_builder.PositionAtEnd(condBlock);
-		var iVal = _builder.BuildLoad2(LLVMTypeRef.Int32, counterAlloca, "__fe_i_val");
-		var cmp = _builder.BuildICmp(LLVMIntPredicate.LLVMIntSLT, iVal, length, "__fe_cmp");
-		_builder.BuildCondBr(cmp, bodyBlock, endBlock);
-
-		_builder.PositionAtEnd(bodyBlock);
-		var arrPtrField = _builder.BuildGEP2(sliceLayout, collectionAlloca, new LLVMValueRef[] {
-			LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
-			LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0)
-		}, "__fe_arr_field");
-		var dataPtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), arrPtrField, "__fe_data_ptr");
-		var elemLlvmTy = GetLLVMType(itemType);
-		var elemPtr = _builder.BuildGEP2(elemLlvmTy, dataPtr, new LLVMValueRef[] { iVal }, "__fe_elem_ptr");
-		if (fe.IsReferenceBinding)
-		{
-			_builder.BuildStore(elemPtr, itemAlloca);
-		}
-		else
-		{
-			var elemVal = _builder.BuildLoad2(elemLlvmTy, elemPtr, "__fe_elem");
-			_builder.BuildStore(elemVal, itemAlloca);
-		}
-
-		EmitStatement(fe.Body);
-		if (_builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
-		{
-			_builder.BuildBr(incBlock);
-		}
-
-		_function.LoopContexts.Pop();
-		if (!string.IsNullOrEmpty(fe.Label))
-			_function.LabeledBreaks.Pop();
-
-		_builder.PositionAtEnd(incBlock);
-		var newI = _builder.BuildAdd(iVal, LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1), "__fe_new_i");
-		_builder.BuildStore(newI, counterAlloca);
-		_builder.BuildBr(condBlock);
-
-		_builder.PositionAtEnd(endBlock);
-	}
-
-	private void EmitForEachEnumerator(ForEachStatementSyntax fe, TypeSymbol collectionType, TypeSymbol itemType, LLVMValueRef currentFunc, string prefix)
-	{
-		var (collectionAlloca, _, _, _) = GetFieldPointer(fe.Collection);
-
-		var enumeratorTypeName = fe.EnumeratorTypeName;
-		var enumeratorType = enumeratorTypeName is not null ? _bindingContext!.ResolveType(enumeratorTypeName) : null;
-		if (enumeratorType is null)
-			return;
-		var enumeratorLlvmType = GetLLVMType(enumeratorType);
-
-		var getEnumeratorName = fe.GetEnumeratorFunctionName;
-		var moveNextName = fe.MoveNextFunctionName;
-		var currentName = fe.CurrentFunctionName;
-		if (getEnumeratorName is null || moveNextName is null || currentName is null)
-			return;
-
-		var getEnumeratorCallee = _globals[getEnumeratorName];
-		var getEnumeratorFuncType = _functionTypes[getEnumeratorName];
-		var receiverType = LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0);
-		var getEnumeratorResult = _builder.BuildCall2(getEnumeratorFuncType, getEnumeratorCallee, new LLVMValueRef[] { collectionAlloca }, "__fe_enum");
-
-		var enumeratorAlloca = _memory.BuildEntryAlloca(enumeratorLlvmType, "__fe_enumerator");
-		_builder.BuildStore(getEnumeratorResult, enumeratorAlloca);
-
-		var itemSlotTy = fe.IsReferenceBinding ? LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0) : GetLLVMType(itemType);
-		var itemAlloca = _memory.BuildEntryAlloca(itemSlotTy, fe.ItemName);
-		_function.Locals[fe.ItemName] = itemAlloca;
-		_function.VariableTypes[fe.ItemName] = fe.IsReferenceBinding ? new PointerTypeSymbol(itemType, isMutable: fe.BindingKind == ForEachVariableKind.RefVar) : itemType;
-
-		var condBlock = currentFunc.AppendBasicBlock(prefix + "fecond");
-		var bodyBlock = currentFunc.AppendBasicBlock(prefix + "febody");
-		var endBlock = currentFunc.AppendBasicBlock(prefix + "feend");
-
-		var ctx = new LoopCodegenFrame(fe.Label, endBlock, condBlock);
-		_function.LoopContexts.Push(ctx);
-		if (!string.IsNullOrEmpty(fe.Label))
-			_function.LabeledBreaks.Push(new LabeledBreakCodegenFrame(fe.Label!, endBlock));
-
-		_builder.BuildBr(condBlock);
-
-		_builder.PositionAtEnd(condBlock);
-		var moveNextCallee = _globals[moveNextName];
-		var moveNextFuncType = _functionTypes[moveNextName];
-		var hasMore = _builder.BuildCall2(moveNextFuncType, moveNextCallee, new LLVMValueRef[] { enumeratorAlloca }, "__fe_has_more");
-		_builder.BuildCondBr(hasMore, bodyBlock, endBlock);
-
-		_builder.PositionAtEnd(bodyBlock);
-		var currentCallee = _globals[currentName];
-		var currentFuncType = _functionTypes[currentName];
-		var currentVal = _builder.BuildCall2(currentFuncType, currentCallee, new LLVMValueRef[] { enumeratorAlloca }, "__fe_current");
-		if (fe.IsReferenceBinding)
-		{
-			_builder.BuildStore(currentVal, itemAlloca);
-		}
-		else if (fe.CurrentReturnsReference)
-		{
-			var derefVal = _builder.BuildLoad2(GetLLVMType(itemType), currentVal, "__fe_current_val");
-			_builder.BuildStore(derefVal, itemAlloca);
-		}
-		else
-		{
-			_builder.BuildStore(currentVal, itemAlloca);
-		}
-
-		EmitStatement(fe.Body);
-		if (_builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
-		{
-			_builder.BuildBr(condBlock);
-		}
-
-		_function.LoopContexts.Pop();
-		if (!string.IsNullOrEmpty(fe.Label))
-			_function.LabeledBreaks.Pop();
-		_builder.PositionAtEnd(endBlock);
-
-		_cleanup.EmitForEachEnumeratorCleanup(enumeratorAlloca, enumeratorType);
-	}
-
-	private void EmitBreakStatement(BreakStatementSyntax brk)
-	{
-		// A labeled break targets the innermost matching labeled construct (labeled block or
-		// labeled loop) in lexical descent order; both kinds are tracked on _function.LabeledBreaks.
-		if (brk.TargetLabel is not null)
-		{
-			foreach (var target in _function.LabeledBreaks)
-			{
-				if (target.Label == brk.TargetLabel)
-				{
-					_builder.BuildBr(target.BreakBlock);
-					return;
-				}
-			}
-		}
-
-		// An unlabeled break exits the innermost switch frame first (C-style); otherwise the
-		// nearest loop. With no frame at all the statement was rejected by validation
-		// (CVL1070/CVL1066), so there is nothing meaningful to lower.
-		if (_function.SwitchBreaks.Count > 0)
-		{
-			_builder.BuildBr(_function.SwitchBreaks.Peek());
-			return;
-		}
-
-		if (_function.LoopContexts.Count > 0)
-			_builder.BuildBr(_function.LoopContexts.Peek().BreakBlock);
-	}
-
-	private void EmitContinueStatement(ContinueStatementSyntax cont)
-	{
-		if (_function.LoopContexts.Count == 0)
-			return;
-
-		if (cont.Label is not null)
-		{
-			foreach (var ctx in _function.LoopContexts)
-			{
-				if (ctx.Label == cont.Label)
-				{
-					_builder.BuildBr(ctx.ContinueBlock);
-					return;
-				}
-			}
-		}
-
-		_builder.BuildBr(_function.LoopContexts.Peek().ContinueBlock);
-	}
-
 
 	private string? ResolveGlobalKey(string shortName)
 	{
@@ -4219,273 +3857,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		return 4; // Fallback
 	}
 
-	private void EmitSwitchStatement(SwitchStatementSyntax sw)
-	{
-		var switchTargetType = GetExprType(sw.Expression);
-		EnumTypeSymbol? enumTarget = null;
-		if (switchTargetType is EnumTypeSymbol et)
-		{
-			enumTarget = et;
-		}
-		else if (switchTargetType is PointerTypeSymbol pt && pt.ReferencedType is EnumTypeSymbol pet)
-		{
-			enumTarget = pet;
-		}
-
-		if (enumTarget is not null)
-		{
-			var value = EmitExpression(sw.Expression);
-			EmitEnumSwitch(sw, enumTarget, value);
-			return;
-		}
-
-		var (targetVal, unionType, _, _) = GetFieldPointer(sw.Expression);
-		var isRefTarget = GetExprType(sw.Expression) is PointerTypeSymbol;
-		var isMutableRef = GetExprType(sw.Expression) is PointerTypeSymbol ptrSymbol && ptrSymbol.IsMutable; // Capture original reference mutability
-
-		if (unionType is PointerTypeSymbol ptr)
-		{
-			unionType = ptr.ReferencedType;
-		}
-
-		var unionLayout = GetLLVMType(unionType);
-
-		var isNpo = unionType is UnionTypeSymbol npoUt && npoUt.IsNpoEligible;
-
-		// 1. Load the discriminator: for NPO unions this is the flat pointer value
-		//    itself (None = null); for tagged unions it is the i8 tag at struct index 0.
-		LLVMValueRef discriminator;
-		if (isNpo)
-		{
-			discriminator = _builder.BuildLoad2(unionLayout, targetVal, "flat_ptr_val");
-		}
-		else
-		{
-			var tagPtr = _builder.BuildGEP2(unionLayout, targetVal, new LLVMValueRef[] {
-				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
-				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0)
-			}, "tag_ptr");
-			discriminator = _builder.BuildLoad2(LLVMTypeRef.Int8, tagPtr, "tag_val");
-		}
-
-		var currentFunc = _builder.InsertBlock.Parent;
-		var endBlock = currentFunc.AppendBasicBlock("sw_end");
-		var nextCheckBlock = _builder.InsertBlock;
-		_function.SwitchBreaks.Push(endBlock);
-
-		try
-		{
-			for (int i = 0; i < sw.Cases.Count; i++)
-			{
-				var c = sw.Cases[i];
-				_builder.PositionAtEnd(nextCheckBlock);
-
-				if (c.IsDefault || c.VariantName == "_")
-				{
-					var bodyBlock = currentFunc.AppendBasicBlock("default_body");
-					_builder.BuildBr(bodyBlock);
-
-					_builder.PositionAtEnd(bodyBlock);
-					EmitSwitchCaseBody(c, targetVal, unionType, "", isDefault: true, isRefTarget, isMutableRef);
-					if (_builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
-						_builder.BuildBr(endBlock);
-
-					break;
-				}
-				else
-				{
-					var unionTypeSym = unionType as UnionTypeSymbol;
-					var fieldIndex = GetFieldIndex(unionTypeSym!, c.VariantName);
-
-					var caseBodyBlock = currentFunc.AppendBasicBlock($"case_{c.VariantName}_body");
-					nextCheckBlock = currentFunc.AppendBasicBlock($"case_{c.VariantName}_next");
-
-					LLVMValueRef cond;
-					if (isNpo)
-					{
-						// NPO: Some (payload) matches non-null; None (void) matches null.
-						var isNone = unionTypeSym!.Fields[fieldIndex].IsVoidVariant;
-						var nullConst = LLVMValueRef.CreateConstPointerNull(unionLayout);
-						cond = isNone
-							? _builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, discriminator, nullConst, "npo_is_none")
-							: _builder.BuildICmp(LLVMIntPredicate.LLVMIntNE, discriminator, nullConst, "npo_is_some");
-					}
-					else
-					{
-						cond = _builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, discriminator, LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, (ulong)fieldIndex), "tag_match");
-					}
-					_builder.BuildCondBr(cond, caseBodyBlock, nextCheckBlock);
-
-					_builder.PositionAtEnd(caseBodyBlock);
-					EmitSwitchCaseBody(c, targetVal, unionType, c.VariantName, isDefault: false, isRefTarget, isMutableRef);
-					if (_builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
-						_builder.BuildBr(endBlock);
-				}
-			}
-		}
-		finally
-		{
-			_function.SwitchBreaks.Pop();
-		}
-
-		_builder.PositionAtEnd(nextCheckBlock);
-		if (_builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
-			_builder.BuildBr(endBlock);
-
-		_builder.PositionAtEnd(endBlock);
-	}
-
-	private void EmitEnumSwitch(SwitchStatementSyntax sw, EnumTypeSymbol enumTarget, LLVMValueRef value)
-	{
-		var storageTy = GetLLVMType(enumTarget);
-		var currentFunc = _builder.InsertBlock.Parent;
-		var endBlock = currentFunc.AppendBasicBlock("sw_end");
-		var nextCheckBlock = _builder.InsertBlock;
-		var hasDefault = false;
-		_function.SwitchBreaks.Push(endBlock);
-
-		try
-		{
-			for (int i = 0; i < sw.Cases.Count; i++)
-			{
-				var c = sw.Cases[i];
-				_builder.PositionAtEnd(nextCheckBlock);
-
-				if (c.IsDefault || c.VariantName == "_")
-				{
-					hasDefault = true;
-					var bodyBlock = currentFunc.AppendBasicBlock("default_body");
-					_builder.BuildBr(bodyBlock);
-
-					_builder.PositionAtEnd(bodyBlock);
-					EmitBlock(new BlockStatementSyntax(c.Span, c.Body));
-					if (_builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
-						_builder.BuildBr(endBlock);
-
-					break;
-				}
-				else
-				{
-					var variant = enumTarget.FindVariant(c.VariantName) ?? enumTarget.Variants[0];
-
-					var caseBodyBlock = currentFunc.AppendBasicBlock($"enum_case_{c.VariantName}_body");
-					nextCheckBlock = currentFunc.AppendBasicBlock($"enum_case_{c.VariantName}_next");
-
-					var cond = _builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, value,
-						LLVMValueRef.CreateConstInt(storageTy, unchecked((ulong)variant.Value)), "enum_switch_match");
-					_builder.BuildCondBr(cond, caseBodyBlock, nextCheckBlock);
-
-					_builder.PositionAtEnd(caseBodyBlock);
-					EmitBlock(new BlockStatementSyntax(c.Span, c.Body));
-					if (_builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
-						_builder.BuildBr(endBlock);
-				}
-			}
-		}
-		finally
-		{
-			_function.SwitchBreaks.Pop();
-		}
-
-		_builder.PositionAtEnd(nextCheckBlock);
-		if (!hasDefault)
-		{
-			EmitEnumSwitchTrapDefault();
-		}
-		else if (_builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
-		{
-			_builder.BuildBr(endBlock);
-		}
-
-		_builder.PositionAtEnd(endBlock);
-	}
-
-	private void EmitEnumSwitchTrapDefault()
-	{
-		if (_llvmTrap is null)
-		{
-			var trapFnType = LLVMTypeRef.CreateFunction(LLVMTypeRef.Void, []);
-			_llvmTrap = (trapFnType, _module.AddFunction("llvm.trap", trapFnType));
-		}
-
-		_builder.BuildCall2(_llvmTrap.Value.Type, _llvmTrap.Value.Func, new LLVMValueRef[] { }, "");
-		_builder.BuildUnreachable();
-	}
-
-	private void EmitSwitchCaseBody(SwitchCaseSyntax c, LLVMValueRef targetVal, TypeSymbol unionType, string variantName, bool isDefault, bool isRefTarget, bool isMutableRef)
-	{
-		var unionTypeSym = unionType as UnionTypeSymbol;
-
-		if (c.VariableName is not null && !isDefault)
-		{
-			var fieldIndex = GetFieldIndex(unionTypeSym!, variantName);
-			var field = unionTypeSym.Fields[fieldIndex];
-
-			var isNpo = unionTypeSym.IsNpoEligible;
-
-			LLVMValueRef payloadPtr;
-			LLVMValueRef castPtr;
-			if (isNpo)
-			{
-				// NPO: the payload IS the flat pointer slot itself (no {0,1} GEP, no bitcast).
-				payloadPtr = targetVal;
-				castPtr = targetVal;
-			}
-			else
-			{
-				var unionLayout = GetLLVMType(unionType);
-				payloadPtr = _builder.BuildGEP2(unionLayout, targetVal, new LLVMValueRef[] {
-					LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
-					LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1)
-				}, "union_payload_ptr");
-
-				castPtr = _builder.BuildBitCast(payloadPtr, LLVMTypeRef.CreatePointer(GetLLVMType(field.Type), 0), "payload_cast_ptr");
-			}
-
-			// Structurally mirror the target reference mutability. For NPO the payload is
-			// already the inner reference, so the promoted variable is that same reference.
-			var varType = isNpo ? field.Type : (isRefTarget ? new PointerTypeSymbol(field.Type, isMutable: isMutableRef) : field.Type);
-
-			var alloca = _builder.BuildAlloca(GetLLVMType(varType), c.VariableName);
-			_function.Locals[c.VariableName] = alloca;
-			_function.VariableTypes[c.VariableName] = varType;
-
-			if (isNpo)
-			{
-				// NPO: the promoted variable holds the inner reference itself (the flat pointer
-				// value), regardless of whether the target was taken by ref or by value.
-				var val = _builder.BuildLoad2(GetLLVMType(field.Type), targetVal, "flat_payload_val");
-				_builder.BuildStore(val, alloca);
-			}
-			else if (isRefTarget)
-			{
-				_builder.BuildStore(castPtr, alloca);
-			}
-			else
-			{
-				var val = _builder.BuildLoad2(GetLLVMType(field.Type), castPtr, "payload_val");
-				_builder.BuildStore(val, alloca);
-
-				// By-value switch over a ResourceMove-style union moves the payload into the case
-				// binding (the sole owner now); reset the source slot to None so its own tag-checked
-				// cleanup cannot drop the same resource a second time.
-				if (_cleanup.UnionNeedsTagCheckedCleanup(unionTypeSym!))
-				{
-					var srcLayout = GetLLVMType(unionType);
-					var srcTagPtr = _builder.BuildGEP2(srcLayout, targetVal, new LLVMValueRef[] {
-						LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
-						LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0)
-					}, "move_src_tag_ptr");
-					var moveNoneIdx = unionTypeSym.NoneVariant is not null ? GetFieldIndex(unionTypeSym, unionTypeSym.NoneVariant.Name) : 0;
-					_builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, (ulong)moveNoneIdx), srcTagPtr);
-				}
-			}
-		}
-
-		EmitBlock(new BlockStatementSyntax(c.Span, c.Body));
-	}
-
-	/// <summary>
+					/// <summary>
 
 	private LLVMValueRef SafeBitCast(LLVMValueRef value, LLVMTypeRef targetType, string name = "")
 	{
