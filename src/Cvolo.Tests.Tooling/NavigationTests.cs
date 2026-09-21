@@ -422,4 +422,47 @@ public sealed class NavigationTests
 			Assert.Equal("ErrorAttribute", declaring.Text.GetText(def.SelectionSpan));
 		}
 	}
+
+	[Fact]
+	public void MalformedDeclaration_DoesNotThrowFromDocumentSymbolsOrTokens()
+	{
+		const string s = "int () { return 0; }\n";
+		var x = Open(("Main.cvl", s));
+		using (x.Fixture)
+		{
+			Assert.NotNull(x.Document.GetDocumentSymbols());
+			Assert.NotNull(x.Document.GetSemanticTokens());
+		}
+	}
+
+	[Fact]
+	public void TryCatchFinallyBodies_ResolveCallsAndLocals()
+	{
+		const string s =
+			"int Sum(int v) { return v; }\n" +
+			"int main() {\n" +
+			"    val int a = 1;\n" +
+			"    try {\n" +
+			"        val int b = Sum(a);\n" +
+			"        return b;\n" +
+			"    } catch {\n" +
+			"        return 0;\n" +
+			"    } finally {\n" +
+			"        val int c = Sum(a);\n" +
+			"    }\n" +
+			"}\n";
+		var x = Open(("Main.cvl", s));
+		using (x.Fixture)
+		{
+			var tryCall = x.Document.GetSymbolAtPosition(s.IndexOf("Sum(a)", StringComparison.Ordinal) + 1);
+			var finallyCall = x.Document.GetSymbolAtPosition(s.LastIndexOf("Sum(a)", StringComparison.Ordinal) + 1);
+			var finallyLocal = x.Document.GetSymbolAtPosition(s.LastIndexOf("Sum(a)", StringComparison.Ordinal) + 4);
+			Assert.NotNull(tryCall);
+			Assert.NotNull(finallyCall);
+			Assert.NotNull(finallyLocal);
+			Assert.Equal(ToolingSymbolKind.Function, tryCall!.Kind);
+			Assert.Equal(ToolingSymbolKind.Function, finallyCall!.Kind);
+			Assert.Equal(ToolingSymbolKind.Local, finallyLocal!.Kind);
+		}
+	}
 }

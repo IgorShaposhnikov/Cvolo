@@ -8,7 +8,7 @@ public sealed class LexerKeywordCatalogTests
 	[Fact]
 	public void Catalog_ContainsTheFullLexerKeywordRuleRange()
 	{
-		Assert.Equal(CvoloLexer.CATCH - CvoloLexer.VAL + 1, LexerKeywordCatalog.AllKeywords.Count);
+		Assert.Equal(CvoloLexer.FINALLY - CvoloLexer.VAL + 1, LexerKeywordCatalog.AllKeywords.Count);
 		Assert.True(LexerKeywordCatalog.AllKeywords.SetEquals(
 		[
 			"val", "var", "refvar", "heap", "ref", "extern", "return", "if", "else", "while", "for",
@@ -18,6 +18,7 @@ public sealed class LexerKeywordCatalogTests
 			"interface", "protocol", "embed", "namespace", "using", "expose", "global", "switch",
 			"case", "default", "where", "is", "alias", "defer", "asm", "volatile", "alignstack",
 			"intel", "nameof", "typeof", "break", "continue", "foreach", "in", "try", "catch",
+			"finally",
 		]));
 	}
 
@@ -29,6 +30,7 @@ public sealed class LexerKeywordCatalogTests
 		Assert.True(LexerKeywordCatalog.IsKeyword("int"));
 		Assert.True(LexerKeywordCatalog.IsKeyword("nameof"));
 		Assert.True(LexerKeywordCatalog.IsKeyword("catch"));
+		Assert.True(LexerKeywordCatalog.IsKeyword("finally"));
 	}
 
 	[Fact]
@@ -43,13 +45,13 @@ public sealed class LexerKeywordCatalogTests
 	public void Catalog_BoundsAreDerivedFromGeneratedTokenConstants()
 	{
 		// Bounds are pinned to the generated named token constants (first/last keyword rule),
-		// so '66' appears here only as the derived value CATCH - VAL + 1, never as a magic literal.
-		var expectedWindow = Enumerable.Range(CvoloLexer.VAL, CvoloLexer.CATCH - CvoloLexer.VAL + 1)
+		// so '67' appears here only as the derived value FINALLY - VAL + 1, never as a magic literal.
+		var expectedWindow = Enumerable.Range(CvoloLexer.VAL, CvoloLexer.FINALLY - CvoloLexer.VAL + 1)
 			.Select(tokenType => CvoloLexer.DefaultVocabulary.GetLiteralName(tokenType)!.Trim('\''))
 			.ToHashSet(StringComparer.Ordinal);
 
 		Assert.True(LexerKeywordCatalog.AllKeywords.SetEquals(expectedWindow));
-		Assert.Equal(CvoloLexer.CATCH - CvoloLexer.VAL + 1, LexerKeywordCatalog.AllKeywords.Count);
+		Assert.Equal(CvoloLexer.FINALLY - CvoloLexer.VAL + 1, LexerKeywordCatalog.AllKeywords.Count);
 
 		// The first punctuation token (LPAREN, the rule immediately following the keyword block)
 		// is NOT part of the catalog, proving the window stops exactly at the keyword boundary.

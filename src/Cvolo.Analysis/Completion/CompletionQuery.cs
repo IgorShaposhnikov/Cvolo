@@ -354,6 +354,9 @@ public static class CompletionQuery
 					break;
 				}
 
+				if (tryStatement.FinallyBody is { } finallyBody)
+					WalkBody(finallyBody, frame, state, frames);
+
 				break;
 
 			case DeferStatementSyntax deferStatement:

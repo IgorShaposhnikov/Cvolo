@@ -321,12 +321,13 @@ internal sealed class NavigationIndex
 		if (_byDeclaration.TryGetValue(declaration, out var existing))
 			return existing;
 
-		var selectionSpan = selection is { } precise
+		var selectionSpan = selection is { } precise && precise.Start >= 0 && precise.Length >= 0
 			? new TextSpan(precise.Start, precise.Length)
 			: ComputeNameSpan(source, declaration.Span, name);
 
+		var declarationSpan = new TextSpan(Math.Max(declaration.Span.Start, 0), Math.Max(declaration.Span.Length, 0));
 		var entry = new Entry(new SymbolId(_token, _nextId++), name, kind, owner);
-		entry.Definitions.Add(new SymbolDefinition(documentId, new TextSpan(declaration.Span.Start, declaration.Span.Length), selectionSpan));
+		entry.Definitions.Add(new SymbolDefinition(documentId, declarationSpan, selectionSpan));
 		_byDeclaration[declaration] = entry;
 		_byId[entry.Id.Value] = entry;
 		return entry;

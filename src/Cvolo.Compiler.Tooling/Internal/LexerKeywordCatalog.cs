@@ -16,7 +16,7 @@ namespace Cvolo.Compiler.Tooling.Internal;
 /// Discovery does NOT rely on a magic numeric token range. ANTLR emits every keyword rule
 /// (CvoloLexer.g4 lines 6-71) as a contiguous block of named token-type constants immediately
 /// followed by punctuation (LPAREN=67 onward), so the keyword window is exactly
-/// [<see cref="CvoloLexer.VAL"/>, <see cref="CvoloLexer.CATCH"/>] — the first and last keyword
+/// [<see cref="CvoloLexer.VAL"/>, <see cref="CvoloLexer.FINALLY"/>] — the first and last keyword
 /// rules in the grammar. Both bounds are the generated named constants, so adding, removing or
 /// reordering a keyword renumbers those constants and this catalog tracks them without edits.
 ///
@@ -28,7 +28,7 @@ namespace Cvolo.Compiler.Tooling.Internal;
 internal static class LexerKeywordCatalog
 {
 	private const int FirstKeywordTokenType = CvoloLexer.VAL;
-	private const int LastKeywordTokenType = CvoloLexer.CATCH;
+	private const int LastKeywordTokenType = CvoloLexer.FINALLY;
 
 	private static readonly Lazy<IReadOnlySet<string>> All = new(() =>
 		Enumerable.Range(FirstKeywordTokenType, LastKeywordTokenType - FirstKeywordTokenType + 1)

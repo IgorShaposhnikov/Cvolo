@@ -30,7 +30,7 @@ internal static class SemanticTokenService
 		{
 			foreach (var node in Descendants(unit))
 			{
-				if (!TryCandidatePosition(node, source, out var position))
+				if (!TryCandidatePosition(node, source, out var position) || position < 0)
 					continue;
 
 				var resolved = CompletionQuery.ResolveSymbol(analysis.BinderContext, unit, position);
