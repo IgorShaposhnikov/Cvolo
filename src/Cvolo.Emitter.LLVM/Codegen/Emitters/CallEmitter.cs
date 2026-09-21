@@ -152,7 +152,7 @@ internal sealed class CallEmitter(
 				receiverType = Function.VariableTypes[receiverName];
 				found = true;
 			}
-			else if ((codegen.GlobalVariables.ContainsKey(receiverName) ? receiverName : ResolveGlobalKey(receiverName)) is { } recvKey
+			else if ((codegen.GlobalVariables.ContainsKey(receiverName) ? receiverName : values.ResolveGlobalKey(receiverName)) is { } recvKey
 				&& codegen.GlobalVariables.TryGetValue(recvKey, out var globalPtr))
 			{
 				receiverPtr = globalPtr;
@@ -375,7 +375,7 @@ internal sealed class CallEmitter(
 		}
 		else
 		{
-			var calleeName = ResolveGlobalKey(call.FunctionName);
+			var calleeName = values.ResolveGlobalKey(call.FunctionName);
 			if (Function.Locals.TryGetValue(call.FunctionName, out var localSlot))
 			{
 				delegatePtr = localSlot;
@@ -472,23 +472,23 @@ internal sealed class CallEmitter(
 				break;
 			case "rotl":
 			case "rotr":
+			{
+				var rotateAmount = args[^1];
+				var valueType = args[0].TypeOf;
+				var shiftType = rotateAmount.TypeOf;
+				if (shiftType.Kind != LLVMTypeKind.LLVMIntegerTypeKind || shiftType.IntWidth != valueType.IntWidth)
 				{
-					var rotateAmount = args[^1];
-					var valueType = args[0].TypeOf;
-					var shiftType = rotateAmount.TypeOf;
-					if (shiftType.Kind != LLVMTypeKind.LLVMIntegerTypeKind || shiftType.IntWidth != valueType.IntWidth)
-					{
-						rotateAmount = valueType.IntWidth > shiftType.IntWidth
-							? Builder.BuildZExt(rotateAmount, valueType, "rot_zext")
-							: Builder.BuildTrunc(rotateAmount, valueType, "rot_trunc");
-					}
-
-					var widthMask = LLVMValueRef.CreateConstInt(valueType, (ulong)valueType.IntWidth - 1);
-					rotateAmount = Builder.BuildAnd(rotateAmount, widthMask, "rot_mask");
-					args = [args[0], args[0], rotateAmount];
-					baseName = baseName == "rotl" ? "fshl" : "fshr";
-					break;
+					rotateAmount = valueType.IntWidth > shiftType.IntWidth
+						? Builder.BuildZExt(rotateAmount, valueType, "rot_zext")
+						: Builder.BuildTrunc(rotateAmount, valueType, "rot_trunc");
 				}
+
+				var widthMask = LLVMValueRef.CreateConstInt(valueType, (ulong)valueType.IntWidth - 1);
+				rotateAmount = Builder.BuildAnd(rotateAmount, widthMask, "rot_mask");
+				args = [args[0], args[0], rotateAmount];
+				baseName = baseName == "rotl" ? "fshl" : "fshr";
+				break;
+			}
 			case "fpc.nan":
 			case "fpc.inf":
 			case "fpc.finite":
@@ -537,7 +537,7 @@ internal sealed class CallEmitter(
 			return true;
 		}
 
-		if ((codegen.GlobalVariables.ContainsKey(receiverName) ? receiverName : ResolveGlobalKey(receiverName)) is { } recvKey
+		if ((codegen.GlobalVariables.ContainsKey(receiverName) ? receiverName : values.ResolveGlobalKey(receiverName)) is { } recvKey
 			&& codegen.GlobalVariables.TryGetValue(recvKey, out var globalPtr))
 		{
 			receiverPtr = globalPtr;
@@ -594,36 +594,6 @@ internal sealed class CallEmitter(
 		}
 
 		return name;
-	}
-
-	/// <summary>
-	/// Resolves a short global name to a unique qualified key using the current namespace and
-	/// active using directives.
-	/// </summary>
-	private string? ResolveGlobalKey(string shortName)
-	{
-		if (!codegen.GlobalShortNames.TryGetValue(shortName, out var candidates))
-			return null;
-
-		if (candidates.Count == 1)
-			return candidates[0];
-
-		var currentNs = BindingContext.CurrentNamespace;
-		if (!string.IsNullOrEmpty(currentNs))
-		{
-			var own = $"{currentNs}.{shortName}";
-			if (candidates.Contains(own))
-				return own;
-		}
-
-		foreach (var ns in BindingContext.GetActiveUsings(BindingContext.CurrentUnit))
-		{
-			var viaKey = $"{ns}.{shortName}";
-			if (candidates.Contains(viaKey))
-				return viaKey;
-		}
-
-		return null;
 	}
 
 	/// <summary>
