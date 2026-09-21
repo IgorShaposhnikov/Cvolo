@@ -17,8 +17,8 @@ namespace Cvolo.Emitter.LLVM.Codegen.Emitters;
 /// <remarks>
 /// This class owns expression dispatch, operators, casts, borrows, inline assembly, and heap-expression
 /// orchestration. Calls, aggregate construction, delegate construction, cleanup, memory primitives, and
-/// value coercion remain delegated to their dedicated components. Semantic type/address resolution stays
-/// behind callbacks during the migration so this extraction does not change language behavior.
+/// value coercion remain delegated to their dedicated components. Semantic type resolution remains a
+/// migration callback, while aggregate/member/index addressing is delegated to <see cref="AggregateEmitter"/>.
 /// </remarks>
 /// <remarks>
 /// Creates an expression emitter over the shared codegen run and the currently active function frame.
@@ -33,16 +33,10 @@ internal sealed class ExpressionEmitter(
 	ValueCoercion coercion,
 	Func<FunctionCodegenContext> getFunction,
 	Func<ExpressionSyntax, TypeSymbol> getExpressionType,
-	Func<ExpressionSyntax, (LLVMValueRef ptr, TypeSymbol type, bool valueProvenance, LLVMValueRef? tbaa)> getFieldPointer,
 	Func<string, LLVMValueRef> load,
 	Func<string, string?> resolveGlobalKey,
-	Func<ExpressionSyntax, string?> tryExtractQualifiedGlobalKey,
-	Func<MemberAccessExpressionSyntax, EnumTypeSymbol?> tryResolveEnumVariantReceiver,
-	Func<EnumTypeSymbol, (LLVMValueRef ptr, TypeSymbol type)> emitEnumValuesSlicePointer,
-	Action<LLVMValueRef?, LLVMValueRef> applyTbaa,
 	Func<TypeSymbol, bool> typeEscapesHeap,
-	Func<LLVMValueRef, LLVMTypeRef, string, LLVMValueRef> safeBitCast,
-	Func<EnumTypeSymbol, LLVMValueRef, TypeSymbol, UnionTypeSymbol, (LLVMValueRef ptr, UnionTypeSymbol unionType)> materializeEnumCastOption)
+	Func<LLVMValueRef, LLVMTypeRef, string, LLVMValueRef> safeBitCast)
 {
 	private readonly Dictionary<string, LLVMValueRef> _typeofGlobals = [];
 	private int _typeofCounter;
@@ -123,7 +117,7 @@ internal sealed class ExpressionEmitter(
 					LLVMValueRef? storagePtr = null;
 					if (isBorrowTarget)
 					{
-						var (targetPtr, targetUnion, _, _) = getFieldPointer(isPat.Operand);
+						var (targetPtr, targetUnion, _, _) = aggregates.GetFieldPointer(isPat.Operand);
 						operandType = targetUnion is PointerTypeSymbol ptrTy ? ptrTy.ReferencedType : targetUnion;
 						storagePtr = targetPtr;
 					}
@@ -257,14 +251,14 @@ internal sealed class ExpressionEmitter(
 				{
 					// Namespace-qualified global (e.g. 'System.Math.UInt.MaxValue'): the member
 					// access is the whole global slot, so load it directly instead of GEPing.
-					if (tryExtractQualifiedGlobalKey(m) is { } globalMemberKey
+					if (aggregates.TryExtractQualifiedGlobalKey(m) is { } globalMemberKey
 						&& codegen.GlobalVariables.TryGetValue(globalMemberKey, out var globalMemberPtr))
 					{
 						return Builder.BuildLoad2(LowerType(codegen.GlobalVariableTypes[globalMemberKey]), globalMemberPtr, "global_member_val");
 					}
 
 					// Enum scoped-variant access: EnumName.Variant is a compile-time constant.
-					if (tryResolveEnumVariantReceiver(m) is { } enumConstType
+					if (aggregates.TryResolveEnumVariantReceiver(m) is { } enumConstType
 						&& enumConstType.FindVariant(m.MemberName) is { } enumConstVariant)
 					{
 						return LLVMValueRef.CreateConstInt(LowerType(enumConstType), unchecked((ulong)enumConstVariant.Value));
@@ -272,11 +266,11 @@ internal sealed class ExpressionEmitter(
 
 					// Enum metaprogramming surface (spec Â§5): Values is a read-only slice
 					// materialized from a .rodata global; Min/Max/Count are compile-time ints.
-					if (tryResolveEnumVariantReceiver(m) is { } enumMetaType)
+					if (aggregates.TryResolveEnumVariantReceiver(m) is { } enumMetaType)
 					{
 						if (m.MemberName == "Values")
 						{
-							var (valuesPtr, valuesType) = emitEnumValuesSlicePointer(enumMetaType);
+							var (valuesPtr, valuesType) = aggregates.EmitEnumValuesSlicePointer(enumMetaType);
 							return Builder.BuildLoad2(LowerType(valuesType), valuesPtr, "enum_values");
 						}
 
@@ -295,16 +289,16 @@ internal sealed class ExpressionEmitter(
 						}
 					}
 
-					var (ptr, type, _, tbaa) = getFieldPointer(m);
+					var (ptr, type, _, tbaa) = aggregates.GetFieldPointer(m);
 					var instr = Builder.BuildLoad2(LowerType(type), ptr, "member_val");
-					applyTbaa(tbaa, instr);
+					aggregates.ApplyTbaa(tbaa, instr);
 					return instr;
 				}
 			case IndexExpressionSyntax idx:
 				{
-					var (ptr, type, _, tbaa) = getFieldPointer(idx);
+					var (ptr, type, _, tbaa) = aggregates.GetFieldPointer(idx);
 					var instr = Builder.BuildLoad2(LowerType(type), ptr, "index_val");
-					applyTbaa(tbaa, instr);
+					aggregates.ApplyTbaa(tbaa, instr);
 					return instr;
 				}
 			case BorrowExpressionSyntax b:
@@ -758,7 +752,7 @@ internal sealed class ExpressionEmitter(
 					var structType = thisType?.ReferencedType as StructTypeSymbol;
 					if (structType?.FindField(ctorId.Name) is not null)
 					{
-						var (fieldPtr, _, _, _) = getFieldPointer(ctorId);
+						var (fieldPtr, _, _, _) = aggregates.GetFieldPointer(ctorId);
 						calls.Emit(ctorCall, fieldPtr);
 						return fieldPtr;
 					}
@@ -766,13 +760,13 @@ internal sealed class ExpressionEmitter(
 			}
 			else if (bin.Left is MemberAccessExpressionSyntax m)
 			{
-				var (fieldPtr, _, _, _) = getFieldPointer(m);
+				var (fieldPtr, _, _, _) = aggregates.GetFieldPointer(m);
 				calls.Emit(ctorCall, fieldPtr);
 				return fieldPtr;
 			}
 			else if (bin.Left is IndexExpressionSyntax idx)
 			{
-				var (elementPtr, _, _, _) = getFieldPointer(idx);
+				var (elementPtr, _, _, _) = aggregates.GetFieldPointer(idx);
 				calls.Emit(ctorCall, elementPtr);
 				return elementPtr;
 			}
@@ -911,14 +905,14 @@ internal sealed class ExpressionEmitter(
 					var field = structType.FindField(id.Name);
 					if (field is not null)
 					{
-						var (fieldPtr, _, _, tbaa) = getFieldPointer(id);
+						var (fieldPtr, _, _, tbaa) = aggregates.GetFieldPointer(id);
 						if (field.Type is UnionTypeSymbol && bin.Right is StructInitializationExpressionSyntax fieldReinit)
 							aggregates.EmitStructInitializationInPlace(fieldReinit, fieldPtr);
 						else
 						{
 							var coerced = coercion.CoerceIntegerWidth(right, rTy, field.Type);
 							var store = Builder.BuildStore(coercion.CoerceFloatWidth(coerced, rTy, field.Type), fieldPtr);
-							applyTbaa(tbaa, store);
+							aggregates.ApplyTbaa(tbaa, store);
 						}
 
 						return right;
@@ -929,7 +923,7 @@ internal sealed class ExpressionEmitter(
 					var field = unionType.FindField(id.Name);
 					if (field is not null)
 					{
-						var (fieldPtr, _, _, _) = getFieldPointer(id);
+						var (fieldPtr, _, _, _) = aggregates.GetFieldPointer(id);
 						if (bin.Right is StructInitializationExpressionSyntax thisFieldReinit)
 							aggregates.EmitStructInitializationInPlace(thisFieldReinit, fieldPtr);
 						else
@@ -945,12 +939,12 @@ internal sealed class ExpressionEmitter(
 		}
 		else if (bin.Left is MemberAccessExpressionSyntax m)
 		{
-			var (fieldPtr, fieldType, _, tbaa) = getFieldPointer(m);
+			var (fieldPtr, fieldType, _, tbaa) = aggregates.GetFieldPointer(m);
 
 			// Set active variant tag when assigning a union variant (e.g. 'this.Some = value')
 			if (getExpressionType(m.Expression) is UnionTypeSymbol unionType && !unionType.IsNpoEligible)
 			{
-				var (unionPtr, _, _, _) = getFieldPointer(m.Expression);
+				var (unionPtr, _, _, _) = aggregates.GetFieldPointer(m.Expression);
 				var variantIndex = codegen.AggregateLayout.GetFieldIndex(unionType, m.MemberName);
 				var unionLayout = LowerType(unionType);
 				var tagPtr = Builder.BuildGEP2(unionLayout, unionPtr, new LLVMValueRef[] {
@@ -977,14 +971,14 @@ internal sealed class ExpressionEmitter(
 				coerced = coercion.CoerceIntegerWidth(coerced, rTy, fieldType);
 				coerced = coercion.CoerceFloatWidth(coerced, rTy, fieldType);
 				var fieldStore = Builder.BuildStore(coerced, fieldPtr);
-				applyTbaa(tbaa, fieldStore);
+				aggregates.ApplyTbaa(tbaa, fieldStore);
 			}
 
 			return right;
 		}
 		else if (bin.Left is IndexExpressionSyntax idx)
 		{
-			var (elementPtr, elementType, _, tbaa) = getFieldPointer(idx);
+			var (elementPtr, elementType, _, tbaa) = aggregates.GetFieldPointer(idx);
 			if (elementType is UnionTypeSymbol elemUnion
 				&& cleanup.UnionNeedsTagCheckedCleanup(elemUnion)
 				&& bin.Right is StructInitializationExpressionSyntax)
@@ -1002,7 +996,7 @@ internal sealed class ExpressionEmitter(
 				coerced = coercion.CoerceIntegerWidth(coerced, rTy, elementType);
 				coerced = coercion.CoerceFloatWidth(coerced, rTy, elementType);
 				var elemStore = Builder.BuildStore(coerced, elementPtr);
-				applyTbaa(tbaa, elemStore);
+				aggregates.ApplyTbaa(tbaa, elemStore);
 			}
 
 			return right;
@@ -1099,7 +1093,7 @@ internal sealed class ExpressionEmitter(
 			{
 				if (BindingContext.ResolveType($"Option<{safeCastEnum.Name}>") is UnionTypeSymbol optionUnion)
 				{
-					var (optionPtr, optionTy) = materializeEnumCastOption(safeCastEnum, operand, operandType, optionUnion);
+					var (optionPtr, optionTy) = aggregates.MaterializeEnumCastOption(safeCastEnum, operand, operandType, optionUnion);
 					return Builder.BuildLoad2(LowerType(optionTy), optionPtr, "enum_cast_option");
 				}
 			}
@@ -1256,13 +1250,13 @@ internal sealed class ExpressionEmitter(
 						return ptr;
 					if (unary.Operand is MemberAccessExpressionSyntax memberAccess)
 					{
-						var (fieldPtr, _, _, _) = getFieldPointer(memberAccess);
+						var (fieldPtr, _, _, _) = aggregates.GetFieldPointer(memberAccess);
 						return fieldPtr;
 					}
 
 					if (unary.Operand is IndexExpressionSyntax indexExpr)
 					{
-						var (elementPtr, _, _, _) = getFieldPointer(indexExpr);
+						var (elementPtr, _, _, _) = aggregates.GetFieldPointer(indexExpr);
 						return elementPtr;
 					}
 
@@ -1328,12 +1322,12 @@ internal sealed class ExpressionEmitter(
 		}
 		else if (expr.Expression is MemberAccessExpressionSyntax m)
 		{
-			var (fieldPtr, _, _, _) = getFieldPointer(m);
+			var (fieldPtr, _, _, _) = aggregates.GetFieldPointer(m);
 			return fieldPtr;
 		}
 		else if (expr.Expression is IndexExpressionSyntax idx)
 		{
-			var (elementPtr, _, _, _) = getFieldPointer(idx);
+			var (elementPtr, _, _, _) = aggregates.GetFieldPointer(idx);
 			return elementPtr;
 		}
 		// Borrowing a dereferenced pointer ('ref *ptr' or 'refvar *ptr') returns the underlying pointer value
@@ -1350,11 +1344,11 @@ internal sealed class ExpressionEmitter(
 	/// </summary>
 	private LLVMValueRef EmitIncrementDecrement(UnaryExpressionSyntax u, bool isPrefix, bool isIncrement)
 	{
-		var (ptr, type, _, tbaa) = getFieldPointer(u.Operand);
+		var (ptr, type, _, tbaa) = aggregates.GetFieldPointer(u.Operand);
 		var ty = LowerType(type);
 
 		var currentVal = Builder.BuildLoad2(ty, ptr, "incdec_current");
-		applyTbaa(tbaa, currentVal);
+		aggregates.ApplyTbaa(tbaa, currentVal);
 		var step = LLVMValueRef.CreateConstInt(ty, 1);
 
 		var newVal = isIncrement
@@ -1362,7 +1356,7 @@ internal sealed class ExpressionEmitter(
 			: Builder.BuildSub(currentVal, step, "incdec_new");
 
 		var store = Builder.BuildStore(newVal, ptr);
-		applyTbaa(tbaa, store);
+		aggregates.ApplyTbaa(tbaa, store);
 
 		return isPrefix ? newVal : currentVal;
 	}

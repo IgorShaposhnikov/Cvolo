@@ -50,10 +50,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 	private FunctionCodegenContext _function = new();
 	private readonly Dictionary<string, StructDeclarationSyntax> _astStructs = [];
-	private readonly bool _enableTbaa;
-	private TbaaMetadata? _tbaa;
 	private (LLVMTypeRef Type, LLVMValueRef Func)? _llvmTrap;
-	private readonly Dictionary<string, LLVMValueRef> _enumValuesGlobals = [];
 
 	static CodeGenerator()
 	{
@@ -76,14 +73,22 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		_cleanup = new CleanupEmitter(_codegen);
 		_memory = new MemoryEmitter(_codegen);
 		_coercion = new ValueCoercion(_codegen);
-		_aggregates = new AggregateEmitter(_codegen, _memory, EmitExpression, GetExprType);
+		_aggregates = new AggregateEmitter(
+			_codegen,
+			_memory,
+			() => _function,
+			EmitExpression,
+			EmitStringLiteral,
+			GetExprType,
+			EmitCallForAggregateAddress,
+			enableTbaa);
 		_calls = new CallEmitter(
 			_codegen,
 			_cleanup,
+			_aggregates,
 			() => _function,
 			EmitExpression,
 			GetExprType,
-			GetFieldPointer,
 			_coercion,
 			Load,
 			_declarations.ExternDeclarations,
@@ -98,7 +103,6 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			() => _function,
 			EmitExpression,
 			GetExprType,
-			GetFieldPointer,
 			IsConstructorCall,
 			EmitEnumSwitchTrapDefault);
 		_functions = new FunctionEmitter(
@@ -134,20 +138,13 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			_coercion,
 			() => _function,
 			GetExprType,
-			GetFieldPointer,
 			Load,
 			ResolveGlobalKey,
-			TryExtractQualifiedGlobalKey,
-			TryResolveEnumVariantReceiver,
-			EmitEnumValuesSlicePointer,
-			ApplyTbaa,
 			TypeEscapesHeap,
-			SafeBitCast,
-			MaterializeEnumCastOption);
+			SafeBitCast);
 
 		_optimizer = optimizer;
 		_irVerifier = irVerifier;
-		_enableTbaa = enableTbaa;
 	}
 
 	public LLVMModuleRef Module => _module;
@@ -372,6 +369,11 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	private LLVMValueRef EmitExpression(ExpressionSyntax expr) => _expressions.Emit(expr);
 
 	/// <summary>
+	/// Emits calls requested by aggregate address materialization after the call emitter has been wired.
+	/// </summary>
+	private LLVMValueRef EmitCallForAggregateAddress(CallExpressionSyntax call) => _calls.Emit(call);
+
+	/// <summary>
 	/// Emits a global string literal through the expression emitter for runtime diagnostics.
 	/// </summary>
 	private LLVMValueRef EmitStringLiteral(string value) => _expressions.EmitStringLiteral(value);
@@ -425,30 +427,6 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		return null;
 	}
 
-	private static string? TryExtractQualifiedGlobalKey(ExpressionSyntax expr)
-	{
-		if (expr is not MemberAccessExpressionSyntax outer)
-			return null;
-
-		var segments = new List<string> { outer.MemberName };
-		var current = outer.Expression;
-		while (current is MemberAccessExpressionSyntax nested)
-		{
-			if (nested.Expression is not IdentifierExpressionSyntax && nested.Expression is not MemberAccessExpressionSyntax)
-				return null;
-
-			segments.Add(nested.MemberName);
-			current = nested.Expression;
-		}
-
-		if (current is not IdentifierExpressionSyntax leaf)
-			return null;
-
-		segments.Add(leaf.Name);
-		segments.Reverse();
-		return string.Join(".", segments);
-	}
-
 	private LLVMValueRef Load(string name)
 	{
 		if (!_function.Locals.TryGetValue(name, out var ptr))
@@ -478,7 +456,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 					var fieldPtr = _builder.BuildGEP2(structLayoutTy, actualThisPtr, new LLVMValueRef[] { zero, index }, "this_field_ptr");
 					var thisFieldLoad = _builder.BuildLoad2(GetLLVMType(field.Type), fieldPtr, "this_field_val");
-					ApplyTbaa(GetTbaaTag(structType, fieldIndex), thisFieldLoad);
+					_aggregates.ApplyTbaa(_aggregates.GetTbaaTag(structType, fieldIndex), thisFieldLoad);
 					return thisFieldLoad;
 				}
 			}
@@ -683,7 +661,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	{
 		// Enum scoped-variant access: the receiver is an enum type name, not a value.
 		// Also exposes the metaprogramming surface: Values (slice), Min/Max/Count (int).
-		if (TryResolveEnumVariantReceiver(m) is { } enumMetaType)
+		if (_aggregates.TryResolveEnumVariantReceiver(m) is { } enumMetaType)
 		{
 			if (enumMetaType.FindVariant(m.MemberName) is not null)
 				return enumMetaType;
@@ -718,29 +696,6 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		}
 
 		return TypeSymbol.Int;
-	}
-
-	/// <summary>
-	/// Resolves an enum type name used as a scoped-variant-access receiver
-	/// (e.g. the 'Status' in 'Status.Active', possibly namespaced). Returns null
-	/// when the receiver is a value expression rather than an enum type name.
-	/// </summary>
-	private EnumTypeSymbol? TryResolveEnumVariantReceiver(MemberAccessExpressionSyntax m)
-	{
-		var dotted = GetDottedName(m.Expression);
-		if (dotted is null)
-			return null;
-
-		return _bindingContext!.ResolveType(dotted) as EnumTypeSymbol;
-	}
-
-	private static string? GetDottedName(ExpressionSyntax expr)
-	{
-		if (expr is IdentifierExpressionSyntax id)
-			return id.Name;
-		if (expr is MemberAccessExpressionSyntax m && GetDottedName(m.Expression) is { } baseName)
-			return $"{baseName}.{m.MemberName}";
-		return null;
 	}
 
 	private TypeSymbol GetIndexExpressionType(IndexExpressionSyntax idx)
@@ -781,40 +736,6 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		return name;
 	}
 
-	private void InjectBoundsCheck(IndexExpressionSyntax idx, LLVMValueRef indexVal, LLVMValueRef limitVal)
-	{
-		var currentFunc = _builder.InsertBlock.Parent;
-		var safeBlock = currentFunc.AppendBasicBlock("bounds_safe");
-		var panicBlock = currentFunc.AppendBasicBlock("bounds_panic");
-
-		var cmp = _builder.BuildICmp(LLVMIntPredicate.LLVMIntULT, indexVal, limitVal, "is_in_bounds");
-		_builder.BuildCondBr(cmp, safeBlock, panicBlock);
-
-		_builder.PositionAtEnd(panicBlock);
-		EmitPanicRoutine(idx);
-
-		_builder.PositionAtEnd(safeBlock);
-	}
-
-	private void EmitPanicRoutine(IndexExpressionSyntax idx)
-	{
-		var errorLines = _compilationContext!.FormatDiagnostic("Runtime Error", "Index was outside the bounds of the array.", idx.Span, true);
-		var putsFunc = _globals["puts"];
-		var putsType = _functionTypes["puts"];
-		var exitFunc = _globals["exit"];
-		var exitType = _functionTypes["exit"];
-
-		foreach (var line in errorLines)
-		{
-			var strConstant = EmitStringLiteral(line);
-			_builder.BuildCall2(putsType, putsFunc, new LLVMValueRef[] { strConstant }, "puts_call");
-		}
-
-		// Passed "" instead of "exit_call" to ensure no void register is assigned
-		_builder.BuildCall2(exitType, exitFunc, new LLVMValueRef[] { LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1) }, "");
-		_builder.BuildUnreachable();
-	}
-
 	private LLVMTypeRef GetLLVMType(TypeSymbol t)
 		=> _types.Lower(t);
 
@@ -830,427 +751,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		return GetLLVMType(t);
 	}
 
-	private (LLVMValueRef ptr, TypeSymbol type, bool valueProvenance, LLVMValueRef? tbaa) GetFieldPointer(ExpressionSyntax expr)
-	{
-		if (expr is IdentifierExpressionSyntax id)
-		{
-			if (!_function.Locals.TryGetValue(id.Name, out var structPtr))
-			{
-				// If the identifier is a field/variant of 'this' in an extension block, resolve its pointer implicitly!
-				if (_function.Locals.TryGetValue("this", out var thisPtr))
-				{
-					var thisType = _function.VariableTypes["this"] as PointerTypeSymbol;
-					var refType = thisType!.ReferencedType;
 
-					if (refType is StructTypeSymbol structType)
-					{
-						var field = structType.FindField(id.Name);
-						if (field is not null)
-						{
-							var actualThisPtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), thisPtr, "loaded_this_ptr");
-
-							var fieldIndex = _codegen.AggregateLayout.GetFieldIndex(structType, id.Name);
-							var structLayoutTy = GetLLVMType(structType);
-							var zero = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0);
-							var index = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)fieldIndex);
-
-							var fieldPtr = _builder.BuildGEP2(structLayoutTy, actualThisPtr, new LLVMValueRef[] { zero, index }, "this_field_ptr");
-							return (fieldPtr, field.Type, true, GetTbaaTag(structType, fieldIndex));
-						}
-					}
-					else if (refType is UnionTypeSymbol unionType)
-					{
-						var field = unionType.FindField(id.Name);
-						if (field is not null)
-						{
-							var actualThisPtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), thisPtr, "loaded_this_ptr");
-
-							// Null-Pointer Optimization: the flat slot IS the value (a ref/refvar pointer).
-							// Some = value stores directly; there is no tag/payload struct to index into.
-							if (unionType.IsNpoEligible && !field.IsVoidVariant)
-								return (actualThisPtr, field.Type, false, null);
-
-							var fieldIndex = _codegen.AggregateLayout.GetFieldIndex(unionType, id.Name);
-							var structLayoutTy = GetLLVMType(unionType);
-
-							// For unions, access the payload (index 1 of the struct) and cast it to the variant's concrete type
-							var payloadPtr = _builder.BuildGEP2(structLayoutTy, actualThisPtr, new LLVMValueRef[] {
-								LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
-								LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1)
-							}, "union_payload_ptr");
-
-							var castPtr = _builder.BuildBitCast(payloadPtr, LLVMTypeRef.CreatePointer(GetLLVMType(field.Type), 0), "payload_cast_ptr");
-							return (castPtr, field.Type, false, null);
-						}
-					}
-				}
-
-				throw new InvalidOperationException($"Undefined variable '{id.Name}'");
-			}
-
-			var type = _function.VariableTypes[id.Name];
-			var isReference = type is PointerTypeSymbol;
-			var isHeap = _function.HeapAllocatedVars.Contains(id.Name) && type is not SliceTypeSymbol;
-
-			if (isReference || isHeap)
-			{
-				var actualPtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), structPtr, "loaded_ptr");
-				var innerType = type is PointerTypeSymbol ptrType ? ptrType.ReferencedType : type;
-				// ref/refvar/heap borrows all address a typed struct directly; members are
-				// tagged the same way on every access so LLVM can use !tbaa to disambiguate
-				// between distinct struct types. Soundness is preserved by GetFieldTag, which
-				// still refuses structs carrying reference-layer fields, plus the unsafe gate.
-				return (actualPtr, innerType, true, null);
-			}
-
-			return (structPtr, type, true, null);
-		}
-		else if (expr is MemberAccessExpressionSyntax m)
-		{
-			// Namespace-qualified global receiver: 'NS.Point.X' addresses the global slot
-			// directly (the GlobalVariable IS a pointer), so chained member reads/writes work.
-			if (TryExtractQualifiedGlobalKey(m) is { } globalBaseKey
-				&& _globalVariables.TryGetValue(globalBaseKey, out var globalBasePtr))
-			{
-				return (globalBasePtr, _globalVariableTypes[globalBaseKey], true, null);
-			}
-
-			// Enum metaprogramming: EnumName.Values is a slice backed by a .rodata global.
-			// The receiver is a type name (not a value), so it must be handled before the
-			// parent lookup below.
-			if (TryResolveEnumVariantReceiver(m) is { } enumValuesType && m.MemberName == "Values")
-			{
-				var (enumPtr, enumType) = EmitEnumValuesSlicePointer(enumValuesType);
-				return (enumPtr, enumType, false, null);
-			}
-
-			var (parentPtr, parentType, valueProvenance, _) = GetFieldPointer(m.Expression);
-
-			if (parentType is SliceTypeSymbol sliceType && m.MemberName == "Length")
-			{
-				var structLayout = GetLLVMType(sliceType);
-				var lengthPtr = _builder.BuildGEP2(structLayout, parentPtr, new LLVMValueRef[] { LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0), LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1) }, "len_ptr");
-				return (lengthPtr, TypeSymbol.Int, false, null);
-			}
-
-			// Dot access through a reference field (auto-deref): parentPtr addresses a
-			// pointer slot holding the referenced struct; load it, then GEP into the
-			// referenced struct's field so both reads and writes work.
-			if (parentType is PointerTypeSymbol refPtrType)
-			{
-				var referred = refPtrType.ReferencedType;
-				var refStruct = referred as StructTypeSymbol ?? _bindingContext?.ResolveType(referred.Name) as StructTypeSymbol;
-				if (refStruct is not null)
-				{
-					var rawPtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), parentPtr, "reffield_load");
-					var refFieldIndex = _codegen.AggregateLayout.GetFieldIndex(refStruct, m.MemberName);
-					var refFieldType = refStruct.Fields[refFieldIndex].Type;
-
-					var refStructLayoutTy = GetLLVMType(refStruct);
-					var refZero = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0);
-					var refIndex = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)refFieldIndex);
-
-					var refFieldPtr = _builder.BuildGEP2(refStructLayoutTy, rawPtr, new LLVMValueRef[] { refZero, refIndex }, "reffield_member_ptr");
-					return (refFieldPtr, refFieldType, false, GetTbaaTag(refStruct, refFieldIndex));
-				}
-
-				parentType = referred;
-			}
-
-			// Arrow operator: parentPtr is a pointer to a struct pointer; load it first
-			if (m.Operator == "->")
-			{
-				var rawPtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), parentPtr, "arrow_load");
-				var structType = (parentType as StructTypeSymbol)
-					?? (parentType is RawPointerTypeSymbol rpt ? rpt.ElementType as StructTypeSymbol : null)
-					?? (parentType is PointerTypeSymbol pt ? pt.ReferencedType as StructTypeSymbol : null)
-					?? _bindingContext?.ResolveType(parentType.Name) as StructTypeSymbol;
-
-				if (structType is null)
-				{
-					throw new InvalidOperationException($"Cannot resolve struct type for arrow operator on '{parentType.Name}'");
-				}
-
-				var fieldIndex = _codegen.AggregateLayout.GetFieldIndex(structType, m.MemberName);
-				var fieldType = structType.Fields[fieldIndex].Type;
-
-				var structLayoutTy = GetLLVMType(structType);
-				var zero = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0);
-				var index = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)fieldIndex);
-
-				var fieldPtr = _builder.BuildGEP2(structLayoutTy, rawPtr, new LLVMValueRef[] { zero, index }, "arrow_field_ptr");
-				return (fieldPtr, fieldType, false, GetTbaaTag(structType, fieldIndex));
-			}
-
-			// Ensure parentType is resolved to concrete StructTypeSymbol or UnionTypeSymbol
-			if (parentType is not (StructTypeSymbol or UnionTypeSymbol) && _bindingContext?.ResolveType(parentType.Name) is TypeSymbol resolvedParent)
-			{
-				parentType = resolvedParent;
-			}
-
-			if (parentType is UnionTypeSymbol unionType)
-			{
-				var fieldIndex = _codegen.AggregateLayout.GetFieldIndex(unionType, m.MemberName);
-				var fieldType = unionType.Fields[fieldIndex].Type;
-
-				// Null-Pointer Optimization: the flat slot IS the ref/refvar value. Reading u.Some
-				// yields the flat pointer itself; there is no tag/payload struct to index into.
-				if (unionType.IsNpoEligible && !unionType.Fields[fieldIndex].IsVoidVariant)
-					return (parentPtr, fieldType, false, null);
-
-				var structLayoutTy = GetLLVMType(parentType);
-				var payloadPtr = _builder.BuildGEP2(structLayoutTy, parentPtr, new LLVMValueRef[] {
-				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
-				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1)
-			}, "union_payload_ptr");
-
-				var castPtr = SafeBitCast(payloadPtr, LLVMTypeRef.CreatePointer(GetLLVMType(fieldType), 0), "payload_cast_ptr");
-				return (castPtr, fieldType, false, null);
-			}
-
-			var dotStructType = (parentType as StructTypeSymbol)
-				?? _bindingContext?.ResolveType(parentType.Name) as StructTypeSymbol;
-
-			if (dotStructType is null)
-			{
-				throw new InvalidOperationException($"Type '{parentType.Name}' is not a struct; cannot access member '{m.MemberName}'");
-			}
-
-			var dotFieldIndex = _codegen.AggregateLayout.GetFieldIndex(dotStructType, m.MemberName);
-			var dotFieldType = dotStructType.Fields[dotFieldIndex].Type;
-
-			var dotStructLayoutTy = GetLLVMType(dotStructType);
-			var dotZero = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0);
-			var dotIndex = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)dotFieldIndex);
-
-			var dotFieldPtr = _builder.BuildGEP2(dotStructLayoutTy, parentPtr, new LLVMValueRef[] { dotZero, dotIndex }, "member_ptr");
-			return (dotFieldPtr, dotFieldType, valueProvenance, valueProvenance ? GetTbaaTag(dotStructType, dotFieldIndex) : null);
-		}
-		else if (expr is IndexExpressionSyntax idx)
-		{
-			var (parentPtr, parentType, _, _) = GetFieldPointer(idx.Left);
-			var indexVal = EmitExpression(idx.Index);
-
-			if (parentType is SliceTypeSymbol sliceType)
-			{
-				var sliceLayout = GetLLVMType(sliceType);
-
-				// Get pointer to slice buffer (Index 0 of fat pointer)
-				var arrPtrField = _builder.BuildGEP2(sliceLayout, parentPtr, new LLVMValueRef[] { LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0), LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0) }, "arr_field");
-				var arrayPtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), arrPtrField, "arr_ptr");
-
-				// Get slice length (Index 1 of fat pointer)
-				var lenPtrField = _builder.BuildGEP2(sliceLayout, parentPtr, new LLVMValueRef[] { LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0), LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1) }, "len_field");
-				var lengthReg = _builder.BuildLoad2(LLVMTypeRef.Int32, lenPtrField, "len_val");
-
-				InjectBoundsCheck(idx, indexVal, lengthReg);
-
-				var elementLlvmTy = GetLLVMType(sliceType.ElementType);
-				var elementPtr = _builder.BuildGEP2(elementLlvmTy, arrayPtr, new LLVMValueRef[] { indexVal }, "element_ptr");
-				return (elementPtr, sliceType.ElementType, false, null);
-			}
-			else if (parentType is ArrayTypeSymbol arrayType)
-			{
-				var arrayLayout = GetLLVMType(arrayType);
-				var limit = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (ulong)arrayType.Size);
-
-				InjectBoundsCheck(idx, indexVal, limit);
-
-				var elementPtr = _builder.BuildGEP2(arrayLayout, parentPtr, new LLVMValueRef[] { LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0), indexVal }, "element_ptr");
-				return (elementPtr, arrayType.ElementType, false, null);
-			}
-		}
-		else if (expr is BorrowExpressionSyntax b)
-		{
-			return GetFieldPointer(b.Expression); // Unpack the inner expression pointer recursively
-		}
-		else if (expr is UnaryExpressionSyntax castExpr && castExpr.Operator.StartsWith('(') && castExpr.Operator.EndsWith(')') && _function.UnsafeDepth == 0)
-		{
-			// A safe-zone (Enum)integer cast evaluates to Option<Enum>; as a field-pointer
-			// (used by switch over the cast), materialize the tagged-union temporary.
-			var castTypeName = castExpr.Operator.Substring(1, castExpr.Operator.Length - 2);
-			if (_bindingContext!.ResolveType(castTypeName) is EnumTypeSymbol castEnum)
-			{
-				var castOperandType = GetExprType(castExpr.Operand);
-				if (castOperandType is not EnumTypeSymbol && TypeSymbol.IsIntegerType(castOperandType) &&
-					_bindingContext.ResolveType($"Option<{castEnum.Name}>") is UnionTypeSymbol castOption)
-				{
-					var castOperand = EmitExpression(castExpr.Operand);
-					var (castPtr, castType) = MaterializeEnumCastOption(castEnum, castOperand, castOperandType, castOption);
-					return (castPtr, castType, false, null);
-				}
-			}
-		}
-		else if (expr is CallExpressionSyntax call)
-		{
-			var retType = GetExprType(call);
-			var callVal = _calls.Emit(call);
-
-			// 1. If call returns a reference/pointer (e.g. 'ref Point'), return the pointer directly
-			if (retType is PointerTypeSymbol ptrType)
-			{
-				var inner = ptrType.ReferencedType;
-				if (inner is not (StructTypeSymbol or UnionTypeSymbol) && _bindingContext?.ResolveType(inner.Name) is TypeSymbol resolvedInner)
-					inner = resolvedInner;
-				return (callVal, inner, false, null);
-			}
-
-			if (retType is RawPointerTypeSymbol rawPtrType)
-			{
-				var inner = rawPtrType.ElementType;
-				if (inner is not (StructTypeSymbol or UnionTypeSymbol) && _bindingContext?.ResolveType(inner.Name) is TypeSymbol resolvedInner)
-					inner = resolvedInner;
-				return (callVal, inner, false, null);
-			}
-
-			// 2. If call returns a struct or union by value, spill to a stack temporary to allow field GEP
-			var structType = retType as StructTypeSymbol ?? _bindingContext?.ResolveType(retType.Name) as StructTypeSymbol;
-			if (structType is not null)
-			{
-				var structLayout = GetLLVMType(structType);
-				var tempAlloc = _builder.BuildAlloca(structLayout, "call_struct_tmp");
-				_builder.BuildStore(callVal, tempAlloc);
-				return (tempAlloc, structType, false, null);
-			}
-
-			var unionType = retType as UnionTypeSymbol ?? _bindingContext?.ResolveType(retType.Name) as UnionTypeSymbol;
-			if (unionType is not null)
-			{
-				var unionLayout = GetLLVMType(unionType);
-				var tempAlloc = _builder.BuildAlloca(unionLayout, "call_union_tmp");
-				_builder.BuildStore(callVal, tempAlloc);
-				return (tempAlloc, unionType, false, null);
-			}
-
-			return (callVal, retType, false, null);
-		}
-
-		throw new InvalidOperationException($"Unsupported {expr.GetType()} field pointer expression");
-	}
-
-	private TbaaMetadata Tbaa => _tbaa ??= new TbaaMetadata(_context, _module, s => GetLLVMType(s));
-
-	private LLVMValueRef? GetTbaaTag(StructTypeSymbol structType, int fieldIndex)
-	{
-		if (!_enableTbaa || _function.UnsafeDepth != 0 || !TbaaMetadata.IsScalar(structType.Fields[fieldIndex].Type))
-			return null;
-
-		return Tbaa.GetFieldTag(structType, fieldIndex);
-	}
-
-	private void ApplyTbaa(LLVMValueRef? tag, LLVMValueRef instruction)
-	{
-		if (tag is not null)
-			instruction.SetMetadata(Tbaa.TbaaKindId, tag.Value);
-	}
-
-	/// <summary>
-	/// (Â§5.B) Materializes EnumName.Values as a read-only slice backed by a single
-	/// .rodata global. Returns the address of a stack temp holding the slice.
-	/// </summary>
-	private (LLVMValueRef ptr, TypeSymbol type) EmitEnumValuesSlicePointer(EnumTypeSymbol enumType)
-	{
-		var sliceType = new SliceTypeSymbol(enumType);
-		var sliceLayout = GetLLVMType(sliceType);
-		var elementTy = GetLLVMType(enumType.StorageType);
-		var count = enumType.IsFlags
-			? enumType.Variants.Count(v => v.Value > 0 && IsPowerOfTwo(v.Value))
-			: enumType.Variants.Count;
-		var global = GetOrCreateEnumValuesGlobal(enumType, elementTy, count);
-
-		var tmp = _builder.BuildAlloca(sliceLayout, "values_slice");
-		var zero = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0);
-		var one = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1);
-		var arrPtr = _builder.BuildGEP2(sliceLayout, tmp, new LLVMValueRef[] { zero, zero }, "values_arr_ptr");
-		_builder.BuildStore(_builder.BuildBitCast(global, LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), "values_arr_cast"), arrPtr);
-		var lenPtr = _builder.BuildGEP2(sliceLayout, tmp, new LLVMValueRef[] { zero, one }, "values_len_ptr");
-		_builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)count), lenPtr);
-		return (tmp, sliceType);
-	}
-
-	private LLVMValueRef GetOrCreateEnumValuesGlobal(EnumTypeSymbol enumType, LLVMTypeRef elementTy, int count)
-	{
-		if (_enumValuesGlobals.TryGetValue(enumType.Name, out var existing))
-		{
-			return existing;
-		}
-
-		var constElems = enumType.IsFlags
-			? enumType.Variants.Where(v => v.Value > 0 && IsPowerOfTwo(v.Value))
-				.Select(v => LLVMValueRef.CreateConstInt(elementTy, unchecked((ulong)v.Value))).ToArray()
-			: enumType.Variants
-				.Select(v => LLVMValueRef.CreateConstInt(elementTy, unchecked((ulong)v.Value))).ToArray();
-		var global = _module.AddGlobal(LLVMTypeRef.CreateArray(elementTy, (uint)count), $"enum_values_{enumType.Name}");
-		global.Initializer = LLVMValueRef.CreateConstArray(elementTy, constElems);
-		global.IsGlobalConstant = true;
-		_enumValuesGlobals[enumType.Name] = global;
-		return global;
-	}
-
-	private static bool IsPowerOfTwo(long value) => value > 0 && (value & (value - 1)) == 0;
-
-	/// <summary>
-	/// Builds a tagged-union Option&lt;Enum&gt; temporary for a safe-zone (Enum)integer cast:
-	/// the operand is normalized to the enum's storage width, then compared against every
-	/// declared variant value; a match stores the Some tag + payload, otherwise the None tag.
-	/// </summary>
-	private (LLVMValueRef ptr, UnionTypeSymbol unionType) MaterializeEnumCastOption(
-		EnumTypeSymbol enumType, LLVMValueRef operand, TypeSymbol operandType, UnionTypeSymbol optionUnion)
-	{
-		var storageTy = GetLLVMType(enumType.StorageType);
-
-		var normalized = operand;
-		var operandWidth = TypeSymbol.IntegerBitWidth(operandType);
-		var storageWidth = TypeSymbol.IntegerBitWidth(enumType.StorageType);
-		if (operandWidth > storageWidth)
-			normalized = _builder.BuildTrunc(normalized, storageTy, "ecast_trunc");
-		else if (operandWidth < storageWidth)
-			normalized = TypeSymbol.IsSignedIntegerType(operandType)
-				? _builder.BuildSExt(normalized, storageTy, "ecast_sext")
-				: _builder.BuildZExt(normalized, storageTy, "ecast_zext");
-
-		var unionLayout = GetLLVMType(optionUnion);
-		var tmp = _builder.BuildAlloca(unionLayout, "ecast_tmp");
-
-		var someIndex = _codegen.AggregateLayout.GetFieldIndex(optionUnion, "Some");
-		var noneIndex = _codegen.AggregateLayout.GetFieldIndex(optionUnion, "None");
-		var someTag = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, (ulong)someIndex);
-		var noneTag = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, (ulong)noneIndex);
-
-		var zero = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0);
-		var one = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1);
-		var tagPtr = _builder.BuildGEP2(unionLayout, tmp, new LLVMValueRef[] { zero, zero }, "ecast_tag");
-		var payloadPtr = _builder.BuildGEP2(unionLayout, tmp, new LLVMValueRef[] { zero, one }, "ecast_payload");
-
-		var currentFunc = _builder.InsertBlock.Parent;
-		var join = currentFunc.AppendBasicBlock("ecast_join");
-		var nextCheck = _builder.InsertBlock;
-
-		foreach (var variant in enumType.Variants)
-		{
-			var matchBlock = currentFunc.AppendBasicBlock($"ecast_{variant.Name}");
-			var afterBlock = currentFunc.AppendBasicBlock($"ecast_{variant.Name}_next");
-
-			_builder.PositionAtEnd(nextCheck);
-			var variantConst = LLVMValueRef.CreateConstInt(storageTy, unchecked((ulong)variant.Value));
-			var matches = _builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, normalized, variantConst, "ecast_cmp");
-			_builder.BuildCondBr(matches, matchBlock, afterBlock);
-
-			_builder.PositionAtEnd(matchBlock);
-			_builder.BuildStore(someTag, tagPtr);
-			_builder.BuildStore(normalized, payloadPtr);
-			_builder.BuildBr(join);
-
-			nextCheck = afterBlock;
-		}
-
-		_builder.PositionAtEnd(nextCheck);
-		_builder.BuildStore(noneTag, tagPtr);
-		_builder.BuildBr(join);
-
-		_builder.PositionAtEnd(join);
-		return (tmp, optionUnion);
-	}
 
 
 

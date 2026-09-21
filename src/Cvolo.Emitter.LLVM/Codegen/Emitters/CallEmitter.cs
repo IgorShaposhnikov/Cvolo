@@ -18,9 +18,8 @@ namespace Cvolo.Emitter.LLVM.Codegen.Emitters;
 /// <remarks>
 /// This extraction intentionally preserves the existing call semantics. Binding, overload
 /// resolution, delegate value construction, native ABI classification, and general expression
-/// emission remain outside this class. The callback seam is a migration boundary: it lets call
-/// emission reuse the existing expression/address/coercion paths while <see cref="CodeGenerator"/>
-/// is incrementally decomposed.
+/// emission remain outside this class. Aggregate/member/index addressing is delegated to
+/// <see cref="AggregateEmitter"/>, while expression/type callbacks remain migration seams.
 /// </remarks>
 /// <remarks>
 /// Creates a call emitter backed by module-level codegen state and the current function frame.
@@ -28,10 +27,10 @@ namespace Cvolo.Emitter.LLVM.Codegen.Emitters;
 internal sealed class CallEmitter(
 	CodegenContext codegen,
 	CleanupEmitter cleanup,
+	AggregateEmitter aggregates,
 	Func<FunctionCodegenContext> getFunction,
 	Func<ExpressionSyntax, LLVMValueRef> emitExpression,
 	Func<ExpressionSyntax, TypeSymbol> getExpressionType,
-	Func<ExpressionSyntax, (LLVMValueRef ptr, TypeSymbol type, bool valueProvenance, LLVMValueRef? tbaa)> getFieldPointer,
 	ValueCoercion coercion,
 	Func<string, LLVMValueRef> load,
 	IReadOnlyDictionary<string, ExternDeclarationSyntax> astExterns,
@@ -220,7 +219,7 @@ internal sealed class CallEmitter(
 				if (argExpr is IdentifierExpressionSyntax id)
 					arrayPtr = Function.Locals[id.Name];
 				else
-					(arrayPtr, _, _, _) = getFieldPointer(argExpr);
+					(arrayPtr, _, _, _) = aggregates.GetFieldPointer(argExpr);
 
 				val = coercion.CoerceArrayToSlice(arrayPtr, valTy, targetSlice);
 			}
@@ -305,7 +304,7 @@ internal sealed class CallEmitter(
 				if (argExpr is IdentifierExpressionSyntax id)
 					arrayPtr = Function.Locals[id.Name];
 				else
-					(arrayPtr, _, _, _) = getFieldPointer(argExpr);
+					(arrayPtr, _, _, _) = aggregates.GetFieldPointer(argExpr);
 
 				val = Builder.BuildBitCast(arrayPtr, codegen.Types.Lower(TypeSymbol.String), "array_to_string_cast");
 			}
@@ -315,7 +314,7 @@ internal sealed class CallEmitter(
 				if (argExpr is IdentifierExpressionSyntax id)
 					slicePtr = Function.Locals[id.Name];
 				else
-					(slicePtr, _, _, _) = getFieldPointer(argExpr);
+					(slicePtr, _, _, _) = aggregates.GetFieldPointer(argExpr);
 
 				var sliceLayout = codegen.Types.Lower(valTy);
 				var ptrField = Builder.BuildGEP2(
@@ -472,23 +471,23 @@ internal sealed class CallEmitter(
 				break;
 			case "rotl":
 			case "rotr":
+			{
+				var rotateAmount = args[^1];
+				var valueType = args[0].TypeOf;
+				var shiftType = rotateAmount.TypeOf;
+				if (shiftType.Kind != LLVMTypeKind.LLVMIntegerTypeKind || shiftType.IntWidth != valueType.IntWidth)
 				{
-					var rotateAmount = args[^1];
-					var valueType = args[0].TypeOf;
-					var shiftType = rotateAmount.TypeOf;
-					if (shiftType.Kind != LLVMTypeKind.LLVMIntegerTypeKind || shiftType.IntWidth != valueType.IntWidth)
-					{
-						rotateAmount = valueType.IntWidth > shiftType.IntWidth
-							? Builder.BuildZExt(rotateAmount, valueType, "rot_zext")
-							: Builder.BuildTrunc(rotateAmount, valueType, "rot_trunc");
-					}
-
-					var widthMask = LLVMValueRef.CreateConstInt(valueType, (ulong)valueType.IntWidth - 1);
-					rotateAmount = Builder.BuildAnd(rotateAmount, widthMask, "rot_mask");
-					args = new List<LLVMValueRef> { args[0], args[0], rotateAmount };
-					baseName = baseName == "rotl" ? "fshl" : "fshr";
-					break;
+					rotateAmount = valueType.IntWidth > shiftType.IntWidth
+						? Builder.BuildZExt(rotateAmount, valueType, "rot_zext")
+						: Builder.BuildTrunc(rotateAmount, valueType, "rot_trunc");
 				}
+
+				var widthMask = LLVMValueRef.CreateConstInt(valueType, (ulong)valueType.IntWidth - 1);
+				rotateAmount = Builder.BuildAnd(rotateAmount, widthMask, "rot_mask");
+				args = new List<LLVMValueRef> { args[0], args[0], rotateAmount };
+				baseName = baseName == "rotl" ? "fshl" : "fshr";
+				break;
+			}
 			case "fpc.nan":
 			case "fpc.inf":
 			case "fpc.finite":

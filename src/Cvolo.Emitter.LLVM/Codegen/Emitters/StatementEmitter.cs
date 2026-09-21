@@ -18,8 +18,8 @@ namespace Cvolo.Emitter.LLVM.Codegen.Emitters;
 /// conditionals, loops, foreach iteration, switch dispatch, unsafe blocks, and break/continue.
 /// </summary>
 /// <remarks>
-/// Expression emission remains a migration dependency until <c>ExpressionEmitter</c> is extracted.
-/// Cleanup, aggregate materialization, call emission, memory allocation, and value coercion are
+/// Expression and semantic-type resolution remain migration dependencies supplied by the orchestration layer.
+/// Cleanup, aggregate/address emission, call emission, memory allocation, and value coercion are
 /// delegated to their dedicated services so this class owns statement orchestration rather than
 /// duplicating those subsystems.
 /// </remarks>
@@ -27,8 +27,8 @@ namespace Cvolo.Emitter.LLVM.Codegen.Emitters;
 /// Creates a statement emitter over the shared codegen services and the current function state.
 /// </remarks>
 /// <remarks>
-/// Expression and constructor-classification callbacks are temporary migration seams. They will
-/// disappear when expression lowering is extracted from <see cref="CodeGenerator"/>.
+/// Expression/type and constructor-classification callbacks are temporary migration seams. Aggregate
+/// address resolution is owned directly by <see cref="AggregateEmitter"/>.
 /// </remarks>
 internal sealed class StatementEmitter(
 	CodegenContext codegen,
@@ -40,7 +40,6 @@ internal sealed class StatementEmitter(
 	Func<FunctionCodegenContext> getFunction,
 	Func<ExpressionSyntax, LLVMValueRef> emitExpression,
 	Func<ExpressionSyntax, TypeSymbol> getExpressionType,
-	Func<ExpressionSyntax, (LLVMValueRef ptr, TypeSymbol type, bool valueProvenance, LLVMValueRef? tbaa)> getFieldPointer,
 	Func<CallExpressionSyntax, TypeSymbol, bool> isConstructorCall,
 	Action emitTrapDefault)
 {
@@ -592,7 +591,7 @@ internal sealed class StatementEmitter(
 	/// </summary>
 	private void EmitForEachArray(ForEachStatementSyntax fe, ArrayTypeSymbol arrayType, TypeSymbol itemType, LLVMValueRef currentFunc, string prefix)
 	{
-		var (collectionAlloca, _, _, _) = getFieldPointer(fe.Collection);
+		var (collectionAlloca, _, _, _) = aggregates.GetFieldPointer(fe.Collection);
 
 		var counterAlloca = memory.BuildEntryAlloca(LLVMTypeRef.Int32, "__fe_i");
 		Builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0), counterAlloca);
@@ -659,7 +658,7 @@ internal sealed class StatementEmitter(
 	/// </summary>
 	private void EmitForEachSlice(ForEachStatementSyntax fe, SliceTypeSymbol sliceType, TypeSymbol itemType, LLVMValueRef currentFunc, string prefix)
 	{
-		var (collectionAlloca, _, _, _) = getFieldPointer(fe.Collection);
+		var (collectionAlloca, _, _, _) = aggregates.GetFieldPointer(fe.Collection);
 		var sliceLayout = codegen.Types.Lower(sliceType);
 
 		var lenPtrField = Builder.BuildGEP2(sliceLayout, collectionAlloca, new LLVMValueRef[]
@@ -735,7 +734,7 @@ internal sealed class StatementEmitter(
 	/// </summary>
 	private void EmitForEachEnumerator(ForEachStatementSyntax fe, TypeSymbol collectionType, TypeSymbol itemType, LLVMValueRef currentFunc, string prefix)
 	{
-		var (collectionAlloca, _, _, _) = getFieldPointer(fe.Collection);
+		var (collectionAlloca, _, _, _) = aggregates.GetFieldPointer(fe.Collection);
 
 		var enumeratorTypeName = fe.EnumeratorTypeName;
 		var enumeratorType = enumeratorTypeName is not null ? BindingContext.ResolveType(enumeratorTypeName) : null;
@@ -901,7 +900,7 @@ internal sealed class StatementEmitter(
 			return;
 		}
 
-		var (targetVal, unionType, _, _) = getFieldPointer(sw.Expression);
+		var (targetVal, unionType, _, _) = aggregates.GetFieldPointer(sw.Expression);
 		var isRefTarget = getExpressionType(sw.Expression) is PointerTypeSymbol;
 		var isMutableRef = getExpressionType(sw.Expression) is PointerTypeSymbol ptrSymbol && ptrSymbol.IsMutable; // Capture original reference mutability
 
