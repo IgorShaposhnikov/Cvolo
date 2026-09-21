@@ -31,13 +31,6 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	private readonly ILLVMOptimizer? _optimizer;
 	private readonly IRVerifier? _irVerifier;
 
-	// Keep migration aliases local to CodeGenerator so this commit changes ownership,
-	// not hundreds of emission call sites at once.
-	private LLVMModuleRef _module => _codegen.Module;
-	private LLVMBuilderRef _builder => _codegen.Builder;
-	private BindingContext? _bindingContext { get => _codegen.BindingContext; set => _codegen.BindingContext = value; }
-	private CompilationContext? _compilationContext { get => _codegen.CompilationContext; set => _codegen.CompilationContext = value; }
-	private CompilationUnitSyntax? _currentUnit { get => _codegen.CurrentUnit; set => _codegen.CurrentUnit = value; }
 
 	private FunctionCodegenContext _function = new();
 	private (LLVMTypeRef Type, LLVMValueRef Func)? _llvmTrap;
@@ -133,12 +126,19 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		_irVerifier = irVerifier;
 	}
 
-	public LLVMModuleRef Module => _module;
+	/// <summary>
+	/// Gets the LLVM module owned by this code-generation run.
+	/// </summary>
+	public LLVMModuleRef Module => _codegen.Module;
 
+	/// <summary>
+	/// Emits all declarations, globals, and function bodies for a bound compilation, then runs the
+	/// configured optimization and verification pipeline and returns the final LLVM IR text.
+	/// </summary>
 	public string Emit(IReadOnlyList<CompilationUnitSyntax> units, CompilationContext context, BindingContext bindingContext)
 	{
-		_bindingContext = bindingContext;
-		_compilationContext = context;
+		_codegen.BindingContext = bindingContext;
+		_codegen.CompilationContext = context;
 
 		// Preserve the existing declaration order while delegating module-level work to
 		// dedicated emitters. Function definitions are still orchestrated below.
@@ -161,7 +161,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			var ns = unit.NamespaceDeclaration?.Name;
 			bindingContext.CurrentUnit = unit;
 			bindingContext.CurrentNamespace = ns;
-			_currentUnit = unit;
+			_codegen.CurrentUnit = unit;
 
 			var members = ns != null ? unit.NamespaceDeclaration!.Members : unit.Members;
 			foreach (var member in members)
@@ -268,7 +268,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				var originalUnit = (bindingContext.SymbolUnits.TryGetValue(baseMangledName, out var u) ? u : null) ?? units[0];
 				bindingContext.CurrentUnit = originalUnit;
 				bindingContext.CurrentNamespace = originalUnit?.NamespaceDeclaration?.Name;
-				_currentUnit = originalUnit;
+				_codegen.CurrentUnit = originalUnit;
 
 				_functions.EmitBody(instDecl, instDecl.Name);
 			}
@@ -283,7 +283,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				var originalUnit = (bindingContext.SymbolUnits.TryGetValue(emitName, out var u) ? u : null) ?? units[0];
 				bindingContext.CurrentUnit = originalUnit;
 				bindingContext.CurrentNamespace = originalUnit?.NamespaceDeclaration?.Name;
-				_currentUnit = originalUnit;
+				_codegen.CurrentUnit = originalUnit;
 
 				if (decl is FunctionDeclarationSyntax func)
 				{
@@ -297,22 +297,19 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		}
 
 		// 1. Create a deep clone of the unoptimized module state for diagnostic fallback
-		var noOptimizedModule = _module.Clone();
+		var noOptimizedModule = _codegen.Module.Clone();
 
 		// 2. Run the optimization pipeline
-		_optimizer?.Optimize(_module);
+		_optimizer?.Optimize(_codegen.Module);
 
 		// 3. Verify the resulting module, providing the unoptimized fallback
-		_irVerifier?.VerifyModule(_module, noOptimizedModule);
+		_irVerifier?.VerifyModule(_codegen.Module, noOptimizedModule);
 
 		// 4. Dispose of the unoptimized clone if verification passes to prevent native leaks
 		noOptimizedModule.Dispose();
 
-		return _module.PrintToString();
+		return _codegen.Module.PrintToString();
 	}
-
-
-
 
 
 	/// <summary>
@@ -331,17 +328,20 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	private LLVMValueRef EmitStringLiteral(string value) => _expressions.EmitStringLiteral(value);
 
 
-
+	/// <summary>
+	/// Emits the shared <c>llvm.trap</c> call followed by <c>unreachable</c> for code paths that must
+	/// terminate immediately after a failed runtime guard.
+	/// </summary>
 	private void EmitEnumSwitchTrapDefault()
 	{
 		if (_llvmTrap is null)
 		{
 			var trapFnType = LLVMTypeRef.CreateFunction(LLVMTypeRef.Void, []);
-			_llvmTrap = (trapFnType, _module.AddFunction("llvm.trap", trapFnType));
+			_llvmTrap = (trapFnType, _codegen.Module.AddFunction("llvm.trap", trapFnType));
 		}
 
-		_builder.BuildCall2(_llvmTrap.Value.Type, _llvmTrap.Value.Func, new LLVMValueRef[] { }, "");
-		_builder.BuildUnreachable();
+		_codegen.Builder.BuildCall2(_llvmTrap.Value.Type, _llvmTrap.Value.Func, Array.Empty<LLVMValueRef>(), "");
+		_codegen.Builder.BuildUnreachable();
 	}
 
 
@@ -358,14 +358,12 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	}
 
 
-
-
-
+	/// <summary>
+	/// Releases the LLVM builder and module owned by this code generator.
+	/// </summary>
 	public void Dispose()
 	{
-		_builder.Dispose();
-		_module.Dispose();
+		_codegen.Builder.Dispose();
+		_codegen.Module.Dispose();
 	}
-
-
 }

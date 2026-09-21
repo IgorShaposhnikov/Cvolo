@@ -472,23 +472,23 @@ internal sealed class CallEmitter(
 				break;
 			case "rotl":
 			case "rotr":
-			{
-				var rotateAmount = args[^1];
-				var valueType = args[0].TypeOf;
-				var shiftType = rotateAmount.TypeOf;
-				if (shiftType.Kind != LLVMTypeKind.LLVMIntegerTypeKind || shiftType.IntWidth != valueType.IntWidth)
 				{
-					rotateAmount = valueType.IntWidth > shiftType.IntWidth
-						? Builder.BuildZExt(rotateAmount, valueType, "rot_zext")
-						: Builder.BuildTrunc(rotateAmount, valueType, "rot_trunc");
-				}
+					var rotateAmount = args[^1];
+					var valueType = args[0].TypeOf;
+					var shiftType = rotateAmount.TypeOf;
+					if (shiftType.Kind != LLVMTypeKind.LLVMIntegerTypeKind || shiftType.IntWidth != valueType.IntWidth)
+					{
+						rotateAmount = valueType.IntWidth > shiftType.IntWidth
+							? Builder.BuildZExt(rotateAmount, valueType, "rot_zext")
+							: Builder.BuildTrunc(rotateAmount, valueType, "rot_trunc");
+					}
 
-				var widthMask = LLVMValueRef.CreateConstInt(valueType, (ulong)valueType.IntWidth - 1);
-				rotateAmount = Builder.BuildAnd(rotateAmount, widthMask, "rot_mask");
-				args = new List<LLVMValueRef> { args[0], args[0], rotateAmount };
-				baseName = baseName == "rotl" ? "fshl" : "fshr";
-				break;
-			}
+					var widthMask = LLVMValueRef.CreateConstInt(valueType, (ulong)valueType.IntWidth - 1);
+					rotateAmount = Builder.BuildAnd(rotateAmount, widthMask, "rot_mask");
+					args = [args[0], args[0], rotateAmount];
+					baseName = baseName == "rotl" ? "fshl" : "fshr";
+					break;
+				}
 			case "fpc.nan":
 			case "fpc.inf":
 			case "fpc.finite":
@@ -630,10 +630,7 @@ internal sealed class CallEmitter(
 	/// Reuses an already declared LLVM intrinsic or declares the exact signature required by the
 	/// emitted operands.
 	/// </summary>
-	private LLVMValueRef GetOrDeclareIntrinsic(
-		string intrinsicBaseName,
-		IReadOnlyList<LLVMValueRef> args,
-		LLVMTypeRef returnType)
+	private LLVMValueRef GetOrDeclareIntrinsic(string intrinsicBaseName, IReadOnlyList<LLVMValueRef> args, LLVMTypeRef returnType)
 	{
 		var fullIntrinsicName = intrinsicBaseName;
 		if (args.Count > 0 && !intrinsicBaseName.EndsWith(".f64") && !intrinsicBaseName.EndsWith(".f32"))
