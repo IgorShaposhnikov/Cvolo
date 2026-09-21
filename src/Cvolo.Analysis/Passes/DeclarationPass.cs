@@ -1,15 +1,12 @@
 using Cvolo.Analysis.Passes.Declaration;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
-using Cvolo.Core.AST.Directives;
-using Cvolo.Core.Diagnostics;
 
 namespace Cvolo.Analysis.Passes;
 
 public sealed class DeclarationPass(BindingContext context)
 {
-	private readonly TypeAliasValidator _aliases = new(context);л
-	private readonly TypeAliasValidator _aliases = new(context);л
+	private readonly TypeAliasValidator _aliases = new(context);
 	private readonly TypeDeclarationRegistrar _types = new(context);
 	private readonly ContractHierarchyLinker _contracts = new(context);
 	private readonly EmbedLinker _embeds = new(context);
@@ -19,6 +16,7 @@ public sealed class DeclarationPass(BindingContext context)
 	private readonly GenericDefaultCopyValidator _genericDefaultCopies = new(context);
 	private readonly FunctionDeclarationRegistrar _functions = new(context);
 	private readonly GlobalVariableRegistrar _globals = new(context);
+	private readonly ExposeUsingValidator _exposeUsings = new(context);
 	private ExtensionRegistrar? _extensions;
 	private ExtensionRegistrar Extensions => _extensions ??= new(context, _functions, _destructors, _genericDefaultCopies);
 	/// <summary>
@@ -32,7 +30,7 @@ public sealed class DeclarationPass(BindingContext context)
 
 	public void Process(IEnumerable<CompilationUnitSyntax> units)
 	{
-		ProcessExposeUsings(units);
+		_exposeUsings.Process(units);
 
 		// Pass 0a-pre: Register all type aliases before any type/field/parameter resolution
 		// so struct fields and function signatures may reference them. Names are reserved
@@ -128,82 +126,5 @@ public sealed class DeclarationPass(BindingContext context)
 		_genericDefaults.Validate(units);
 	}
 
-
-
-	/// <summary>
-	/// Pass 0: Registers all declared namespaces, collects 'expose using' re-exports,
-	/// and validates that:
-	/// 1. 'expose using' is only declared inside a namespace (CVL1060).
-	/// 2. Target namespaces of 'expose using' actually exist across the compilation units (CVL1061).
-	/// </summary>
-	private void ProcessExposeUsings(IEnumerable<CompilationUnitSyntax> units)
-	{
-		context.DeclaredNamespaces.Clear();
-		context.NamespaceReExports.Clear();
-
-		// 1. Gather all declared namespaces across all units
-		foreach (var unit in units)
-		{
-			if (unit.NamespaceDeclaration is not null)
-			{
-				context.DeclaredNamespaces.Add(unit.NamespaceDeclaration.Name);
-			}
-		}
-
-		// 2. Validate and register 'expose using' directives
-		var exposeDirectives = new List<(CompilationContext FileCtx, UsingDirectiveSyntax Directive, string? EnclosingNs)>();
-
-		foreach (var unit in units)
-		{
-			context.CurrentUnit = unit;
-			var fileContext = context.FileContexts[unit];
-
-			// File-level usings (outside any namespace)
-			foreach (var u in unit.Usings)
-			{
-				if (u.IsExposed)
-				{
-					context.Diagnostics.Report(
-						fileContext,
-						u.Span,
-						"'expose using' can only be used inside a namespace.",
-						DiagnosticIds.ExposeUsingOutsideNamespace);
-				}
-			}
-
-			// Namespace-level usings
-			if (unit.NamespaceDeclaration is not null)
-			{
-				var currentNs = unit.NamespaceDeclaration.Name;
-				foreach (var u in unit.NamespaceDeclaration.Usings)
-				{
-					if (u.IsExposed)
-					{
-						if (!context.NamespaceReExports.TryGetValue(currentNs, out var set))
-						{
-							set = new HashSet<string>(StringComparer.Ordinal);
-							context.NamespaceReExports[currentNs] = set;
-						}
-
-						set.Add(u.NamespaceName);
-						exposeDirectives.Add((fileContext, u, currentNs));
-					}
-				}
-			}
-		}
-
-		// 3. Verify that re-export target namespaces exist (CVL1061)
-		foreach (var (fileCtx, directive, _) in exposeDirectives)
-		{
-			if (!context.DeclaredNamespaces.Contains(directive.NamespaceName))
-			{
-				context.Diagnostics.Report(
-					fileCtx,
-					directive.Span,
-					$"Target namespace '{directive.NamespaceName}' of 'expose using' does not exist.",
-					DiagnosticIds.ExposeUsingNamespaceNotFound);
-			}
-		}
-	}
 
 }
