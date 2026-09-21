@@ -9,6 +9,9 @@ using Cvolo.Core.AST.Declarations;
 using Cvolo.Core.AST.Expressions;
 using Cvolo.Core.AST.Statements;
 using Cvolo.Core.Diagnostics;
+using Cvolo.Emitter.LLVM.Codegen;
+using Cvolo.Emitter.LLVM.Codegen.ControlFlow;
+using Cvolo.Emitter.LLVM.Codegen.TypeLowering;
 using LLVMSharp.Interop;
 
 namespace Cvolo.Emitter.LLVM;
@@ -20,16 +23,13 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	private readonly LLVMContextRef _context; // Holds the native LLVM Context
 	private readonly ILLVMOptimizer? _optimizer;
 	private readonly IRVerifier? _irVerifier;
+	private readonly LlvmTypeLowering _types;
 
 	// Metadata Cache Dictionaries
 	private readonly Dictionary<string, LLVMValueRef> _globals = [];
-	private readonly Dictionary<string, LLVMValueRef> _locals = [];
+	private FunctionCodegenContext _function = new();
 	private readonly Dictionary<string, LLVMTypeRef> _functionTypes = [];
 	private readonly Dictionary<string, LLVMTypeRef> _llvmStructTypes = [];
-	private readonly Dictionary<string, TypeSymbol> _variableTypes = [];
-	private readonly HashSet<string> _heapAllocatedVars = [];
-	private readonly HashSet<string> _movedVars = [];
-	private bool _ownershipTransferFunction;
 	private readonly Dictionary<string, StructDeclarationSyntax> _astStructs = [];
 	private readonly Dictionary<string, ExternDeclarationSyntax> _astExterns = [];
 	private readonly Dictionary<string, ExternBlockFunctionSyntax> _astExternBlockFunctions = [];
@@ -41,9 +41,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	private BindingContext? _bindingContext;
 	private CompilationContext? _compilationContext; // Renamed to avoid LLVM _context conflict
 	private CompilationUnitSyntax? _currentUnit;
-	private readonly HashSet<string> _disposedVars = [];
 	private readonly bool _enableTbaa;
-	private int _unsafeDepth;
 	private TbaaMetadata? _tbaa;
 	private (LLVMTypeRef Type, LLVMValueRef Func)? _llvmTrap;
 	private readonly Dictionary<string, LLVMValueRef> _enumValuesGlobals = [];
@@ -53,36 +51,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	private readonly HashSet<string> _exportedSymbols = [];
 	private readonly bool _checkedFfiBounds;
 	private readonly IReadOnlySet<string>? _definedGlobalNames;
-	// A safe delegate value is a two-word struct { invoke thunk pointer, context pointer }.
-	// All four delegate producers (free fn group, bound method, capturing lambda, and
-	// non-capturing lambda) are lowered to a uniform "R thunk(void* context, P...)" thunk.
-	private LLVMTypeRef _delegateWordType = default;
 	private int _delegateFunctionCounter;
-	private readonly Stack<LoopContext> _loopContextStack = [];
-
-	// Break targets for switch frames: an unlabeled `break;` inside a switch case exits the
-	// innermost switch (C-style), not any surrounding loop. Each frame is the switch's
-	// after-block, pushed while the switch's case bodies are emitted.
-	private readonly Stack<LLVMBasicBlockRef> _switchBreakStack = [];
-
-	// Break targets for labeled blocks: `break L;` may target a labeled block OR a labeled
-	// loop. Both are pushed here in lexical descent order so a labeled break resolves to the
-	// innermost matching construct first. Labeled loops also remain on _loopContextStack for
-	// their continue/break-block bookkeeping.
-	private readonly Stack<LabeledBreakContext> _labeledBreakStack = [];
-
-	private sealed class LabeledBreakContext(string label, LLVMBasicBlockRef breakBlock)
-	{
-		public string Label { get; } = label;
-		public LLVMBasicBlockRef BreakBlock { get; } = breakBlock;
-	}
-
-	private sealed class LoopContext(string? label, LLVMBasicBlockRef breakBlock, LLVMBasicBlockRef continueBlock)
-	{
-		public string? Label { get; } = label;
-		public LLVMBasicBlockRef BreakBlock { get; } = breakBlock;
-		public LLVMBasicBlockRef ContinueBlock { get; } = continueBlock;
-	}
 
 	static CodeGenerator()
 	{
@@ -100,6 +69,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		_builder = _context.CreateBuilder();
 		_optimizer = optimizer;
 		_irVerifier = irVerifier;
+		_types = new LlvmTypeLowering(_llvmStructTypes);
 		_enableTbaa = enableTbaa;
 		_checkedFfiBounds = checkedFfiBounds;
 		_definedGlobalNames = definedGlobalNames;
@@ -809,20 +779,16 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		var entry = llvmFunc.AppendBasicBlock("entry");
 		_builder.PositionAtEnd(entry);
 
-		_locals.Clear();
-		_variableTypes.Clear();
-		_heapAllocatedVars.Clear();
-		_movedVars.Clear();
-		_disposedVars.Clear();
+		_function = new FunctionCodegenContext();
 
 		var funcSymbol = _bindingContext!.Globals.Lookup(mangledName) as FunctionSymbol
 			?? (_bindingContext.MonomorphizedFunctions.TryGetValue(mangledName, out var monoSymbol) ? monoSymbol : null);
-		_unsafeDepth = funcSymbol is not null && (funcSymbol.SafetyTier == SafetyTier.Unsafe || funcSymbol.IsUnsafeBody) ? 1 : 0;
+		_function.UnsafeDepth = funcSymbol is not null && (funcSymbol.SafetyTier == SafetyTier.Unsafe || funcSymbol.IsUnsafeBody) ? 1 : 0;
 
 		// An 'unbound' factory that returns a heap-escaping graph handle transfers ownership of
 		// its heap allocations to the caller ('heap-relative provenance'), so inner-block scopes
 		// must NOT free them (that would sever the self-referential graph mid-construction).
-		_ownershipTransferFunction = funcSymbol is not null
+		_function.OwnershipTransferFunction = funcSymbol is not null
 			&& funcSymbol.SafetyTier == SafetyTier.Unbound
 			&& _functionReturnTypes.TryGetValue(mangledName, out var retType)
 			&& TypeEscapesHeap(retType);
@@ -831,14 +797,14 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		// so loads/stores/field GEPs work through the ordinary machinery (locals shadow on redeclare).
 		foreach (var (globalName, globalRef) in _globalVariables)
 		{
-			if (!_locals.ContainsKey(globalName))
-				_locals[globalName] = globalRef;
+			if (!_function.Locals.ContainsKey(globalName))
+				_function.Locals[globalName] = globalRef;
 		}
 
 		foreach (var (globalName, globalType) in _globalVariableTypes)
 		{
-			if (!_variableTypes.ContainsKey(globalName))
-				_variableTypes[globalName] = globalType;
+			if (!_function.VariableTypes.ContainsKey(globalName))
+				_function.VariableTypes[globalName] = globalType;
 		}
 
 		// Also seed the bare short name for unqualified references, resolved against the
@@ -846,15 +812,15 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		// references never reach codegen because the binder reports CVL1077 first).
 		foreach (var (shortName, _) in _globalShortNames)
 		{
-			if (_locals.ContainsKey(shortName))
+			if (_function.Locals.ContainsKey(shortName))
 				continue;
 
 			var resolvedKey = ResolveGlobalKey(shortName);
 			if (resolvedKey is null)
 				continue;
 
-			_locals[shortName] = _globalVariables[resolvedKey];
-			_variableTypes[shortName] = _globalVariableTypes[resolvedKey];
+			_function.Locals[shortName] = _globalVariables[resolvedKey];
+			_function.VariableTypes[shortName] = _globalVariableTypes[resolvedKey];
 		}
 
 		if (_bindingContext!.Globals.Lookup(mangledName) is FunctionSymbol sym)
@@ -920,8 +886,8 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 				_builder.BuildStore(param, alloca);
 
-				_locals[paramName] = alloca;
-				_variableTypes[paramName] = typeSymbol;
+				_function.Locals[paramName] = alloca;
+				_function.VariableTypes[paramName] = typeSymbol;
 			}
 		}
 		else // Fallback
@@ -938,15 +904,15 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				var alloca = _builder.BuildAlloca(llvmType, paramName);
 				_builder.BuildStore(param, alloca);
 
-				_locals[paramName] = alloca;
-				_variableTypes[paramName] = typeSymbol;
+				_function.Locals[paramName] = alloca;
+				_function.VariableTypes[paramName] = typeSymbol;
 			}
 		}
 
 		// Constructor chaining: a delegating constructor (`T(args) : this(...)`) invokes
 		// the target constructor on the same destination storage before its own body runs.
 		if (_constructorInitializers.TryGetValue(mangledName, out var chainedCtor)
-			&& _locals.TryGetValue("this", out var thisStorage)
+			&& _function.Locals.TryGetValue("this", out var thisStorage)
 			&& _bindingContext!.ConstructorDelegationTargets.TryGetValue(mangledName, out var chainTarget))
 		{
 			// 'this' holds the alloca of the destination-storage pointer; load the pointer value.
@@ -969,11 +935,11 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 		if (func.ReturnType == "void" && !EndsWithReturn(func.Body))
 		{
-			EmitCleanup([.. _locals.Keys], skipHeapFree: _ownershipTransferFunction);
+			EmitCleanup([.. _function.Locals.Keys], skipHeapFree: _function.OwnershipTransferFunction);
 			_builder.BuildRetVoid();
 		}
 
-		_unsafeDepth = 0;
+		_function.UnsafeDepth = 0;
 	}
 
 	private void EmitBlock(BlockStatementSyntax block)
@@ -996,7 +962,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 		if (!EndsWithReturn(block))
 		{
-			EmitCleanup(blockVars, skipHeapFree: _ownershipTransferFunction);
+			EmitCleanup(blockVars, skipHeapFree: _function.OwnershipTransferFunction);
 		}
 	}
 
@@ -1008,14 +974,14 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 		_builder.BuildBr(bodyBlock);
 
-		_labeledBreakStack.Push(new LabeledBreakContext(labeledBlock.Label, endBlock));
+		_function.LabeledBreaks.Push(new LabeledBreakCodegenFrame(labeledBlock.Label, endBlock));
 		_builder.PositionAtEnd(bodyBlock);
 		EmitBlock(labeledBlock.Body);
 		if (_builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
 		{
 			_builder.BuildBr(endBlock);
 		}
-		_labeledBreakStack.Pop();
+		_function.LabeledBreaks.Pop();
 
 		_builder.PositionAtEnd(endBlock);
 	}
@@ -1055,9 +1021,9 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				EmitForEachStatement(fe);
 				break;
 			case UnsafeBlockStatementSyntax unsafeBlock:
-				_unsafeDepth++;
+				_function.UnsafeDepth++;
 				EmitBlock(unsafeBlock.Body);
-				_unsafeDepth--;
+				_function.UnsafeDepth--;
 				break;
 			case BreakStatementSyntax brk:
 				EmitBreakStatement(brk);
@@ -1098,7 +1064,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 				var loadedNone = _builder.BuildLoad2(unionLayout, tempAlloc, "loaded_none");
 
-				EmitCleanup([.. _locals.Keys], skipHeapFree: _ownershipTransferFunction);
+				EmitCleanup([.. _function.Locals.Keys], skipHeapFree: _function.OwnershipTransferFunction);
 				_builder.BuildRet(loadedNone);
 				return;
 			}
@@ -1126,7 +1092,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				materialized = _builder.BuildLoad2(layout, value, "struct_ret_val");
 			}
 
-			EmitCleanup([.. _locals.Keys], skipHeapFree: _ownershipTransferFunction);
+			EmitCleanup([.. _function.Locals.Keys], skipHeapFree: _function.OwnershipTransferFunction);
 
 			if (materialized is not null)
 			{
@@ -1148,7 +1114,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		}
 		else
 		{
-			EmitCleanup([.. _locals.Keys], skipHeapFree: _ownershipTransferFunction);
+			EmitCleanup([.. _function.Locals.Keys], skipHeapFree: _function.OwnershipTransferFunction);
 			_builder.BuildRetVoid();
 		}
 	}
@@ -1345,12 +1311,12 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 									isMutable: GetExprType(isPat.Operand) is PointerTypeSymbol borrowPtr && borrowPtr.IsMutable)
 								: unionTypeSym.FindField(isPat.VariantName)?.Type ?? unionTypeSym;
 
-						if (!_locals.TryGetValue(isPat.BoundName, out var bindSlot))
+						if (!_function.Locals.TryGetValue(isPat.BoundName, out var bindSlot))
 						{
 							var bindTy = GetLLVMType(promotedType);
 							bindSlot = _builder.BuildAlloca(bindTy, isPat.BoundName);
-							_locals[isPat.BoundName] = bindSlot;
-							_variableTypes[isPat.BoundName] = promotedType;
+							_function.Locals[isPat.BoundName] = bindSlot;
+							_function.VariableTypes[isPat.BoundName] = promotedType;
 						}
 
 						// Every pattern evaluation re-binds the payload: the scrutinee changes
@@ -1718,7 +1684,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			&& nameFunc.Name.StartsWith("$Name$", StringComparison.Ordinal))
 		{
 			var receiverName = call.FunctionName[..call.FunctionName.IndexOf('.')];
-			var receiverType = _variableTypes[receiverName];
+			var receiverType = _function.VariableTypes[receiverName];
 			var enumType = receiverType is PointerTypeSymbol namePtr
 				? namePtr.ReferencedType as EnumTypeSymbol
 				: receiverType as EnumTypeSymbol;
@@ -1753,7 +1719,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		{
 			var receiverName = call.FunctionName[..call.FunctionName.IndexOf('.')];
 			LLVMValueRef receiverValue;
-			if (_locals.TryGetValue(receiverName, out var hasFlagReceiverPtr))
+			if (_function.Locals.TryGetValue(receiverName, out var hasFlagReceiverPtr))
 			{
 				receiverValue = Load(receiverName);
 			}
@@ -1803,10 +1769,10 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			TypeSymbol receiverType = null!;
 			var found = false;
 
-			if (_locals.TryGetValue(receiverName, out var localPtr))
+			if (_function.Locals.TryGetValue(receiverName, out var localPtr))
 			{
 				receiverPtr = localPtr;
-				receiverType = _variableTypes[receiverName];
+				receiverType = _function.VariableTypes[receiverName];
 				found = true;
 			}
 			else if ((_globalVariables.ContainsKey(receiverName) ? receiverName : ResolveGlobalKey(receiverName)) is { } recvKey
@@ -1816,9 +1782,9 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				receiverType = _globalVariableTypes[recvKey];
 				found = true;
 			}
-			else if (_locals.TryGetValue("this", out var thisPtr))
+			else if (_function.Locals.TryGetValue("this", out var thisPtr))
 			{
-				var thisType = _variableTypes["this"] as PointerTypeSymbol;
+				var thisType = _function.VariableTypes["this"] as PointerTypeSymbol;
 				var structType = thisType?.ReferencedType as StructTypeSymbol;
 				var field = structType?.FindField(receiverName);
 				if (field is not null)
@@ -1860,7 +1826,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		{
 			// Bare call to a sibling extension method (e.g. `AddLast(value)` from within
 			// another method of the same extension): inject the current 'this' pointer.
-			if (!_locals.TryGetValue("this", out var thisSlot))
+			if (!_function.Locals.TryGetValue("this", out var thisSlot))
 				throw new InvalidOperationException($"Cannot resolve implicit receiver 'this' for method call '{call.FunctionName}'.");
 
 			args.Add(_builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), thisSlot, "loaded_this_ptr"));
@@ -1888,7 +1854,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				LLVMValueRef arrayPtr;
 				if (argExpr is IdentifierExpressionSyntax id)
 				{
-					arrayPtr = _locals[id.Name];
+					arrayPtr = _function.Locals[id.Name];
 				}
 				else
 				{
@@ -1913,13 +1879,13 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			// resource to the callee. Exclude the source from caller cleanup so the callee's
 			// tag-checked destructor (and not a second drop here) releases it â€” no double free.
 			if (paramTy is not null && argExpr is IdentifierExpressionSyntax moveArg
-				&& !_disposedVars.Contains(moveArg.Name)
-				&& _variableTypes.TryGetValue(moveArg.Name, out var srcTy)
+				&& !_function.DisposedVars.Contains(moveArg.Name)
+				&& _function.VariableTypes.TryGetValue(moveArg.Name, out var srcTy)
 				&& srcTy is UnionTypeSymbol srcUnion
 				&& UnionNeedsTagCheckedCleanup(srcUnion)
 				&& paramTy is UnionTypeSymbol paramUnion && paramUnion.Name == srcUnion.Name)
 			{
-				_movedVars.Add(moveArg.Name);
+				_function.MovedVars.Add(moveArg.Name);
 			}
 
 			// Detect if this argument is part of the variadic (...) portion
@@ -1982,7 +1948,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				LLVMValueRef arrayPtr;
 				if (argExpr is IdentifierExpressionSyntax id)
 				{
-					arrayPtr = _locals[id.Name];
+					arrayPtr = _function.Locals[id.Name];
 				}
 				else
 				{
@@ -1997,7 +1963,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				LLVMValueRef slicePtr;
 				if (argExpr is IdentifierExpressionSyntax id)
 				{
-					slicePtr = _locals[id.Name];
+					slicePtr = _function.Locals[id.Name];
 				}
 				else
 				{
@@ -2066,7 +2032,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			if (!seen.Add(name)) continue;
 			if (name == "this" || paramNames.Contains(name)) continue;
 			if (_globalShortNames.ContainsKey(name) || _globalVariables.ContainsKey(name)) continue;
-			if (_variableTypes.TryGetValue(name, out var ty))
+			if (_function.VariableTypes.TryGetValue(name, out var ty))
 				result.Add((name, ty));
 		}
 		return result;
@@ -2075,10 +2041,10 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	private bool TryResolveReceiverPointer(string receiverName, out LLVMValueRef receiverPtr, out TypeSymbol receiverType)
 	{
 		receiverPtr = default;
-		if (_locals.TryGetValue(receiverName, out var localPtr))
+		if (_function.Locals.TryGetValue(receiverName, out var localPtr))
 		{
 			receiverPtr = localPtr;
-			receiverType = _variableTypes[receiverName];
+			receiverType = _function.VariableTypes[receiverName];
 			return true;
 		}
 		if ((_globalVariables.ContainsKey(receiverName) ? receiverName : ResolveGlobalKey(receiverName)) is { } recvKey
@@ -2088,8 +2054,8 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			receiverType = _globalVariableTypes[recvKey];
 			return true;
 		}
-		if (_locals.TryGetValue("this", out var thisPtr)
-			&& _variableTypes["this"] is PointerTypeSymbol thisTy
+		if (_function.Locals.TryGetValue("this", out var thisPtr)
+			&& _function.VariableTypes["this"] is PointerTypeSymbol thisTy
 			&& thisTy.ReferencedType is StructTypeSymbol selfStruct
 			&& selfStruct.FindField(receiverName) is { } field)
 		{
@@ -2141,37 +2107,24 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		_functionParameterTypes[thunkName] = [.. visibleParams.Select(p => p.Type).ToList()];
 
 		var savedBlock = _builder.InsertBlock;
-		var savedLocals = new Dictionary<string, LLVMValueRef>(_locals);
-		var savedTypes = new Dictionary<string, TypeSymbol>(_variableTypes);
-		var savedHeap = new HashSet<string>(_heapAllocatedVars);
-		var savedMoved = new HashSet<string>(_movedVars);
-		var savedDisposed = new HashSet<string>(_disposedVars);
-		var savedUnsafe = _unsafeDepth;
-		var savedOwnership = _ownershipTransferFunction;
-
-		_locals.Clear();
-		_variableTypes.Clear();
-		_heapAllocatedVars.Clear();
-		_movedVars.Clear();
-		_disposedVars.Clear();
-		_unsafeDepth = 0;
-		_ownershipTransferFunction = false;
+		var savedFunction = _function;
+		_function = new FunctionCodegenContext();
 
 		foreach (var g in _globalVariables)
 		{
-			if (!_locals.ContainsKey(g.Key)) _locals[g.Key] = g.Value;
+			if (!_function.Locals.ContainsKey(g.Key)) _function.Locals[g.Key] = g.Value;
 		}
 		foreach (var g in _globalVariableTypes)
 		{
-			if (!_variableTypes.ContainsKey(g.Key)) _variableTypes[g.Key] = g.Value;
+			if (!_function.VariableTypes.ContainsKey(g.Key)) _function.VariableTypes[g.Key] = g.Value;
 		}
 		foreach (var (shortName, keys) in _globalShortNames)
 		{
-			if (_locals.ContainsKey(shortName)) continue;
+			if (_function.Locals.ContainsKey(shortName)) continue;
 			if (ResolveGlobalKey(shortName) is { } key && _globalVariables.TryGetValue(key, out var stored))
 			{
-				_locals[shortName] = stored;
-				_variableTypes[shortName] = _globalVariableTypes[key];
+				_function.Locals[shortName] = stored;
+				_function.VariableTypes[shortName] = _globalVariableTypes[key];
 			}
 		}
 
@@ -2184,25 +2137,14 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			var pTy = GetLLVMType(visibleParams[i].Type);
 			var alloca = _builder.BuildAlloca(pTy, pName);
 			_builder.BuildStore(fn.GetParam((uint)(i + 1)), alloca);
-			_locals[pName] = alloca;
-			_variableTypes[pName] = visibleParams[i].Type;
+			_function.Locals[pName] = alloca;
+			_function.VariableTypes[pName] = visibleParams[i].Type;
 		}
 
 		emitBody(fn.GetParam(0));
 
 		_builder.PositionAtEnd(savedBlock);
-		_unsafeDepth = savedUnsafe;
-		_ownershipTransferFunction = savedOwnership;
-		_locals.Clear();
-		_variableTypes.Clear();
-		_heapAllocatedVars.Clear();
-		_movedVars.Clear();
-		_disposedVars.Clear();
-		foreach (var (k, v) in savedLocals) _locals[k] = v;
-		foreach (var (k, v) in savedTypes) _variableTypes[k] = v;
-		foreach (var n in savedHeap) _heapAllocatedVars.Add(n);
-		foreach (var n in savedMoved) _movedVars.Add(n);
-		foreach (var n in savedDisposed) _disposedVars.Add(n);
+		_function = savedFunction;
 
 		return fn;
 	}
@@ -2230,14 +2172,14 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				var fieldPtr = _builder.BuildGEP2(envTy.Value, envAlloc.Value, new LLVMValueRef[] { zero, LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)i) }, "$lambda_cap");
 				if (info.CaptureMode == LambdaCaptureMode.Ref)
 				{
-					_builder.BuildStore(_builder.BuildPointerCast(_locals[cName], i8PtrTy, "cap_ref"), fieldPtr);
+					_builder.BuildStore(_builder.BuildPointerCast(_function.Locals[cName], i8PtrTy, "cap_ref"), fieldPtr);
 				}
 				else
 				{
 					_builder.BuildStore(Load(cName), fieldPtr);
 					if (info.CaptureMode == LambdaCaptureMode.Move)
 					{
-						_movedVars.Add(cName);
+						_function.MovedVars.Add(cName);
 					}
 				}
 			}
@@ -2261,13 +2203,13 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 					if (info.CaptureMode == LambdaCaptureMode.Ref)
 					{
 						var slot = _builder.BuildLoad2(i8PtrTy, fieldPtr, "cap_ref_slot");
-						_locals[cName] = _builder.BuildPointerCast(slot, LLVMTypeRef.CreatePointer(GetLLVMType(cType), 0), "cap_ref_local");
+						_function.Locals[cName] = _builder.BuildPointerCast(slot, LLVMTypeRef.CreatePointer(GetLLVMType(cType), 0), "cap_ref_local");
 					}
 					else
 					{
-						_locals[cName] = fieldPtr;
+						_function.Locals[cName] = fieldPtr;
 					}
-					_variableTypes[cName] = cType;
+					_function.VariableTypes[cName] = cType;
 				}
 			}
 
@@ -2313,10 +2255,10 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				receiverType = rTy;
 			}
 		}
-		else if (isBound && _locals.TryGetValue("this", out var thisPtr))
+		else if (isBound && _function.Locals.TryGetValue("this", out var thisPtr))
 		{
 			receiverStorage = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), thisPtr, "loaded_this_ptr");
-			receiverType = (_variableTypes["this"] as PointerTypeSymbol)?.ReferencedType;
+			receiverType = (_function.VariableTypes["this"] as PointerTypeSymbol)?.ReferencedType;
 		}
 
 		var start = isBound ? 1 : 0;
@@ -2337,7 +2279,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			}
 			for (var i = start; i < fnSym.Parameters.Count; i++)
 			{
-				var pLocal = _locals[visibleParams[i - start].Name];
+				var pLocal = _function.Locals[visibleParams[i - start].Name];
 				cargs.Add(_builder.BuildLoad2(GetLLVMType(fnSym.Parameters[i].Type), pLocal, "group_arg"));
 			}
 
@@ -2398,7 +2340,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		else
 		{
 			var calleeName = ResolveGlobalKey(call.FunctionName);
-			if (_locals.TryGetValue(call.FunctionName, out var localSlot))
+			if (_function.Locals.TryGetValue(call.FunctionName, out var localSlot))
 			{
 				delegatePtr = localSlot;
 			}
@@ -2406,8 +2348,8 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			{
 				delegatePtr = gSlot;
 			}
-			else if (_locals.TryGetValue("this", out var thisPtr)
-				&& _variableTypes["this"] is PointerTypeSymbol thisPtrTy
+			else if (_function.Locals.TryGetValue("this", out var thisPtr)
+				&& _function.VariableTypes["this"] is PointerTypeSymbol thisPtrTy
 				&& thisPtrTy.ReferencedType is StructTypeSymbol thisStruct
 				&& thisStruct.FindField(call.FunctionName) is { } thisField
 				&& thisField.Type is DelegateTypeSymbol)
@@ -2656,7 +2598,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		{
 			if (bin.Left is IdentifierExpressionSyntax ctorId)
 			{
-				if (_locals.TryGetValue(ctorId.Name, out var ptr))
+				if (_function.Locals.TryGetValue(ctorId.Name, out var ptr))
 				{
 					EmitCallExpression(ctorCall, ptr);
 					return ptr;
@@ -2666,9 +2608,9 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 					EmitCallExpression(ctorCall, ctorGlobalPtr);
 					return ctorGlobalPtr;
 				}
-				else if (_locals.TryGetValue("this", out var thisPtr))
+				else if (_function.Locals.TryGetValue("this", out var thisPtr))
 				{
-					var thisType = _variableTypes["this"] as PointerTypeSymbol;
+					var thisType = _function.VariableTypes["this"] as PointerTypeSymbol;
 					var structType = thisType?.ReferencedType as StructTypeSymbol;
 					if (structType?.FindField(ctorId.Name) is not null)
 					{
@@ -2710,8 +2652,8 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 		// 4. Handle Heap-Allocated owning handles
 		if (bin.Right is IdentifierExpressionSyntax heapId
-			&& _heapAllocatedVars.Contains(heapId.Name)
-			&& _locals.TryGetValue(heapId.Name, out var handleSlot)
+			&& _function.HeapAllocatedVars.Contains(heapId.Name)
+			&& _function.Locals.TryGetValue(heapId.Name, out var handleSlot)
 			&& GetExprType(bin.Left) is PointerTypeSymbol)
 		{
 			right = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), handleSlot, "handle_addr");
@@ -2729,9 +2671,9 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		// 6. Execute Assignment to Target (Left-Hand Side)
 		if (bin.Left is IdentifierExpressionSyntax id)
 		{
-			if (_locals.TryGetValue(id.Name, out var ptr))
+			if (_function.Locals.TryGetValue(id.Name, out var ptr))
 			{
-				var type = _variableTypes[id.Name];
+				var type = _function.VariableTypes[id.Name];
 
 				if (bin.Right is NullLiteralExpressionSyntax && type is UnionTypeSymbol optionUnion && optionUnion.IsOption)
 				{
@@ -2774,8 +2716,8 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 					if (type is UnionTypeSymbol reassignedUnion
 						&& UnionNeedsTagCheckedCleanup(reassignedUnion)
 						&& bin.Right is StructInitializationExpressionSyntax
-						&& !_movedVars.Contains(id.Name)
-						&& !_disposedVars.Contains(id.Name))
+						&& !_function.MovedVars.Contains(id.Name)
+						&& !_function.DisposedVars.Contains(id.Name))
 					{
 						EmitUnionTagCheckedCleanup(id.Name, ptr, reassignedUnion);
 					}
@@ -2813,9 +2755,9 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				}
 				return right;
 			}
-			else if (_locals.TryGetValue("this", out var thisPtr))
+			else if (_function.Locals.TryGetValue("this", out var thisPtr))
 			{
-				var thisType = _variableTypes["this"] as PointerTypeSymbol;
+				var thisType = _function.VariableTypes["this"] as PointerTypeSymbol;
 				var refType = thisType!.ReferencedType;
 
 				if (refType is StructTypeSymbol structType)
@@ -3003,7 +2945,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			// Safe/unbound zone: (Enum)integer yields Option<Enum> â€” a checked conversion
 			// comparing against every declared variant value (None when no match). The raw
 			// enum scalar is only produced by this cast inside unsafe code.
-			if (targetTypeSymbol is EnumTypeSymbol safeCastEnum && _unsafeDepth == 0 &&
+			if (targetTypeSymbol is EnumTypeSymbol safeCastEnum && _function.UnsafeDepth == 0 &&
 				operandType is not EnumTypeSymbol && TypeSymbol.IsIntegerType(operandType))
 			{
 				if (_bindingContext.ResolveType($"Option<{safeCastEnum.Name}>") is UnionTypeSymbol optionUnion)
@@ -3019,8 +2961,8 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			if (targetTypeSymbol is RawPointerTypeSymbol)
 			{
 				if (unary.Operand is IdentifierExpressionSyntax ownerId
-					&& _locals.TryGetValue(ownerId.Name, out var handleSlot)
-					&& _heapAllocatedVars.Contains(ownerId.Name))
+					&& _function.Locals.TryGetValue(ownerId.Name, out var handleSlot)
+					&& _function.HeapAllocatedVars.Contains(ownerId.Name))
 				{
 					var rawHeapPtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), handleSlot, "handle_ptr");
 					return rawHeapPtr.TypeOf.Handle == targetType.Handle
@@ -3161,7 +3103,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				}
 			case "&":
 				{
-					if (unary.Operand is IdentifierExpressionSyntax id && _locals.TryGetValue(id.Name, out var ptr))
+					if (unary.Operand is IdentifierExpressionSyntax id && _function.Locals.TryGetValue(id.Name, out var ptr))
 						return ptr;
 					if (unary.Operand is MemberAccessExpressionSyntax memberAccess)
 					{
@@ -3233,8 +3175,8 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			var pointerType = new PointerTypeSymbol(innerType, isMutable);
 
 			var alloca = _builder.BuildAlloca(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), varDecl.Name);
-			_locals[varDecl.Name] = alloca;
-			_variableTypes[varDecl.Name] = pointerType;
+			_function.Locals[varDecl.Name] = alloca;
+			_function.VariableTypes[varDecl.Name] = pointerType;
 
 			_builder.BuildStore(val, alloca);
 			return;
@@ -3247,9 +3189,9 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			var valTy = GetExprType(heapInit);
 
 			var alloca = _builder.BuildAlloca(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), varDecl.Name);
-			_locals[varDecl.Name] = alloca;
-			_variableTypes[varDecl.Name] = valTy;
-			_heapAllocatedVars.Add(varDecl.Name);
+			_function.Locals[varDecl.Name] = alloca;
+			_function.VariableTypes[varDecl.Name] = valTy;
+			_function.HeapAllocatedVars.Add(varDecl.Name);
 
 			_builder.BuildStore(val, alloca);
 			return;
@@ -3260,9 +3202,9 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			var valTy = GetExprType(heapArrInit);
 
 			var alloca = _builder.BuildAlloca(GetLLVMType(valTy), varDecl.Name);
-			_locals[varDecl.Name] = alloca;
-			_variableTypes[varDecl.Name] = valTy;
-			_heapAllocatedVars.Add(varDecl.Name); // Register for RAII cleanup!
+			_function.Locals[varDecl.Name] = alloca;
+			_function.VariableTypes[varDecl.Name] = valTy;
+			_function.HeapAllocatedVars.Add(varDecl.Name); // Register for RAII cleanup!
 
 			_builder.BuildStore(val, alloca);
 			return;
@@ -3272,8 +3214,8 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		{
 			var llvmType = GetLLVMType(typeSymbol);
 			var alloca = _builder.BuildAlloca(llvmType, varDecl.Name);
-			_locals[varDecl.Name] = alloca;
-			_variableTypes[varDecl.Name] = typeSymbol;
+			_function.Locals[varDecl.Name] = alloca;
+			_function.VariableTypes[varDecl.Name] = typeSymbol;
 
 			// Panic-safe zero-ing: a ResourceMove-style union local is pre-set to None so that if
 			// a panic occurs while its constructor/initializer is still running, the unwinder (and
@@ -3356,13 +3298,13 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		{
 			// Type Inference
 			var valTy = GetExprType(varDecl.Initializer!);
-			_variableTypes[varDecl.Name] = valTy;
+			_function.VariableTypes[varDecl.Name] = valTy;
 
 			if (varDecl.Initializer is CallExpressionSyntax ctorCall && IsConstructorCall(ctorCall, valTy))
 			{
 				var llvmType = GetLLVMType(valTy);
 				var alloca = BuildEntryAlloca(llvmType, varDecl.Name);
-				_locals[varDecl.Name] = alloca;
+				_function.Locals[varDecl.Name] = alloca;
 
 				// Panic-safe zero-ing for Unions initialized via Type Inference
 				if (valTy is UnionTypeSymbol zeroUnion && UnionNeedsTagCheckedCleanup(zeroUnion))
@@ -3384,8 +3326,8 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				if (val.TypeOf.Kind == LLVMTypeKind.LLVMPointerTypeKind)
 				{
 					// Struct-init/ctor/sret-style expressions already return an alloca pointer:
-					// forward it straight into _locals so later GEPs/loads hit storage.
-					_locals[varDecl.Name] = val;
+					// forward it straight into _function.Locals so later GEPs/loads hit storage.
+					_function.Locals[varDecl.Name] = val;
 				}
 				else
 				{
@@ -3393,7 +3335,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 					// materialize into private storage; field access must GEP off a pointer.
 					var llvmType = GetLLVMType(valTy);
 					var alloca = BuildEntryAlloca(llvmType, varDecl.Name);
-					_locals[varDecl.Name] = alloca;
+					_function.Locals[varDecl.Name] = alloca;
 					_builder.BuildStore(val, alloca);
 				}
 			}
@@ -3402,7 +3344,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				var val = EmitExpression(varDecl.Initializer!);
 				var llvmType = GetLLVMType(valTy);
 				var alloca = BuildEntryAlloca(llvmType, varDecl.Name);
-				_locals[varDecl.Name] = alloca;
+				_function.Locals[varDecl.Name] = alloca;
 				_builder.BuildStore(val, alloca);
 			}
 		}
@@ -3441,10 +3383,10 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		var bodyBlock = currentFunc.AppendBasicBlock(prefix + "whilebody");
 		var endBlock = currentFunc.AppendBasicBlock(prefix + "whileend");
 
-		var ctx = new LoopContext(whileStmt.Label, endBlock, condBlock);
-		_loopContextStack.Push(ctx);
+		var ctx = new LoopCodegenFrame(whileStmt.Label, endBlock, condBlock);
+		_function.LoopContexts.Push(ctx);
 		if (!string.IsNullOrEmpty(whileStmt.Label))
-			_labeledBreakStack.Push(new LabeledBreakContext(whileStmt.Label!, endBlock));
+			_function.LabeledBreaks.Push(new LabeledBreakCodegenFrame(whileStmt.Label!, endBlock));
 
 		_builder.BuildBr(condBlock);
 
@@ -3459,9 +3401,9 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			_builder.BuildBr(condBlock);
 		}
 
-		_loopContextStack.Pop();
+		_function.LoopContexts.Pop();
 		if (!string.IsNullOrEmpty(whileStmt.Label))
-			_labeledBreakStack.Pop();
+			_function.LabeledBreaks.Pop();
 		_builder.PositionAtEnd(endBlock);
 	}
 
@@ -3476,10 +3418,10 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		var incBlock = currentFunc.AppendBasicBlock(prefix + "forinc");
 		var endBlock = currentFunc.AppendBasicBlock(prefix + "forend");
 
-		var ctx = new LoopContext(forStmt.Label, endBlock, incBlock);
-		_loopContextStack.Push(ctx);
+		var ctx = new LoopCodegenFrame(forStmt.Label, endBlock, incBlock);
+		_function.LoopContexts.Push(ctx);
 		if (!string.IsNullOrEmpty(forStmt.Label))
-			_labeledBreakStack.Push(new LabeledBreakContext(forStmt.Label!, endBlock));
+			_function.LabeledBreaks.Push(new LabeledBreakCodegenFrame(forStmt.Label!, endBlock));
 
 		_builder.BuildBr(condBlock);
 
@@ -3494,9 +3436,9 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			_builder.BuildBr(incBlock);
 		}
 
-		_loopContextStack.Pop();
+		_function.LoopContexts.Pop();
 		if (!string.IsNullOrEmpty(forStmt.Label))
-			_labeledBreakStack.Pop();
+			_function.LabeledBreaks.Pop();
 
 		_builder.PositionAtEnd(incBlock);
 		EmitExpression(forStmt.Increment);
@@ -3541,18 +3483,18 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 		var itemSlotTy = fe.IsReferenceBinding ? LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0) : GetLLVMType(itemType);
 		var itemAlloca = BuildEntryAlloca(itemSlotTy, fe.ItemName);
-		_locals[fe.ItemName] = itemAlloca;
-		_variableTypes[fe.ItemName] = fe.IsReferenceBinding ? new PointerTypeSymbol(itemType, isMutable: fe.BindingKind == ForEachVariableKind.RefVar) : itemType;
+		_function.Locals[fe.ItemName] = itemAlloca;
+		_function.VariableTypes[fe.ItemName] = fe.IsReferenceBinding ? new PointerTypeSymbol(itemType, isMutable: fe.BindingKind == ForEachVariableKind.RefVar) : itemType;
 
 		var condBlock = currentFunc.AppendBasicBlock(prefix + "fecond");
 		var bodyBlock = currentFunc.AppendBasicBlock(prefix + "febody");
 		var incBlock = currentFunc.AppendBasicBlock(prefix + "feinc");
 		var endBlock = currentFunc.AppendBasicBlock(prefix + "feend");
 
-		var ctx = new LoopContext(fe.Label, endBlock, incBlock);
-		_loopContextStack.Push(ctx);
+		var ctx = new LoopCodegenFrame(fe.Label, endBlock, incBlock);
+		_function.LoopContexts.Push(ctx);
 		if (!string.IsNullOrEmpty(fe.Label))
-			_labeledBreakStack.Push(new LabeledBreakContext(fe.Label!, endBlock));
+			_function.LabeledBreaks.Push(new LabeledBreakCodegenFrame(fe.Label!, endBlock));
 
 		_builder.BuildBr(condBlock);
 
@@ -3583,9 +3525,9 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			_builder.BuildBr(incBlock);
 		}
 
-		_loopContextStack.Pop();
+		_function.LoopContexts.Pop();
 		if (!string.IsNullOrEmpty(fe.Label))
-			_labeledBreakStack.Pop();
+			_function.LabeledBreaks.Pop();
 
 		_builder.PositionAtEnd(incBlock);
 		var newI = _builder.BuildAdd(iVal, LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1), "__fe_new_i");
@@ -3611,18 +3553,18 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 		var itemSlotTy = fe.IsReferenceBinding ? LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0) : GetLLVMType(itemType);
 		var itemAlloca = BuildEntryAlloca(itemSlotTy, fe.ItemName);
-		_locals[fe.ItemName] = itemAlloca;
-		_variableTypes[fe.ItemName] = fe.IsReferenceBinding ? new PointerTypeSymbol(itemType, isMutable: fe.BindingKind == ForEachVariableKind.RefVar) : itemType;
+		_function.Locals[fe.ItemName] = itemAlloca;
+		_function.VariableTypes[fe.ItemName] = fe.IsReferenceBinding ? new PointerTypeSymbol(itemType, isMutable: fe.BindingKind == ForEachVariableKind.RefVar) : itemType;
 
 		var condBlock = currentFunc.AppendBasicBlock(prefix + "fecond");
 		var bodyBlock = currentFunc.AppendBasicBlock(prefix + "febody");
 		var incBlock = currentFunc.AppendBasicBlock(prefix + "feinc");
 		var endBlock = currentFunc.AppendBasicBlock(prefix + "feend");
 
-		var ctx = new LoopContext(fe.Label, endBlock, incBlock);
-		_loopContextStack.Push(ctx);
+		var ctx = new LoopCodegenFrame(fe.Label, endBlock, incBlock);
+		_function.LoopContexts.Push(ctx);
 		if (!string.IsNullOrEmpty(fe.Label))
-			_labeledBreakStack.Push(new LabeledBreakContext(fe.Label!, endBlock));
+			_function.LabeledBreaks.Push(new LabeledBreakCodegenFrame(fe.Label!, endBlock));
 
 		_builder.BuildBr(condBlock);
 
@@ -3655,9 +3597,9 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			_builder.BuildBr(incBlock);
 		}
 
-		_loopContextStack.Pop();
+		_function.LoopContexts.Pop();
 		if (!string.IsNullOrEmpty(fe.Label))
-			_labeledBreakStack.Pop();
+			_function.LabeledBreaks.Pop();
 
 		_builder.PositionAtEnd(incBlock);
 		var newI = _builder.BuildAdd(iVal, LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1), "__fe_new_i");
@@ -3693,17 +3635,17 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 		var itemSlotTy = fe.IsReferenceBinding ? LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0) : GetLLVMType(itemType);
 		var itemAlloca = BuildEntryAlloca(itemSlotTy, fe.ItemName);
-		_locals[fe.ItemName] = itemAlloca;
-		_variableTypes[fe.ItemName] = fe.IsReferenceBinding ? new PointerTypeSymbol(itemType, isMutable: fe.BindingKind == ForEachVariableKind.RefVar) : itemType;
+		_function.Locals[fe.ItemName] = itemAlloca;
+		_function.VariableTypes[fe.ItemName] = fe.IsReferenceBinding ? new PointerTypeSymbol(itemType, isMutable: fe.BindingKind == ForEachVariableKind.RefVar) : itemType;
 
 		var condBlock = currentFunc.AppendBasicBlock(prefix + "fecond");
 		var bodyBlock = currentFunc.AppendBasicBlock(prefix + "febody");
 		var endBlock = currentFunc.AppendBasicBlock(prefix + "feend");
 
-		var ctx = new LoopContext(fe.Label, endBlock, condBlock);
-		_loopContextStack.Push(ctx);
+		var ctx = new LoopCodegenFrame(fe.Label, endBlock, condBlock);
+		_function.LoopContexts.Push(ctx);
 		if (!string.IsNullOrEmpty(fe.Label))
-			_labeledBreakStack.Push(new LabeledBreakContext(fe.Label!, endBlock));
+			_function.LabeledBreaks.Push(new LabeledBreakCodegenFrame(fe.Label!, endBlock));
 
 		_builder.BuildBr(condBlock);
 
@@ -3737,9 +3679,9 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			_builder.BuildBr(condBlock);
 		}
 
-		_loopContextStack.Pop();
+		_function.LoopContexts.Pop();
 		if (!string.IsNullOrEmpty(fe.Label))
-			_labeledBreakStack.Pop();
+			_function.LabeledBreaks.Pop();
 		_builder.PositionAtEnd(endBlock);
 
 		EmitForEachEnumeratorCleanup(enumeratorAlloca, enumeratorType);
@@ -3773,10 +3715,10 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	private void EmitBreakStatement(BreakStatementSyntax brk)
 	{
 		// A labeled break targets the innermost matching labeled construct (labeled block or
-		// labeled loop) in lexical descent order; both kinds are tracked on _labeledBreakStack.
+		// labeled loop) in lexical descent order; both kinds are tracked on _function.LabeledBreaks.
 		if (brk.TargetLabel is not null)
 		{
-			foreach (var target in _labeledBreakStack)
+			foreach (var target in _function.LabeledBreaks)
 			{
 				if (target.Label == brk.TargetLabel)
 				{
@@ -3789,24 +3731,24 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		// An unlabeled break exits the innermost switch frame first (C-style); otherwise the
 		// nearest loop. With no frame at all the statement was rejected by validation
 		// (CVL1070/CVL1066), so there is nothing meaningful to lower.
-		if (_switchBreakStack.Count > 0)
+		if (_function.SwitchBreaks.Count > 0)
 		{
-			_builder.BuildBr(_switchBreakStack.Peek());
+			_builder.BuildBr(_function.SwitchBreaks.Peek());
 			return;
 		}
 
-		if (_loopContextStack.Count > 0)
-			_builder.BuildBr(_loopContextStack.Peek().BreakBlock);
+		if (_function.LoopContexts.Count > 0)
+			_builder.BuildBr(_function.LoopContexts.Peek().BreakBlock);
 	}
 
 	private void EmitContinueStatement(ContinueStatementSyntax cont)
 	{
-		if (_loopContextStack.Count == 0)
+		if (_function.LoopContexts.Count == 0)
 			return;
 
 		if (cont.Label is not null)
 		{
-			foreach (var ctx in _loopContextStack)
+			foreach (var ctx in _function.LoopContexts)
 			{
 				if (ctx.Label == cont.Label)
 				{
@@ -3816,7 +3758,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			}
 		}
 
-		_builder.BuildBr(_loopContextStack.Peek().ContinueBlock);
+		_builder.BuildBr(_function.LoopContexts.Peek().ContinueBlock);
 	}
 
 	// Coerces an expression value that is a `ref T` into the pointed-to value when it
@@ -3887,11 +3829,11 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 	private LLVMValueRef Load(string name)
 	{
-		if (!_locals.TryGetValue(name, out var ptr))
+		if (!_function.Locals.TryGetValue(name, out var ptr))
 		{
-			if (_locals.TryGetValue("this", out var thisPtr))
+			if (_function.Locals.TryGetValue("this", out var thisPtr))
 			{
-				if (_variableTypes["this"] is PointerTypeSymbol thisPtrTy && thisPtrTy.ReferencedType is EnumTypeSymbol enumSelf)
+				if (_function.VariableTypes["this"] is PointerTypeSymbol thisPtrTy && thisPtrTy.ReferencedType is EnumTypeSymbol enumSelf)
 				{
 					// Unqualified enum variant access inside an extension body:
 					// 'Active' lowers to the variant's compile-time constant.
@@ -3900,7 +3842,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 						return LLVMValueRef.CreateConstInt(GetLLVMType(enumSelf), unchecked((ulong)variant.Value));
 				}
 
-				var thisType = _variableTypes["this"] as PointerTypeSymbol;
+				var thisType = _function.VariableTypes["this"] as PointerTypeSymbol;
 				var structType = thisType!.ReferencedType as StructTypeSymbol;
 				var field = structType?.FindField(name);
 				if (field is not null)
@@ -3922,11 +3864,11 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			throw new InvalidOperationException($"Undefined variable '{name}'");
 		}
 
-		var type = _variableTypes[name];
+		var type = _function.VariableTypes[name];
 
 		// A heap-allocated owning handle read as a whole denotes the value stored in its
 		// heap block (the slot itself only holds the block pointer).
-		if (_heapAllocatedVars.Contains(name) && type is StructTypeSymbol heapStruct)
+		if (_function.HeapAllocatedVars.Contains(name) && type is StructTypeSymbol heapStruct)
 		{
 			var innerTy = GetLLVMType(heapStruct);
 			var blockPtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), ptr, "heap_block_ptr");
@@ -3953,11 +3895,11 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 	private LLVMValueRef EmitBorrowExpression(BorrowExpressionSyntax expr)
 	{
-		if (expr.Expression is IdentifierExpressionSyntax id && _locals.TryGetValue(id.Name, out var ptr))
+		if (expr.Expression is IdentifierExpressionSyntax id && _function.Locals.TryGetValue(id.Name, out var ptr))
 		{
-			var type = _variableTypes[id.Name];
+			var type = _function.VariableTypes[id.Name];
 			var isReference = type is PointerTypeSymbol;
-			var isHeap = _heapAllocatedVars.Contains(id.Name) && type is not SliceTypeSymbol;
+			var isHeap = _function.HeapAllocatedVars.Contains(id.Name) && type is not SliceTypeSymbol;
 
 			if (isReference || isHeap)
 			{
@@ -4082,7 +4024,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 	private TypeSymbol GetExprTypeIdentifier(IdentifierExpressionSyntax id)
 	{
-		if (_variableTypes.TryGetValue(id.Name, out var type))
+		if (_function.VariableTypes.TryGetValue(id.Name, out var type))
 		{
 			// Enum 'this' in an extension body reads as the scalar enum value,
 			// not the injected receiver pointer.
@@ -4092,7 +4034,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		}
 
 		// Unqualified enum variant access inside an enum extension body.
-		if (_variableTypes.TryGetValue("this", out var thisTy)
+		if (_function.VariableTypes.TryGetValue("this", out var thisTy)
 			&& thisTy is PointerTypeSymbol thisPtr
 			&& thisPtr.ReferencedType is EnumTypeSymbol enumSelf
 			&& enumSelf.FindVariant(id.Name) is not null)
@@ -4103,7 +4045,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		// Unqualified struct field access inside a receiver/extension body
 		// (e.g. `ptr` meaning `this.ptr`). Mirror the Load() field lookup so
 		// type inference (pointer arithmetic etc.) sees the real field type.
-		if (_variableTypes.TryGetValue("this", out var thisFieldTy)
+		if (_function.VariableTypes.TryGetValue("this", out var thisFieldTy)
 			&& thisFieldTy is PointerTypeSymbol thisFieldPtr
 			&& thisFieldPtr.ReferencedType is StructTypeSymbol thisFieldStruct
 			&& thisFieldStruct.FindField(id.Name) is { } field)
@@ -4129,7 +4071,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		{
 			var typeName = u.Operator.Substring(1, u.Operator.Length - 2);
 			var result = _bindingContext!.ResolveType(typeName)!;
-			if (result is EnumTypeSymbol castEnum && _unsafeDepth == 0)
+			if (result is EnumTypeSymbol castEnum && _function.UnsafeDepth == 0)
 			{
 				// Mirrors ValidationPass.GetUnaryExpressionType: safe-zone enum casts
 				// from integers produce Option<Enum>; unsafe code gets the raw enum.
@@ -4313,17 +4255,17 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		foreach (var name in variableNames)
 		{
 
-			if (_movedVars.Contains(name) || _disposedVars.Contains(name))
+			if (_function.MovedVars.Contains(name) || _function.DisposedVars.Contains(name))
 				continue;
 
-			var isHeap = _heapAllocatedVars.Contains(name);
+			var isHeap = _function.HeapAllocatedVars.Contains(name);
 			if (isHeap && skipHeapFree)
 				continue;
 
-			_disposedVars.Add(name);
+			_function.DisposedVars.Add(name);
 
-			var ptrAlloc = _locals[name];
-			var type = _variableTypes[name];
+			var ptrAlloc = _function.Locals[name];
+			var type = _function.VariableTypes[name];
 
 			// 1. Call the type's '~T()' destructor ONLY for owned StructTypeSymbol variables. When the
 			//    struct has no destructor of its own, still drop any resource-move fields it
@@ -4333,7 +4275,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				var disposeBaseName = $"{structType.Name}.~{structType.Name}";
 
 				LLVMValueRef thisPtr;
-				if (_heapAllocatedVars.Contains(name))
+				if (_function.HeapAllocatedVars.Contains(name))
 				{
 					thisPtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), ptrAlloc, "this_ptr");
 				}
@@ -4377,7 +4319,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			//    (unbound factory returning a graph handle), the heap blocks are deliberately
 			//    leaked so the self-referential graph stays alive for the caller ('heap-relative
 			//    provenance'). 'skipHeapFree' suppresses only the free, never the destructors.
-			if (_heapAllocatedVars.Contains(name) && !skipHeapFree)
+			if (_function.HeapAllocatedVars.Contains(name) && !skipHeapFree)
 			{
 				LLVMValueRef actualHeapPtr;
 				if (type is SliceTypeSymbol sliceType)
@@ -4773,64 +4715,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	}
 
 	private LLVMTypeRef GetLLVMType(TypeSymbol t)
-	{
-		if (t is null)
-			return LLVMTypeRef.Int32;
-
-		if (t is PointerTypeSymbol)
-			return LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0);
-
-		if (t is RawPointerTypeSymbol rawPtr)
-			return LLVMTypeRef.CreatePointer(GetLLVMType(rawPtr.ElementType), 0);
-
-		if (t is SliceTypeSymbol)
-		{
-			var opaquePtr = LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0);
-			return LLVMTypeRef.CreateStruct(new LLVMTypeRef[] { opaquePtr, LLVMTypeRef.Int32 }, false);
-		}
-
-		if (t is ArrayTypeSymbol arr)
-		{
-			return LLVMTypeRef.CreateArray(GetLLVMType(arr.ElementType), (uint)arr.Size);
-		}
-
-		if (t is UnionTypeSymbol union && union.IsNpoEligible)
-			return LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0);
-
-		if (t is EnumTypeSymbol enumType)
-			return GetLLVMType(enumType.StorageType);
-
-		// A safe delegate is a two-word value: { invoke thunk pointer, context pointer }.
-		// The uniform thunk ABI always receives (void* context, P...) regardless of how the
-		// delegate value was produced (free function, bound method, or closure).
-		if (t is DelegateTypeSymbol)
-		{
-			if (_delegateWordType.Handle == 0)
-				_delegateWordType = LLVMTypeRef.CreateStruct(
-					[LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0)], false);
-			return _delegateWordType;
-		}
-
-		if (t is StructTypeSymbol || t is UnionTypeSymbol)
-		{
-			if (_llvmStructTypes.TryGetValue(t.Name, out var typeRef))
-				return typeRef;
-		}
-
-		return t.Name switch
-		{
-			"void" => LLVMTypeRef.Void,
-			"int" or "uint" => LLVMTypeRef.Int32,
-			"long" or "ulong" or "nint" or "nuint" => LLVMTypeRef.Int64,
-			"short" or "ushort" => LLVMTypeRef.Int16,
-			"byte" or "sbyte" or "char" => LLVMTypeRef.Int8,
-			"float" => LLVMTypeRef.Float,
-			"double" => LLVMTypeRef.Double,
-			"bool" => LLVMTypeRef.Int1,
-			"string" or "ptr" => LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0),
-			_ => _llvmStructTypes.TryGetValue(t.Name, out var foundType) ? foundType : LLVMTypeRef.Int32
-		};
-	}
+		=> _types.Lower(t);
 
 	/// <summary>
 	/// Returns the C-ABI-correct LLVM type for a Cvolo type crossing a foreign boundary.
@@ -4848,12 +4733,12 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	{
 		if (expr is IdentifierExpressionSyntax id)
 		{
-			if (!_locals.TryGetValue(id.Name, out var structPtr))
+			if (!_function.Locals.TryGetValue(id.Name, out var structPtr))
 			{
 				// If the identifier is a field/variant of 'this' in an extension block, resolve its pointer implicitly!
-				if (_locals.TryGetValue("this", out var thisPtr))
+				if (_function.Locals.TryGetValue("this", out var thisPtr))
 				{
-					var thisType = _variableTypes["this"] as PointerTypeSymbol;
+					var thisType = _function.VariableTypes["this"] as PointerTypeSymbol;
 					var refType = thisType!.ReferencedType;
 
 					if (refType is StructTypeSymbol structType)
@@ -4902,9 +4787,9 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				throw new InvalidOperationException($"Undefined variable '{id.Name}'");
 			}
 
-			var type = _variableTypes[id.Name];
+			var type = _function.VariableTypes[id.Name];
 			var isReference = type is PointerTypeSymbol;
-			var isHeap = _heapAllocatedVars.Contains(id.Name) && type is not SliceTypeSymbol;
+			var isHeap = _function.HeapAllocatedVars.Contains(id.Name) && type is not SliceTypeSymbol;
 
 			if (isReference || isHeap)
 			{
@@ -5078,7 +4963,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		{
 			return GetFieldPointer(b.Expression); // Unpack the inner expression pointer recursively
 		}
-		else if (expr is UnaryExpressionSyntax castExpr && castExpr.Operator.StartsWith('(') && castExpr.Operator.EndsWith(')') && _unsafeDepth == 0)
+		else if (expr is UnaryExpressionSyntax castExpr && castExpr.Operator.StartsWith('(') && castExpr.Operator.EndsWith(')') && _function.UnsafeDepth == 0)
 		{
 			// A safe-zone (Enum)integer cast evaluates to Option<Enum>; as a field-pointer
 			// (used by switch over the cast), materialize the tagged-union temporary.
@@ -5146,7 +5031,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 	private LLVMValueRef? GetTbaaTag(StructTypeSymbol structType, int fieldIndex)
 	{
-		if (!_enableTbaa || _unsafeDepth != 0 || !TbaaMetadata.IsScalar(structType.Fields[fieldIndex].Type))
+		if (!_enableTbaa || _function.UnsafeDepth != 0 || !TbaaMetadata.IsScalar(structType.Fields[fieldIndex].Type))
 			return null;
 
 		return Tbaa.GetFieldTag(structType, fieldIndex);
@@ -5860,7 +5745,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		var currentFunc = _builder.InsertBlock.Parent;
 		var endBlock = currentFunc.AppendBasicBlock("sw_end");
 		var nextCheckBlock = _builder.InsertBlock;
-		_switchBreakStack.Push(endBlock);
+		_function.SwitchBreaks.Push(endBlock);
 
 		try
 		{
@@ -5914,7 +5799,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		}
 		finally
 		{
-			_switchBreakStack.Pop();
+			_function.SwitchBreaks.Pop();
 		}
 
 		_builder.PositionAtEnd(nextCheckBlock);
@@ -5931,7 +5816,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		var endBlock = currentFunc.AppendBasicBlock("sw_end");
 		var nextCheckBlock = _builder.InsertBlock;
 		var hasDefault = false;
-		_switchBreakStack.Push(endBlock);
+		_function.SwitchBreaks.Push(endBlock);
 
 		try
 		{
@@ -5973,7 +5858,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		}
 		finally
 		{
-			_switchBreakStack.Pop();
+			_function.SwitchBreaks.Pop();
 		}
 
 		_builder.PositionAtEnd(nextCheckBlock);
@@ -6036,8 +5921,8 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			var varType = isNpo ? field.Type : (isRefTarget ? new PointerTypeSymbol(field.Type, isMutable: isMutableRef) : field.Type);
 
 			var alloca = _builder.BuildAlloca(GetLLVMType(varType), c.VariableName);
-			_locals[c.VariableName] = alloca;
-			_variableTypes[c.VariableName] = varType;
+			_function.Locals[c.VariableName] = alloca;
+			_function.VariableTypes[c.VariableName] = varType;
 
 			if (isNpo)
 			{
