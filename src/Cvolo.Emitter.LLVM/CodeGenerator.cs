@@ -11,6 +11,7 @@ using Cvolo.Core.AST.Statements;
 using Cvolo.Core.Diagnostics;
 using Cvolo.Emitter.LLVM.Codegen;
 using Cvolo.Emitter.LLVM.Codegen.ControlFlow;
+using Cvolo.Emitter.LLVM.Codegen.Emitters;
 using Cvolo.Emitter.LLVM.Codegen.TypeLowering;
 using LLVMSharp.Interop;
 
@@ -18,29 +19,33 @@ namespace Cvolo.Emitter.LLVM;
 
 public sealed class CodeGenerator : IEmitter, IDisposable
 {
-	private readonly LLVMModuleRef _module;
-	private readonly LLVMBuilderRef _builder;
-	private readonly LLVMContextRef _context; // Holds the native LLVM Context
+	private readonly CodegenContext _codegen;
+	private readonly CleanupEmitter _cleanup;
 	private readonly ILLVMOptimizer? _optimizer;
 	private readonly IRVerifier? _irVerifier;
-	private readonly LlvmTypeLowering _types;
 
-	// Metadata Cache Dictionaries
-	private readonly Dictionary<string, LLVMValueRef> _globals = [];
+	// Keep migration aliases local to CodeGenerator so this commit changes ownership,
+	// not hundreds of emission call sites at once.
+	private LLVMModuleRef _module => _codegen.Module;
+	private LLVMBuilderRef _builder => _codegen.Builder;
+	private LLVMContextRef _context => _codegen.LLVMContext;
+	private LlvmTypeLowering _types => _codegen.Types;
+	private Dictionary<string, LLVMValueRef> _globals => _codegen.Globals;
+	private Dictionary<string, LLVMTypeRef> _functionTypes => _codegen.FunctionTypes;
+	private Dictionary<string, LLVMTypeRef> _llvmStructTypes => _codegen.LlvmStructTypes;
+	private Dictionary<string, List<TypeSymbol>> _functionParameterTypes => _codegen.FunctionParameterTypes;
+	private Dictionary<string, TypeSymbol> _functionReturnTypes => _codegen.FunctionReturnTypes;
+	private Dictionary<string, LLVMValueRef> _globalVariables => _codegen.GlobalVariables;
+	private Dictionary<string, TypeSymbol> _globalVariableTypes => _codegen.GlobalVariableTypes;
+	private Dictionary<string, List<string>> _globalShortNames => _codegen.GlobalShortNames;
+	private BindingContext? _bindingContext { get => _codegen.BindingContext; set => _codegen.BindingContext = value; }
+	private CompilationContext? _compilationContext { get => _codegen.CompilationContext; set => _codegen.CompilationContext = value; }
+	private CompilationUnitSyntax? _currentUnit { get => _codegen.CurrentUnit; set => _codegen.CurrentUnit = value; }
+
 	private FunctionCodegenContext _function = new();
-	private readonly Dictionary<string, LLVMTypeRef> _functionTypes = [];
-	private readonly Dictionary<string, LLVMTypeRef> _llvmStructTypes = [];
 	private readonly Dictionary<string, StructDeclarationSyntax> _astStructs = [];
 	private readonly Dictionary<string, ExternDeclarationSyntax> _astExterns = [];
 	private readonly Dictionary<string, ExternBlockFunctionSyntax> _astExternBlockFunctions = [];
-	private readonly Dictionary<string, List<TypeSymbol>> _functionParameterTypes = [];
-	private readonly Dictionary<string, TypeSymbol> _functionReturnTypes = [];
-	private readonly Dictionary<string, LLVMValueRef> _globalVariables = [];
-	private readonly Dictionary<string, TypeSymbol> _globalVariableTypes = [];
-	private readonly Dictionary<string, List<string>> _globalShortNames = [];
-	private BindingContext? _bindingContext;
-	private CompilationContext? _compilationContext; // Renamed to avoid LLVM _context conflict
-	private CompilationUnitSyntax? _currentUnit;
 	private readonly bool _enableTbaa;
 	private TbaaMetadata? _tbaa;
 	private (LLVMTypeRef Type, LLVMValueRef Func)? _llvmTrap;
@@ -64,17 +69,18 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 	public CodeGenerator(string moduleName, TargetLayout targetLayout, ILLVMOptimizer? optimizer = null, IRVerifier? irVerifier = null, bool enableTbaa = true, bool checkedFfiBounds = false, IReadOnlySet<string>? definedGlobalNames = null)
 	{
-		_context = LLVMContextRef.Global;
-		_module = _context.CreateModuleWithName(moduleName);
-		_builder = _context.CreateBuilder();
+		var llvmContext = LLVMContextRef.Global;
+		var module = llvmContext.CreateModuleWithName(moduleName);
+		var builder = llvmContext.CreateBuilder();
+		targetLayout.Apply(module, LLVMTargetRef.DefaultTriple);
+		_codegen = new CodegenContext(llvmContext, module, builder, targetLayout);
+		_cleanup = new CleanupEmitter(_codegen);
+
 		_optimizer = optimizer;
 		_irVerifier = irVerifier;
-		_types = new LlvmTypeLowering(_llvmStructTypes);
 		_enableTbaa = enableTbaa;
 		_checkedFfiBounds = checkedFfiBounds;
 		_definedGlobalNames = definedGlobalNames;
-
-		targetLayout.Apply(_module, LLVMTargetRef.DefaultTriple);
 	}
 
 	public LLVMModuleRef Module => _module;
@@ -935,7 +941,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 		if (func.ReturnType == "void" && !EndsWithReturn(func.Body))
 		{
-			EmitCleanup([.. _function.Locals.Keys], skipHeapFree: _function.OwnershipTransferFunction);
+			_cleanup.EmitScopeCleanup(_function, [.. _function.Locals.Keys], skipHeapFree: _function.OwnershipTransferFunction);
 			_builder.BuildRetVoid();
 		}
 
@@ -962,7 +968,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 		if (!EndsWithReturn(block))
 		{
-			EmitCleanup(blockVars, skipHeapFree: _function.OwnershipTransferFunction);
+			_cleanup.EmitScopeCleanup(_function, blockVars, skipHeapFree: _function.OwnershipTransferFunction);
 		}
 	}
 
@@ -981,6 +987,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		{
 			_builder.BuildBr(endBlock);
 		}
+
 		_function.LabeledBreaks.Pop();
 
 		_builder.PositionAtEnd(endBlock);
@@ -1064,7 +1071,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 				var loadedNone = _builder.BuildLoad2(unionLayout, tempAlloc, "loaded_none");
 
-				EmitCleanup([.. _function.Locals.Keys], skipHeapFree: _function.OwnershipTransferFunction);
+				_cleanup.EmitScopeCleanup(_function, [.. _function.Locals.Keys], skipHeapFree: _function.OwnershipTransferFunction);
 				_builder.BuildRet(loadedNone);
 				return;
 			}
@@ -1092,7 +1099,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				materialized = _builder.BuildLoad2(layout, value, "struct_ret_val");
 			}
 
-			EmitCleanup([.. _function.Locals.Keys], skipHeapFree: _function.OwnershipTransferFunction);
+			_cleanup.EmitScopeCleanup(_function, [.. _function.Locals.Keys], skipHeapFree: _function.OwnershipTransferFunction);
 
 			if (materialized is not null)
 			{
@@ -1114,7 +1121,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		}
 		else
 		{
-			EmitCleanup([.. _function.Locals.Keys], skipHeapFree: _function.OwnershipTransferFunction);
+			_cleanup.EmitScopeCleanup(_function, [.. _function.Locals.Keys], skipHeapFree: _function.OwnershipTransferFunction);
 			_builder.BuildRetVoid();
 		}
 	}
@@ -1882,7 +1889,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				&& !_function.DisposedVars.Contains(moveArg.Name)
 				&& _function.VariableTypes.TryGetValue(moveArg.Name, out var srcTy)
 				&& srcTy is UnionTypeSymbol srcUnion
-				&& UnionNeedsTagCheckedCleanup(srcUnion)
+				&& _cleanup.UnionNeedsTagCheckedCleanup(srcUnion)
 				&& paramTy is UnionTypeSymbol paramUnion && paramUnion.Name == srcUnion.Name)
 			{
 				_function.MovedVars.Add(moveArg.Name);
@@ -2714,12 +2721,12 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				else
 				{
 					if (type is UnionTypeSymbol reassignedUnion
-						&& UnionNeedsTagCheckedCleanup(reassignedUnion)
+						&& _cleanup.UnionNeedsTagCheckedCleanup(reassignedUnion)
 						&& bin.Right is StructInitializationExpressionSyntax
 						&& !_function.MovedVars.Contains(id.Name)
 						&& !_function.DisposedVars.Contains(id.Name))
 					{
-						EmitUnionTagCheckedCleanup(id.Name, ptr, reassignedUnion);
+						_cleanup.EmitUnionTagCheckedCleanup(id.Name, ptr, reassignedUnion);
 					}
 
 					if (type is UnionTypeSymbol && bin.Right is StructInitializationExpressionSyntax reinit)
@@ -2815,10 +2822,10 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			}
 
 			if (fieldType is UnionTypeSymbol fieldUnion
-				&& UnionNeedsTagCheckedCleanup(fieldUnion)
+				&& _cleanup.UnionNeedsTagCheckedCleanup(fieldUnion)
 				&& bin.Right is StructInitializationExpressionSyntax)
 			{
-				EmitUnionTagCheckedCleanup(m.MemberName, fieldPtr, fieldUnion);
+				_cleanup.EmitUnionTagCheckedCleanup(m.MemberName, fieldPtr, fieldUnion);
 			}
 
 			if (fieldType is UnionTypeSymbol && bin.Right is StructInitializationExpressionSyntax fieldReinit)
@@ -2840,10 +2847,10 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		{
 			var (elementPtr, elementType, _, tbaa) = GetFieldPointer(idx);
 			if (elementType is UnionTypeSymbol elemUnion
-				&& UnionNeedsTagCheckedCleanup(elemUnion)
+				&& _cleanup.UnionNeedsTagCheckedCleanup(elemUnion)
 				&& bin.Right is StructInitializationExpressionSyntax)
 			{
-				EmitUnionTagCheckedCleanup("elem", elementPtr, elemUnion);
+				_cleanup.EmitUnionTagCheckedCleanup("elem", elementPtr, elemUnion);
 			}
 
 			if (elementType is UnionTypeSymbol && bin.Right is StructInitializationExpressionSyntax elemReinit)
@@ -2867,10 +2874,10 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			var targetType = GetExprType(bin.Left);
 
 			if (targetType is UnionTypeSymbol elemUnion
-				&& UnionNeedsTagCheckedCleanup(elemUnion)
+				&& _cleanup.UnionNeedsTagCheckedCleanup(elemUnion)
 				&& bin.Right is StructInitializationExpressionSyntax)
 			{
-				EmitUnionTagCheckedCleanup("deref", targetPtr, elemUnion);
+				_cleanup.EmitUnionTagCheckedCleanup("deref", targetPtr, elemUnion);
 			}
 
 			if (targetType is UnionTypeSymbol && bin.Right is StructInitializationExpressionSyntax elemReinit)
@@ -2898,10 +2905,10 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			var targetPtr = EmitCallExpression(callLeft);
 
 			if (targetType is UnionTypeSymbol elemUnion
-				&& UnionNeedsTagCheckedCleanup(elemUnion)
+				&& _cleanup.UnionNeedsTagCheckedCleanup(elemUnion)
 				&& bin.Right is StructInitializationExpressionSyntax)
 			{
-				EmitUnionTagCheckedCleanup("call_ret", targetPtr, elemUnion);
+				_cleanup.EmitUnionTagCheckedCleanup("call_ret", targetPtr, elemUnion);
 			}
 
 			if (targetType is UnionTypeSymbol && bin.Right is StructInitializationExpressionSyntax elemReinit)
@@ -3220,7 +3227,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			// Panic-safe zero-ing: a ResourceMove-style union local is pre-set to None so that if
 			// a panic occurs while its constructor/initializer is still running, the unwinder (and
 			// any tag-checked destructor) observes a None slot instead of uninitialized garbage.
-			if (typeSymbol is UnionTypeSymbol zeroUnion && UnionNeedsTagCheckedCleanup(zeroUnion))
+			if (typeSymbol is UnionTypeSymbol zeroUnion && _cleanup.UnionNeedsTagCheckedCleanup(zeroUnion))
 			{
 				var zeroNone = zeroUnion.NoneVariant is not null ? GetFieldIndex(zeroUnion, zeroUnion.NoneVariant.Name) : 0;
 				var zeroTagPtr = _builder.BuildGEP2(llvmType, alloca, new LLVMValueRef[] {
@@ -3307,7 +3314,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				_function.Locals[varDecl.Name] = alloca;
 
 				// Panic-safe zero-ing for Unions initialized via Type Inference
-				if (valTy is UnionTypeSymbol zeroUnion && UnionNeedsTagCheckedCleanup(zeroUnion))
+				if (valTy is UnionTypeSymbol zeroUnion && _cleanup.UnionNeedsTagCheckedCleanup(zeroUnion))
 				{
 					var zeroNone = zeroUnion.NoneVariant is not null ? GetFieldIndex(zeroUnion, zeroUnion.NoneVariant.Name) : 0;
 					var zeroTagPtr = _builder.BuildGEP2(llvmType, alloca, new LLVMValueRef[] {
@@ -3684,32 +3691,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			_function.LabeledBreaks.Pop();
 		_builder.PositionAtEnd(endBlock);
 
-		EmitForEachEnumeratorCleanup(enumeratorAlloca, enumeratorType);
-	}
-
-	/// <summary>
-	/// Deferred destruction of the hidden enumerator after the foreach loop completes
-	/// (normal exit, break, or continue-to-exit). Mirrors the owned-struct path of
-	/// <see cref="EmitCleanup"/>: calls the registered <c>~T()</c> when present, otherwise
-	/// drops any resource-move fields the enumerator transitively owns.
-	/// </summary>
-	private void EmitForEachEnumeratorCleanup(LLVMValueRef enumeratorAlloca, TypeSymbol enumeratorType)
-	{
-		if (enumeratorType is not StructTypeSymbol structType)
-			return;
-
-		var disposeBaseName = $"{structType.Name}.~{structType.Name}";
-		if (_bindingContext!.OverloadedFunctions.TryGetValue(disposeBaseName, out var candidates) && candidates.Count > 0)
-		{
-			var disposeSymbol = candidates[0];
-			var callee = _globals[disposeSymbol.Name];
-			var funcType = _functionTypes[disposeSymbol.Name];
-			_builder.BuildCall2(funcType, callee, new LLVMValueRef[] { enumeratorAlloca }, "");
-		}
-		else
-		{
-			EmitNestedFieldDestruction(enumeratorAlloca, structType, "__fe_enumerator");
-		}
+		_cleanup.EmitForEachEnumeratorCleanup(enumeratorAlloca, enumeratorType);
 	}
 
 	private void EmitBreakStatement(BreakStatementSyntax brk)
@@ -4248,291 +4230,6 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 		return name;
 	}
-
-	private void EmitCleanup(IEnumerable<string> variableNames, bool skipHeapFree = false)
-	{
-
-		foreach (var name in variableNames)
-		{
-
-			if (_function.MovedVars.Contains(name) || _function.DisposedVars.Contains(name))
-				continue;
-
-			var isHeap = _function.HeapAllocatedVars.Contains(name);
-			if (isHeap && skipHeapFree)
-				continue;
-
-			_function.DisposedVars.Add(name);
-
-			var ptrAlloc = _function.Locals[name];
-			var type = _function.VariableTypes[name];
-
-			// 1. Call the type's '~T()' destructor ONLY for owned StructTypeSymbol variables. When the
-			//    struct has no destructor of its own, still drop any resource-move fields it
-			//    transitively owns on scope exit (Memory & Safety spec Â§2).
-			if (type is StructTypeSymbol structType)
-			{
-				var disposeBaseName = $"{structType.Name}.~{structType.Name}";
-
-				LLVMValueRef thisPtr;
-				if (_function.HeapAllocatedVars.Contains(name))
-				{
-					thisPtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), ptrAlloc, "this_ptr");
-				}
-				else
-				{
-					thisPtr = ptrAlloc;
-				}
-
-				if (_bindingContext!.OverloadedFunctions.TryGetValue(disposeBaseName, out var candidates) && candidates.Count > 0)
-				{
-					var disposeSymbol = candidates[0];
-					var callee = _globals[disposeSymbol.Name];
-					var funcType = _functionTypes[disposeSymbol.Name];
-
-					_builder.BuildCall2(funcType, callee, new LLVMValueRef[] { thisPtr }, "");
-				}
-				else
-				{
-					EmitNestedFieldDestruction(thisPtr, structType, name);
-				}
-			}
-
-			// 1b. Tag-checked destructor for ResourceMove unions (Option<T> wrapping a move type):
-			//     run the inner ~T() only on the currently-active (Some) payload variant, with a
-			//     reset-before-drop volatile None store so a panic during ~T() never double-frees.
-			if (type is UnionTypeSymbol unionType)
-			{
-				EmitUnionTagCheckedCleanup(name, ptrAlloc, unionType);
-			}
-
-			// 1c. Reverse loop destructor for static arrays of resource-move element types.
-			//     The Memory & Safety spec (Â§2) requires that every element be destroyed in
-			//     decreasing index order (Length-1 .. 0) before the frame pops. Empty/trivially
-			//     destructible element types emit nothing.
-			if (type is ArrayTypeSymbol arrayType)
-			{
-				EmitArrayDestructorLoop(ptrAlloc, arrayType, name);
-			}
-
-			// 2. Free heap memory if it was heap-allocated. On an ownership-transferring return
-			//    (unbound factory returning a graph handle), the heap blocks are deliberately
-			//    leaked so the self-referential graph stays alive for the caller ('heap-relative
-			//    provenance'). 'skipHeapFree' suppresses only the free, never the destructors.
-			if (_function.HeapAllocatedVars.Contains(name) && !skipHeapFree)
-			{
-				LLVMValueRef actualHeapPtr;
-				if (type is SliceTypeSymbol sliceType)
-				{
-					var sliceLayout = GetLLVMType(sliceType);
-					var ptrField = _builder.BuildGEP2(sliceLayout, ptrAlloc, new LLVMValueRef[] { LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0), LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0) }, "slice_ptr_field");
-					actualHeapPtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), ptrField, "heap_ptr");
-				}
-				else
-				{
-					actualHeapPtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), ptrAlloc, "heap_ptr");
-				}
-
-				var freeFunc = _globals["free"];
-				var freeType = _functionTypes["free"];
-				_builder.BuildCall2(freeType, freeFunc, new LLVMValueRef[] { actualHeapPtr }, "");
-			}
-		}
-	}
-
-	/// <summary>
-	/// True when a union carries at least one dtor-bearing payload variant (i.e. it can own a
-	/// runtime resource that must be released when the active variant is <c>Some</c>). Options
-	/// wrapping references (NPO) have no inner destructor and are naturally excluded.
-	/// </summary>
-	private bool UnionNeedsTagCheckedCleanup(UnionTypeSymbol unionType)
-	{
-		return unionType.Fields.Any(f => !f.IsVoidVariant && TypeNeedsDestruction(f.Type));
-	}
-
-	/// <summary>
-	/// Branching tag-checked destructor for a ResourceMove-style union (e.g. <c>Option&lt;T&gt;</c>
-	/// wrapping a move type). Loads the active variant tag and, only for a payload variant whose
-	/// <c>~T()</c> is registered, resets the slot to <c>None</c> (reset-before-drop, volatile) and
-	/// invokes the inner destructor on the payload. A panic inside <c>~T()</c> therefore reads a
-	/// <c>None</c> slot and cannot double-free.
-	/// </summary>
-	private void EmitUnionTagCheckedCleanup(string name, LLVMValueRef ptrAlloc, UnionTypeSymbol unionType)
-	{
-		var dropped = unionType.Fields
-			.Where(f => !f.IsVoidVariant)
-			.Select(f => (Field: f, Index: GetFieldIndex(unionType, f!.Name)))
-			.Where(t => TypeNeedsDestruction(t.Field.Type))
-			.ToList();
-
-		if (dropped.Count == 0)
-			return;
-
-		var unionLayout = GetLLVMType(unionType);
-		var currentFunc = _builder.InsertBlock.Parent;
-
-		// Load the active tag (struct index 0).
-		var tagPtr = _builder.BuildGEP2(unionLayout, ptrAlloc, new LLVMValueRef[] {
-			LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
-			LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0)
-		}, "union_tag_ptr");
-		var tagVal = _builder.BuildLoad2(LLVMTypeRef.Int8, tagPtr, "union_tag_val");
-
-		var noneIndex = unionType.NoneVariant is not null ? GetFieldIndex(unionType, unionType.NoneVariant.Name) : 0;
-		var noneTag = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, (ulong)noneIndex);
-
-		// Forward if/else-if chain over each dtor-bearing variant, rejoining at `after`.
-		var after = currentFunc.AppendBasicBlock($"{name}_cleanup_after");
-
-		for (var i = 0; i < dropped.Count; i++)
-		{
-			var (field, fieldIndex) = dropped[i];
-			var isLast = i == dropped.Count - 1;
-
-			var failBlock = isLast ? after : currentFunc.AppendBasicBlock($"{name}_cleanup_chk_{i + 1}");
-			var dropBlock = currentFunc.AppendBasicBlock($"{name}_cleanup_drop_{i}");
-
-			var isMatch = _builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, tagVal, LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, (ulong)fieldIndex), "tag_match");
-			_builder.BuildCondBr(isMatch, dropBlock, failBlock);
-
-			// Drop body: reset-before-drop (store None tag) THEN call inner ~T() on payload so a
-			// panic during ~T() reads a None slot and cannot double-free. (LLVMSharp exposes no
-			// volatile-store primitive, but DSE cannot elide a store feeding the dtor call.)
-			_builder.PositionAtEnd(dropBlock);
-			_builder.BuildStore(noneTag, tagPtr);
-			var payloadPtr = _builder.BuildGEP2(unionLayout, ptrAlloc, new LLVMValueRef[] {
-				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
-				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1)
-			}, $"{name}_payload");
-			var castPtr = _builder.BuildBitCast(payloadPtr, LLVMTypeRef.CreatePointer(GetLLVMType(field.Type), 0), $"{name}_payload_ptr");
-			EmitElementDestructor(castPtr, field.Type, $"{name}_u");
-			_builder.BuildBr(after);
-
-			_builder.PositionAtEnd(failBlock);
-		}
-
-		_builder.PositionAtEnd(after);
-	}
-
-	/// <summary>
-	/// Emits the reverse-index Array Destructor Loop for a static array of a resource-move
-	/// element type (Memory &amp; Safety spec Â§2). Iterates from Size-1 down to 0, destroying
-	/// each element in place before re-joining the fall-through. Emits nothing when the
-	/// element type carries no destructor obligation.
-	/// </summary>
-	private void EmitArrayDestructorLoop(LLVMValueRef ptrAlloc, ArrayTypeSymbol arrayType, string name)
-	{
-		if (!TypeNeedsDestruction(arrayType.ElementType))
-		{
-			return;
-		}
-
-		var currentFunc = _builder.InsertBlock.Parent;
-		var arrayLayout = GetLLVMType(arrayType);
-
-		var indexAlloca = _builder.BuildAlloca(LLVMTypeRef.Int32, $"{name}_arr_i");
-		_builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (ulong)Math.Max(0, arrayType.Size - 1)), indexAlloca);
-
-		var condBlock = currentFunc.AppendBasicBlock($"{name}_arr_cond");
-		var bodyBlock = currentFunc.AppendBasicBlock($"{name}_arr_body");
-		var endBlock = currentFunc.AppendBasicBlock($"{name}_arr_end");
-
-		_builder.BuildBr(condBlock);
-
-		_builder.PositionAtEnd(condBlock);
-		var iVal = _builder.BuildLoad2(LLVMTypeRef.Int32, indexAlloca, $"{name}_arr_i_val");
-		var zero = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0);
-		var cond = _builder.BuildICmp(LLVMIntPredicate.LLVMIntSGE, iVal, zero, $"{name}_arr_cond");
-		_builder.BuildCondBr(cond, bodyBlock, endBlock);
-
-		_builder.PositionAtEnd(bodyBlock);
-		var elementPtr = _builder.BuildGEP2(arrayLayout, ptrAlloc, new LLVMValueRef[] {
-			LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
-			iVal
-		}, $"{name}_arr_elem");
-		EmitElementDestructor(elementPtr, arrayType.ElementType, name);
-		var next = _builder.BuildSub(iVal, LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1), $"{name}_arr_dec");
-		_builder.BuildStore(next, indexAlloca);
-		_builder.BuildBr(condBlock);
-
-		_builder.PositionAtEnd(endBlock);
-	}
-
-	/// <summary>
-	/// Emits the in-place destructor for a single value held at <paramref name="valuePtr"/>, based
-	/// on its type. Supports structs with their own destructor, tag-checked unions wrapping a move
-	/// type, and nested static arrays.
-	/// </summary>
-	private void EmitElementDestructor(LLVMValueRef valuePtr, TypeSymbol type, string name)
-	{
-		switch (type)
-		{
-			case StructTypeSymbol structType:
-				var disposeBase = $"{structType.Name}.~{structType.Name}";
-				if (_bindingContext!.OverloadedFunctions.TryGetValue(disposeBase, out var disposeSymbols))
-				{
-					var disposeSymbol = disposeSymbols.First();
-					var disposeCallee = _globals[disposeSymbol.Name];
-					var disposeType = _functionTypes[disposeSymbol.Name];
-					_builder.BuildCall2(disposeType, disposeCallee, new LLVMValueRef[] { valuePtr }, "");
-				}
-				else
-				{
-					EmitNestedFieldDestruction(valuePtr, structType, name);
-				}
-				return;
-
-			case UnionTypeSymbol unionType:
-				if (UnionNeedsTagCheckedCleanup(unionType))
-				{
-					EmitUnionTagCheckedCleanup(name, valuePtr, unionType);
-				}
-				return;
-
-			case ArrayTypeSymbol arrayType:
-				EmitArrayDestructorLoop(valuePtr, arrayType, name);
-				return;
-		}
-	}
-
-	/// <summary>
-	/// Drops every resource-move field of a struct that lacks its own destructor, in declaration
-	/// order, so a struct-without-a-dtor still releases the runtime resources it transitively owns
-	/// on scope exit (Memory & Safety spec Â§2). Fields that need no destruction are skipped.
-	/// </summary>
-	private void EmitNestedFieldDestruction(LLVMValueRef valuePtr, StructTypeSymbol structType, string name)
-	{
-		var structLayout = GetLLVMType(structType);
-		foreach (var field in structType.Fields)
-		{
-			if (!TypeNeedsDestruction(field.Type))
-				continue;
-
-			var fieldPtr = _builder.BuildGEP2(structLayout, valuePtr, new LLVMValueRef[] {
-				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
-				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (ulong)GetFieldIndex(structType, field.Name))
-			}, $"{name}_f_{field.Name}");
-			EmitElementDestructor(fieldPtr, field.Type, name);
-		}
-	}
-
-	/// <summary>
-	/// Whether a type carries any destructor obligation: a struct with its own destructor (or,
-	/// lacking one, any transitively owned resource-move field), a union whose active payload
-	/// variant may need dropping, or a static array whose element type needs destruction. Linear
-	/// elements carry no obligation and are excluded.
-	/// </summary>
-	private bool TypeNeedsDestruction(TypeSymbol type) => type switch
-	{
-		// A struct needs destruction if it has its own destructor, or (lacking one) it transitively
-		// embeds a resource-move field that must be dropped on scope exit (Memory & Safety spec Â§2).
-		StructTypeSymbol structType =>
-			_bindingContext!.OverloadedFunctions.ContainsKey($"{structType.Name}.~{structType.Name}")
-			|| structType.Fields.Any(f => TypeNeedsDestruction(f.Type)),
-		UnionTypeSymbol unionType => UnionNeedsTagCheckedCleanup(unionType),
-		ArrayTypeSymbol arrayType => TypeNeedsDestruction(arrayType.ElementType),
-		_ => false
-	};
 
 	private void InjectBoundsCheck(IndexExpressionSyntax idx, LLVMValueRef indexVal, LLVMValueRef limitVal)
 	{
@@ -5943,7 +5640,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				// By-value switch over a ResourceMove-style union moves the payload into the case
 				// binding (the sole owner now); reset the source slot to None so its own tag-checked
 				// cleanup cannot drop the same resource a second time.
-				if (UnionNeedsTagCheckedCleanup(unionTypeSym!))
+				if (_cleanup.UnionNeedsTagCheckedCleanup(unionTypeSym!))
 				{
 					var srcLayout = GetLLVMType(unionType);
 					var srcTagPtr = _builder.BuildGEP2(srcLayout, targetVal, new LLVMValueRef[] {
