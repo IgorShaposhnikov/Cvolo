@@ -21,6 +21,7 @@ internal sealed class FunctionBodyValidator(
 	BindingContext context,
 	ValidationContext validation,
 	StatementValidator statements,
+	IntrinsicValidator intrinsics,
 	Action<TextSpan, TypeSymbol?, string> validateGenericVisibilityLeak,
 	Func<ExpressionSyntax, string?> getBaseIdentifierName)
 {
@@ -48,8 +49,7 @@ internal sealed class FunctionBodyValidator(
 			if (context.CurrentUnit is not null && context.ExternalPackageUnits.Contains(context.CurrentUnit))
 				return;
 
-			var hasIntrinsic = func.Attributes.Any(a => a.Name is "Intrinsic" or "System.Intrinsic" or "IntrinsicAttribute");
-			if (!hasIntrinsic)
+			if (!intrinsics.IsIntrinsicDeclaration(func))
 			{
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
 				context.Diagnostics.Report(currentFileContext, func.NameSpan, $"Function '{func.Name}' must declare a body unless decorated with '[Intrinsic]'.");

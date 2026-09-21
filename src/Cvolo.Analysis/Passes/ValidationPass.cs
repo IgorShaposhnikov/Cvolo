@@ -24,6 +24,22 @@ public sealed class ValidationPass(BindingContext context)
 	/// <summary>Shared callable-target resolver for ordinary, synthetic enum, and delegate-value calls.</summary>
 	private CallResolver Calls => _callResolver ??= new CallResolver(context, Overloads);
 
+	private InlineAsmValidator? _inlineAsmValidator;
+	/// <summary>Shared inline-assembly semantic validator.</summary>
+	private InlineAsmValidator InlineAsm => _inlineAsmValidator ??= new InlineAsmValidator(
+		context,
+		_validation,
+		CheckExpression,
+		GetExpressionType);
+
+	private IntrinsicValidator? _intrinsicValidator;
+	/// <summary>Shared compiler-intrinsic declaration and expression validator.</summary>
+	private IntrinsicValidator Intrinsics => _intrinsicValidator ??= new IntrinsicValidator(
+		context,
+		CheckExpression,
+		GetExpressionType,
+		GetBaseIdentifierName);
+
 	private ExpressionValidator? _expressionValidator;
 	/// <summary>Shared expression semantic validator used by the single validation traversal.</summary>
 	private ExpressionValidator Expressions => _expressionValidator ??= new ExpressionValidator(
@@ -32,6 +48,8 @@ public sealed class ValidationPass(BindingContext context)
 		Classification,
 		Overloads,
 		Calls,
+		InlineAsm,
+		Intrinsics,
 		CheckBlock,
 		ResolveFunctionTemplateName,
 		InstantiateGenericFunction,
@@ -72,6 +90,7 @@ public sealed class ValidationPass(BindingContext context)
 		context,
 		_validation,
 		Statements,
+		Intrinsics,
 		CheckGenericVisibilityLeak,
 		GetBaseIdentifierName);
 

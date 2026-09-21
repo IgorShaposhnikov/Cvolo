@@ -18,8 +18,8 @@ namespace Cvolo.Analysis.Passes.Validation;
 /// </summary>
 /// <remarks>
 /// The validator owns expression dispatch, expression typing, aggregate and borrow checks, target-typed
-/// The validator owns expression dispatch, expression typing, aggregate and borrow checks, target-typed
-/// delegate values, casts, inline assembly, and expression-specific diagnostics. Generic/interface/protocol
+/// delegate values, casts, and expression-specific diagnostics. Inline assembly and compiler intrinsics are
+/// delegated to dedicated validators. Generic/interface/protocol
 /// monomorphization and block traversal remain orchestration responsibilities supplied through callbacks so
 /// this service does not create a second AST pass or depend on <see cref="ValidationPass"/>.
 /// </remarks>
@@ -29,6 +29,8 @@ internal sealed class ExpressionValidator(
 	ClassificationAnalyzer classification,
 	OverloadResolver overloads,
 	CallResolver calls,
+	InlineAsmValidator inlineAsm,
+	IntrinsicValidator intrinsics,
 	Action<BlockStatementSyntax?, SymbolTable, FunctionDeclarationSyntax> validateBlock,
 	Func<string, SymbolTable, string?> resolveFunctionTemplateName,
 	Func<FunctionDeclarationSyntax, List<TypeSymbol>, SymbolTable, FunctionSymbol> instantiateGenericFunction,
@@ -42,28 +44,8 @@ internal sealed class ExpressionValidator(
 	private ClassificationAnalyzer Classification => classification;
 	private OverloadResolver Overloads => overloads;
 	private CallResolver Calls => calls;
-
-	/// <summary>
-	/// Register and machine-state names accepted by the existing inline-assembly clobber validation.
-	/// </summary>
-	private static readonly HashSet<string> ValidClobberRegisters = new(StringComparer.Ordinal)
-	{
-		// x86_64 GPRs (r15 and its sub-registers are intentionally excluded: the
-		// inline-assembly spec corpus treats "r15" as an invalid clobber register).
-		"rax", "rbx", "rcx", "rdx", "rsi", "rdi", "rbp", "rsp",
-		"r8", "r9", "r10", "r11", "r12", "r13", "r14",
-		"eax", "ebx", "ecx", "edx", "esi", "edi", "ebp", "esp",
-		"r8d", "r9d", "r10d", "r11d", "r12d", "r13d", "r14d",
-		"ax", "bx", "cx", "dx", "si", "di", "bp", "sp",
-		"r8w", "r9w", "r10w", "r11w", "r12w", "r13w", "r14w",
-		"al", "bl", "cl", "dl", "sil", "dil", "bpl", "spl",
-		"r8b", "r9b", "r10b", "r11b", "r12b", "r13b", "r14b",
-		"xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7",
-		"xmm8", "xmm9", "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15",
-		"mm0", "mm1", "mm2", "mm3", "mm4", "mm5", "mm6", "mm7",
-		"st0", "st1", "st2", "st3", "st4", "st5", "st6", "st7",
-		"flags", "eflags", "memory", "cc", "dirflag", "fpcw", "fpsw", "fpcr",
-	};
+	private InlineAsmValidator InlineAsm => inlineAsm;
+	private IntrinsicValidator Intrinsics => intrinsics;
 
 	/// <summary>Delegates lambda block validation back to the single validation traversal.</summary>
 	private void CheckBlock(BlockStatementSyntax? block, SymbolTable scope, FunctionDeclarationSyntax currentFunction)
@@ -411,13 +393,11 @@ internal sealed class ExpressionValidator(
 								CheckTargetTypedLambda(assignLambda, assigneeDelegate, scope);
 								break;
 							}
-
 							if (bin.Right is IdentifierExpressionSyntax assignGroupId && !Calls.IsKnownVariable(assignGroupId, scope) && Overloads.HasCandidates(assignGroupId.Name))
 							{
 								CheckFunctionGroupConversion(assignGroupId, assigneeDelegate, scope);
 								break;
 							}
-
 							if (bin.Right is MemberAccessExpressionSyntax assignGroupMa && IsMethodGroupReference(assignGroupMa, scope))
 							{
 								CheckFunctionGroupConversion(assignGroupMa, assigneeDelegate, scope);
@@ -486,13 +466,13 @@ internal sealed class ExpressionValidator(
 					break;
 				}
 			case AsmExpressionSyntax asmExpr:
-				CheckAsmExpression(asmExpr, scope);
+				InlineAsm.Validate(asmExpr, scope);
 				break;
 			case NameofExpressionSyntax nameofExpr:
-				CheckNameofExpression(nameofExpr, scope);
+				Intrinsics.ValidateNameof(nameofExpr, scope);
 				break;
 			case TypeofExpressionSyntax typeofExpr:
-				CheckTypeofExpression(typeofExpr, scope);
+				Intrinsics.ValidateTypeof(typeofExpr);
 				break;
 			case UnaryExpressionSyntax unary:
 				Check(unary.Operand, scope);
@@ -514,7 +494,6 @@ internal sealed class ExpressionValidator(
 						"Lambda requires an expected delegate type.",
 						DiagnosticIds.LambdaRequiresExpectedDelegateType);
 				}
-
 				break;
 			case DefaultExpressionSyntax defaultExpr:
 				{
@@ -1078,7 +1057,7 @@ internal sealed class ExpressionValidator(
 			VoidLiteralExpressionSyntax => TypeSymbol.Void,
 			DefaultExpressionSyntax d => context.ResolveType(d.TypeName),
 			UnaryExpressionSyntax unary => GetUnaryExpressionType(unary, scope),
-			AsmExpressionSyntax asm => GetAsmExpressionType(asm, scope),
+			AsmExpressionSyntax asm => InlineAsm.GetResultType(asm, scope),
 			NameofExpressionSyntax => TypeSymbol.String,
 			TypeofExpressionSyntax => context.ResolveType("System.Type"),
 			IsPatternExpressionSyntax => TypeSymbol.Bool,
@@ -1326,17 +1305,6 @@ internal sealed class ExpressionValidator(
 		return left is EnumTypeSymbol ? left : right is EnumTypeSymbol ? right : null;
 	}
 
-	/// <summary>
-	/// Returns the semantic result type of an inline assembly expression.
-	/// </summary>
-	private TypeSymbol? GetAsmExpressionType(AsmExpressionSyntax asm, SymbolTable scope)
-	{
-		if (asm.ResultType is not null)
-			return context.ResolveType(asm.ResultType);
-
-		var output = asm.Operands.FirstOrDefault(o => o.IsOutput);
-		return output is not null ? GetType(output.Expression, scope) : TypeSymbol.Void;
-	}
 
 	/// <summary>
 	/// Returns the root identifier of a nested member or borrow expression when present.
@@ -1456,227 +1424,6 @@ internal sealed class ExpressionValidator(
 				IsConstantStringExpression(bin.Left) && IsConstantStringExpression(bin.Right),
 			_ => false,
 		};
-	}
-
-	/// <summary>
-	/// Returns the statically foldable name represented by a nameof argument.
-	/// </summary>
-	private static string? GetNameofFoldedName(ExpressionSyntax expr) => expr switch
-	{
-		IdentifierExpressionSyntax id => id.Name,
-		MemberAccessExpressionSyntax m => m.MemberName,
-		_ => null,
-	};
-
-	/// <summary>
-	/// Validates a nameof expression and its static or runtime member target.
-	/// </summary>
-	private void CheckNameofExpression(NameofExpressionSyntax nameofExpr, SymbolTable scope)
-	{
-		var currentFileContext = context.FileContexts[context.CurrentUnit!];
-		var argument = nameofExpr.Argument;
-
-		if (GetNameofFoldedName(argument) is null)
-		{
-			context.Diagnostics.Report(currentFileContext, nameofExpr.Span, "Operator `nameof` cannot be applied to an expression with an empty identifier node.", DiagnosticIds.NameofExpressionInvalid);
-			return;
-		}
-
-		// Static/type receiver: `nameof(StructName.Field)` must not bind the base as a variable.
-		if (argument is MemberAccessExpressionSyntax mem
-			&& GetBaseIdentifierName(mem.Expression) is { } baseName
-			&& scope.Lookup(baseName) is not VariableSymbol
-			&& context.ResolveType(baseName) is { } staticType)
-		{
-			if (!TryValidateStaticNameof(staticType, mem))
-			{
-				context.Diagnostics.Report(currentFileContext, mem.Span, $"The name {mem.MemberName} does not exist in the current context. Cannot evaluate `nameof`.", DiagnosticIds.NameofInvalidSymbolError);
-			}
-
-			return;
-		}
-
-		// Bare type name (e.g. `nameof(Point)`): nothing needs instance binding.
-		var isBareTypeName = argument is IdentifierExpressionSyntax bareId
-			&& scope.Lookup(bareId.Name) is not VariableSymbol
-			&& context.ResolveType(bareId.Name) is not null;
-		if (!isBareTypeName)
-			Check(argument, scope);
-
-		if (argument is MemberAccessExpressionSyntax memAccess && GetType(memAccess, scope) is null)
-		{
-			context.Diagnostics.Report(currentFileContext, memAccess.Span, $"The name {memAccess.MemberName} does not exist in the current context. Cannot evaluate `nameof`.", DiagnosticIds.NameofInvalidSymbolError);
-		}
-		else if (argument is IdentifierExpressionSyntax id
-			&& scope.Lookup(id.Name) is not VariableSymbol
-			&& context.ResolveType(id.Name) is null)
-		{
-			context.Diagnostics.Report(currentFileContext, id.Span, $"The name {id.Name} does not exist in the current context. Cannot evaluate `nameof`.", DiagnosticIds.NameofInvalidSymbolError);
-		}
-	}
-
-	/// <summary>
-	/// Validates that a typeof expression names a known semantic type.
-	/// </summary>
-	private void CheckTypeofExpression(TypeofExpressionSyntax typeofExpr, SymbolTable scope)
-	{
-		if (context.ResolveType(typeofExpr.TypeName) is null)
-		{
-			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.Report(currentFileContext, typeofExpr.Span, $"Type {typeofExpr.TypeName} could not be found. Cannot evaluate `typeof`.", DiagnosticIds.TypeofInvalidTypeError);
-		}
-	}
-
-	/// <summary>
-	/// Validates static nameof member paths against a semantic type.
-	/// </summary>
-	private static bool TryValidateStaticNameof(TypeSymbol type, MemberAccessExpressionSyntax mem)
-	{
-		var segments = new List<string>();
-		ExpressionSyntax current = mem;
-		while (current is MemberAccessExpressionSyntax m)
-		{
-			segments.Insert(0, m.MemberName);
-			current = m.Expression;
-		}
-
-		if (current is not IdentifierExpressionSyntax)
-		{
-			return false;
-		}
-
-		var currentType = type;
-		foreach (var segment in segments)
-		{
-			currentType = currentType switch
-			{
-				StructTypeSymbol s => s.FindField(segment)?.Type,
-				UnionTypeSymbol u => u.FindField(segment)?.Type,
-				EnumTypeSymbol e => e.FindVariant(segment) is null ? null : TypeSymbol.Int,
-				_ => null,
-			};
-			if (currentType is null)
-				return false;
-		}
-
-		return true;
-	}
-
-	/// <summary>
-	/// Validates inline assembly operands, constraints, register bindings, and result rules.
-	/// </summary>
-	private void CheckAsmExpression(AsmExpressionSyntax asm, SymbolTable scope)
-	{
-		if (_validation.UnsafeDepth == 0)
-		{
-			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.Report(currentFileContext, asm.Span,
-				"`asm` can only be used inside `unsafe` contexts.", DiagnosticIds.AsmOutsideUnsafeContext);
-		}
-
-		var outputs = asm.Operands.Where(o => o.IsOutput).ToList();
-		if (asm.ResultType is not null && outputs.Count != 1)
-		{
-			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.Report(currentFileContext, asm.Span,
-				"`asm` with result type requires exactly one output operand.", DiagnosticIds.AsmResultRequiresOneOutput);
-		}
-
-		foreach (var operand in asm.Operands)
-		{
-			Check(operand.Expression, scope);
-
-			if (operand.IsOutput && !IsAssignableLValue(operand.Expression, scope))
-			{
-				var currentFileContext = context.FileContexts[context.CurrentUnit!];
-				context.Diagnostics.Report(currentFileContext, operand.Span,
-					"Output operand must be an l-value (assignable).", DiagnosticIds.AsmOutputNotLValue);
-			}
-
-			if (!IsValidConstraint(operand.Constraint))
-			{
-				var currentFileContext = context.FileContexts[context.CurrentUnit!];
-				context.Diagnostics.Report(currentFileContext, operand.Span,
-					$"Invalid constraint `{operand.Constraint}`.", DiagnosticIds.InvalidAsmConstraint);
-			}
-			else if (TryGetFixedRegister(operand.Constraint) is { } fixedReg)
-			{
-				var operandType = GetType(operand.Expression, scope);
-				if (operandType is not null && !IsAsmRegistrable(operandType))
-				{
-					var currentFileContext = context.FileContexts[context.CurrentUnit!];
-					context.Diagnostics.Report(currentFileContext, operand.Span,
-						$"Type mismatch for operand `{operand.Name ?? operand.Constraint}`.", DiagnosticIds.AsmOperandTypeMismatch);
-				}
-			}
-		}
-
-		foreach (var clobber in asm.Clobbers)
-		{
-			if (!ValidClobberRegisters.Contains(clobber))
-			{
-				var currentFileContext = context.FileContexts[context.CurrentUnit!];
-				context.Diagnostics.Report(currentFileContext, asm.Span,
-					$"Invalid clobber register `{clobber}`.", DiagnosticIds.InvalidAsmClobber);
-			}
-		}
-	}
-
-	/// <summary>
-	/// Returns whether an expression is assignable storage under the existing validation rules.
-	/// </summary>
-	private bool IsAssignableLValue(ExpressionSyntax expr, SymbolTable scope)
-	{
-		switch (expr)
-		{
-			case IdentifierExpressionSyntax id:
-				return scope.Lookup(id.Name) is VariableSymbol
-					|| context.ResolveGlobalReference(id.Name, out _) is not null;
-			case MemberAccessExpressionSyntax or IndexExpressionSyntax:
-				return true;
-			case UnaryExpressionSyntax { Operator: "*" }:
-				return true;
-			default:
-				return false;
-		}
-	}
-
-	/// <summary>
-	/// Returns whether a semantic type may be transferred through an inline-assembly register operand.
-	/// </summary>
-	private static bool IsAsmRegistrable(TypeSymbol t)
-	{
-		return t is RawPointerTypeSymbol or SliceTypeSymbol
-			|| TypeSymbol.IsNumericIntegerType(t)
-			|| TypeSymbol.IsFloatingPointType(t)
-			|| t.Equals(TypeSymbol.Bool) || t.Equals(TypeSymbol.Char);
-	}
-
-	/// <summary>
-	/// Returns whether an inline-assembly constraint string uses a supported shape.
-	/// </summary>
-	private static bool IsValidConstraint(string constraint)
-	{
-		if (string.IsNullOrWhiteSpace(constraint))
-			return false;
-
-		var body = constraint.TrimStart('=', '+', '&', '%');
-		if (body.StartsWith('{'))
-			return body.EndsWith('}') && body.Length > 2 && ValidClobberRegisters.Contains(body[1..^1]);
-
-		return body.All(ch => char.IsAsciiLetterOrDigit(ch) || ch is ',' or '.' or '!');
-	}
-
-	/// <summary>
-	/// Extracts a fixed-register name from an inline-assembly constraint when one is present.
-	/// </summary>
-	private static string? TryGetFixedRegister(string constraint)
-	{
-		var body = constraint.TrimStart('=', '+', '&', '%');
-		if (body.StartsWith('{') && body.EndsWith('}') && body.Length > 2)
-			return body[1..^1];
-
-		return null;
 	}
 
 	/// <summary>
