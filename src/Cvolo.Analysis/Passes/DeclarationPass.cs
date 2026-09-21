@@ -1,9 +1,9 @@
+using Cvolo.Analysis.Passes.Declaration;
 using Cvolo.Analysis.Symbols;
 using Cvolo.Analysis.Symbols.Base;
 using Cvolo.Analysis.Symbols.Collections;
 using Cvolo.Analysis.Symbols.FFI;
 using Cvolo.Analysis.Symbols.Structs;
-using Cvolo.Analysis.Passes.Declaration;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
 using Cvolo.Core.AST.Directives;
@@ -19,6 +19,7 @@ public sealed class DeclarationPass(BindingContext context)
 	private readonly TypeDeclarationRegistrar _types = new(context);
 	private readonly ContractHierarchyLinker _contracts = new(context);
 	private readonly EmbedLinker _embeds = new(context);
+	private readonly EmbeddedMethodPromoter _embeddedMethods = new(context);
 	private ClassificationAnalyzer? _classification;
 	private ClassificationAnalyzer Classification => _classification ??= new ClassificationAnalyzer(context);
 	/// <summary>
@@ -130,7 +131,7 @@ public sealed class DeclarationPass(BindingContext context)
 		// Pass 1.5: Promote embedded-type extension methods onto every struct that
 		// embeds them — `w.TakeDamage(20)` on a struct that `embed`s BaseEntity
 		// resolves BaseEntity's extension with the outer struct as `this`.
-		PromoteEmbeddedMethods(units);
+		_embeddedMethods.Promote(units);
 
 		// Pass 2: Enforce the destructor nesting-depth limit (Memory & Safety §2). Run after every
 		// struct symbol (embeds included) is fully materialized so the transitive ownership graph
@@ -326,158 +327,6 @@ public sealed class DeclarationPass(BindingContext context)
 		return 0;
 	}
 
-
-	/// <summary>
-	/// Pass 1.5. For every struct that embeds another type, register carbon copies
-	/// of the embedded type's extension methods as the outer struct's own — the
-	/// body is validated against the outer's flat fields and emitted with the outer
-	/// as `this` (layout prefix offset is zero, so field GEPs stay identical).
-	/// A method the outer already declares wins (collision-rule parity). This makes
-	/// promoted methods satisfy non-nominal protocols implicitly; nominal interface
-	/// markers stay non-transitive because Conformance is only ever filled by
-	/// explicit `extension T : I` blocks.
-	/// </summary>
-	private void PromoteEmbeddedMethods(IEnumerable<CompilationUnitSyntax> units)
-	{
-		var extensionsByType = new Dictionary<string, List<(CompilationUnitSyntax Unit, ExtensionDeclarationSyntax Decl)>>();
-		foreach (var unit in units)
-		{
-			var members = unit.NamespaceDeclaration is not null ? unit.NamespaceDeclaration.Members : unit.Members;
-			foreach (var member in members)
-			{
-				if (member is not ExtensionDeclarationSyntax extDecl)
-					continue;
-				if (context.ResolveType(extDecl.ExtendedTypeName) is not StructTypeSymbol targetType)
-					continue;
-
-				if (!extensionsByType.TryGetValue(targetType.Name, out var list))
-				{
-					list = [];
-					extensionsByType[targetType.Name] = list;
-				}
-
-				list.Add((unit, extDecl));
-			}
-		}
-
-		var promotedAny = new HashSet<string>();
-		foreach (var unit in units)
-		{
-			var members = unit.NamespaceDeclaration is not null ? unit.NamespaceDeclaration.Members : unit.Members;
-			foreach (var member in members)
-			{
-				if (member is not StructDeclarationSyntax outerDecl || outerDecl.EmbeddedType is null)
-					continue;
-
-				var outerName = context.GetMangledName(outerDecl.Name, unit.NamespaceDeclaration?.Name);
-				if (context.StructTypes.TryGetValue(outerName, out var outerSym) && outerSym is StructTypeSymbol outerStruct)
-					PromoteForStruct(outerStruct, unit, extensionsByType, promotedAny);
-			}
-		}
-	}
-
-	private void PromoteForStruct(
-		StructTypeSymbol outerStruct,
-		CompilationUnitSyntax outerUnit,
-		Dictionary<string, List<(CompilationUnitSyntax Unit, ExtensionDeclarationSyntax Decl)>> extensionsByType,
-		HashSet<string> promotedAny)
-	{
-		var chain = new List<StructTypeSymbol>();
-		var cursor = outerStruct.EmbeddedType;
-		while (cursor is not null)
-		{
-			chain.Add(cursor);
-			cursor = cursor.EmbeddedType;
-		}
-
-		if (chain.Count == 0)
-			return;
-
-		if (!promotedAny.Add(outerStruct.Name))
-			return;
-
-		var previousUnit = context.CurrentUnit;
-		var previousNamespace = context.CurrentNamespace;
-		context.CurrentUnit = outerUnit;
-		context.CurrentNamespace = outerUnit.NamespaceDeclaration?.Name;
-
-		var outerBaseNamespace = outerUnit.NamespaceDeclaration?.Name;
-
-		foreach (var baseStruct in chain)
-		{
-			if (!extensionsByType.TryGetValue(baseStruct.Name, out var extList))
-				continue;
-
-			foreach (var (sourceUnit, extDecl) in extList)
-			{
-				foreach (var method in extDecl.Methods.Concat(extDecl.Destructors.Select(static d => d.ToFunctionDeclaration())))
-				{
-					// Resolve the embedded method's explicit parameter types against
-					// its declaring unit's context (namespace-sensitive types).
-					var previousUnit2 = context.CurrentUnit;
-					var previousNamespace2 = context.CurrentNamespace;
-					context.CurrentUnit = sourceUnit;
-					context.CurrentNamespace = sourceUnit.NamespaceDeclaration?.Name;
-
-					var parameters = new List<ParameterSymbol>
-					{
-						new("this", new PointerTypeSymbol(outerStruct, isMutable: false))
-					};
-					var paramOk = true;
-					foreach (var param in method.Parameters)
-					{
-						var paramType = context.ResolveType(param.Type);
-						if (paramType is null)
-						{
-							paramOk = false;
-							break;
-						}
-
-						parameters.Add(new ParameterSymbol(param.Name, paramType));
-					}
-
-					var returnType = context.ResolveType(method.ReturnType);
-					context.CurrentUnit = previousUnit2;
-					context.CurrentNamespace = previousNamespace2;
-					if (!paramOk || returnType is null)
-						continue;
-
-					// Register under the OUTER struct's method key so `w.Method(...)`
-					// resolves through the existing dotted-extension machinery.
-					var baseKey = context.GetMangledName($"{outerStruct.Name}.{method.Name}", outerBaseNamespace);
-					var overloadedName = context.GetOverloadedMangledName(baseKey, parameters.Select(p => p.Type).ToList());
-
-					if (context.Globals.Lookup(overloadedName) is not null)
-						continue; // outer already declares this signature — own method wins
-
-					var newSymbol = new FunctionSymbol(overloadedName, returnType, parameters)
-					{
-						Visibility = method.Visibility,
-						DeclaringUnit = sourceUnit
-					};
-					context.Globals.Declare(newSymbol);
-
-					if (!context.OverloadedFunctions.TryGetValue(baseKey, out var candidates))
-					{
-						candidates = [];
-						context.OverloadedFunctions[baseKey] = candidates;
-					}
-
-					candidates.Add(newSymbol);
-
-					context.SymbolUnits[overloadedName] = outerUnit;
-
-					var copiedDecl = new FunctionDeclarationSyntax(method.Span, method.ReturnType, overloadedName, [], method.Parameters, method.Body, method.Attributes, method.Modifier, visibility: method.Visibility);
-					context.MonomorphizedExtensionDecls.Add(copiedDecl);
-					context.MonomorphizedExtensionNames[copiedDecl] = overloadedName;
-					context.MonomorphizedExtensionExtendedTypes[overloadedName] = outerStruct.Name;
-				}
-			}
-		}
-
-		context.CurrentUnit = previousUnit;
-		context.CurrentNamespace = previousNamespace;
-	}
 
 
 
