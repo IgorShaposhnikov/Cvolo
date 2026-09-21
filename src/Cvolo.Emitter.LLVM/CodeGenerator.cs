@@ -1,6 +1,5 @@
 using Cvolo.Analysis;
 using Cvolo.Analysis.Symbols.Base;
-using Cvolo.Analysis.Symbols.Collections;
 using Cvolo.Analysis.Symbols.Structs;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
@@ -8,7 +7,6 @@ using Cvolo.Core.AST.Expressions;
 using Cvolo.Core.Diagnostics;
 using Cvolo.Emitter.LLVM.Codegen;
 using Cvolo.Emitter.LLVM.Codegen.Emitters;
-using Cvolo.Emitter.LLVM.Codegen.TypeLowering;
 using Cvolo.Emitter.LLVM.Codegen.Values;
 using LLVMSharp.Interop;
 
@@ -25,6 +23,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	private readonly CallEmitter _calls;
 	private readonly DelegateEmitter _delegates;
 	private readonly ValueCoercion _coercion;
+	private readonly ValueLoader _values;
 	private readonly ExpressionTypeResolver _expressionTypes;
 	private readonly StatementEmitter _statements;
 	private readonly FunctionEmitter _functions;
@@ -36,8 +35,6 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	// not hundreds of emission call sites at once.
 	private LLVMModuleRef _module => _codegen.Module;
 	private LLVMBuilderRef _builder => _codegen.Builder;
-	private LlvmTypeLowering _types => _codegen.Types;
-	private Dictionary<string, List<string>> _globalShortNames => _codegen.GlobalShortNames;
 	private BindingContext? _bindingContext { get => _codegen.BindingContext; set => _codegen.BindingContext = value; }
 	private CompilationContext? _compilationContext { get => _codegen.CompilationContext; set => _codegen.CompilationContext = value; }
 	private CompilationUnitSyntax? _currentUnit { get => _codegen.CurrentUnit; set => _codegen.CurrentUnit = value; }
@@ -76,6 +73,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			_expressionTypes,
 			EmitCallForAggregateAddress,
 			enableTbaa);
+		_values = new ValueLoader(_codegen, _aggregates, () => _function);
 		_calls = new CallEmitter(
 			_codegen,
 			_cleanup,
@@ -84,7 +82,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			EmitExpression,
 			_expressionTypes,
 			_coercion,
-			Load,
+			_values,
 			_declarations.ExternDeclarations,
 			_declarations.ExternBlockFunctions);
 		_statements = new StatementEmitter(
@@ -104,8 +102,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			() => _function,
 			function => _function = function,
 			GetFFIType,
-			ResolveGlobalKey,
-			TypeEscapesHeap,
+			_values,
 			(call, thisPointer) => _calls.Emit(call, thisPointer),
 			_statements.EmitBlock,
 			EmitEnumSwitchTrapDefault,
@@ -119,8 +116,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			_statements.EmitBlock,
 			_expressionTypes,
 			_coercion,
-			Load,
-			ResolveGlobalKey);
+			_values);
 		_expressions = new ExpressionEmitter(
 			_codegen,
 			_cleanup,
@@ -131,10 +127,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			_coercion,
 			() => _function,
 			_expressionTypes,
-			Load,
-			ResolveGlobalKey,
-			TypeEscapesHeap,
-			SafeBitCast);
+			_values);
 
 		_optimizer = optimizer;
 		_irVerifier = irVerifier;
@@ -319,32 +312,6 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	}
 
 
-	/// <summary>
-	/// True if the given type (or any type it transitively contains: struct fields, union
-	/// variant payloads, array/slice element types) carries a reference field
-	/// (<see cref="PointerTypeSymbol"/> / <see cref="RawPointerTypeSymbol"/>). Such a type is a
-	/// graph handle that can point back into a function's heap-allocated data.
-	/// </summary>
-	private static bool TypeEscapesHeap(TypeSymbol type)
-	{
-		switch (type)
-		{
-			case PointerTypeSymbol:
-			case RawPointerTypeSymbol:
-				return true;
-			case StructTypeSymbol structType:
-				return structType.Fields.Any(f => TypeEscapesHeap(f.Type));
-			case UnionTypeSymbol unionType:
-				return unionType.Fields.Any(f => TypeEscapesHeap(f.Type));
-			case ArrayTypeSymbol arrayType:
-				return TypeEscapesHeap(arrayType.ElementType);
-			case SliceTypeSymbol sliceType:
-				return TypeEscapesHeap(sliceType.ElementType);
-			default:
-				return false;
-		}
-	}
-
 
 
 
@@ -377,103 +344,6 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		_builder.BuildUnreachable();
 	}
 
-	private string? ResolveGlobalKey(string shortName)
-	{
-		if (!_globalShortNames.TryGetValue(shortName, out var candidates))
-			return null;
-
-		if (candidates.Count == 1)
-			return candidates[0];
-
-		var currentNs = _bindingContext?.CurrentNamespace;
-		if (!string.IsNullOrEmpty(currentNs))
-		{
-			var own = $"{currentNs}.{shortName}";
-			if (candidates.Contains(own))
-				return own;
-		}
-
-		foreach (var ns in _bindingContext?.GetActiveUsings(_bindingContext.CurrentUnit) ?? [])
-		{
-			var viaKey = $"{ns}.{shortName}";
-			if (candidates.Contains(viaKey))
-				return viaKey;
-		}
-
-		return null;
-	}
-
-	private LLVMValueRef Load(string name)
-	{
-		if (!_function.Locals.TryGetValue(name, out var ptr))
-		{
-			if (_function.Locals.TryGetValue("this", out var thisPtr))
-			{
-				if (_function.VariableTypes["this"] is PointerTypeSymbol thisPtrTy && thisPtrTy.ReferencedType is EnumTypeSymbol enumSelf)
-				{
-					// Unqualified enum variant access inside an extension body:
-					// 'Active' lowers to the variant's compile-time constant.
-					var variant = enumSelf.FindVariant(name);
-					if (variant is not null)
-						return LLVMValueRef.CreateConstInt(GetLLVMType(enumSelf), unchecked((ulong)variant.Value));
-				}
-
-				var thisType = _function.VariableTypes["this"] as PointerTypeSymbol;
-				var structType = thisType!.ReferencedType as StructTypeSymbol;
-				var field = structType?.FindField(name);
-				if (field is not null)
-				{
-					var actualThisPtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), thisPtr, "loaded_this_ptr");
-
-					var fieldIndex = _codegen.AggregateLayout.GetFieldIndex(structType, name);
-					var structLayoutTy = GetLLVMType(structType);
-					var zero = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0);
-					var index = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)fieldIndex);
-
-					var fieldPtr = _builder.BuildGEP2(structLayoutTy, actualThisPtr, new LLVMValueRef[] { zero, index }, "this_field_ptr");
-					var thisFieldLoad = _builder.BuildLoad2(GetLLVMType(field.Type), fieldPtr, "this_field_val");
-					_aggregates.ApplyTbaa(_aggregates.GetTbaaTag(structType, fieldIndex), thisFieldLoad);
-					return thisFieldLoad;
-				}
-			}
-
-			throw new InvalidOperationException($"Undefined variable '{name}'");
-		}
-
-		var type = _function.VariableTypes[name];
-
-		// A heap-allocated owning handle read as a whole denotes the value stored in its
-		// heap block (the slot itself only holds the block pointer).
-		if (_function.HeapAllocatedVars.Contains(name) && type is StructTypeSymbol heapStruct)
-		{
-			var innerTy = GetLLVMType(heapStruct);
-			var blockPtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), ptr, "heap_block_ptr");
-			return _builder.BuildLoad2(innerTy, blockPtr, "heap_load_val");
-		}
-
-		var ty = GetLLVMType(type);
-
-		var reg = _builder.BuildLoad2(ty, ptr, "load_val");
-
-		if (type is PointerTypeSymbol ptrType)
-		{
-			var resolvedType = ptrType.ReferencedType;
-			if (resolvedType == TypeSymbol.Int || resolvedType == TypeSymbol.Double || resolvedType == TypeSymbol.Bool || resolvedType == TypeSymbol.Char
-				|| resolvedType is EnumTypeSymbol)
-			{
-				var innerTy = GetLLVMType(resolvedType);
-				return _builder.BuildLoad2(innerTy, reg, "deref_val");
-			}
-		}
-
-		return reg;
-	}
-
-
-
-
-	private LLVMTypeRef GetLLVMType(TypeSymbol t)
-		=> _types.Lower(t);
 
 	/// <summary>
 	/// Returns the C-ABI-correct LLVM type for a Cvolo type crossing a foreign boundary.
@@ -484,7 +354,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	{
 		if (t is not null && t.Name == "bool")
 			return LLVMTypeRef.Int8;
-		return GetLLVMType(t);
+		return _codegen.Types.Lower(t);
 	}
 
 
@@ -497,16 +367,5 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		_module.Dispose();
 	}
 
-
-	private LLVMValueRef SafeBitCast(LLVMValueRef value, LLVMTypeRef targetType, string name = "")
-	{
-		if (value.TypeOf.Handle == targetType.Handle)
-			return value;
-
-		if (value.TypeOf.Kind == LLVMTypeKind.LLVMPointerTypeKind && targetType.Kind == LLVMTypeKind.LLVMPointerTypeKind)
-			return value;
-
-		return _builder.BuildBitCast(value, targetType, name);
-	}
 
 }

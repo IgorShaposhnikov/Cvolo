@@ -6,6 +6,7 @@ using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
 using Cvolo.Core.AST.Expressions;
 using Cvolo.Core.AST.Statements;
+using Cvolo.Emitter.LLVM.Codegen.Values;
 using LLVMSharp.Interop;
 
 namespace Cvolo.Emitter.LLVM.Codegen.Emitters;
@@ -31,8 +32,7 @@ internal sealed class FunctionEmitter(
 	Func<FunctionCodegenContext> getFunction,
 	Action<FunctionCodegenContext> setFunction,
 	Func<TypeSymbol, LLVMTypeRef> lowerFfiType,
-	Func<string, string?> resolveGlobalKey,
-	Func<TypeSymbol, bool> typeEscapesHeap,
+	ValueLoader values,
 	Func<CallExpressionSyntax, LLVMValueRef?, LLVMValueRef> emitCall,
 	Action<BlockStatementSyntax> emitBlock,
 	Action emitTrap,
@@ -110,7 +110,7 @@ internal sealed class FunctionEmitter(
 		context.OwnershipTransferFunction = functionSymbol is not null
 			&& functionSymbol.SafetyTier == SafetyTier.Unbound
 			&& codegen.FunctionReturnTypes.TryGetValue(mangledName, out var returnType)
-			&& typeEscapesHeap(returnType);
+			&& cleanup.TypeEscapesHeap(returnType);
 
 		return context;
 	}
@@ -138,7 +138,7 @@ internal sealed class FunctionEmitter(
 			if (Function.Locals.ContainsKey(shortName))
 				continue;
 
-			var resolvedKey = resolveGlobalKey(shortName);
+			var resolvedKey = values.ResolveGlobalKey(shortName);
 			if (resolvedKey is null)
 				continue;
 

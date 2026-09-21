@@ -140,6 +140,28 @@ internal sealed class CleanupEmitter(CodegenContext codegen)
 		}
 	}
 
+
+	/// <summary>
+	/// Returns whether a type can transitively expose heap-owned storage through a reference-bearing
+	/// field, variant payload, array element, or slice element.
+	/// </summary>
+	/// <remarks>
+	/// The result is used by existing ownership-transfer decisions. It intentionally preserves the
+	/// previous recursive classification without introducing new escape-analysis semantics.
+	/// </remarks>
+	public bool TypeEscapesHeap(TypeSymbol type)
+	{
+		return type switch
+		{
+			PointerTypeSymbol or RawPointerTypeSymbol => true,
+			StructTypeSymbol structType => structType.Fields.Any(field => TypeEscapesHeap(field.Type)),
+			UnionTypeSymbol unionType => unionType.Fields.Any(field => TypeEscapesHeap(field.Type)),
+			ArrayTypeSymbol arrayType => TypeEscapesHeap(arrayType.ElementType),
+			SliceTypeSymbol sliceType => TypeEscapesHeap(sliceType.ElementType),
+			_ => false,
+		};
+	}
+
 	/// <summary>
 	/// Returns whether a union can hold a payload that carries a destruction obligation.
 	/// </summary>

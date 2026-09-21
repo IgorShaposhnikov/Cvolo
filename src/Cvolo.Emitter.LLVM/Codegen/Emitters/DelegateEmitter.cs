@@ -21,8 +21,9 @@ namespace Cvolo.Emitter.LLVM.Codegen.Emitters;
 /// <see cref="CleanupEmitter"/>.
 ///
 /// Expression and statement emission remain delegated through the existing orchestration seam,
-/// while semantic expression typing is shared through <see cref="ExpressionTypeResolver"/>. This
-/// extraction does not introduce new delegate semantics.
+/// while semantic expression typing and named-value access are shared through
+/// <see cref="ExpressionTypeResolver"/> and <see cref="ValueLoader"/>. This extraction does not
+/// introduce new delegate semantics.
 /// </remarks>
 /// <remarks>
 /// Creates a delegate emitter backed by module-level codegen state and callbacks into the
@@ -36,8 +37,7 @@ internal sealed class DelegateEmitter(
 	Action<BlockStatementSyntax> emitBlock,
 	ExpressionTypeResolver expressionTypes,
 	ValueCoercion coercion,
-	Func<string, LLVMValueRef> load,
-	Func<string, string?> resolveGlobalKey)
+	ValueLoader values)
 {
 	private int _delegateFunctionCounter;
 
@@ -86,7 +86,7 @@ internal sealed class DelegateEmitter(
 				}
 				else
 				{
-					Builder.BuildStore(load(captureName), fieldPtr);
+					Builder.BuildStore(values.Load(captureName), fieldPtr);
 					if (info.CaptureMode == LambdaCaptureMode.Move)
 						Function.MovedVars.Add(captureName);
 				}
@@ -305,7 +305,7 @@ internal sealed class DelegateEmitter(
 			return true;
 		}
 
-		if ((codegen.GlobalVariables.ContainsKey(receiverName) ? receiverName : resolveGlobalKey(receiverName)) is { } receiverKey
+		if ((codegen.GlobalVariables.ContainsKey(receiverName) ? receiverName : values.ResolveGlobalKey(receiverName)) is { } receiverKey
 			&& codegen.GlobalVariables.TryGetValue(receiverKey, out var globalPointer))
 		{
 			receiverPointer = globalPointer;
@@ -417,7 +417,7 @@ internal sealed class DelegateEmitter(
 		{
 			if (Function.Locals.ContainsKey(shortName))
 				continue;
-			if (resolveGlobalKey(shortName) is { } key && codegen.GlobalVariables.TryGetValue(key, out var storage))
+			if (values.ResolveGlobalKey(shortName) is { } key && codegen.GlobalVariables.TryGetValue(key, out var storage))
 			{
 				Function.Locals[shortName] = storage;
 				Function.VariableTypes[shortName] = codegen.GlobalVariableTypes[key];

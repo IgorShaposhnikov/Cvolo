@@ -19,8 +19,8 @@ namespace Cvolo.Emitter.LLVM.Codegen.Emitters;
 /// This extraction intentionally preserves the existing call semantics. Binding, overload
 /// resolution, delegate value construction, native ABI classification, and general expression
 /// emission remain outside this class. Aggregate/member/index addressing is delegated to
-/// <see cref="AggregateEmitter"/>, while semantic expression typing is shared through
-/// <see cref="ExpressionTypeResolver"/>.
+/// <see cref="AggregateEmitter"/>, while semantic expression typing and named-value access are
+/// shared through <see cref="ExpressionTypeResolver"/> and <see cref="ValueLoader"/>.
 /// </remarks>
 /// <remarks>
 /// Creates a call emitter backed by module-level codegen state and the current function frame.
@@ -33,7 +33,7 @@ internal sealed class CallEmitter(
 	Func<ExpressionSyntax, LLVMValueRef> emitExpression,
 	ExpressionTypeResolver expressionTypes,
 	ValueCoercion coercion,
-	Func<string, LLVMValueRef> load,
+	ValueLoader values,
 	IReadOnlyDictionary<string, ExternDeclarationSyntax> astExterns,
 	IReadOnlyDictionary<string, ExternBlockFunctionSyntax> astExternBlockFunctions)
 {
@@ -79,7 +79,7 @@ internal sealed class CallEmitter(
 		{
 			var receiverName = call.FunctionName[..call.FunctionName.IndexOf('.')];
 			var enumType = GetBoundEnumReceiverType(nameFunc) ?? throw new InvalidOperationException($"Name() requires an enum receiver but found '{receiverName}'.");
-			var receiverValue = load(receiverName);
+			var receiverValue = values.Load(receiverName);
 			var storageTy = codegen.Types.Lower(enumType);
 			var nameResult = Builder.BuildGlobalStringPtr("(unknown)", $"enum_name_{enumType.Name}_unknown");
 			foreach (var variant in enumType.Variants)
@@ -106,7 +106,7 @@ internal sealed class CallEmitter(
 			var receiverName = call.FunctionName[..call.FunctionName.IndexOf('.')];
 			LLVMValueRef receiverValue;
 			if (Function.Locals.ContainsKey(receiverName))
-				receiverValue = load(receiverName);
+				receiverValue = values.Load(receiverName);
 			else
 				receiverValue = emitExpression(call.Arguments[0]);
 
@@ -472,23 +472,23 @@ internal sealed class CallEmitter(
 				break;
 			case "rotl":
 			case "rotr":
+			{
+				var rotateAmount = args[^1];
+				var valueType = args[0].TypeOf;
+				var shiftType = rotateAmount.TypeOf;
+				if (shiftType.Kind != LLVMTypeKind.LLVMIntegerTypeKind || shiftType.IntWidth != valueType.IntWidth)
 				{
-					var rotateAmount = args[^1];
-					var valueType = args[0].TypeOf;
-					var shiftType = rotateAmount.TypeOf;
-					if (shiftType.Kind != LLVMTypeKind.LLVMIntegerTypeKind || shiftType.IntWidth != valueType.IntWidth)
-					{
-						rotateAmount = valueType.IntWidth > shiftType.IntWidth
-							? Builder.BuildZExt(rotateAmount, valueType, "rot_zext")
-							: Builder.BuildTrunc(rotateAmount, valueType, "rot_trunc");
-					}
-
-					var widthMask = LLVMValueRef.CreateConstInt(valueType, (ulong)valueType.IntWidth - 1);
-					rotateAmount = Builder.BuildAnd(rotateAmount, widthMask, "rot_mask");
-					args = new List<LLVMValueRef> { args[0], args[0], rotateAmount };
-					baseName = baseName == "rotl" ? "fshl" : "fshr";
-					break;
+					rotateAmount = valueType.IntWidth > shiftType.IntWidth
+						? Builder.BuildZExt(rotateAmount, valueType, "rot_zext")
+						: Builder.BuildTrunc(rotateAmount, valueType, "rot_trunc");
 				}
+
+				var widthMask = LLVMValueRef.CreateConstInt(valueType, (ulong)valueType.IntWidth - 1);
+				rotateAmount = Builder.BuildAnd(rotateAmount, widthMask, "rot_mask");
+				args = new List<LLVMValueRef> { args[0], args[0], rotateAmount };
+				baseName = baseName == "rotl" ? "fshl" : "fshr";
+				break;
+			}
 			case "fpc.nan":
 			case "fpc.inf":
 			case "fpc.finite":

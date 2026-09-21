@@ -128,4 +128,28 @@ internal sealed class ValueCoercion(CodegenContext codegen)
 
 		return Builder.BuildLoad2(fatStructType, sliceAlloc, "slice_val");
 	}
+
+	/// <summary>
+	/// Preserves an already-compatible value or emits the legacy LLVM bitcast used when codegen needs
+	/// to reinterpret a value as another representation-compatible LLVM type.
+	/// </summary>
+	/// <remarks>
+	/// Pointer-to-pointer conversions are returned unchanged because LLVM's opaque-pointer model does
+	/// not require an instruction for those conversions. This exactly preserves the former
+	/// <c>CodeGenerator.SafeBitCast</c> behavior.
+	/// </remarks>
+	public LLVMValueRef SafeBitCast(LLVMValueRef value, LLVMTypeRef targetType, string name = "")
+	{
+		if (value.TypeOf.Handle == targetType.Handle)
+			return value;
+
+		if (value.TypeOf.Kind == LLVMTypeKind.LLVMPointerTypeKind
+			&& targetType.Kind == LLVMTypeKind.LLVMPointerTypeKind)
+		{
+			return value;
+		}
+
+		return Builder.BuildBitCast(value, targetType, name);
+	}
+
 }

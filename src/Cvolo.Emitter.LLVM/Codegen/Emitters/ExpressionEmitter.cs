@@ -17,8 +17,9 @@ namespace Cvolo.Emitter.LLVM.Codegen.Emitters;
 /// This class owns expression dispatch, operators, casts, borrows, inline assembly, and heap-expression
 /// orchestration. Calls, aggregate construction, delegate construction, cleanup, memory primitives, and
 /// value coercion remain delegated to their dedicated components. Semantic type resolution is
-/// shared through <see cref="ExpressionTypeResolver"/>, while aggregate/member/index addressing is
-/// delegated to <see cref="AggregateEmitter"/>.
+/// shared through <see cref="ExpressionTypeResolver"/>, named-value access through
+/// <see cref="ValueLoader"/>, and aggregate/member/index addressing through
+/// <see cref="AggregateEmitter"/>.
 /// </remarks>
 /// <remarks>
 /// Creates an expression emitter over the shared codegen run and the currently active function frame.
@@ -33,10 +34,7 @@ internal sealed class ExpressionEmitter(
 	ValueCoercion coercion,
 	Func<FunctionCodegenContext> getFunction,
 	ExpressionTypeResolver expressionTypes,
-	Func<string, LLVMValueRef> load,
-	Func<string, string?> resolveGlobalKey,
-	Func<TypeSymbol, bool> typeEscapesHeap,
-	Func<LLVMValueRef, LLVMTypeRef, string, LLVMValueRef> safeBitCast)
+	ValueLoader values)
 {
 	private readonly Dictionary<string, LLVMValueRef> _typeofGlobals = [];
 	private int _typeofCounter;
@@ -246,7 +244,7 @@ internal sealed class ExpressionEmitter(
 					return isSome;
 				}
 			case IdentifierExpressionSyntax id:
-				return load(id.Name);
+				return values.Load(id.Name);
 			case MemberAccessExpressionSyntax m:
 				{
 					// Namespace-qualified global (e.g. 'System.Math.UInt.MaxValue'): the member
@@ -691,7 +689,7 @@ internal sealed class ExpressionEmitter(
 					calls.Emit(ctorCall, ptr);
 					return ptr;
 				}
-				else if (resolveGlobalKey(ctorId.Name) is { } ctorGlobalKey && codegen.GlobalVariables.TryGetValue(ctorGlobalKey, out var ctorGlobalPtr))
+				else if (values.ResolveGlobalKey(ctorId.Name) is { } ctorGlobalKey && codegen.GlobalVariables.TryGetValue(ctorGlobalKey, out var ctorGlobalPtr))
 				{
 					calls.Emit(ctorCall, ctorGlobalPtr);
 					return ctorGlobalPtr;
@@ -788,7 +786,7 @@ internal sealed class ExpressionEmitter(
 				else if (type is PointerTypeSymbol)
 				{
 					if (bin.Right is BorrowExpressionSyntax
-						|| (rTy is PointerTypeSymbol rhsRef && typeEscapesHeap(rhsRef.ReferencedType)))
+						|| (rTy is PointerTypeSymbol rhsRef && cleanup.TypeEscapesHeap(rhsRef.ReferencedType)))
 					{
 						Builder.BuildStore(right, ptr);
 					}
@@ -828,7 +826,7 @@ internal sealed class ExpressionEmitter(
 
 				return right;
 			}
-			else if (resolveGlobalKey(id.Name) is { } globalKey && codegen.GlobalVariables.TryGetValue(globalKey, out var globalPtr))
+			else if (values.ResolveGlobalKey(id.Name) is { } globalKey && codegen.GlobalVariables.TryGetValue(globalKey, out var globalPtr))
 			{
 				var globalType = codegen.GlobalVariableTypes[globalKey];
 				if (globalType is UnionTypeSymbol && bin.Right is StructInitializationExpressionSyntax globalReinit)
@@ -1060,7 +1058,7 @@ internal sealed class ExpressionEmitter(
 					var rawHeapPtr = Builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), handleSlot, "handle_ptr");
 					return rawHeapPtr.TypeOf.Handle == targetType.Handle
 						? rawHeapPtr
-						: safeBitCast(rawHeapPtr, targetType, "handle_cast");
+						: coercion.SafeBitCast(rawHeapPtr, targetType, "handle_cast");
 				}
 
 				// By-value handle (e.g. a heap node returned then passed by value): the
@@ -1072,7 +1070,7 @@ internal sealed class ExpressionEmitter(
 					&& operand.TypeOf.Kind == LLVMTypeKind.LLVMStructTypeKind)
 				{
 					var hiddenPtr = Builder.BuildExtractValue(operand, 0, "handle_hidden_ptr");
-					return safeBitCast(hiddenPtr, targetType, "handle_cast");
+					return coercion.SafeBitCast(hiddenPtr, targetType, "handle_cast");
 				}
 			}
 
@@ -1151,7 +1149,7 @@ internal sealed class ExpressionEmitter(
 				return Builder.BuildIntToPtr(operand, targetType, "cast_inttoptr");
 			}
 
-			return safeBitCast(operand, targetType, "cast_bitcast");
+			return coercion.SafeBitCast(operand, targetType, "cast_bitcast");
 		}
 
 		switch (unary.Operator)
