@@ -196,6 +196,43 @@ public sealed class PackPipelineTests : IDisposable
 	}
 
 	[Fact]
+	public void Pack_LibraryProject_RoundTripsPublicDelegateMetadata()
+	{
+		RequireClang();
+		var projectDir = CreateProject(Fixture("delegate-api"), "Library");
+		File.WriteAllText(Path.Combine(projectDir, "Api.cvl"), """
+namespace TestLibrary;
+
+public delegate int BinaryOp(int a, int b);
+delegate void Hidden();
+public int Add(int a, int b) { return a + b; }
+""");
+
+		var result = PackPipeline.Execute(projectDir, DefaultOptions(
+			Fixture(Path.Combine("out", "delegate-api.cvlib")),
+			[TargetTriple.HostTriple()],
+			stripSource: true));
+
+		using var archive = CvlArchiveReader.Read(result.OutputPath, verifySignature: false);
+		Assert.Equal(string.Empty, archive.ReadSourceBuffer());
+
+		var api = PackageApiMetadata.Read(archive);
+		var unit = Assert.Single(api.Units);
+		Assert.Equal("TestLibrary", unit.Namespace);
+
+		var type = Assert.Single(unit.Delegates);
+		Assert.Equal("BinaryOp", type.Name);
+		Assert.Equal("int", type.ReturnType);
+		Assert.Equal(2, type.Parameters.Count);
+		Assert.Equal("int", type.Parameters[0].Type);
+		Assert.Equal("a", type.Parameters[0].Name);
+		Assert.Equal("int", type.Parameters[1].Type);
+		Assert.Equal("b", type.Parameters[1].Name);
+		Assert.False(type.IsNative);
+		Assert.Null(type.CallingConvention);
+	}
+
+	[Fact]
 	public void Pack_LibraryProject_DoesNotRequireMain()
 	{
 		RequireClang();

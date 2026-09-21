@@ -109,6 +109,7 @@ public static class PackageTemplateSource
 		FunctionDeclarationSyntax function => function.Visibility == Visibility.Public
 			&& (function.GenericParameters.Count > 0 || function.Parameters.Any(parameter => ReferencesContract(parameter.Type, contractNames))),
 		StructDeclarationSyntax type => type.Visibility == Visibility.Public && type.GenericParameters.Count > 0,
+		DelegateDeclarationSyntax type => type.Visibility == Visibility.Public && type.GenericParameters.Count > 0,
 		InterfaceDeclarationSyntax type => type.Visibility == Visibility.Public,
 		ProtocolDeclarationSyntax type => type.Visibility == Visibility.Public,
 		ExtensionDeclarationSyntax extension => extension.Visibility == Visibility.Public,

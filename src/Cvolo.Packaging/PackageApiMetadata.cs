@@ -83,7 +83,22 @@ public sealed class PackageApiMetadata
 				})
 				.ToArray();
 
-			if (functions.Length == 0 && structs.Length == 0 && enums.Length == 0 && globals.Length == 0)
+			var delegates = members
+				.OfType<DelegateDeclarationSyntax>()
+				.Where(type => type.Visibility == Visibility.Public && type.GenericParameters.Count == 0)
+				.Select(type => new PackageApiDelegate
+				{
+					Name = type.Name,
+					ReturnType = type.ReturnType,
+					Parameters = type.Parameters
+						.Select(parameter => new PackageApiParameter(parameter.Type, parameter.Name))
+						.ToArray(),
+					IsNative = type.IsNative,
+					CallingConvention = type.CallingConvention
+				})
+				.ToArray();
+
+			if (functions.Length == 0 && structs.Length == 0 && enums.Length == 0 && globals.Length == 0 && delegates.Length == 0)
 				continue;
 
 			apiUnits.Add(new PackageApiUnit
@@ -94,7 +109,8 @@ public sealed class PackageApiMetadata
 				Functions = functions,
 				Structs = structs,
 				Enums = enums,
-				Globals = globals
+				Globals = globals,
+				Delegates = delegates
 			});
 		}
 
@@ -170,6 +186,9 @@ public sealed class PackageApiMetadata
 				.ToArray(),
 			Globals = group.SelectMany(unit => unit.Globals)
 				.DistinctBy(global => global.Name)
+				.ToArray(),
+			Delegates = group.SelectMany(unit => unit.Delegates)
+				.DistinctBy(type => type.Name)
 				.ToArray()
 		})
 		.ToArray();
@@ -245,6 +264,17 @@ public sealed class PackageApiMetadata
 					null!,
 					modifier: function.Modifier,
 					visibility: Visibility.Public)));
+
+			members.AddRange(unit.Delegates.Select(type =>
+				(SyntaxNode)new DelegateDeclarationSyntax(
+					span,
+					type.ReturnType,
+					type.Name,
+					[],
+					type.Parameters.Select(parameter => new ParameterSyntax(span, parameter.Type, parameter.Name)).ToArray(),
+					visibility: Visibility.Public,
+					isNative: type.IsNative,
+					callingConvention: type.CallingConvention)));
 
 			var fileUsings = unit.FileUsings.Select(ns => new UsingDirectiveSyntax(span, ns)).ToArray();
 			NamespaceDeclarationSyntax? namespaceDeclaration = null;
@@ -334,6 +364,7 @@ public sealed class PackageApiUnit
 	public IReadOnlyList<PackageApiStruct> Structs { get; init; } = [];
 	public IReadOnlyList<PackageApiEnum> Enums { get; init; } = [];
 	public IReadOnlyList<PackageApiGlobal> Globals { get; init; } = [];
+	public IReadOnlyList<PackageApiDelegate> Delegates { get; init; } = [];
 }
 
 public sealed class PackageApiFunction
@@ -366,6 +397,15 @@ public sealed class PackageApiGlobal
 	public string Name { get; init; } = string.Empty;
 	public string Type { get; init; } = string.Empty;
 	public bool IsMutable { get; init; }
+}
+
+public sealed class PackageApiDelegate
+{
+	public string Name { get; init; } = string.Empty;
+	public string ReturnType { get; init; } = "void";
+	public IReadOnlyList<PackageApiParameter> Parameters { get; init; } = [];
+	public bool IsNative { get; init; }
+	public string? CallingConvention { get; init; }
 }
 
 public sealed class PackageApiEnumVariant
