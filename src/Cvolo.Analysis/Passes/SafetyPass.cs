@@ -1,13 +1,12 @@
+using Cvolo.Analysis.Passes.Safety;
 using Cvolo.Analysis.Symbols;
 using Cvolo.Analysis.Symbols.Base;
 using Cvolo.Analysis.Symbols.Structs;
-using Cvolo.Analysis.Passes.Safety;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
 using Cvolo.Core.AST.Expressions;
 using Cvolo.Core.AST.Statements;
 using Cvolo.Core.Diagnostics;
-using Cvolo.Analysis.VisibilityChecks;
 
 namespace Cvolo.Analysis.Passes;
 
@@ -15,9 +14,9 @@ public sealed class SafetyPass(BindingContext context)
 {
 	private BorrowTracker? _borrows;
 	private readonly Stack<SafetyTier> _currentTierStack = [];
-	private readonly HashSet<string> _localRefsInUnboundScope = []; // refvar/ref variables declared inside the current unbound scope (including nested unsafe blocks)
 	private ReferenceLifetimeAnalyzer? _referenceLifetimes;
 	private MoveAnalyzer? _moves;
+	private UnboundValidator? _unbound;
 
 	/// <summary>
 	/// Lazily creates the per-function borrow tracker that owns borrow exclusivity, parent locks,
@@ -47,6 +46,16 @@ public sealed class SafetyPass(BindingContext context)
 		context,
 		Borrows,
 		ResolveExpressionType);
+
+	/// <summary>
+	/// Lazily creates the unbound-sandbox validator that owns structural reference-field mutation,
+	/// visibility preservation, and local-reference escape checks while tier transitions remain here.
+	/// </summary>
+	private UnboundValidator Unbound => _unbound ??= new UnboundValidator(
+		context,
+		GetBaseIdentifierName,
+		() => CurrentTier,
+		() => _currentTierStack.Contains(SafetyTier.Unbound));
 
 	// — Safe Delegates & Borrowed Closures pass state (todo 7) —
 	/// <summary>The function whose body is currently being walked (used for lambda block bodies).</summary>
@@ -157,7 +166,7 @@ public sealed class SafetyPass(BindingContext context)
 
 		Borrows.Reset();
 		ReferenceLifetimes.Reset();
-		_localRefsInUnboundScope.Clear();
+		Unbound.Reset();
 		_delegateProvenances.Clear();
 		_delegateParams.Clear();
 		_refCapturedVars.Clear();
@@ -254,10 +263,7 @@ public sealed class SafetyPass(BindingContext context)
 						if (sym.Type is PointerTypeSymbol || (sym.Type is UnionTypeSymbol optU && optU.IsOption && optU.IsNpoEligible))
 							ReferenceLifetimes.TrackReferenceTarget(v.Name, v.Initializer, scope, clearWhenMissing: false);
 
-						// Track refvar/ref declarations inside unbound scope for CVL1008
-						// Uses stack check (not CurrentTier) so nested unsafe blocks inside unbound are still tracked
-						if (v.Type is not null && v.Type.StartsWith("ref") && _currentTierStack.Contains(SafetyTier.Unbound))
-							_localRefsInUnboundScope.Add(v.Name);
+						Unbound.TrackLocalReferenceDeclaration(v);
 
 						// Track ref field targets for struct variables (§3C)
 						if (v.Type is not "ref" and not "refvar" && sym.Type is StructTypeSymbol)
@@ -473,7 +479,7 @@ public sealed class SafetyPass(BindingContext context)
 
 			case MemberAccessExpressionSyntax m:
 				CheckExpressionSafety(m.Expression, scope);
-				ReportUnboundRefFieldVisibilityLeak(m.Expression, m.MemberName, m.Span, scope);
+				Unbound.ValidateMemberAccess(m, scope);
 				break;
 
 			case IndexExpressionSyntax idx:
@@ -639,12 +645,7 @@ public sealed class SafetyPass(BindingContext context)
 						Moves.ResetMoved(leftSymbol);
 						Moves.HandleCopyAssignment(bin.Right, scope);
 
-						// CVL1008: Escape prevention — local refvar cannot escape unbound scope to globals
-						if (_currentTierStack.Contains(SafetyTier.Unbound) && leftSymbol.IsGlobal && IsLocalUnboundRef(bin.Right, scope))
-						{
-							context.Diagnostics.Report(context.CurrentUnit!.Context, bin.Span,
-								$"Reference cannot escape unbound scope: cannot assign local reference to global variable '{leftId.Name}'");
-						}
+						Unbound.ValidateGlobalAssignmentEscape(bin, leftSymbol, scope);
 
 						// Track ref field targets for struct reassignment (§3C)
 						if (leftSymbol.Type is StructTypeSymbol)
@@ -690,44 +691,7 @@ public sealed class SafetyPass(BindingContext context)
 				{
 					CheckExpressionSafety(bin.Left, scope);
 
-					// Structural Field-Mutation Isolation (§2 Rule 7): safe code must not directly write
-					// to a struct's `refvar`/`ref` reference fields; it may only read or traverse them.
-					// Modifying a structural reference field requires an `unbound` block or function.
-					// Raw-pointer fields are unaffected (they are not references and remain freely writable).
-					if (bin.Operator == "="
-						&& bin.Left is MemberAccessExpressionSyntax fieldWrite
-						&& CurrentTier != SafetyTier.Unbound
-						&& GetRefFieldName(fieldWrite.Expression, fieldWrite.MemberName, scope) is { } mutRefField)
-					{
-						var baseName = GetBaseIdentifierName(fieldWrite.Expression) ?? "?";
-						context.Diagnostics.Report(context.CurrentUnit!.Context, bin.Span,
-							$"Cannot assign to reference field '{mutRefField}' of variable '{baseName}' in safe code. Use an 'unbound' block or function to modify structural reference fields.");
-					}
-
-					// CVL1035: The unbound sandbox suspends the borrow checker but NOT visibility.
-					// A ref/refvar field that is private/internal and declared in another compilation
-					// unit cannot be structurally mutated (or traversed, handled above) from here.
-					if (bin.Operator == "=" && _currentTierStack.Contains(SafetyTier.Unbound) &&
-						bin.Left is MemberAccessExpressionSyntax unboundWrite)
-					{
-						ReportUnboundRefFieldVisibilityLeak(unboundWrite.Expression, unboundWrite.MemberName, bin.Span, scope);
-					}
-
-					// CVL1008: Escape prevention for reference-field stores. A local reference declared
-					// inside unbound scope must not escape into a reference field of an external (non-local)
-					// struct object (a parameter or a global), which outlives the unbound scope and would
-					// otherwise dangle.
-					if (bin.Operator == "="
-						&& _currentTierStack.Contains(SafetyTier.Unbound)
-						&& IsLocalUnboundRef(bin.Right, scope)
-						&& bin.Left is MemberAccessExpressionSyntax member
-						&& IsExternalEscapeBase(member.Expression, scope)
-						&& GetRefFieldName(member.Expression, member.MemberName, scope) is { } refField)
-					{
-						var baseName = GetBaseIdentifierName(member.Expression) ?? "?";
-						context.Diagnostics.Report(context.CurrentUnit!.Context, bin.Span,
-							$"Reference cannot escape unbound scope: cannot assign local reference to reference field '{refField}' of non-local variable '{baseName}'");
-					}
+					Unbound.ValidateReferenceFieldAssignment(bin, scope);
 				}
 
 				break;
@@ -914,79 +878,6 @@ public sealed class SafetyPass(BindingContext context)
 		return null;
 	}
 
-	/// <summary>
-	/// Returns true if the expression resolves to a refvar/ref variable declared locally inside the current unbound scope.
-	/// </summary>
-	private bool IsLocalUnboundRef(ExpressionSyntax expr, SymbolTable scope)
-	{
-		var name = GetBaseIdentifierName(expr);
-		if (name == null) return false;
-		if (!_localRefsInUnboundScope.Contains(name)) return false;
-		return scope.Lookup(name) is VariableSymbol sym && sym.Type is PointerTypeSymbol;
-	}
-
-	/// <summary>
-	/// Returns true when the base of a member access resolves to a non-local ("external") variable: a function
-	/// parameter or a global. Such objects outlive the surrounding unbound scope, so a local unbound reference
-	/// stored into one of their reference fields would escape and dangle (CVL1008).
-	/// </summary>
-	private bool IsExternalEscapeBase(ExpressionSyntax baseExpr, SymbolTable scope)
-	{
-		var name = GetBaseIdentifierName(baseExpr);
-		if (name == null) return false;
-		return scope.Lookup(name) is VariableSymbol sym && (sym.IsGlobal || sym.Origin == OriginKind.Parameter);
-	}
-
-	/// <summary>
-	/// Resolves the named field on the struct type of the given base expression and returns its name if and only if
-	/// it is a reference (ref/refvar) field. Returns null for value fields or when the type cannot be resolved.
-	/// </summary>
-	private string? GetRefFieldName(ExpressionSyntax baseExpr, string fieldName, SymbolTable scope)
-	{
-		var (_, field) = ResolveStructField(baseExpr, fieldName, scope);
-		return field is { Type: PointerTypeSymbol } ? field.Name : null;
-	}
-
-	private (StructTypeSymbol? Container, StructFieldSymbol? Field) ResolveStructField(ExpressionSyntax baseExpr, string fieldName, SymbolTable scope)
-	{
-		var name = GetBaseIdentifierName(baseExpr);
-		if (name == null || scope.Lookup(name) is not VariableSymbol sym) return (null, null);
-
-		var structType = sym.Type switch
-		{
-			StructTypeSymbol s => s,
-			PointerTypeSymbol p when p.ReferencedType is StructTypeSymbol s => s,
-			_ => null
-		};
-		return (structType, structType?.FindField(fieldName));
-	}
-
-	/// <summary>
-	/// CVL1035: the unbound sandbox suspends access checks? No — it suspends the borrow checker only.
-	/// A private ref/refvar field declared in another compilation unit cannot be structurally mutated
-	/// or traversed from an unbound scope. Internal fields are always reachable within a single module.
-	/// </summary>
-	private void ReportUnboundRefFieldVisibilityLeak(ExpressionSyntax baseExpr, string fieldName, TextSpan span, SymbolTable scope)
-	{
-		if (context.LegacyVisibility || !_currentTierStack.Contains(SafetyTier.Unbound))
-			return;
-
-		var (container, field) = ResolveStructField(baseExpr, fieldName, scope);
-		if (container is null || field is null || field.Type is not PointerTypeSymbol)
-			return;
-		if (field.Visibility == Visibility.Public)
-			return;
-
-		CompilationUnitSyntax? declaringUnit = null;
-		if (context.SymbolUnits.TryGetValue(container.Name, out var unit))
-			declaringUnit = unit;
-		if (declaringUnit is null || VisibilityChecker.IsAccessible(field.Visibility, context.CurrentUnit, declaringUnit))
-			return;
-
-		context.Diagnostics.Report(context.CurrentUnit!.Context, span,
-			$"The 'unbound' sandbox cannot suspend access restrictions. Structural mutation of refvar field '{field.Name}' is blocked because it is not visible to this compilation scope.",
-			DiagnosticIds.UnboundVisibilityLeak);
-	}
 
 	private void CheckSwitchStatementSafety(SwitchStatementSyntax sw, SymbolTable scope, FunctionDeclarationSyntax func)
 	{
