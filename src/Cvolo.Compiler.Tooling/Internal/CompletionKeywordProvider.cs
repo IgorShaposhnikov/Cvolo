@@ -42,7 +42,7 @@ internal static class CompletionKeywordProvider
 	[
 		"alias", "global", "val", "var", "private", "internal", "public",
 		"extern", "expose", "struct", "union", "enum", "extension",
-		"interface", "protocol", "unsafe", "unbound", "namespace", "using",
+		"interface", "protocol", "delegate", "unsafe", "unbound", "namespace", "using",
 		.. TypeKeywords
 	];
 

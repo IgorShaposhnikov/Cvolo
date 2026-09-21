@@ -266,6 +266,10 @@ internal sealed class NavigationIndex
 					Register(documentId, source, member, member.Name, ToolingSymbolKind.Method, null, protocolDeclaration.Name);
 				break;
 
+			case DelegateDeclarationSyntax delegateDeclaration:
+				Register(documentId, source, delegateDeclaration, delegateDeclaration.Name, ToolingSymbolKind.Delegate, null);
+				break;
+
 			case TypeAliasDeclarationSyntax typeAlias:
 				Register(documentId, source, typeAlias, typeAlias.Name, ToolingSymbolKind.TypeAlias, null);
 				break;
@@ -425,6 +429,7 @@ internal sealed class NavigationIndex
 		ResolvedSymbolKind.EnumMember => ToolingSymbolKind.EnumMember,
 		ResolvedSymbolKind.Interface => ToolingSymbolKind.Interface,
 		ResolvedSymbolKind.Protocol => ToolingSymbolKind.Protocol,
+		ResolvedSymbolKind.Delegate => ToolingSymbolKind.Delegate,
 		ResolvedSymbolKind.TypeAlias => ToolingSymbolKind.TypeAlias,
 		ResolvedSymbolKind.TypeParameter => ToolingSymbolKind.TypeParameter,
 		ResolvedSymbolKind.Function => ToolingSymbolKind.Function,

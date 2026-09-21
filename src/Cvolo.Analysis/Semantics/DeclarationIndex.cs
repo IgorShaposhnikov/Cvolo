@@ -134,6 +134,9 @@ internal sealed class DeclarationIndex
 			case TypeAliasDeclarationSyntax typeAlias:
 				_types[context.GetMangledName(typeAlias.Name, ns)] = typeAlias;
 				break;
+			case DelegateDeclarationSyntax delegateDeclaration:
+				_types[context.GetMangledName(delegateDeclaration.Name, ns)] = delegateDeclaration;
+				break;
 		}
 	}
 

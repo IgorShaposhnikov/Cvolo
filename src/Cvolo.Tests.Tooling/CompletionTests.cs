@@ -836,6 +836,23 @@ public sealed class CompletionTests
 	}
 
 	[Fact]
+	public void TopLevelPartialDeclarationKeyword_Delegate()
+	{
+		var result = Complete("struct A { int x; }\ndel|");
+
+		Assert.True(Contains(result, "delegate", CompletionKind.Keyword));
+	}
+
+	[Fact]
+	public void DelegateType_IsOfferedAsTypeCandidate()
+	{
+		var result = Complete("delegate int BinaryOp(int a, int b);\nint main() {\n    val Binary| op;\n    return 0;\n}\n");
+
+		Assert.True(Contains(result, "BinaryOp", CompletionKind.Type));
+		Assert.DoesNotContain(result.Candidates, c => c.Label == "BinaryOp" && c.Kind == CompletionKind.Function);
+	}
+
+	[Fact]
 	public void TopLevelPartialDeclarationKeyword_DoesNotLeakStatementKeywords()
 	{
 		var result = Complete("struct A { int x; }\nali|");

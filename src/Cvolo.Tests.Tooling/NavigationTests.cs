@@ -120,6 +120,52 @@ public sealed class NavigationTests
 	}
 
 	[Fact]
+	public void DelegateDeclaration_ResolvesWithExactIdentityAndDefinition()
+	{
+		const string s = "delegate int BinaryOp(int a, int b);\nint main() { return 0; }\n";
+		var x = Open(("Main.cvl", s));
+		using (x.Fixture)
+		{
+			var symbol = x.Document.GetSymbolAtPosition(At(s, "BinaryOp"));
+			Assert.NotNull(symbol);
+			Assert.Equal(ToolingSymbolKind.Delegate, symbol!.Kind);
+			Assert.Equal("delegate int BinaryOp(int a, int b)", symbol.DisplayText);
+			var def = Assert.Single(x.Snapshot.GetDefinitions(symbol.SymbolId));
+			Assert.Equal("BinaryOp", x.Document.Text.GetText(def.SelectionSpan));
+		}
+	}
+
+	[Fact]
+	public void DelegateTypeReference_ResolvesToDelegateDeclaration()
+	{
+		const string s = "delegate int BinaryOp(int a, int b);\nint main() { val BinaryOp op; return 0; }\n";
+		var x = Open(("Main.cvl", s));
+		using (x.Fixture)
+		{
+			var symbol = x.Document.GetSymbolAtPosition(At(s, "BinaryOp op"));
+			Assert.NotNull(symbol);
+			Assert.Equal(ToolingSymbolKind.Delegate, symbol!.Kind);
+			Assert.Equal("delegate int BinaryOp(int a, int b)", symbol.DisplayText);
+			var def = Assert.Single(x.Snapshot.GetDefinitions(symbol.SymbolId));
+			Assert.Equal("BinaryOp", x.Document.Text.GetText(def.SelectionSpan));
+		}
+	}
+
+	[Fact]
+	public void DocumentSymbols_IncludeDelegateDeclaration()
+	{
+		const string s = "delegate int BinaryOp(int a, int b);\nstruct Node { public int value; }\nint main() { return 0; }\n";
+		var x = Open(("Main.cvl", s));
+		using (x.Fixture)
+		{
+			var symbols = x.Document.GetDocumentSymbols();
+			var op = Assert.Single(symbols.Where(z => z.Name == "BinaryOp" && z.Kind == ToolingSymbolKind.Delegate));
+			Assert.Equal("delegate int BinaryOp(int a, int b)", op.Detail);
+			Assert.Empty(op.Children);
+		}
+	}
+
+	[Fact]
 	public void InvalidPosition_ThrowsAndUnresolvedNameReturnsNull()
 	{
 		const string s = "int main() { return Missing; }\n";

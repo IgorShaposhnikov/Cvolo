@@ -76,6 +76,7 @@ internal static class SemanticTokenService
 		EnumDeclarationSyntax or
 		InterfaceDeclarationSyntax or
 		ProtocolDeclarationSyntax or
+		DelegateDeclarationSyntax or
 		TypeAliasDeclarationSyntax or
 		VariableDeclarationSyntax or
 		ParameterSyntax or
@@ -119,6 +120,8 @@ internal static class SemanticTokenService
 				return TryIndexOf(source, interfaceDeclaration.Span, interfaceDeclaration.Name, out position);
 			case ProtocolDeclarationSyntax protocolDeclaration:
 				return TryIndexOf(source, protocolDeclaration.Span, protocolDeclaration.Name, out position);
+			case DelegateDeclarationSyntax delegateDeclaration:
+				return TryIndexOf(source, delegateDeclaration.Span, delegateDeclaration.Name, out position);
 			case TypeAliasDeclarationSyntax typeAlias:
 				return TryIndexOf(source, typeAlias.Span, typeAlias.Name, out position);
 			case StructFieldSyntax structField:

@@ -18,6 +18,7 @@ public enum ResolvedSymbolKind
 	EnumMember,
 	Interface,
 	Protocol,
+	Delegate,
 	TypeAlias,
 	TypeParameter,
 	Function,

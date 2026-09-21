@@ -116,6 +116,21 @@ public sealed class SemanticTokenTests
 	}
 
 	[Fact]
+	public void DelegateDeclaration_IsClassified()
+	{
+		const string s = "delegate int BinaryOp(int a, int b);\nint main() { return 0; }\n";
+		var x = Open(s);
+		using (x.Fixture)
+		{
+			var tokens = WithText(x.Document, x.Document.GetSemanticTokens(), "BinaryOp");
+
+			Assert.Single(tokens);
+			Assert.Equal(ToolingSymbolKind.Delegate, tokens[0].Kind);
+			Assert.True(tokens[0].Modifiers.HasFlag(SemanticTokenModifiers.Declaration));
+		}
+	}
+
+	[Fact]
 	public void ShadowedLocals_ProduceDistinctDeclarationTokens()
 	{
 		const string s = "int main() {\n    val int value = 1;\n    {\n        val int value = 2;\n        return value;\n    }\n}\n";

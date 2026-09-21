@@ -423,6 +423,9 @@ internal static class SymbolResolver
 					?? OnName(NameSpan(source, interfaceMember.Span, interfaceMember.Name, fromEnd: false), interfaceMember.Name, position, ResolvedSymbolKind.Method, interfaceMember, $"{interfaceMember.ReturnType} {interfaceMember.Name}({ParameterList(interfaceMember.Parameters)})");
 			case ProtocolDeclarationSyntax protocolDeclaration:
 				return OnName(NameSpan(source, protocolDeclaration.Span, protocolDeclaration.Name, fromEnd: false), protocolDeclaration.Name, position, ResolvedSymbolKind.Protocol, protocolDeclaration, Display(protocolDeclaration, protocolDeclaration.Name));
+			case DelegateDeclarationSyntax delegateDeclaration:
+				return ResolveTypeReference(context, index, source, delegateDeclaration.ReturnTypeSpan, delegateDeclaration.ReturnType, position)
+					?? OnName(NameSpan(source, delegateDeclaration.Span, delegateDeclaration.Name, fromEnd: false), delegateDeclaration.Name, position, ResolvedSymbolKind.Delegate, delegateDeclaration, Display(delegateDeclaration, delegateDeclaration.Name));
 			case ProtocolMethodDeclarationSyntax protocolMember:
 				return ResolveTypeReference(context, index, source, protocolMember.Span, protocolMember.ReturnType, position)
 					?? OnName(NameSpan(source, protocolMember.Span, protocolMember.Name, fromEnd: false), protocolMember.Name, position, ResolvedSymbolKind.Method, protocolMember, $"{protocolMember.ReturnType} {protocolMember.Name}({ParameterList(protocolMember.Parameters)})");
@@ -552,6 +555,7 @@ internal static class SymbolResolver
 		UnionTypeSymbol => ResolvedSymbolKind.Union,
 		InterfaceTypeSymbol => ResolvedSymbolKind.Interface,
 		ProtocolTypeSymbol => ResolvedSymbolKind.Protocol,
+		DelegateTypeSymbol => ResolvedSymbolKind.Delegate,
 		_ => ResolvedSymbolKind.OtherType,
 	};
 
@@ -573,6 +577,7 @@ internal static class SymbolResolver
 		ProtocolDeclarationSyntax protocolDeclaration => $"protocol {protocolDeclaration.Name}{Generic(protocolDeclaration.GenericParameters)}",
 		TypeAliasDeclarationSyntax typeAlias => $"alias {typeAlias.Name}{Generic(typeAlias.GenericParameters)} = {typeAlias.Type}",
 		ExtensionDeclarationSyntax extension => $"extension {extension.ExtendedTypeName}",
+		DelegateDeclarationSyntax delegateDeclaration => $"delegate {delegateDeclaration.ReturnType} {delegateDeclaration.Name}{Generic(delegateDeclaration.GenericParameters)}({ParameterList(delegateDeclaration.Parameters)})",
 		_ => fallback,
 	};
 

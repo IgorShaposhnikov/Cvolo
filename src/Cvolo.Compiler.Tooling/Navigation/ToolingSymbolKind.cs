@@ -15,6 +15,7 @@ public enum ToolingSymbolKind
 	EnumMember,
 	Interface,
 	Protocol,
+	Delegate,
 	TypeAlias,
 	TypeParameter,
 	Function,

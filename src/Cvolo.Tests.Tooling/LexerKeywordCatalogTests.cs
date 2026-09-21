@@ -16,7 +16,7 @@ public sealed class LexerKeywordCatalogTests
 			"sbyte", "double", "float", "nint", "nuint", "bool", "string", "char", "struct", "union",
 			"enum", "private", "internal", "public", "unsafe", "unbound", "panic", "extension",
 			"interface", "protocol", "embed", "namespace", "using", "expose", "global", "switch",
-			"case", "default", "where", "is", "alias", "defer", "asm", "volatile", "alignstack",
+			"case", "default", "where", "is", "alias", "defer", "move", "delegate", "asm", "volatile", "alignstack",
 			"intel", "nameof", "typeof", "break", "continue", "foreach", "in", "try", "catch",
 			"finally",
 		]));

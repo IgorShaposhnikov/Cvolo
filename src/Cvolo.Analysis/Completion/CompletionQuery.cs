@@ -474,6 +474,12 @@ public static class CompletionQuery
 				types.Add((symbol, key));
 		}
 
+		foreach (var (key, symbol) in state.Context.DelegateTypes)
+		{
+			if (!key.Contains('<'))
+				types.Add((symbol, key));
+		}
+
 		// Generic struct/union templates already have placeholder TypeSymbols in StructTypes /
 		// UnionTypes with the declaration visibility attached. Keeping one authoritative path
 		// avoids bypassing VisibilityChecker and also deduplicates generic template labels.
