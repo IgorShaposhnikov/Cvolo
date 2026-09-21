@@ -1,37 +1,43 @@
-using Cvolo.Analysis.Passes.Safety;
 using Cvolo.Analysis.Symbols;
 using Cvolo.Analysis.Symbols.Base;
-using Cvolo.Analysis.Symbols.Borrowing;
 using Cvolo.Analysis.Symbols.Collections;
 using Cvolo.Analysis.Symbols.Structs;
-using Cvolo.Analysis.VisibilityChecks;
+using Cvolo.Analysis.Passes.Safety;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
 using Cvolo.Core.AST.Expressions;
 using Cvolo.Core.AST.Statements;
 using Cvolo.Core.Diagnostics;
+using Cvolo.Analysis.VisibilityChecks;
 
 namespace Cvolo.Analysis.Passes;
 
 public sealed class SafetyPass(BindingContext context)
 {
-	private readonly List<BorrowSymbol> _activeBorrows = [];
-	private readonly Dictionary<string, (string BorrowedName, bool IsMutable, int LastUseEnd, TextSpan DeclSpan)> _activeRefs = [];
-	private readonly Dictionary<string, HashSet<string>> _parentLocks = []; // parentVar -> set of refVar names
+	private BorrowTracker? _borrows;
 	private readonly Stack<SafetyTier> _currentTierStack = [];
 	private readonly HashSet<string> _localRefsInUnboundScope = []; // refvar/ref variables declared inside the current unbound scope (including nested unsafe blocks)
 	private ClassificationAnalyzer? _classification;
 	private ReferenceLifetimeAnalyzer? _referenceLifetimes;
 
 	/// <summary>
-	/// Lazily creates the reference-lifetime service while keeping borrow-lock and safety-tier
-	/// ownership in this pass. The callbacks preserve the existing expression/type semantics.
+	/// Lazily creates the per-function borrow tracker that owns borrow exclusivity, parent locks,
+	/// and early-release bookkeeping while leaving move and delegate semantics in this pass.
+	/// </summary>
+	private BorrowTracker Borrows => _borrows ??= new BorrowTracker(
+		context,
+		GetBaseIdentifierName,
+		() => CurrentTier);
+
+	/// <summary>
+	/// Lazily creates the reference-lifetime service while borrow-lock state is owned by
+	/// <see cref="BorrowTracker"/> and safety-tier state remains in this pass.
 	/// </summary>
 	private ReferenceLifetimeAnalyzer ReferenceLifetimes => _referenceLifetimes ??= new ReferenceLifetimeAnalyzer(
 		context,
 		ResolveExpressionType,
 		GetBaseIdentifierName,
-		name => _parentLocks.ContainsKey(name),
+		Borrows.HasParentLock,
 		() => CurrentTier);
 
 	// — Safe Delegates & Borrowed Closures pass state (todo 7) —
@@ -142,9 +148,7 @@ public sealed class SafetyPass(BindingContext context)
 		if (!func.HasBody)
 			return;
 
-		_activeBorrows.Clear();
-		_activeRefs.Clear();
-		_parentLocks.Clear();
+		Borrows.Reset();
 		ReferenceLifetimes.Reset();
 		_localRefsInUnboundScope.Clear();
 		_delegateProvenances.Clear();
@@ -195,111 +199,18 @@ public sealed class SafetyPass(BindingContext context)
 		if (block is null)
 			return;
 
-		var borrowCountBefore = _activeBorrows.Count;
-		var refsAtEntry = new HashSet<string>(_activeRefs.Keys);
+		var borrowState = Borrows.CaptureBlockState();
 		var stmts = block.Statements;
 		for (var i = 0; i < stmts.Count; i++)
 		{
 			var stmt = stmts[i];
-			ReleaseExpiredBorrows(stmt.Span.Start, block, i);
+			Borrows.ReleaseExpiredBorrows(stmt.Span.Start, block, i);
 			CheckStatementSafety(stmt, scope, func);
 		}
 
 		// Release all borrows and refs taken in this block at block exit.
-		if (_activeBorrows.Count > borrowCountBefore)
-			_activeBorrows.RemoveRange(borrowCountBefore, _activeBorrows.Count - borrowCountBefore);
-		var refsToRemove = _activeRefs.Keys.Where(k => !refsAtEntry.Contains(k)).ToList();
-		foreach (var name in refsToRemove)
-		{
-			_activeRefs.Remove(name);
-			ReleaseParentLock(name);
+		foreach (var name in Borrows.ExitBlock(borrowState))
 			ReferenceLifetimes.RemoveVariable(name);
-		}
-	}
-
-	/// <summary>
-	/// For each active ref, check if it has any uses in statements from startIndex onward.
-	/// If a ref has no uses in remaining statements, release its borrow early.
-	/// </summary>
-	private void ReleaseExpiredBorrows(int currentStatementStart, BlockStatementSyntax block, int startIndex)
-	{
-		var stmts = block.Statements;
-		var toRelease = new List<string>();
-
-		foreach (var kv in _activeRefs)
-		{
-			var refName = kv.Key;
-			var hasUseAfterCurrent = false;
-
-			for (var j = startIndex; j < stmts.Count; j++)
-			{
-				if (NodeContainsRefUse(stmts[j], refName))
-				{
-					hasUseAfterCurrent = true;
-					break;
-				}
-			}
-
-			if (!hasUseAfterCurrent)
-				toRelease.Add(refName);
-		}
-
-		foreach (var refName in toRelease)
-		{
-			_activeRefs.Remove(refName);
-			_activeBorrows.RemoveAll(b => b.BorrowerName == refName);
-			ReleaseParentLock(refName);
-		}
-	}
-
-	/// <summary>
-	/// Check whether a syntax node (recursively, including branches and loops)
-	/// contains any use of the given identifier name.
-	/// </summary>
-	private static bool NodeContainsRefUse(SyntaxNode node, string refName)
-	{
-		return node switch
-		{
-			BlockStatementSyntax block => block.Statements.Any(s => NodeContainsRefUse(s, refName)),
-			IfStatementSyntax ifStmt =>
-				NodeContainsRefUse(ifStmt.Condition, refName) ||
-				NodeContainsRefUse(ifStmt.ThenStatement, refName) ||
-				(ifStmt.ElseClause != null && NodeContainsRefUse(ifStmt.ElseClause.Body, refName)),
-			WhileStatementSyntax whileStmt =>
-				NodeContainsRefUse(whileStmt.Condition, refName) ||
-				NodeContainsRefUse(whileStmt.Body, refName),
-			ForStatementSyntax forStmt =>
-				(forStmt.Initializer != null && NodeContainsRefUse(forStmt.Initializer, refName)) ||
-				NodeContainsRefUse(forStmt.Condition, refName) ||
-				NodeContainsRefUse(forStmt.Increment, refName) ||
-				NodeContainsRefUse(forStmt.Body, refName),
-			ForEachStatementSyntax forEach =>
-				NodeContainsRefUse(forEach.Collection, refName) ||
-				NodeContainsRefUse(forEach.Body, refName),
-			ReturnStatementSyntax ret => ret.Expression != null && ExprContainsRefUse(ret.Expression, refName),
-			ExpressionStatementSyntax exprStmt => ExprContainsRefUse(exprStmt.Expression, refName),
-			VariableDeclarationSyntax varDecl => varDecl.Initializer != null && ExprContainsRefUse(varDecl.Initializer, refName),
-			ExpressionSyntax expr => ExprContainsRefUse(expr, refName),
-			_ => false
-		};
-	}
-
-	/// <summary>
-	/// Check whether an expression (recursively) references the given identifier name.
-	/// </summary>
-	private static bool ExprContainsRefUse(ExpressionSyntax expr, string refName)
-	{
-		return expr switch
-		{
-			IdentifierExpressionSyntax id => id.Name == refName,
-			MemberAccessExpressionSyntax m => ExprContainsRefUse(m.Expression, refName),
-			IndexExpressionSyntax idx => ExprContainsRefUse(idx.Left, refName) || ExprContainsRefUse(idx.Index, refName),
-			BorrowExpressionSyntax borrow => ExprContainsRefUse(borrow.Expression, refName),
-			CallExpressionSyntax call => call.Arguments.Any(a => ExprContainsRefUse(a, refName)),
-			BinaryExpressionSyntax bin => ExprContainsRefUse(bin.Left, refName) || ExprContainsRefUse(bin.Right, refName),
-			StructInitializationExpressionSyntax init => init.Initializers.Any(f => ExprContainsRefUse(f.Expression, refName)),
-			_ => false
-		};
 	}
 
 	private void CheckStatementSafety(SyntaxNode stmt, SymbolTable scope, FunctionDeclarationSyntax func)
@@ -357,7 +268,7 @@ public sealed class SafetyPass(BindingContext context)
 							"Raw pointer variables cannot be declared outside unsafe context.");
 					}
 
-					VerifyBorrowRules(v, scope);
+					Borrows.VerifyDeclarationBorrow(v);
 				}
 
 				break;
@@ -455,7 +366,7 @@ public sealed class SafetyPass(BindingContext context)
 			// CVL1088: returning the item (or a borrow of it) leaks the synthesized reference past the body.
 			foreach (var ret in EnumerateNodes<ReturnStatementSyntax>(body))
 			{
-				if (ret.Expression is not null && ExprContainsRefUse(ret.Expression, itemName))
+				if (ret.Expression is not null && BorrowTracker.ExpressionContainsRefUse(ret.Expression, itemName))
 				{
 					context.Diagnostics.Report(context.CurrentUnit!.Context, ret.Span,
 						$"Escape Boundary Violation: reference loop variable '{itemName}' uses an internal stack provenance exception and cannot cross the lexical boundary of the loop block.",
@@ -469,7 +380,7 @@ public sealed class SafetyPass(BindingContext context)
 				if (assign.Operator != "=")
 					continue;
 				var lhsBase = GetBaseIdentifierName(assign.Left);
-				if (lhsBase is not null && !safeTargets.Contains(lhsBase) && ExprContainsRefUse(assign.Right, itemName))
+				if (lhsBase is not null && !safeTargets.Contains(lhsBase) && BorrowTracker.ExpressionContainsRefUse(assign.Right, itemName))
 				{
 					context.Diagnostics.Report(context.CurrentUnit!.Context, assign.Span,
 						$"Escape Boundary Violation: reference loop variable '{itemName}' uses an internal stack provenance exception and cannot cross the lexical boundary of the loop block.",
@@ -485,7 +396,7 @@ public sealed class SafetyPass(BindingContext context)
 					continue;
 				for (var i = 0; i < call.Arguments.Count && i < callee.Parameters.Count; i++)
 				{
-					if (callee.Parameters[i].Type is PointerTypeSymbol && ExprContainsRefUse(call.Arguments[i], itemName))
+					if (callee.Parameters[i].Type is PointerTypeSymbol && BorrowTracker.ExpressionContainsRefUse(call.Arguments[i], itemName))
 					{
 						context.Diagnostics.Report(context.CurrentUnit!.Context, call.Arguments[i].Span,
 							$"Escape Boundary Violation: reference loop variable '{itemName}' uses an internal stack provenance exception and cannot cross the lexical boundary of the loop block.",
@@ -718,7 +629,7 @@ public sealed class SafetyPass(BindingContext context)
 						?? context.ResolveGlobalReference(leftId.Name, out _);
 					if (leftSymbol is not null)
 					{
-						VerifyBorrowLock(bin.Left, scope, "reassign");
+						Borrows.VerifyUnlocked(bin.Left, "reassign");
 						leftSymbol.IsMoved = false;
 						HandleCopyAssignment(bin.Right, scope);
 
@@ -832,7 +743,7 @@ public sealed class SafetyPass(BindingContext context)
 				case CopyKind.ResourceMove:
 					if (arg is IdentifierExpressionSyntax aid && scope.Lookup(aid.Name) is VariableSymbol av)
 					{
-						VerifyBorrowLock(arg, scope, "move");
+						Borrows.VerifyUnlocked(arg, "move");
 						av.IsMoved = true;
 					}
 					break;
@@ -849,7 +760,7 @@ public sealed class SafetyPass(BindingContext context)
 		{
 			if (arg is IdentifierExpressionSyntax sid && scope.Lookup(sid.Name) is VariableSymbol sv)
 			{
-				VerifyBorrowLock(arg, scope, "move");
+				Borrows.VerifyUnlocked(arg, "move");
 				sv.IsMoved = true;
 			}
 		}
@@ -935,9 +846,7 @@ public sealed class SafetyPass(BindingContext context)
 	private void RegisterRefCaptureLock(string name, TextSpan span)
 	{
 		var lockName = "$refλ:" + name;
-		_activeRefs[lockName] = (name, false, span.End, span);
-		_activeBorrows.Add(new BorrowSymbol(lockName, name, false, span));
-		RegisterParentLock(name, lockName);
+		Borrows.RegisterBorrow(lockName, name, false, span);
 	}
 
 	/// <summary>
@@ -1068,75 +977,6 @@ public sealed class SafetyPass(BindingContext context)
 		return false;
 	}
 
-	private void VerifyBorrowRules(VariableDeclarationSyntax varDecl, SymbolTable scope)
-	{
-		// Borrow exclusivity checks are disabled in unbound and unsafe tiers
-		if (CurrentTier != SafetyTier.Safe)
-			return;
-
-		if ((varDecl.Type == "refvar" || varDecl.Type == "ref") && varDecl.Initializer is BorrowExpressionSyntax borrow)
-		{
-			var borrowedName = GetBaseIdentifierName(borrow.Expression);
-			if (borrowedName != null)
-			{
-				var isMutable = varDecl.Type == "refvar";
-
-				// Array Index Locking: borrowing any element blocks all other element borrows
-				var isIndexBorrow = borrow.Expression is IndexExpressionSyntax;
-				if (isIndexBorrow && _parentLocks.ContainsKey(borrowedName))
-				{
-					context.Diagnostics.Report(context.CurrentUnit!.Context, varDecl.Span,
-						$"'{borrowedName}' is already borrowed; cannot borrow multiple elements of the same array");
-				}
-
-				// Exclusive Mutability: check parent-level conflicts
-				var conflicts = _activeBorrows.Where(b => b.BorrowedName == borrowedName).ToList();
-				if (conflicts.Count > 0)
-				{
-					if (isMutable || conflicts.Any(c => c.IsMutable))
-					{
-						context.Diagnostics.Report(context.CurrentUnit!.Context, varDecl.Span, $"Cannot borrow '{borrowedName}' because an incompatible borrow is already active");
-					}
-				}
-
-				_activeBorrows.Add(new BorrowSymbol(varDecl.Name, borrowedName, isMutable, varDecl.Span));
-				_activeRefs[varDecl.Name] = (borrowedName, isMutable, varDecl.Span.End, varDecl.Span);
-				RegisterParentLock(borrowedName, varDecl.Name);
-			}
-		}
-	}
-
-	private void RegisterParentLock(string parentName, string refName)
-	{
-		if (!_parentLocks.TryGetValue(parentName, out var refs))
-		{
-			refs = [];
-			_parentLocks[parentName] = refs;
-		}
-		refs.Add(refName);
-	}
-
-	private void ReleaseParentLock(string refName)
-	{
-		var parentKeys = _parentLocks.Where(kv => kv.Value.Contains(refName)).Select(kv => kv.Key).ToList();
-		foreach (var parent in parentKeys)
-		{
-			_parentLocks[parent].Remove(refName);
-			if (_parentLocks[parent].Count == 0)
-				_parentLocks.Remove(parent);
-		}
-	}
-
-	private void VerifyBorrowLock(ExpressionSyntax expr, SymbolTable scope, string verb)
-	{
-		var name = GetBaseIdentifierName(expr);
-		if (name != null && _parentLocks.ContainsKey(name))
-		{
-			context.Diagnostics.Report(context.CurrentUnit!.Context, expr.Span,
-				$"Cannot {verb} '{name}' while a field borrow is still active");
-		}
-	}
-
 	private string? GetBaseIdentifierName(ExpressionSyntax expr)
 	{
 		if (expr is IdentifierExpressionSyntax id) return id.Name;
@@ -1233,18 +1073,14 @@ public sealed class SafetyPass(BindingContext context)
 			if (hasRefPromotion && parentName is not null)
 			{
 				var isMutable = targetType is PointerTypeSymbol targetPtr && targetPtr.IsMutable;
-				_activeBorrows.Add(new BorrowSymbol(c.VariableName!, parentName, isMutable, c.Span));
-				_activeRefs[c.VariableName!] = (parentName, isMutable, c.Span.End, c.Span);
-				RegisterParentLock(parentName, c.VariableName!);
+				Borrows.RegisterBorrow(c.VariableName!, parentName, isMutable, c.Span);
 			}
 
 			CheckBlockSafety(new BlockStatementSyntax(c.Span, c.Body), new SymbolTable(scope), func);
 
 			if (hasRefPromotion && parentName is not null)
 			{
-				_activeRefs.Remove(c.VariableName!);
-				_activeBorrows.RemoveAll(b => b.BorrowerName == c.VariableName);
-				ReleaseParentLock(c.VariableName!);
+				Borrows.RemoveBorrower(c.VariableName!);
 			}
 		}
 	}
