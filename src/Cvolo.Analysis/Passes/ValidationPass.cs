@@ -1,15 +1,16 @@
+using Cvolo.Analysis.Passes.Validation;
+using Cvolo.Analysis.Resolution;
 using Cvolo.Analysis.Semantics;
 using Cvolo.Analysis.Symbols;
 using Cvolo.Analysis.Symbols.Base;
 using Cvolo.Analysis.Symbols.Collections;
 using Cvolo.Analysis.Symbols.Structs;
+using Cvolo.Analysis.VisibilityChecks;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
 using Cvolo.Core.AST.Expressions;
 using Cvolo.Core.AST.Statements;
 using Cvolo.Core.Diagnostics;
-using Cvolo.Analysis.VisibilityChecks;
-using Cvolo.Analysis.Passes.Validation;
 
 namespace Cvolo.Analysis.Passes;
 
@@ -18,15 +19,13 @@ public sealed class ValidationPass(BindingContext context)
 	private ClassificationAnalyzer? _classification;
 	private ClassificationAnalyzer Classification => _classification ??= new ClassificationAnalyzer(context);
 
-	/// <summary>
-	/// Placeholder used for deferred lambda and function-group arguments during overload resolution.
-	/// It is a semantic resolver sentinel rather than mutable validation traversal state.
-	/// </summary>
-	/// <remarks>
-	/// The marker only matches delegate-typed parameters during candidate scoring; target-typed
-	/// validation resolves the actual lambda or method-group conversion after overload selection.
-	/// </remarks>
-	private static readonly TypeSymbol LambdaArgMarker = new("<lambda-argument>");
+	private OverloadResolver? _overloadResolver;
+	/// <summary>Shared overload candidate discovery and signature scoring service.</summary>
+	private OverloadResolver Overloads => _overloadResolver ??= new OverloadResolver(context);
+	private CallResolver? _callResolver;
+	/// <summary>Shared callable-target resolver for ordinary, synthetic enum, and delegate-value calls.</summary>
+	private CallResolver Calls => _callResolver ??= new CallResolver(context, Overloads);
+
 	/// <summary>
 	/// Mutable traversal state for the validation run. The state object is kept separate from the
 	/// semantic services owned by <see cref="BindingContext"/> so later validators can share the same
@@ -382,7 +381,7 @@ public sealed class ValidationPass(BindingContext context)
 				if (candParams.Count != argTypes.Count)
 					continue;
 
-				var score = CompareSignatureExactly(candParams, argTypes);
+				var score = Overloads.CompareSignatureExactly(candParams, argTypes);
 				if (score > bestScore)
 				{
 					bestScore = score;
@@ -394,23 +393,6 @@ public sealed class ValidationPass(BindingContext context)
 		return target;
 	}
 
-	private int CompareSignatureExactly(IReadOnlyList<TypeSymbol> paramTypes, IReadOnlyList<TypeSymbol> argTypes)
-	{
-		var score = 0;
-		for (var i = 0; i < paramTypes.Count; i++)
-		{
-			if (paramTypes[i].Equals(argTypes[i]))
-				score += 4;
-			else if (argTypes[i].Equals(TypeSymbol.Null) && (paramTypes[i] is RawPointerTypeSymbol || (paramTypes[i] is UnionTypeSymbol u && u.IsOption)))
-				score += 3;
-			else if (TypeSymbol.IsIntegerType(paramTypes[i]) && TypeSymbol.IsIntegerType(argTypes[i]))
-				score += 1;
-			else if (TypeSymbol.IsFloatingPointType(paramTypes[i]) && TypeSymbol.IsIntegerType(argTypes[i]))
-				score += 1;
-		}
-
-		return score;
-	}
 
 	private void CollectFieldAssignments(SyntaxNode node, HashSet<string> assigned)
 	{
@@ -702,10 +684,10 @@ public sealed class ValidationPass(BindingContext context)
 			var enumeratorName = enumeratorType.Name;
 
 			var moveNextName = $"{enumeratorName}.MoveNext";
-			var moveNextFunc = ResolveOverloadedFunction(moveNextName, [new PointerTypeSymbol(enumeratorType, isMutable: true)], scope);
+			var moveNextFunc = Overloads.Resolve(moveNextName, [new PointerTypeSymbol(enumeratorType, isMutable: true)], scope);
 
 			var currentName = $"{enumeratorName}.Current";
-			var currentFunc2 = ResolveOverloadedFunction(currentName, [new PointerTypeSymbol(enumeratorType, isMutable: true)], scope);
+			var currentFunc2 = Overloads.Resolve(currentName, [new PointerTypeSymbol(enumeratorType, isMutable: true)], scope);
 
 			if (moveNextFunc is null)
 			{
@@ -839,9 +821,9 @@ public sealed class ValidationPass(BindingContext context)
 		var receiverTypes = new[] { new PointerTypeSymbol(collectionType, isMutable: true) };
 
 		var candidates = new List<FunctionSymbol>();
-		GatherOverloadCandidates(name, candidates);
+		Overloads.GatherCandidates(name, candidates);
 
-		// GatherOverloadCandidates can surface the same physical symbol more than once
+		// Overload candidate discovery can surface the same physical symbol more than once
 		// (exact-name, current-namespace, and active-using lookups may all hit the same
 		// entry). Deduplicate by identity so a single candidate is never scored as a tie.
 		candidates = candidates.Distinct().ToList();
@@ -878,7 +860,7 @@ public sealed class ValidationPass(BindingContext context)
 		foreach (var candidate in candidates)
 		{
 			var paramTypes = candidate.Parameters.Select(p => p.Type).ToList();
-			var score = CompareSignature(paramTypes, receiverTypes, candidate.IsVariadic);
+			var score = Overloads.CompareSignature(paramTypes, receiverTypes, candidate.IsVariadic);
 			if (score > bestScore)
 			{
 				bestScore = score;
@@ -989,7 +971,7 @@ public sealed class ValidationPass(BindingContext context)
 					$"Cannot initialize delegate '{declaredDelegateType.Name}' with 'null'; delegates are non-null values.",
 					DiagnosticIds.NullLiteralForDelegate);
 			}
-			else if (varDecl.Initializer is IdentifierExpressionSyntax groupId && !IsKnownVariable(groupId, scope) && HasFunctionOverloads(groupId.Name))
+			else if (varDecl.Initializer is IdentifierExpressionSyntax groupId && !Calls.IsKnownVariable(groupId, scope) && Overloads.HasCandidates(groupId.Name))
 			{
 				CheckFunctionGroupConversion(groupId, declaredDelegateType, scope);
 			}
@@ -1236,21 +1218,21 @@ public sealed class ValidationPass(BindingContext context)
 						if (arg is LambdaExpressionSyntax)
 						{
 							deferredGroupArgs.Add((arg, argIndex));
-							argTypes.Add(LambdaArgMarker);
+							argTypes.Add(OverloadResolver.DeferredCallableArgument);
 							continue;
 						}
 
 						var isDeferredGroup = arg switch
 						{
 							IdentifierExpressionSyntax idArg =>
-								!IsKnownVariable(idArg, scope) && HasFunctionOverloads(idArg.Name),
+								!Calls.IsKnownVariable(idArg, scope) && Overloads.HasCandidates(idArg.Name),
 							MemberAccessExpressionSyntax maArg => IsMethodGroupReference(maArg, scope),
 							_ => false,
 						};
 						if (isDeferredGroup)
 						{
 							deferredGroupArgs.Add((arg, argIndex));
-							argTypes.Add(LambdaArgMarker);
+							argTypes.Add(OverloadResolver.DeferredCallableArgument);
 							continue;
 						}
 
@@ -1287,7 +1269,7 @@ public sealed class ValidationPass(BindingContext context)
 						if (resolvedType is StructTypeSymbol or UnionTypeSymbol)
 						{
 							// This is a generic constructor call! Use the fully qualified resolved type name for overload resolution
-							func = ResolveOverloadedFunction(resolvedType.Name, argTypes, scope, call);
+							func = Overloads.Resolve(resolvedType.Name, argTypes, scope, call);
 						}
 						else
 						{
@@ -1303,9 +1285,7 @@ public sealed class ValidationPass(BindingContext context)
 					else
 					{
 						// Use overload resolution logic for standard non-generic functions / constructors
-						func = TryResolveEnumName(call, argTypes, scope);
-						func ??= TryResolveFlagsHasFlag(call, argTypes, scope);
-						func ??= ResolveOverloadedFunction(call.FunctionName, argTypes, scope);
+						func = Calls.ResolveOrdinaryCall(call, argTypes, scope);
 
 						// No concrete overload matched: fall back to interface-parameterized dispatch
 						// (implicit generic templates monomorphized with the concrete conforming arg types).
@@ -1337,7 +1317,7 @@ public sealed class ValidationPass(BindingContext context)
 					{
 						// Not an ordinary function: could this be a delegate value invocation
 						// ('h(42)') or a delegate-typed field invocation ('obj.Handler(42)')?
-						if (TryResolveDelegateInvocation(call, argTypes, scope, out var delegateType))
+						if (Calls.TryResolveDelegateInvocation(call, scope, out var delegateType))
 						{
 							context.ResolvedDelegateCalls[call] = delegateType;
 
@@ -1472,7 +1452,7 @@ public sealed class ValidationPass(BindingContext context)
 								CheckTargetTypedLambda(assignLambda, assigneeDelegate, scope);
 								break;
 							}
-							if (bin.Right is IdentifierExpressionSyntax assignGroupId && !IsKnownVariable(assignGroupId, scope) && HasFunctionOverloads(assignGroupId.Name))
+							if (bin.Right is IdentifierExpressionSyntax assignGroupId && !Calls.IsKnownVariable(assignGroupId, scope) && Overloads.HasCandidates(assignGroupId.Name))
 							{
 								CheckFunctionGroupConversion(assignGroupId, assigneeDelegate, scope);
 								break;
@@ -2088,7 +2068,7 @@ public sealed class ValidationPass(BindingContext context)
 				return;
 			}
 
-			if (ret.Expression is IdentifierExpressionSyntax retId && !IsKnownVariable(retId, scope) && HasFunctionOverloads(retId.Name))
+			if (ret.Expression is IdentifierExpressionSyntax retId && !Calls.IsKnownVariable(retId, scope) && Overloads.HasCandidates(retId.Name))
 			{
 				CheckFunctionGroupConversion(retId, expectedDelegate, scope);
 				return;
@@ -2309,20 +2289,20 @@ public sealed class ValidationPass(BindingContext context)
 		switch (groupRef)
 		{
 			case IdentifierExpressionSyntax id:
-				GatherOverloadCandidates(id.Name, candidates);
+				Overloads.GatherCandidates(id.Name, candidates);
 				break;
 			case MemberAccessExpressionSyntax ma when IsMethodGroupReference(ma, scope):
-			{
-				var receiverType = GetExpressionType(ma.Expression, scope);
-				if (receiverType is PointerTypeSymbol ptr)
-					receiverType = ptr.ReferencedType;
-				if (receiverType is null)
-					return;
-				candidates.AddRange(context
-					.GetExtensionMethodCandidates(receiverType, context.CurrentUnit, ma.MemberName)
-					.Select(candidate => candidate.Function));
-				break;
-			}
+				{
+					var receiverType = GetExpressionType(ma.Expression, scope);
+					if (receiverType is PointerTypeSymbol ptr)
+						receiverType = ptr.ReferencedType;
+					if (receiverType is null)
+						return;
+					candidates.AddRange(context
+						.GetExtensionMethodCandidates(receiverType, context.CurrentUnit, ma.MemberName)
+						.Select(candidate => candidate.Function));
+					break;
+				}
 		}
 
 		var isBoundMethod = groupRef is MemberAccessExpressionSyntax;
@@ -2378,7 +2358,7 @@ public sealed class ValidationPass(BindingContext context)
 				$"Cannot initialize delegate '{delegateType.Name}' with 'null'; delegates are non-null values.",
 				DiagnosticIds.NullLiteralForDelegate);
 		}
-		else if (expr is IdentifierExpressionSyntax groupId && !IsKnownVariable(groupId, scope) && HasFunctionOverloads(groupId.Name))
+		else if (expr is IdentifierExpressionSyntax groupId && !Calls.IsKnownVariable(groupId, scope) && Overloads.HasCandidates(groupId.Name))
 		{
 			CheckFunctionGroupConversion(groupId, delegateType, scope);
 		}
@@ -2390,24 +2370,6 @@ public sealed class ValidationPass(BindingContext context)
 		{
 			CheckExpression(expr, scope);
 		}
-	}
-
-	/// <summary>True if 'name' refers to a registered function overload group.</summary>
-	private bool HasFunctionOverloads(string name)
-	{
-		var candidates = new List<FunctionSymbol>();
-		GatherOverloadCandidates(name, candidates);
-		return candidates.Count > 0;
-	}
-
-	/// <summary>True if the identifier resolves to a variable (local, parameter, or global).</summary>
-	private bool IsKnownVariable(IdentifierExpressionSyntax id, SymbolTable scope)
-	{
-		if (scope.Lookup(id.Name) is VariableSymbol)
-			return true;
-		if (context.ResolveGlobalReference(id.Name, out _) is VariableSymbol)
-			return true;
-		return id.Name == "self" || id.Name == "this";
 	}
 
 	/// <summary>True if the member access names a zero-arg-this extension member on the
@@ -2430,59 +2392,6 @@ public sealed class ValidationPass(BindingContext context)
 		if (receiverType is UnionTypeSymbol unionType && unionType.FindField(ma.MemberName) is not null)
 			return false;
 		return context.GetExtensionMethodCandidates(receiverType, context.CurrentUnit, ma.MemberName).Count > 0;
-	}
-
-	/// <summary>
-	/// Resolves 'h(42)' / 'obj.Handler(42)' delegate-value invocations (§14). Returns true and a
-	/// bound DelegateTypeSymbol when the call target is a delegate-typed variable or struct/union
-	/// field; otherwise false. Callers record the binding in ResolvedDelegateCalls.
-	/// </summary>
-	private bool TryResolveDelegateInvocation(CallExpressionSyntax call, IReadOnlyList<TypeSymbol> argTypes, SymbolTable scope, out DelegateTypeSymbol? delegateType)
-	{
-		delegateType = null;
-		TypeSymbol? delegateMemberType = null;
-
-		if (call.FunctionName.Contains('.'))
-		{
-			var lastDot = call.FunctionName.LastIndexOf('.');
-			var receiverName = call.FunctionName[..lastDot];
-			var memberName = call.FunctionName[(lastDot + 1)..];
-
-			var receiver = scope.Lookup(receiverName) as VariableSymbol ?? context.ResolveGlobalReference(receiverName, out _) as VariableSymbol;
-			if (receiver is null)
-				return false;
-
-			var receiverType = receiver.Type;
-			if (receiverType is PointerTypeSymbol ptr)
-				receiverType = ptr.ReferencedType;
-
-			delegateMemberType = receiverType switch
-			{
-				StructTypeSymbol structType => structType.FindField(memberName)?.Type,
-				UnionTypeSymbol unionType => unionType.FindField(memberName)?.Type,
-				_ => null,
-			};
-		}
-		else
-		{
-			var variable = scope.Lookup(call.FunctionName) as VariableSymbol ?? context.ResolveGlobalReference(call.FunctionName, out _) as VariableSymbol;
-			if (variable is null)
-				return false;
-			delegateMemberType = variable.Type;
-		}
-
-		if (delegateMemberType is not DelegateTypeSymbol callableDelegate)
-			return false;
-		delegateType = callableDelegate;
-
-		if (call.Arguments.Count != callableDelegate.Parameters.Count)
-		{
-			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.Report(currentFileContext, call.ArgumentListSpan,
-				$"Delegate '{callableDelegate.Name}' expects {callableDelegate.Parameters.Count} argument(s) but received {call.Arguments.Count}");
-		}
-
-		return true;
 	}
 
 	private TypeSymbol? GetFlagsBinaryType(BinaryExpressionSyntax bin, SymbolTable scope)
@@ -3528,330 +3437,6 @@ public sealed class ValidationPass(BindingContext context)
 		_ => false,
 	};
 
-	private FunctionSymbol? TryResolveEnumName(CallExpressionSyntax call, IReadOnlyList<TypeSymbol> argTypes, SymbolTable scope)
-	{
-		// (§5.A) Name() is a synthesized zero-arg method on every enum: no stdlib symbol
-		// exists, so we synthesize a validation-side FunctionSymbol and lower the call
-		// to an O(1) .rodata string lookup in the CodeGenerator.
-		if (!call.FunctionName.Contains('.') || !call.FunctionName.EndsWith(".Name", StringComparison.Ordinal))
-		{
-			return null;
-		}
-
-		var receiverName = call.FunctionName[..call.FunctionName.IndexOf('.')];
-		if (scope.Lookup(receiverName) is not VariableSymbol receiverSymbol)
-		{
-			return null;
-		}
-
-		var receiverType = receiverSymbol.Type;
-		if (receiverType is PointerTypeSymbol receiverPtr)
-		{
-			receiverType = receiverPtr.ReferencedType;
-		}
-
-		if (receiverType is not EnumTypeSymbol enumType)
-		{
-			return null;
-		}
-
-		if (argTypes.Count != 0)
-		{
-			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.Report(currentFileContext, call.Span, "Name expects no arguments.");
-		}
-
-		return new FunctionSymbol($"$Name${receiverName}", TypeSymbol.String,
-			[new ParameterSymbol("this", new PointerTypeSymbol(enumType, isMutable: false))]);
-	}
-
-	private FunctionSymbol? TryResolveFlagsHasFlag(CallExpressionSyntax call, IReadOnlyList<TypeSymbol> argTypes, SymbolTable scope)
-	{
-		// (§3.C) HasFlag is a synthesized method on [Flags] enums: no stdlib symbol
-		// exists, so we synthesize a validation-side FunctionSymbol and lower the call
-		// to (p & f) == f in the CodeGenerator.
-		if (!call.FunctionName.Contains('.') || !call.FunctionName.EndsWith(".HasFlag", StringComparison.Ordinal))
-		{
-			return null;
-		}
-
-		var receiverName = call.FunctionName[..call.FunctionName.IndexOf('.')];
-		if (scope.Lookup(receiverName) is not VariableSymbol receiverSymbol)
-		{
-			return null;
-		}
-
-		var receiverType = receiverSymbol.Type;
-		if (receiverType is PointerTypeSymbol receiverPtr)
-		{
-			receiverType = receiverPtr.ReferencedType;
-		}
-
-		if (receiverType is not EnumTypeSymbol { IsFlags: true } flagsEnum)
-		{
-			return null;
-		}
-
-		if (argTypes.Count != 1 || argTypes[0] != flagsEnum)
-		{
-			// Report the misuse but still return a synthetic symbol so the generic
-			// "No overload" error is not emitted a second time.
-			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.Report(currentFileContext, call.Span,
-				$"HasFlag expects exactly one argument of the same [Flags] enum type '{flagsEnum.Name}'.");
-		}
-
-		var receiverParam = new ParameterSymbol("this", new PointerTypeSymbol(flagsEnum, isMutable: false));
-		var flagParam = new ParameterSymbol("flag", flagsEnum);
-		return new FunctionSymbol($"$HasFlag${flagsEnum.Name}", TypeSymbol.Bool, [receiverParam, flagParam]);
-	}
-
-	private FunctionSymbol? ResolveOverloadedFunction(string name, IReadOnlyList<TypeSymbol> argTypes, SymbolTable scope, CallExpressionSyntax? call = null)
-	{
-		var candidates = new List<FunctionSymbol>();
-		var baseName = name;
-		var adjustedArgTypes = new List<TypeSymbol>(argTypes);
-
-		var isDottedExtension = false;
-		TypeSymbol? dottedReceiverType = null;
-		string? dottedMemberName = null;
-
-		// Detect dotted extension method call
-		if (name.Contains('.'))
-		{
-			var parts = name.Split('.');
-			var receiverName = parts[0];
-			var methodName = parts[1];
-
-			var receiverSymbol = scope.Lookup(receiverName) as VariableSymbol
-				?? context.ResolveGlobalReference(receiverName, out _);
-			if (receiverSymbol is not null)
-			{
-				var receiverType = receiverSymbol.Type;
-				if (receiverType is PointerTypeSymbol ptr)
-					receiverType = ptr.ReferencedType;
-
-				if (receiverType is StructTypeSymbol or UnionTypeSymbol or EnumTypeSymbol)
-				{
-					isDottedExtension = true;
-					dottedReceiverType = receiverType;
-					dottedMemberName = methodName;
-					// Keep the canonical receiver-qualified name for diagnostics/debugging.
-					baseName = $"{receiverType.Name}.{methodName}";
-
-					// Prepend the receiver's reference type as the first argument!
-					var receiverRefType = new PointerTypeSymbol(receiverType, isMutable: receiverSymbol.IsMutable);
-					adjustedArgTypes.Insert(0, receiverRefType);
-				}
-			}
-		}
-
-		if (!isDottedExtension)
-		{
-			var constructorName = name;
-			if (call != null && call.TypeArguments.Count > 0 && !name.Contains('<'))
-			{
-				var concreteTypeName = $"{name}<{string.Join(", ", call.TypeArguments)}>";
-				var resolvedType = context.ResolveType(concreteTypeName);
-				if (resolvedType != null)
-				{
-					constructorName = resolvedType.Name;
-				}
-			}
-
-			// Dual-Name Lookup: Support both fully-qualified namespace name and short name
-			var shortConstructorName = constructorName;
-			if (shortConstructorName.Contains('.'))
-			{
-				shortConstructorName = shortConstructorName.Substring(shortConstructorName.LastIndexOf('.') + 1);
-			}
-
-			if (context.Constructors.ContainsKey(constructorName) || context.Constructors.ContainsKey(shortConstructorName))
-			{
-				baseName = context.Constructors.ContainsKey(constructorName) ? constructorName : shortConstructorName;
-				var ctorType = context.ResolveType(baseName);
-
-				if (ctorType is not null)
-					adjustedArgTypes.Insert(0, new PointerTypeSymbol(ctorType, isMutable: true));
-			}
-			else if (scope.Lookup("this") is VariableSymbol enclosingThis
-					 && enclosingThis.Type is PointerTypeSymbol thisPtrType
-					 && thisPtrType.ReferencedType is StructTypeSymbol or UnionTypeSymbol or EnumTypeSymbol)
-			{
-				// Implicit receiver call of a sibling extension method (e.g. calling a
-				// private helper of the same extended type from another extension method).
-				// The monomorphized sibling is registered under '{InstantiatedType.Name}.{MethodName}'.
-				var enclosingType = thisPtrType.ReferencedType;
-				if (context.OverloadedFunctions.ContainsKey($"{enclosingType.Name}.{name}"))
-				{
-					baseName = $"{enclosingType.Name}.{name}";
-					adjustedArgTypes.Insert(0, new PointerTypeSymbol(enclosingType, isMutable: thisPtrType.IsMutable));
-				}
-			}
-		}
-
-		// 1. Gather candidates through the same extension lookup authority used by
-		// protocol matching and completion. Non-extension calls keep the ordinary
-		// function/constructor namespace lookup path.
-		if (isDottedExtension && dottedReceiverType is not null && dottedMemberName is not null)
-		{
-			candidates.AddRange(context
-				.GetExtensionMethodCandidates(dottedReceiverType, context.CurrentUnit, dottedMemberName)
-				.Select(candidate => candidate.Function));
-		}
-		else
-		{
-			GatherOverloadCandidates(baseName, candidates);
-		}
-
-		// 2. Select the candidate with the best signature match score
-		FunctionSymbol? bestMatch = null;
-		var bestScore = -1;
-
-		foreach (var candidate in candidates)
-		{
-			var paramTypes = candidate.Parameters.Select(p => p.Type).ToList();
-			var score = CompareSignature(paramTypes, adjustedArgTypes, candidate.IsVariadic);
-			if (score > bestScore)
-			{
-				bestScore = score;
-				bestMatch = candidate;
-			}
-		}
-
-		return bestScore >= 0 ? bestMatch : null;
-	}
-
-	private void GatherOverloadCandidates(string name, List<FunctionSymbol> targetList)
-	{
-		// Direct or exact match search (e.g., "MyNamespace.Point.Move" or "Point.Move")
-		if (context.OverloadedFunctions.TryGetValue(name, out var directMatches))
-			TargetListAddRangeUnique(targetList, directMatches);
-
-		// Scoped Namespace lookup
-		var localMangled = context.GetMangledName(name, context.CurrentNamespace);
-		if (context.OverloadedFunctions.TryGetValue(localMangled, out var localMatches))
-			TargetListAddRangeUnique(targetList, localMatches);
-
-		// Search through imported namespaces (expanded with 'expose using')
-		if (context.CurrentUnit is not null)
-		{
-			var activeUsings = context.GetActiveUsings(context.CurrentUnit);
-
-			foreach (var ns in activeUsings)
-			{
-				var candidateMangled = context.GetMangledName(name, ns);
-				if (context.OverloadedFunctions.TryGetValue(candidateMangled, out var match))
-					TargetListAddRangeUnique(targetList, match);
-			}
-		}
-	}
-
-	// A plain identifier may resolve through both the direct table and the current-namespace
-	// mangled key (and imported namespaces), so the same FunctionSymbol can surface twice.
-	private static void TargetListAddRangeUnique(List<FunctionSymbol> targetList, IReadOnlyList<FunctionSymbol> candidates)
-	{
-		foreach (var candidate in candidates)
-		{
-			if (!targetList.Contains(candidate))
-				targetList.Add(candidate);
-		}
-	}
-
-	private int CompareSignature(IReadOnlyList<TypeSymbol> paramTypes, IReadOnlyList<TypeSymbol> argTypes, bool isVariadic)
-	{
-		if (!isVariadic && paramTypes.Count != argTypes.Count)
-			return -1; // Incompatible bounds
-
-		if (isVariadic && argTypes.Count < paramTypes.Count)
-			return -1; // Missing required parameters
-
-		var score = 0;
-		var countToCheck = paramTypes.Count;
-
-		for (var i = 0; i < countToCheck; i++)
-		{
-			var param = paramTypes[i];
-			var arg = argTypes[i];
-
-			if (arg == LambdaArgMarker)
-			{
-				// A lambda / function-group argument has no intrinsic type; it can only
-				// satisfy a delegate-typed parameter (§4.2 / §22 target typing).
-				if (param is DelegateTypeSymbol)
-				{
-					score += 4;
-					continue;
-				}
-				return -1;
-			}
-
-			if (param.Equals(arg))
-			{
-				score += 4; // Direct exact match is preferred
-			}
-			else if (arg.Equals(TypeSymbol.Null) && (param is RawPointerTypeSymbol || (param is UnionTypeSymbol union && union.IsOption)))
-			{
-				score += 3; // Null matches raw pointers and Option types!
-			}
-			else if (param is PointerTypeSymbol paramPtr && arg is PointerTypeSymbol argPointer &&
-					 paramPtr.ReferencedType is SliceTypeSymbol sliceType && argPointer.ReferencedType is ArrayTypeSymbol arrayType &&
-					 sliceType.ElementType.Equals(arrayType.ElementType))
-			{
-				// Safety check: Cannot pass a read-only pointer to a mutating parameter!
-				if (paramPtr.IsMutable && !argPointer.IsMutable)
-				{
-					return -1;
-				}
-
-				score += paramPtr.IsMutable == argPointer.IsMutable ? 3 : 2;
-				continue;
-			}
-			else if (param is PointerTypeSymbol pPtr && arg is PointerTypeSymbol aPtr && pPtr.ReferencedType.Equals(aPtr.ReferencedType))
-			{
-				if (pPtr.IsMutable && !aPtr.IsMutable)
-				{
-					return -1;
-				}
-
-				score += pPtr.IsMutable == aPtr.IsMutable ? 3 : 2;
-				continue;
-			}
-			else if (param is SliceTypeSymbol slice && arg is ArrayTypeSymbol arr && slice.ElementType.Equals(arr.ElementType))
-			{
-				score += 3; // Implicit decay of Array to Dynamic Slice
-			}
-			else if (param is PointerTypeSymbol ptr && ptr.ReferencedType.Equals(arg))
-			{
-				score += 2; // Implicit reference casting
-			}
-			else if (arg is PointerTypeSymbol argPtr && param.Equals(argPtr.ReferencedType))
-			{
-				score += 2; // Implicit dereference matches
-			}
-			else if (param.Equals(TypeSymbol.Double) && arg.Equals(TypeSymbol.Int))
-			{
-				score += 1; // Implicit numeric promotion (int -> double)
-			}
-			else if (TypeSymbol.IsNumericIntegerType(param) && TypeSymbol.IsNumericIntegerType(arg) && !param.Equals(arg))
-			{
-				score += 1; // Implicit integer width conversion (byte->int, int->long, etc.)
-			}
-			else if (param.Name == "string" && ((arg is ArrayTypeSymbol arrSymbol && arrSymbol.ElementType.Name == "char") || (arg is SliceTypeSymbol sliceSymbol && sliceSymbol.ElementType.Name == "char")))
-			{
-				score += 1; // Implicit char array/slice to string decay
-			}
-			else
-			{
-				return -1; // Parameter signature mismatch
-			}
-		}
-
-		if (isVariadic)
-			score += 1;
-
-		return score;
-	}
 
 	private TypeSymbol? CheckArrayReplication(ArrayReplicationExpressionSyntax expr, SymbolTable scope)
 	{
