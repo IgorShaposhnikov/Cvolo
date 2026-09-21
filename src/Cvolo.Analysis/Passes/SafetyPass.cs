@@ -1,7 +1,7 @@
+using Cvolo.Analysis.Passes.Safety;
 using Cvolo.Analysis.Symbols;
 using Cvolo.Analysis.Symbols.Base;
 using Cvolo.Analysis.Symbols.Structs;
-using Cvolo.Analysis.Passes.Safety;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
 using Cvolo.Core.AST.Expressions;
@@ -17,6 +17,7 @@ public sealed class SafetyPass(BindingContext context)
 	private ReferenceLifetimeAnalyzer? _referenceLifetimes;
 	private MoveAnalyzer? _moves;
 	private UnboundValidator? _unbound;
+	private ForEachSafetyValidator? _forEachSafety;
 
 	/// <summary>
 	/// Lazily creates the unsafe-context validator that owns tier-stack transitions and
@@ -63,6 +64,14 @@ public sealed class SafetyPass(BindingContext context)
 		GetBaseIdentifierName,
 		() => UnsafeContext.CurrentTier,
 		() => UnsafeContext.IsInsideUnbound);
+
+	/// <summary>
+	/// Lazily creates the foreach safety validator that enforces reference-item escape boundaries
+	/// and the immutable collection contract for the duration of each loop body.
+	/// </summary>
+	private ForEachSafetyValidator ForEachSafety => _forEachSafety ??= new ForEachSafetyValidator(
+		context,
+		GetBaseIdentifierName);
 
 	// — Safe Delegates & Borrowed Closures pass state (todo 7) —
 	/// <summary>The function whose body is currently being walked (used for lambda block bodies).</summary>
@@ -338,7 +347,7 @@ public sealed class SafetyPass(BindingContext context)
 				CheckExpressionSafety(fe.Collection, scope);
 				if (fe.Body is BlockStatementSyntax feBlock)
 				{
-					CheckForEachContractViolations(fe, feBlock);
+					ForEachSafety.Validate(fe, feBlock);
 					CheckBlockSafety(feBlock, new SymbolTable(scope), func);
 				}
 				else
@@ -355,101 +364,6 @@ public sealed class SafetyPass(BindingContext context)
 			case ContinueStatementSyntax:
 				break;
 		}
-	}
-
-	/// <summary>
-	/// Structural pre-pass over a foreach body enforcing the Hardened Iteration contract:
-	/// - §2.B / CVL1088: a reference loop variable (refvar binding, or val over a ref-returning
-	///   Current) may not cross the lexical boundary of the loop block.
-	/// - §4.D: the collection identifier is under an immutable borrow contract for the whole loop;
-	///   structural topology mutation (array reallocation, mutator calls, field writes on the
-	///   collection) is blocked. Only element slot data via the loop variable may change.
-	/// </summary>
-	private void CheckForEachContractViolations(ForEachStatementSyntax fe, BlockStatementSyntax body)
-	{
-		var itemName = fe.ItemName;
-		var collectionBase = GetBaseIdentifierName(fe.Collection);
-
-		// Targets that outlive nothing beyond the body are safe: the loop variable itself (write-through
-		// to the current element slot) and any variable declared anywhere within the body subtree.
-		var safeTargets = new HashSet<string> { itemName };
-		CollectLocalDeclNames(body, safeTargets);
-
-		if (fe.IsReferenceBinding)
-		{
-			// CVL1088: returning the item (or a borrow of it) leaks the synthesized reference past the body.
-			foreach (var ret in EnumerateNodes<ReturnStatementSyntax>(body))
-			{
-				if (ret.Expression is not null && BorrowTracker.ExpressionContainsRefUse(ret.Expression, itemName))
-				{
-					context.Diagnostics.Report(context.CurrentUnit!.Context, ret.Span,
-						$"Escape Boundary Violation: reference loop variable '{itemName}' uses an internal stack provenance exception and cannot cross the lexical boundary of the loop block.",
-						DiagnosticIds.ForeachEscapeBoundary);
-				}
-			}
-
-			// CVL1088: storing the item into any location that outlives the loop block.
-			foreach (var assign in EnumerateNodes<BinaryExpressionSyntax>(body))
-			{
-				if (assign.Operator != "=")
-					continue;
-				var lhsBase = GetBaseIdentifierName(assign.Left);
-				if (lhsBase is not null && !safeTargets.Contains(lhsBase) && BorrowTracker.ExpressionContainsRefUse(assign.Right, itemName))
-				{
-					context.Diagnostics.Report(context.CurrentUnit!.Context, assign.Span,
-						$"Escape Boundary Violation: reference loop variable '{itemName}' uses an internal stack provenance exception and cannot cross the lexical boundary of the loop block.",
-						DiagnosticIds.ForeachEscapeBoundary);
-				}
-			}
-
-			// CVL1088: passing the item into a reference parameter leaks it to the callee's frame,
-			// which is only conditionally allowed and cannot be proved safe here.
-			foreach (var call in EnumerateNodes<CallExpressionSyntax>(body))
-			{
-				if (!context.ResolvedCalls.TryGetValue(call, out var callee))
-					continue;
-				for (var i = 0; i < call.Arguments.Count && i < callee.Parameters.Count; i++)
-				{
-					if (callee.Parameters[i].Type is PointerTypeSymbol && BorrowTracker.ExpressionContainsRefUse(call.Arguments[i], itemName))
-					{
-						context.Diagnostics.Report(context.CurrentUnit!.Context, call.Arguments[i].Span,
-							$"Escape Boundary Violation: reference loop variable '{itemName}' uses an internal stack provenance exception and cannot cross the lexical boundary of the loop block.",
-							DiagnosticIds.ForeachEscapeBoundary);
-					}
-				}
-			}
-		}
-
-		// §4.D immutable borrow contract on the collection identifier.
-		if (collectionBase is not null)
-		{
-			foreach (var assign in EnumerateNodes<BinaryExpressionSyntax>(body))
-			{
-				if (assign.Operator == "=" && GetBaseIdentifierName(assign.Left) == collectionBase)
-				{
-					context.Diagnostics.Report(context.CurrentUnit!.Context, assign.Span,
-						$"'{collectionBase}' is under an immutable borrow contract while it is being iterated: structural mutation is not allowed inside the 'foreach' body.");
-				}
-			}
-
-			foreach (var call in EnumerateNodes<CallExpressionSyntax>(body))
-			{
-				var dot = call.FunctionName.IndexOf('.');
-				if (dot > 0 && call.FunctionName.AsSpan(0, dot).SequenceEqual(collectionBase))
-				{
-					context.Diagnostics.Report(context.CurrentUnit!.Context, call.Span,
-						$"'{collectionBase}' is under an immutable borrow contract while it is being iterated: mutating method calls are not allowed inside the 'foreach' body.");
-				}
-			}
-		}
-	}
-
-	private static void CollectLocalDeclNames(SyntaxNode root, HashSet<string> into)
-	{
-		if (root is VariableDeclarationSyntax vd)
-			into.Add(vd.Name);
-		foreach (var child in root.GetChildren())
-			CollectLocalDeclNames(child, into);
 	}
 
 	private static IEnumerable<TSyntax> EnumerateNodes<TSyntax>(SyntaxNode root) where TSyntax : SyntaxNode
@@ -512,54 +426,54 @@ public sealed class SafetyPass(BindingContext context)
 				break;
 
 			case LambdaExpressionSyntax lam:
-				// §8.7 capture sources are outer locals + by-value parameters only; borrowed-ref
-				// lexical bindings are never capture sources (§8.8). Compute the set from the
-				// enclosing scope: any identifier in the body resolving to a non-global variable.
-				var capturedNames = ComputeCapturedNames(lam, scope);
+                // §8.7 capture sources are outer locals + by-value parameters only; borrowed-ref
+                // lexical bindings are never capture sources (§8.8). Compute the set from the
+                // enclosing scope: any identifier in the body resolving to a non-global variable.
+                var capturedNames = ComputeCapturedNames(lam, scope);
 
-				// Capture-policy validation (§8.2/8.3/8.5/8.7/8.9)
-				foreach (var name in capturedNames)
-				{
-					if (scope.Lookup(name) is not VariableSymbol capturedSym) continue;
+                // Capture-policy validation (§8.2/8.3/8.5/8.7/8.9)
+                foreach (var name in capturedNames)
+                {
+                    if (scope.Lookup(name) is not VariableSymbol capturedSym) continue;
 
-					if (capturedSym.Type is PointerTypeSymbol)
-					{
-						// §8.8 borrowed-ref lexical bindings are never capture sources in any mode.
-						context.Diagnostics.Report(context.CurrentUnit!.Context, lam.Span,
-							$"Cannot capture reference binding '{name}' in a lambda; capture sources must be by-value locals and parameters.",
-							DiagnosticIds.RefBindingCaptureUnsupported);
-					}
-					else if (DelegateTypeHelpers.ContainsMutableBorrowCapability(capturedSym.Type))
-					{
-						// §8.9 the captured value carries a mutable-borrow capability.
-						context.Diagnostics.Report(context.CurrentUnit!.Context, lam.Span,
-							$"Cannot capture '{name}' of type '{capturedSym.Type.Name}': the type carries a mutable-borrow capability (refvar/slice/aggregate) which may not be captured.",
-							DiagnosticIds.MutableBorrowCapabilityCapture);
-					}
-					else if (lam.CaptureMode == LambdaCaptureMode.Default
-							 && Moves.IsMoveOnly(capturedSym.Type))
-					{
-						// §8.2 default mode copies a snapshot; move-only values cannot be copied.
-						context.Diagnostics.Report(context.CurrentUnit!.Context, lam.Span,
-							$"Cannot capture '{name}' in default mode: '{capturedSym.Type.Name}' is move-only and cannot be copied; use 'move' or 'ref' capture.",
-							DiagnosticIds.DefaultModeCaptureOfMoveOnly);
-					}
+                    if (capturedSym.Type is PointerTypeSymbol)
+                    {
+                        // §8.8 borrowed-ref lexical bindings are never capture sources in any mode.
+                        context.Diagnostics.Report(context.CurrentUnit!.Context, lam.Span,
+                            $"Cannot capture reference binding '{name}' in a lambda; capture sources must be by-value locals and parameters.",
+                            DiagnosticIds.RefBindingCaptureUnsupported);
+                    }
+                    else if (DelegateTypeHelpers.ContainsMutableBorrowCapability(capturedSym.Type))
+                    {
+                        // §8.9 the captured value carries a mutable-borrow capability.
+                        context.Diagnostics.Report(context.CurrentUnit!.Context, lam.Span,
+                            $"Cannot capture '{name}' of type '{capturedSym.Type.Name}': the type carries a mutable-borrow capability (refvar/slice/aggregate) which may not be captured.",
+                            DiagnosticIds.MutableBorrowCapabilityCapture);
+                    }
+                    else if (lam.CaptureMode == LambdaCaptureMode.Default
+                             && Moves.IsMoveOnly(capturedSym.Type))
+                    {
+                        // §8.2 default mode copies a snapshot; move-only values cannot be copied.
+                        context.Diagnostics.Report(context.CurrentUnit!.Context, lam.Span,
+                            $"Cannot capture '{name}' in default mode: '{capturedSym.Type.Name}' is move-only and cannot be copied; use 'move' or 'ref' capture.",
+                            DiagnosticIds.DefaultModeCaptureOfMoveOnly);
+                    }
 
-					if (lam.CaptureMode == LambdaCaptureMode.Move
-						&& Moves.IsMoveOnly(capturedSym.Type))
-					{
-						// §8.3 'move' capture moves the move-only source: it becomes unavailable.
-						Moves.MarkMoved(capturedSym);
-					}
+                    if (lam.CaptureMode == LambdaCaptureMode.Move
+                        && Moves.IsMoveOnly(capturedSym.Type))
+                    {
+                        // §8.3 'move' capture moves the move-only source: it becomes unavailable.
+                        Moves.MarkMoved(capturedSym);
+                    }
 
-					if (lam.CaptureMode == LambdaCaptureMode.Ref)
-					{
-						// §8.6 active immutable-borrow lock while the lambda may be invoked:
-						// mutation, move, and incompatible mutable borrows of the captured
-						// variable are blocked while the borrow is live.
-						RegisterRefCaptureLock(name, lam.Span);
-					}
-				}
+                    if (lam.CaptureMode == LambdaCaptureMode.Ref)
+                    {
+                        // §8.6 active immutable-borrow lock while the lambda may be invoked:
+                        // mutation, move, and incompatible mutable borrows of the captured
+                        // variable are blocked while the borrow is live.
+                        RegisterRefCaptureLock(name, lam.Span);
+                    }
+                }
 
 				// Lambda bodies are validated as safe-callable bodies regardless of the
 				// enclosing tier (§21.3). Check the body inside a child scope holding the
@@ -630,7 +544,7 @@ public sealed class SafetyPass(BindingContext context)
 				{
 					var leftSymbol = scope.Lookup(leftId.Name) as VariableSymbol
 						?? context.ResolveGlobalReference(leftId.Name, out _);
-					if (leftSymbol is not null)
+if (leftSymbol is not null)
 					{
 						Borrows.VerifyUnlocked(bin.Left, "reassign");
 						Moves.ResetMoved(leftSymbol);
