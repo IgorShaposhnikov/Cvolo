@@ -22,6 +22,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	private readonly CodegenContext _codegen;
 	private readonly CleanupEmitter _cleanup;
 	private readonly AggregateEmitter _aggregates;
+	private readonly CallEmitter _calls;
 	private readonly ILLVMOptimizer? _optimizer;
 	private readonly IRVerifier? _irVerifier;
 
@@ -77,6 +78,19 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		_codegen = new CodegenContext(llvmContext, module, builder, targetLayout);
 		_cleanup = new CleanupEmitter(_codegen);
 		_aggregates = new AggregateEmitter(_codegen, EmitExpression, GetExprType);
+		_calls = new CallEmitter(
+			_codegen,
+			_cleanup,
+			() => _function,
+			EmitExpression,
+			GetExprType,
+			GetFieldPointer,
+			CoerceIntegerWidth,
+			CoerceArrayToSlice,
+			Load,
+			GetByteSize,
+			_astExterns,
+			_astExternBlockFunctions);
 
 		_optimizer = optimizer;
 		_irVerifier = irVerifier;
@@ -117,7 +131,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		_functionReturnTypes["exit"] = TypeSymbol.Void;
 		_functionReturnTypes["memset"] = TypeSymbol.String;
 
-		// Register parameter-type symbols so GetParamType returns correct widths for built-ins
+		// Register parameter-type symbols so call emission sees correct widths for built-ins
 		_functionParameterTypes["malloc"] = [TypeSymbol.ULong];
 		_functionParameterTypes["free"] = [TypeSymbol.String];
 		_functionParameterTypes["puts"] = [TypeSymbol.String];
@@ -936,7 +950,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				chainedCtor.ConstructorArguments!);
 
 			_bindingContext.ResolvedCalls[chainCall] = chainTarget;
-			EmitCallExpression(chainCall, thisPtr);
+			_calls.Emit(chainCall, thisPtr);
 		}
 
 		EmitBlock(func.Body);
@@ -1429,7 +1443,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			case ParenthesizedStructInitializerExpressionSyntax parenStruct:
 				return _aggregates.EmitParenthesizedStructInitialization(parenStruct);
 			case CallExpressionSyntax call:
-				return EmitCallExpression(call);
+				return _calls.Emit(call);
 			case BinaryExpressionSyntax bin:
 				return EmitBinaryExpression(bin);
 			case UnaryExpressionSyntax unary:
@@ -1650,349 +1664,6 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		return _bindingContext.ResolvedCalls.TryGetValue(call, out var resolved) &&
 			   resolved.Parameters.Count > 0 &&
 			   resolved.Parameters[0].Name == "this";
-	}
-
-	private LLVMValueRef EmitCallExpression(CallExpressionSyntax call, LLVMValueRef? implicitThisPtr = null)
-	{
-		var paramOffset = implicitThisPtr is not null ? 1 : 0;
-		return EmitCallExpressionCore(call, implicitThisPtr, paramOffset);
-	}
-
-	private LLVMValueRef EmitCallExpression(CallExpressionSyntax call)
-	{
-		return EmitCallExpressionCore(call, null, 0);
-	}
-
-	private LLVMValueRef EmitCallExpressionCore(CallExpressionSyntax call, LLVMValueRef? implicitThisPtr, int paramOffset)
-	{
-		if (call.FunctionName == "sizeof")
-		{
-			var targetTypeName = call.TypeArguments[0];
-			var targetType = _bindingContext!.ResolveType(targetTypeName)!;
-			var size = GetByteSize(targetType);
-			return LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (ulong)size);
-		}
-
-		// §13.6 Delegate invocation: the callee is a delegate-typed variable or a delegate field.
-		// The delegate is a two-word { invoke thunk, context } value; dispatch is uniform.
-		if (_bindingContext!.ResolvedDelegateCalls.TryGetValue(call, out var delegCall))
-		{
-			return EmitDelegateInvocation(call, delegCall);
-		}
-
-		// Check if the resolved callee is decorated with [Intrinsic("llvm.xxx")]
-		if (_bindingContext!.ResolvedCalls.TryGetValue(call, out var intrinsicFunc) && !string.IsNullOrEmpty(intrinsicFunc.IntrinsicName))
-		{
-			return EmitIntrinsicCall(call, intrinsicFunc);
-		}
-
-		// (Â§5.A) Name() is synthesized on every enum and returns the declared variant
-		// name as an O(1) .rodata string constant.
-		if (_bindingContext!.ResolvedCalls.TryGetValue(call, out var nameFunc)
-			&& nameFunc.Name.StartsWith("$Name$", StringComparison.Ordinal))
-		{
-			var receiverName = call.FunctionName[..call.FunctionName.IndexOf('.')];
-			var receiverType = _function.VariableTypes[receiverName];
-			var enumType = receiverType is PointerTypeSymbol namePtr
-				? namePtr.ReferencedType as EnumTypeSymbol
-				: receiverType as EnumTypeSymbol;
-
-			if (enumType is null)
-			{
-				throw new InvalidOperationException($"Name() requires an enum receiver but found '{receiverName}'.");
-			}
-
-			var receiverValue = Load(receiverName);
-			var storageTy = GetLLVMType(enumType);
-
-			// Every per-variant name is the address of a .rodata global (a compile-time
-			// constant i8*), so a nested select chain performs the dispatch without any
-			// control-flow blocks.
-			var nameResult = _builder.BuildGlobalStringPtr("(unknown)", $"enum_name_{enumType.Name}_unknown");
-			foreach (var variant in enumType.Variants)
-			{
-				var isMatch = _builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, receiverValue,
-					LLVMValueRef.CreateConstInt(storageTy, unchecked((ulong)variant.Value)), "enum_name_cmp");
-				nameResult = _builder.BuildSelect(isMatch,
-					_builder.BuildGlobalStringPtr(variant.Name, $"enum_name_{enumType.Name}_{variant.Name}"),
-					nameResult, "enum_name_result");
-			}
-
-			return nameResult;
-		}
-
-		// (Â§3.C) HasFlag is synthesized on [Flags] enums and lowered inline to (p & f) == f.
-		if (_bindingContext!.ResolvedCalls.TryGetValue(call, out var hasFlagFunc)
-			&& hasFlagFunc.Name.StartsWith("$HasFlag$", StringComparison.Ordinal))
-		{
-			var receiverName = call.FunctionName[..call.FunctionName.IndexOf('.')];
-			LLVMValueRef receiverValue;
-			if (_function.Locals.TryGetValue(receiverName, out var hasFlagReceiverPtr))
-			{
-				receiverValue = Load(receiverName);
-			}
-			else
-			{
-				receiverValue = EmitExpression(call.Arguments[0]);
-			}
-
-			var flagValue = EmitExpression(call.Arguments[0]);
-			var andVal = _builder.BuildAnd(receiverValue, flagValue, "hasflag_and");
-			return _builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, andVal, flagValue, "hasflag_result");
-		}
-
-		string emitName;
-
-		// Retrieve the pre-resolved overload from the binder context
-		if (_bindingContext!.ResolvedCalls.TryGetValue(call, out var resolvedFunc))
-		{
-			emitName = resolvedFunc.Name;
-		}
-		else
-		{
-			// Fallback for generic configurations and structural fallbacks
-			emitName = ResolveFunctionName(call.FunctionName, _currentUnit!);
-			if (call.TypeArguments.Count > 0)
-			{
-				emitName = $"{emitName}<{string.Join(", ", call.TypeArguments)}>";
-			}
-		}
-
-		var callee = _globals[emitName];
-		var funcType = _functionTypes[emitName];
-
-		var args = new List<LLVMValueRef>();
-
-		// Ensure it's ACTUALLY an extension method (has a 'this' parameter) before treating the left side as a variable receiver!
-		var isExtensionCall = _bindingContext!.ResolvedCalls.TryGetValue(call, out var resolvedExt)
-			&& resolvedExt.Parameters.Count > 0
-			&& resolvedExt.Parameters[0].Name == "this";
-
-		if (isExtensionCall && call.FunctionName.Contains('.'))
-		{
-			var lastDot = call.FunctionName.LastIndexOf('.');
-			var receiverName = call.FunctionName[..lastDot];
-
-			LLVMValueRef receiverPtr = default;
-			TypeSymbol receiverType = null!;
-			var found = false;
-
-			if (_function.Locals.TryGetValue(receiverName, out var localPtr))
-			{
-				receiverPtr = localPtr;
-				receiverType = _function.VariableTypes[receiverName];
-				found = true;
-			}
-			else if ((_globalVariables.ContainsKey(receiverName) ? receiverName : ResolveGlobalKey(receiverName)) is { } recvKey
-				&& _globalVariables.TryGetValue(recvKey, out var globalPtr))
-			{
-				receiverPtr = globalPtr;
-				receiverType = _globalVariableTypes[recvKey];
-				found = true;
-			}
-			else if (_function.Locals.TryGetValue("this", out var thisPtr))
-			{
-				var thisType = _function.VariableTypes["this"] as PointerTypeSymbol;
-				var structType = thisType?.ReferencedType as StructTypeSymbol;
-				var field = structType?.FindField(receiverName);
-				if (field is not null)
-				{
-					var actualThisPtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), thisPtr, "loaded_this_ptr");
-					var fieldIndex = GetFieldIndex(structType!, receiverName);
-					var structLayoutTy = GetLLVMType(structType!);
-					var zero = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0);
-					var index = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)fieldIndex);
-
-					receiverPtr = _builder.BuildGEP2(structLayoutTy, actualThisPtr, new LLVMValueRef[] { zero, index }, "this_field_ptr");
-					receiverType = field.Type;
-					found = true;
-				}
-			}
-
-			if (found)
-			{
-				if (receiverType is PointerTypeSymbol)
-				{
-					args.Add(_builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), receiverPtr, "receiver_loaded_ptr"));
-				}
-				else
-				{
-					args.Add(receiverPtr);
-				}
-			}
-			else
-			{
-				throw new InvalidOperationException($"Cannot resolve receiver '{receiverName}' for method call '{call.FunctionName}'.");
-			}
-		}
-		else if (implicitThisPtr is not null)
-		{
-			// Constructor call: first parameter is the destination storage
-			args.Add(implicitThisPtr.Value);
-		}
-		else if (isExtensionCall)
-		{
-			// Bare call to a sibling extension method (e.g. `AddLast(value)` from within
-			// another method of the same extension): inject the current 'this' pointer.
-			if (!_function.Locals.TryGetValue("this", out var thisSlot))
-				throw new InvalidOperationException($"Cannot resolve implicit receiver 'this' for method call '{call.FunctionName}'.");
-
-			args.Add(_builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), thisSlot, "loaded_this_ptr"));
-		}
-
-		// Adjust offset if an implicit 'this' receiver was dynamically injected into the args list above
-		// Adjust offset if an implicit 'this' receiver was dynamically injected into the args list above
-		var actualParamOffset = paramOffset + (isExtensionCall ? 1 : 0);
-
-		for (var i = 0; i < call.Arguments.Count; i++)
-		{
-			var argExpr = call.Arguments[i];
-			LLVMValueRef val;
-			var valTy = GetExprType(argExpr);
-			var paramTy = GetParamType(emitName, i + actualParamOffset);
-
-			var targetSlice = paramTy is SliceTypeSymbol sl
-							? sl
-							: (paramTy is PointerTypeSymbol pPtr && pPtr.ReferencedType is SliceTypeSymbol sRef ? sRef : null);
-
-			var isArgArray = valTy is ArrayTypeSymbol || (valTy is PointerTypeSymbol aPtr && aPtr.ReferencedType is ArrayTypeSymbol);
-
-			if (targetSlice is not null && isArgArray)
-			{
-				LLVMValueRef arrayPtr;
-				if (argExpr is IdentifierExpressionSyntax id)
-				{
-					arrayPtr = _function.Locals[id.Name];
-				}
-				else
-				{
-					var (ptr, _, _, _) = GetFieldPointer(argExpr);
-					arrayPtr = ptr;
-				}
-
-				val = CoerceArrayToSlice(arrayPtr, valTy, targetSlice);
-			}
-			else
-			{
-				val = EmitExpression(argExpr);
-			}
-
-			if (paramTy is not null && valTy is PointerTypeSymbol ptrTy && val.TypeOf.Kind == LLVMTypeKind.LLVMPointerTypeKind && !paramTy.Equals(valTy) && paramTy is not PointerTypeSymbol)
-			{
-				val = _builder.BuildLoad2(GetLLVMType(ptrTy.ReferencedType), val, "deref_arg");
-				valTy = ptrTy.ReferencedType;
-			}
-
-			// Ownership transfer: passing a ResourceMove-style union by value transfers the
-			// resource to the callee. Exclude the source from caller cleanup so the callee's
-			// tag-checked destructor (and not a second drop here) releases it â€” no double free.
-			if (paramTy is not null && argExpr is IdentifierExpressionSyntax moveArg
-				&& !_function.DisposedVars.Contains(moveArg.Name)
-				&& _function.VariableTypes.TryGetValue(moveArg.Name, out var srcTy)
-				&& srcTy is UnionTypeSymbol srcUnion
-				&& _cleanup.UnionNeedsTagCheckedCleanup(srcUnion)
-				&& paramTy is UnionTypeSymbol paramUnion && paramUnion.Name == srcUnion.Name)
-			{
-				_function.MovedVars.Add(moveArg.Name);
-			}
-
-			// Detect if this argument is part of the variadic (...) portion
-			var isVariadic = (_astExterns.TryGetValue(emitName, out var ext) && ext.IsVariadic)
-				|| (_astExternBlockFunctions.TryGetValue(emitName, out var blockFn) && blockFn.IsVariadic);
-			var declaredParamCount = _functionParameterTypes.TryGetValue(emitName, out var fpt) ? fpt.Count : 0;
-			var isVariadicArg = isVariadic && (i + actualParamOffset >= declaredParamCount);
-
-			if (isVariadicArg)
-			{
-				// Variadic promotion rules (promote Boolean and Char to i32)
-				if (valTy.Equals(TypeSymbol.Bool))
-				{
-					val = _builder.BuildZExt(val, LLVMTypeRef.Int32, "prom_bool");
-				}
-				else if (valTy.Equals(TypeSymbol.Char))
-				{
-					val = _builder.BuildZExt(val, LLVMTypeRef.Int32, "prom_char");
-				}
-			}
-			else if (paramTy is not null)
-			{
-				// Coerce integer widths and numeric promotions ONLY for declared fixed parameters
-				if (TypeSymbol.IsFloatingPointType(paramTy) && TypeSymbol.IsIntegerType(valTy))
-				{
-					val = TypeSymbol.IsSignedIntegerType(valTy)
-						? _builder.BuildSIToFP(val, GetLLVMType(paramTy), "call_sitofp")
-						: _builder.BuildUIToFP(val, GetLLVMType(paramTy), "call_uitofp");
-					valTy = paramTy;
-				}
-				else if (TypeSymbol.IsIntegerType(valTy) && TypeSymbol.IsIntegerType(paramTy))
-				{
-					val = CoerceIntegerWidth(val, valTy, paramTy);
-					valTy = paramTy;
-				}
-
-				// Fallback safeguard: if LLVM function signature expects a specific integer width on fixed params, match it
-				var actualParamIndex = (uint)(i + actualParamOffset);
-				if (actualParamIndex < callee.ParamsCount)
-				{
-					var expectedLlvmTy = callee.GetParam(actualParamIndex).TypeOf;
-					if (expectedLlvmTy.Kind == LLVMTypeKind.LLVMIntegerTypeKind && val.TypeOf.Kind == LLVMTypeKind.LLVMIntegerTypeKind)
-					{
-						if (val.TypeOf.IntWidth < expectedLlvmTy.IntWidth)
-						{
-							val = TypeSymbol.IsSignedIntegerType(valTy)
-								? _builder.BuildSExt(val, expectedLlvmTy, "call_sext")
-								: _builder.BuildZExt(val, expectedLlvmTy, "call_zext");
-						}
-						else if (val.TypeOf.IntWidth > expectedLlvmTy.IntWidth)
-						{
-							val = _builder.BuildTrunc(val, expectedLlvmTy, "call_trunc");
-						}
-					}
-				}
-			}
-
-			if (paramTy is not null && paramTy.Equals(TypeSymbol.String) && valTy is ArrayTypeSymbol)
-			{
-				LLVMValueRef arrayPtr;
-				if (argExpr is IdentifierExpressionSyntax id)
-				{
-					arrayPtr = _function.Locals[id.Name];
-				}
-				else
-				{
-					var (ptr, _, _, _) = GetFieldPointer(argExpr);
-					arrayPtr = ptr;
-				}
-
-				val = _builder.BuildBitCast(arrayPtr, GetLLVMType(TypeSymbol.String), "array_to_string_cast");
-			}
-			else if (paramTy is not null && paramTy.Equals(TypeSymbol.String) && valTy is SliceTypeSymbol)
-			{
-				LLVMValueRef slicePtr;
-				if (argExpr is IdentifierExpressionSyntax id)
-				{
-					slicePtr = _function.Locals[id.Name];
-				}
-				else
-				{
-					var (ptr, _, _, _) = GetFieldPointer(argExpr);
-					slicePtr = ptr;
-				}
-
-				var sliceLayout = GetLLVMType(valTy);
-				var ptrField = _builder.BuildGEP2(sliceLayout, slicePtr, new LLVMValueRef[] { LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0), LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0) }, "slice_ptr_field");
-				val = _builder.BuildLoad2(GetLLVMType(TypeSymbol.String), ptrField, "slice_to_string_cast");
-			}
-
-			args.Add(val);
-		}
-
-		var retTypeSymbol = _functionReturnTypes.TryGetValue(emitName, out var ret)
-			? ret
-			: (resolvedFunc is { ReturnType: not null } resolvedFn ? resolvedFn.ReturnType : TypeSymbol.Int);
-		var instName = retTypeSymbol.Equals(TypeSymbol.Void) ? "" : "call_val";
-
-		return _builder.BuildCall2(funcType, callee, args.ToArray(), instName);
 	}
 
 	// ============================================================
@@ -2315,91 +1986,6 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		};
 	}
 
-	private LLVMValueRef EmitDelegateInvocation(CallExpressionSyntax call, DelegateTypeSymbol delegateType)
-	{
-		var i8PtrTy = LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0);
-		var zero = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0);
-		var one = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1);
-
-		LLVMValueRef delegatePtr;
-		if (call.FunctionName.Contains('.'))
-		{
-			var lastDot = call.FunctionName.LastIndexOf('.');
-			var receiverName = call.FunctionName[..lastDot];
-			var memberName = call.FunctionName[(lastDot + 1)..];
-
-			if (TryResolveReceiverPointer(receiverName, out var recvPtr, out var recvTy)
-				&& recvTy is not null
-				&& (recvTy is PointerTypeSymbol rpp && rpp.ReferencedType is StructTypeSymbol rstruct
-					? rstruct
-					: recvTy as StructTypeSymbol) is { } receiverStruct)
-			{
-				LLVMValueRef basePtr = recvPtr;
-				if (recvTy is PointerTypeSymbol)
-					basePtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), recvPtr, "receiver_loaded_ptr");
-				var fieldIdx = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)GetFieldIndex(receiverStruct, memberName));
-				delegatePtr = _builder.BuildGEP2(GetLLVMType(receiverStruct), basePtr, new LLVMValueRef[] { zero, fieldIdx }, "delegate_field_ptr");
-			}
-			else
-			{
-				throw new InvalidOperationException($"Cannot resolve receiver '{receiverName}' for delegate invocation '{call.FunctionName}'.");
-			}
-		}
-		else
-		{
-			var calleeName = ResolveGlobalKey(call.FunctionName);
-			if (_function.Locals.TryGetValue(call.FunctionName, out var localSlot))
-			{
-				delegatePtr = localSlot;
-			}
-			else if (calleeName is { } key && _globalVariables.TryGetValue(key, out var gSlot))
-			{
-				delegatePtr = gSlot;
-			}
-			else if (_function.Locals.TryGetValue("this", out var thisPtr)
-				&& _function.VariableTypes["this"] is PointerTypeSymbol thisPtrTy
-				&& thisPtrTy.ReferencedType is StructTypeSymbol thisStruct
-				&& thisStruct.FindField(call.FunctionName) is { } thisField
-				&& thisField.Type is DelegateTypeSymbol)
-			{
-				// Unqualified delegate field access inside an extension method body
-				// resolves through the injected `this` receiver pointer.
-				var actualThisPtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), thisPtr, "loaded_this_ptr");
-				var fieldIdx = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)GetFieldIndex(thisStruct, call.FunctionName));
-				delegatePtr = _builder.BuildGEP2(GetLLVMType(thisStruct), actualThisPtr, new LLVMValueRef[] { zero, fieldIdx }, "delegate_field_ptr");
-			}
-			else
-			{
-				throw new InvalidOperationException($"Cannot resolve delegate variable '{call.FunctionName}'.");
-			}
-		}
-
-		var wordTy = GetLLVMType(delegateType);
-		var tmp = _builder.BuildAlloca(wordTy, "$del_tmp");
-		_builder.BuildStore(_builder.BuildLoad2(wordTy, delegatePtr, "del_val"), tmp);
-
-		var invokeSlot = _builder.BuildGEP2(wordTy, tmp, new LLVMValueRef[] { zero, zero }, "invoke_slot");
-		var ctxSlot = _builder.BuildGEP2(wordTy, tmp, new LLVMValueRef[] { zero, one }, "ctx_slot");
-		var invokeW = _builder.BuildLoad2(i8PtrTy, invokeSlot, "invoke_word");
-		var ctxW = _builder.BuildLoad2(i8PtrTy, ctxSlot, "ctx_word");
-
-		var thunkParamTys = new List<LLVMTypeRef> { i8PtrTy };
-		foreach (var p in delegateType.Parameters) thunkParamTys.Add(GetLLVMType(p.Type));
-		var thunkTy = LLVMTypeRef.CreateFunction(GetLLVMType(delegateType.ReturnType), [.. thunkParamTys]);
-		var invokeFn = _builder.BuildPointerCast(invokeW, LLVMTypeRef.CreatePointer(thunkTy, 0), "invoke_fn");
-
-		var args = new List<LLVMValueRef> { ctxW };
-		for (var i = 0; i < call.Arguments.Count; i++)
-		{
-			var argExpr = call.Arguments[i];
-			var argVal = EmitExpression(argExpr);
-			if (i < delegateType.Parameters.Count)
-				argVal = CoerceIntegerWidth(argVal, GetExprType(argExpr), delegateType.Parameters[i].Type);
-			args.Add(argVal);
-		}
-
-		return _builder.BuildCall2(thunkTy, invokeFn, args.ToArray(), delegateType.ReturnType.Equals(TypeSymbol.Void) ? "" : "$del_call");
-	}
 
 	private LLVMValueRef EmitBinaryExpression(BinaryExpressionSyntax bin)
 	{
@@ -2608,12 +2194,12 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			{
 				if (_function.Locals.TryGetValue(ctorId.Name, out var ptr))
 				{
-					EmitCallExpression(ctorCall, ptr);
+					_calls.Emit(ctorCall, ptr);
 					return ptr;
 				}
 				else if (ResolveGlobalKey(ctorId.Name) is { } ctorGlobalKey && _globalVariables.TryGetValue(ctorGlobalKey, out var ctorGlobalPtr))
 				{
-					EmitCallExpression(ctorCall, ctorGlobalPtr);
+					_calls.Emit(ctorCall, ctorGlobalPtr);
 					return ctorGlobalPtr;
 				}
 				else if (_function.Locals.TryGetValue("this", out var thisPtr))
@@ -2623,7 +2209,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 					if (structType?.FindField(ctorId.Name) is not null)
 					{
 						var (fieldPtr, _, _, _) = GetFieldPointer(ctorId);
-						EmitCallExpression(ctorCall, fieldPtr);
+						_calls.Emit(ctorCall, fieldPtr);
 						return fieldPtr;
 					}
 				}
@@ -2631,25 +2217,25 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			else if (bin.Left is MemberAccessExpressionSyntax m)
 			{
 				var (fieldPtr, _, _, _) = GetFieldPointer(m);
-				EmitCallExpression(ctorCall, fieldPtr);
+				_calls.Emit(ctorCall, fieldPtr);
 				return fieldPtr;
 			}
 			else if (bin.Left is IndexExpressionSyntax idx)
 			{
 				var (elementPtr, _, _, _) = GetFieldPointer(idx);
-				EmitCallExpression(ctorCall, elementPtr);
+				_calls.Emit(ctorCall, elementPtr);
 				return elementPtr;
 			}
 			else if (bin.Left is UnaryExpressionSyntax { Operator: "*" } deref)
 			{
 				var targetPtr = EmitExpression(deref.Operand);
-				EmitCallExpression(ctorCall, targetPtr);
+				_calls.Emit(ctorCall, targetPtr);
 				return targetPtr;
 			}
 			else if (bin.Left is CallExpressionSyntax callLeft)
 			{
-				var targetPtr = EmitCallExpression(callLeft);
-				EmitCallExpression(ctorCall, targetPtr);
+				var targetPtr = _calls.Emit(callLeft);
+				_calls.Emit(ctorCall, targetPtr);
 				return targetPtr;
 			}
 		}
@@ -2761,7 +2347,6 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 					coerced = CoerceFloatWidth(coerced, rTy, globalType);
 					_builder.BuildStore(coerced, globalPtr);
 				}
-
 				return right;
 			}
 			else if (_function.Locals.TryGetValue("this", out var thisPtr))
@@ -2904,7 +2489,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			var targetType = callRetType is PointerTypeSymbol ptrTy ? ptrTy.ReferencedType : callRetType;
 
 			// Emit the call. Because it returns 'refvar', LLVM returns the pointer directly.
-			var targetPtr = EmitCallExpression(callLeft);
+			var targetPtr = _calls.Emit(callLeft);
 
 			if (targetType is UnionTypeSymbol elemUnion
 				&& _cleanup.UnionNeedsTagCheckedCleanup(elemUnion)
@@ -3288,7 +2873,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				{
 					// 'var T v = T(args)': the constructor populates the variable's storage
 					// in place via its implicit 'this' parameter; no value store follows.
-					EmitCallExpression(ctorCall, alloca);
+					_calls.Emit(ctorCall, alloca);
 				}
 				else
 				{
@@ -3326,7 +2911,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 					_builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, (ulong)zeroNone), zeroTagPtr);
 				}
 
-				EmitCallExpression(ctorCall, alloca);
+				_calls.Emit(ctorCall, alloca);
 			}
 			// Register Forwarding: If the aggregate is already allocated on the stack, forward its address
 			else if (valTy is StructTypeSymbol || valTy is ArrayTypeSymbol)
@@ -4197,15 +3782,6 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		};
 	}
 
-	private TypeSymbol? GetParamType(string mangledFuncName, int index)
-	{
-		if (_functionParameterTypes.TryGetValue(mangledFuncName, out var paramTypes) && index < paramTypes.Count)
-		{
-			return paramTypes[index];
-		}
-
-		return null;
-	}
 
 	private string ResolveFunctionName(string name, CompilationUnitSyntax activeUnit)
 	{
@@ -4682,7 +4258,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		else if (expr is CallExpressionSyntax call)
 		{
 			var retType = GetExprType(call);
-			var callVal = EmitCallExpression(call);
+			var callVal = _calls.Emit(call);
 
 			// 1. If call returns a reference/pointer (e.g. 'ref Point'), return the pointer directly
 			if (retType is PointerTypeSymbol ptrType)
@@ -4920,7 +4496,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		{
 			// The constructor populates the freshly allocated memory via its implicit `this`
 			// pointer (a raw pointer to the allocation), so reference fields can be written.
-			EmitCallExpression(callInit, rawPtr);
+			_calls.Emit(callInit, rawPtr);
 		}
 
 		return rawPtr;
@@ -5308,166 +4884,6 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	}
 
 	/// <summary>
-	/// Dynamically resolves and emits an LLVM intrinsic call based on the [Intrinsic("...")] attribute.
-	/// Automatically appends type suffixes (e.g. "sqrt" + double -> "llvm.sqrt.f64").
-	/// </summary>
-	private LLVMValueRef EmitIntrinsicCall(CallExpressionSyntax call, FunctionSymbol func)
-	{
-		var args = call.Arguments.Select(EmitExpression).ToList();
-
-		// Coerce arguments to the declared [Intrinsic] parameter types before the width
-		// heuristics below run. A literal argument is emitted at its inferred type (an
-		// int, say), so without this a RotateLeft(byte, uint) call would funnel-shift the
-		// value at i32 width instead of i8, silently producing wrong results.
-		if (args.Count == func.Parameters.Count)
-		{
-			for (var i = 0; i < args.Count; i++)
-			{
-				var paramTy = func.Parameters[i].Type;
-				var argTy = GetExprType(call.Arguments[i]);
-				if (TypeSymbol.IsIntegerType(argTy) && TypeSymbol.IsIntegerType(paramTy))
-				{
-					args[i] = CoerceIntegerWidth(args[i], argTy, paramTy);
-				}
-				else if (TypeSymbol.IsIntegerType(argTy) && TypeSymbol.IsFloatingPointType(paramTy))
-				{
-					args[i] = TypeSymbol.IsSignedIntegerType(argTy)
-						? _builder.BuildSIToFP(args[i], GetLLVMType(paramTy), "intr_sitofp")
-						: _builder.BuildUIToFP(args[i], GetLLVMType(paramTy), "intr_uitofp");
-				}
-			}
-		}
-
-		var baseName = func.IntrinsicName!;
-
-		// Some intrinsics need extra operands a Cvolo source signature cannot express
-		// (see libraries/System/Math). They are injected here, keyed off the [Intrinsic] base name.
-		var injected = new List<LLVMValueRef>();
-		switch (baseName)
-		{
-			case "abs":
-				// llvm.abs.iN(x, false): INT_MIN must wrap, not become poison.
-				injected.Add(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int1, 0));
-				break;
-			case "ctlz":
-			case "cttz":
-				// llvm.ctlz/cttz.iN(x, false): input 0 is defined (yields the bit width).
-				injected.Add(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int1, 0));
-				break;
-			case "rotl":
-			case "rotr":
-				// llvm.fshl/fshr.iN(x, x, amt): the funnel shift carries the value in both slots.
-				{
-					var rotateAmount = args[^1];
-					var valueType = args[0].TypeOf;
-					var shiftType = rotateAmount.TypeOf;
-					if (shiftType.Kind != LLVMTypeKind.LLVMIntegerTypeKind || shiftType.IntWidth != valueType.IntWidth)
-					{
-						rotateAmount = valueType.IntWidth > shiftType.IntWidth
-							? _builder.BuildZExt(rotateAmount, valueType, "rot_zext")
-							: _builder.BuildTrunc(rotateAmount, valueType, "rot_trunc");
-					}
-
-					// Rotate amounts are masked by the bit width (spec: C#/LLVM rotate semantics).
-					var widthMask = LLVMValueRef.CreateConstInt(valueType, (ulong)valueType.IntWidth - 1);
-					rotateAmount = _builder.BuildAnd(rotateAmount, widthMask, "rot_mask");
-
-					args = new List<LLVMValueRef> { args[0], args[0], rotateAmount };
-					baseName = baseName == "rotl" ? "fshl" : "fshr";
-					break;
-				}
-			case "fpc.nan":
-			case "fpc.inf":
-			case "fpc.finite":
-			case "fpc.normal":
-			case "fpc.subnormal":
-			case "fpc.zero":
-			case "fpc.negzero":
-			case "fpc.neg":
-				// llvm.is.fpclass.<suffix>(x, mask) — FPClassTest bitmask (see LLVM FPClassTest).
-				injected.Add(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, FpClassMask(baseName)));
-				baseName = "is.fpclass";
-				break;
-		}
-
-		// If full name specified (e.g. "llvm.trap"), use directly; otherwise build "llvm.<name>.<typeSuffix>"
-		string targetName;
-		if (baseName.StartsWith("llvm.", StringComparison.Ordinal))
-		{
-			targetName = baseName;
-		}
-		else
-		{
-			var typeSuffix = args.Count > 0 ? GetTypeSuffix(args[0].TypeOf) : "";
-			targetName = string.IsNullOrEmpty(typeSuffix)
-				? $"llvm.{baseName}"
-				: $"llvm.{baseName}.{typeSuffix}";
-		}
-
-		var emittedArgs = args.Concat(injected).ToArray();
-		var retTy = GetLLVMType(func.ReturnType);
-		var callee = GetOrDeclareIntrinsic(targetName, emittedArgs, retTy);
-		var funcType = _functionTypes[targetName];
-
-		var callName = retTy.Kind == LLVMTypeKind.LLVMVoidTypeKind ? "" : "intrinsic_call";
-		return _builder.BuildCall2(funcType, callee, emittedArgs, callName);
-	}
-
-	/// <summary>
-	/// Bitmask for LLVM's <c>llvm.is.fpclass</c> intrinsic, matching LLVM's FPClassTest enum:
-	/// SNan=1, QNan=2, NegInf=4, NegNormal=8, NegSubnormal=16, NegZero=32,
-	/// PosZero=64, PosSubnormal=128, PosNormal=256, PosInf=512.
-	///
-	/// Every mask MUST be a subset of fcAllFlags (0x7FF, the 11 class bits); any set bit
-	/// above that range makes the LLVM verifier reject the module ("invalid floating-point
-	/// class mask"). Prefer composing masks from the bits above over ~/0xFFFF arithmetic.
-	/// </summary>
-	private static ulong FpClassMask(string baseName) => baseName switch
-	{
-		"fpc.nan" => 1 | 2,                       // fcNan (any NaN)
-		"fpc.inf" => 4 | 512,                     // fcInf (either infinity)
-		"fpc.finite" => 32 | 64 | 16 | 128 | 8 | 256,  // fcZero | fcSubnormal | fcNormal == 504
-		"fpc.normal" => 8 | 256,                  // fcNormal (±normal)
-		"fpc.subnormal" => 16 | 128,              // fcSubnormal (±subnormal)
-		"fpc.zero" => 32 | 64,                    // fcZero (±0)
-		"fpc.negzero" => 32,                      // fcNegZero only
-		"fpc.neg" => 4 | 8 | 16 | 32,        // any negative class incl. -0 and -Inf
-		_ => 0,
-	};
-
-	private static string GetTypeSuffix(LLVMTypeRef type) => type.Kind switch
-	{
-		LLVMTypeKind.LLVMDoubleTypeKind => "f64",
-		LLVMTypeKind.LLVMFloatTypeKind => "f32",
-		LLVMTypeKind.LLVMIntegerTypeKind when type.IntWidth == 64 => "i64",
-		LLVMTypeKind.LLVMIntegerTypeKind when type.IntWidth == 32 => "i32",
-		LLVMTypeKind.LLVMIntegerTypeKind when type.IntWidth == 16 => "i16",
-		LLVMTypeKind.LLVMIntegerTypeKind when type.IntWidth == 8 => "i8",
-		_ => ""
-	};
-
-	private LLVMValueRef GetOrDeclareIntrinsic(string intrinsicBaseName, IReadOnlyList<LLVMValueRef> args, LLVMTypeRef returnType)
-	{
-		// Normalize name (e.g. "llvm.sqrt" -> "llvm.sqrt.f64")
-		var fullIntrinsicName = intrinsicBaseName;
-		if (args.Count > 0 && !intrinsicBaseName.EndsWith(".f64") && !intrinsicBaseName.EndsWith(".f32"))
-		{
-			if (args[0].TypeOf.Kind == LLVMTypeKind.LLVMDoubleTypeKind)
-				fullIntrinsicName = $"{intrinsicBaseName}.f64";
-			else if (args[0].TypeOf.Kind == LLVMTypeKind.LLVMFloatTypeKind)
-				fullIntrinsicName = $"{intrinsicBaseName}.f32";
-		}
-
-		if (_globals.TryGetValue(fullIntrinsicName, out var existing))
-			return existing;
-
-		var paramTypes = args.Select(a => a.TypeOf).ToArray();
-		var funcType = LLVMTypeRef.CreateFunction(returnType, paramTypes);
-		var func = _module.AddFunction(fullIntrinsicName, funcType);
-		_globals[fullIntrinsicName] = func;
-		_functionTypes[fullIntrinsicName] = funcType;
-		return func;
-	}
 
 	private LLVMValueRef SafeBitCast(LLVMValueRef value, LLVMTypeRef targetType, string name = "")
 	{
