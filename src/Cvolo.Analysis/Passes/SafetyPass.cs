@@ -1,7 +1,7 @@
-using Cvolo.Analysis.Passes.Safety;
 using Cvolo.Analysis.Symbols;
 using Cvolo.Analysis.Symbols.Base;
 using Cvolo.Analysis.Symbols.Structs;
+using Cvolo.Analysis.Passes.Safety;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
 using Cvolo.Core.AST.Expressions;
@@ -13,10 +13,16 @@ namespace Cvolo.Analysis.Passes;
 public sealed class SafetyPass(BindingContext context)
 {
 	private BorrowTracker? _borrows;
-	private readonly Stack<SafetyTier> _currentTierStack = [];
+	private UnsafeContextValidator? _unsafeContext;
 	private ReferenceLifetimeAnalyzer? _referenceLifetimes;
 	private MoveAnalyzer? _moves;
 	private UnboundValidator? _unbound;
+
+	/// <summary>
+	/// Lazily creates the unsafe-context validator that owns tier-stack transitions and
+	/// diagnostics for unsafe-only raw-pointer operations.
+	/// </summary>
+	private UnsafeContextValidator UnsafeContext => _unsafeContext ??= new UnsafeContextValidator(context);
 
 	/// <summary>
 	/// Lazily creates the per-function borrow tracker that owns borrow exclusivity, parent locks,
@@ -25,18 +31,18 @@ public sealed class SafetyPass(BindingContext context)
 	private BorrowTracker Borrows => _borrows ??= new BorrowTracker(
 		context,
 		GetBaseIdentifierName,
-		() => CurrentTier);
+		() => UnsafeContext.CurrentTier);
 
 	/// <summary>
 	/// Lazily creates the reference-lifetime service while borrow-lock state is owned by
-	/// <see cref="BorrowTracker"/> and safety-tier state remains in this pass.
+	/// <see cref="BorrowTracker"/> and tier state is supplied by <see cref="UnsafeContextValidator"/>.
 	/// </summary>
 	private ReferenceLifetimeAnalyzer ReferenceLifetimes => _referenceLifetimes ??= new ReferenceLifetimeAnalyzer(
 		context,
 		ResolveExpressionType,
 		GetBaseIdentifierName,
 		Borrows.HasParentLock,
-		() => CurrentTier);
+		() => UnsafeContext.CurrentTier);
 
 	/// <summary>
 	/// Lazily creates the value-move service that owns moved-state checks, by-value ownership
@@ -49,13 +55,14 @@ public sealed class SafetyPass(BindingContext context)
 
 	/// <summary>
 	/// Lazily creates the unbound-sandbox validator that owns structural reference-field mutation,
-	/// visibility preservation, and local-reference escape checks while tier transitions remain here.
+	/// visibility preservation, and local-reference escape checks while tier state comes from
+	/// <see cref="UnsafeContextValidator"/>.
 	/// </summary>
 	private UnboundValidator Unbound => _unbound ??= new UnboundValidator(
 		context,
 		GetBaseIdentifierName,
-		() => CurrentTier,
-		() => _currentTierStack.Contains(SafetyTier.Unbound));
+		() => UnsafeContext.CurrentTier,
+		() => UnsafeContext.IsInsideUnbound);
 
 	// — Safe Delegates & Borrowed Closures pass state (todo 7) —
 	/// <summary>The function whose body is currently being walked (used for lambda block bodies).</summary>
@@ -93,7 +100,6 @@ public sealed class SafetyPass(BindingContext context)
 	/// <summary>Captured-variable sets of the lambdas currently being checked (stack for CVL1312/CVL1313).</summary>
 	private readonly Stack<HashSet<string>> _lambdaCaptureSets = [];
 
-	private SafetyTier CurrentTier => _currentTierStack.Count > 0 ? _currentTierStack.Peek() : SafetyTier.Safe;
 
 	public void Process(IEnumerable<CompilationUnitSyntax> units)
 	{
@@ -187,8 +193,7 @@ public sealed class SafetyPass(BindingContext context)
 			? SafetyTier.Unsafe
 			: (func.Modifier == SafetyTier.Unbound ? SafetyTier.Unbound : SafetyTier.Safe);
 
-		_currentTierStack.Clear();
-		_currentTierStack.Push(tier);
+		UnsafeContext.Reset(tier);
 
 		// Unsafe tier: skip all safety checks entirely
 		if (tier == SafetyTier.Unsafe)
@@ -275,11 +280,7 @@ public sealed class SafetyPass(BindingContext context)
 					}
 
 					// CVL1005: Raw pointer variables cannot be declared outside unsafe
-					if (sym.Type is RawPointerTypeSymbol && CurrentTier != SafetyTier.Unsafe)
-					{
-						context.Diagnostics.Report(context.CurrentUnit!.Context, v.Span,
-							"Raw pointer variables cannot be declared outside unsafe context.");
-					}
+					UnsafeContext.ValidateRawPointerDeclaration(sym, v.Span);
 
 					Borrows.VerifyDeclarationBorrow(v);
 				}
@@ -345,9 +346,9 @@ public sealed class SafetyPass(BindingContext context)
 				break;
 
 			case UnsafeBlockStatementSyntax unsafeBlock:
-				_currentTierStack.Push(SafetyTier.Unsafe);
+				UnsafeContext.Push(SafetyTier.Unsafe);
 				CheckBlockSafety(unsafeBlock.Body, new SymbolTable(scope), func);
-				_currentTierStack.Pop();
+				UnsafeContext.Pop();
 				break;
 
 			case BreakStatementSyntax:
@@ -469,12 +470,7 @@ public sealed class SafetyPass(BindingContext context)
 				break;
 
 			case NullLiteralExpressionSyntax:
-				// CVL1104: the null literal is only meaningful as a null pointer / empty
-				// option. In safe or unbound code it is always an error.
-				if (CurrentTier != SafetyTier.Unsafe)
-					context.Diagnostics.Report(context.CurrentUnit!.Context, expr.Span,
-						"null is not allowed in safe code. Use Option.None instead.",
-						DiagnosticIds.NullForOptionalType);
+				UnsafeContext.ValidateNullLiteral(expr.Span);
 				break;
 
 			case MemberAccessExpressionSyntax m:
@@ -493,12 +489,7 @@ public sealed class SafetyPass(BindingContext context)
 
 			case UnaryExpressionSyntax u:
 				CheckExpressionSafety(u.Operand, scope);
-				// CVL1006: Dereference only in unsafe
-				if (u.Operator == "*" && CurrentTier != SafetyTier.Unsafe)
-					context.Diagnostics.Report(context.CurrentUnit!.Context, u.Span, "Cannot dereference outside unsafe context.");
-				// CVL1007: Address-of only in unsafe
-				if (u.Operator == "&" && CurrentTier != SafetyTier.Unsafe)
-					context.Diagnostics.Report(context.CurrentUnit!.Context, u.Span, "Cannot take address outside unsafe context.");
+				UnsafeContext.ValidateUnaryOperation(u);
 				break;
 
 			case StructInitializationExpressionSyntax init:
@@ -586,8 +577,8 @@ public sealed class SafetyPass(BindingContext context)
 				}
 
 				_lambdaCaptureSets.Push(capturedNames);
-				var savedTier = _currentTierStack.Count > 0 ? _currentTierStack.Pop() : SafetyTier.Safe;
-				_currentTierStack.Push(SafetyTier.Safe);
+				var savedTier = UnsafeContext.PopOrSafe();
+				UnsafeContext.Push(SafetyTier.Safe);
 				try
 				{
 					if (lam.ExpressionBody != null)
@@ -597,8 +588,8 @@ public sealed class SafetyPass(BindingContext context)
 				}
 				finally
 				{
-					_currentTierStack.Pop();
-					if (savedTier != SafetyTier.Safe) _currentTierStack.Push(savedTier);
+					UnsafeContext.Pop();
+					if (savedTier != SafetyTier.Safe) UnsafeContext.Push(savedTier);
 					_lambdaCaptureSets.Pop();
 				}
 				break;
