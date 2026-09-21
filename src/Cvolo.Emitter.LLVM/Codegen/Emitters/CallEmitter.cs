@@ -6,6 +6,7 @@ using Cvolo.Analysis.Symbols.Structs;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
 using Cvolo.Core.AST.Expressions;
+using Cvolo.Emitter.LLVM.Codegen.Values;
 using LLVMSharp.Interop;
 
 namespace Cvolo.Emitter.LLVM.Codegen.Emitters;
@@ -31,8 +32,7 @@ internal sealed class CallEmitter(
 	Func<ExpressionSyntax, LLVMValueRef> emitExpression,
 	Func<ExpressionSyntax, TypeSymbol> getExpressionType,
 	Func<ExpressionSyntax, (LLVMValueRef ptr, TypeSymbol type, bool valueProvenance, LLVMValueRef? tbaa)> getFieldPointer,
-	Func<LLVMValueRef, TypeSymbol, TypeSymbol, LLVMValueRef> coerceIntegerWidth,
-	Func<LLVMValueRef, TypeSymbol, SliceTypeSymbol, LLVMValueRef> coerceArrayToSlice,
+	ValueCoercion coercion,
 	Func<string, LLVMValueRef> load,
 	Func<TypeSymbol, int> getByteSize,
 	IReadOnlyDictionary<string, ExternDeclarationSyntax> astExterns,
@@ -223,7 +223,7 @@ internal sealed class CallEmitter(
 				else
 					(arrayPtr, _, _, _) = getFieldPointer(argExpr);
 
-				val = coerceArrayToSlice(arrayPtr, valTy, targetSlice);
+				val = coercion.CoerceArrayToSlice(arrayPtr, valTy, targetSlice);
 			}
 			else
 			{
@@ -275,7 +275,7 @@ internal sealed class CallEmitter(
 				}
 				else if (TypeSymbol.IsIntegerType(valTy) && TypeSymbol.IsIntegerType(paramTy))
 				{
-					val = coerceIntegerWidth(val, valTy, paramTy);
+					val = coercion.CoerceIntegerWidth(val, valTy, paramTy);
 					valTy = paramTy;
 				}
 
@@ -422,7 +422,7 @@ internal sealed class CallEmitter(
 			var argExpr = call.Arguments[i];
 			var argVal = emitExpression(argExpr);
 			if (i < delegateType.Parameters.Count)
-				argVal = coerceIntegerWidth(argVal, getExpressionType(argExpr), delegateType.Parameters[i].Type);
+				argVal = coercion.CoerceIntegerWidth(argVal, getExpressionType(argExpr), delegateType.Parameters[i].Type);
 			args.Add(argVal);
 		}
 
@@ -449,7 +449,7 @@ internal sealed class CallEmitter(
 				var argTy = getExpressionType(call.Arguments[i]);
 				if (TypeSymbol.IsIntegerType(argTy) && TypeSymbol.IsIntegerType(paramTy))
 				{
-					args[i] = coerceIntegerWidth(args[i], argTy, paramTy);
+					args[i] = coercion.CoerceIntegerWidth(args[i], argTy, paramTy);
 				}
 				else if (TypeSymbol.IsIntegerType(argTy) && TypeSymbol.IsFloatingPointType(paramTy))
 				{

@@ -5,6 +5,7 @@ using Cvolo.Analysis.Symbols.Structs;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Expressions;
 using Cvolo.Core.AST.Statements;
+using Cvolo.Emitter.LLVM.Codegen.Values;
 using LLVMSharp.Interop;
 
 namespace Cvolo.Emitter.LLVM.Codegen.Emitters;
@@ -34,7 +35,7 @@ internal sealed class DelegateEmitter(
 	Func<ExpressionSyntax, LLVMValueRef> emitExpression,
 	Action<BlockStatementSyntax> emitBlock,
 	Func<ExpressionSyntax, TypeSymbol> getExpressionType,
-	Func<LLVMValueRef, TypeSymbol, TypeSymbol, LLVMValueRef> coerceIntegerWidth,
+	ValueCoercion coercion,
 	Func<string, LLVMValueRef> load,
 	Func<StructTypeSymbol, string, int> getStructFieldIndex,
 	Func<string, string?> resolveGlobalKey)
@@ -166,7 +167,7 @@ internal sealed class DelegateEmitter(
 				}
 				else
 				{
-					Builder.BuildRet(coerceIntegerWidth(
+					Builder.BuildRet(coercion.CoerceIntegerWidth(
 						bodyValue,
 						getExpressionType(lambda.ExpressionBody),
 						delegateType.ReturnType));

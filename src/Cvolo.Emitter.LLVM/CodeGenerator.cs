@@ -13,6 +13,7 @@ using Cvolo.Emitter.LLVM.Codegen;
 using Cvolo.Emitter.LLVM.Codegen.ControlFlow;
 using Cvolo.Emitter.LLVM.Codegen.Emitters;
 using Cvolo.Emitter.LLVM.Codegen.TypeLowering;
+using Cvolo.Emitter.LLVM.Codegen.Values;
 using LLVMSharp.Interop;
 
 namespace Cvolo.Emitter.LLVM;
@@ -25,6 +26,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	private readonly AggregateEmitter _aggregates;
 	private readonly CallEmitter _calls;
 	private readonly DelegateEmitter _delegates;
+	private readonly ValueCoercion _coercion;
 	private readonly ILLVMOptimizer? _optimizer;
 	private readonly IRVerifier? _irVerifier;
 
@@ -79,6 +81,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		_codegen = new CodegenContext(llvmContext, module, builder, targetLayout);
 		_cleanup = new CleanupEmitter(_codegen);
 		_memory = new MemoryEmitter(_codegen);
+		_coercion = new ValueCoercion(_codegen);
 		_aggregates = new AggregateEmitter(_codegen, _memory, EmitExpression, GetExprType);
 		_delegates = new DelegateEmitter(
 			_codegen,
@@ -87,7 +90,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			EmitExpression,
 			EmitBlock,
 			GetExprType,
-			CoerceIntegerWidth,
+			_coercion,
 			Load,
 			(structType, fieldName) => GetFieldIndex(structType, fieldName),
 			ResolveGlobalKey);
@@ -98,8 +101,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			EmitExpression,
 			GetExprType,
 			GetFieldPointer,
-			CoerceIntegerWidth,
-			CoerceArrayToSlice,
+			_coercion,
 			Load,
 			GetByteSize,
 			_astExterns,
@@ -1834,39 +1836,6 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		};
 	}
 
-	private LLVMValueRef CoerceFloatWidth(LLVMValueRef value, TypeSymbol fromType, TypeSymbol toType)
-	{
-		if (!TypeSymbol.IsFloatingPointType(fromType) || !TypeSymbol.IsFloatingPointType(toType))
-			return value;
-
-		if (fromType.Equals(toType))
-			return value;
-
-		return toType.Equals(TypeSymbol.Double)
-			? _builder.BuildFPExt(value, LLVMTypeRef.Double, "store_fpext")
-			: _builder.BuildFPTrunc(value, LLVMTypeRef.Float, "store_fptrunc");
-	}
-
-	private LLVMValueRef CoerceIntegerWidth(LLVMValueRef value, TypeSymbol fromType, TypeSymbol toType)
-	{
-		if (!TypeSymbol.IsIntegerType(fromType) || !TypeSymbol.IsIntegerType(toType))
-			return value;
-
-		var fromWidth = TypeSymbol.IntegerBitWidth(fromType) is var fw ? fw : 0;
-		var toWidth = TypeSymbol.IntegerBitWidth(toType) is var tw ? tw : 0;
-
-		if (fromWidth == toWidth)
-			return value;
-
-		var llvmTarget = GetLLVMType(toType);
-
-		if (fromWidth > toWidth)
-			return _builder.BuildTrunc(value, llvmTarget, "store_trunc");
-
-		return TypeSymbol.IsSignedIntegerType(fromType)
-			? _builder.BuildSExt(value, llvmTarget, "store_sext")
-			: _builder.BuildZExt(value, llvmTarget, "store_zext");
-	}
 
 	private LLVMValueRef EmitAssignStore(BinaryExpressionSyntax bin)
 	{
@@ -1992,8 +1961,8 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 					else
 					{
 						var actualPtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), ptr, "target_ptr");
-						var coerced = CoerceIntegerWidth(right, rTy, type);
-						coerced = CoerceFloatWidth(coerced, rTy, type);
+						var coerced = _coercion.CoerceIntegerWidth(right, rTy, type);
+						coerced = _coercion.CoerceFloatWidth(coerced, rTy, type);
 						_builder.BuildStore(coerced, actualPtr);
 					}
 				}
@@ -2015,10 +1984,10 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 					else
 					{
 						var coerced = (bin.Right is MemberAccessExpressionSyntax or IndexExpressionSyntax)
-							? EmitRefToValue(right, GetExprType(bin.Right))
+							? _coercion.CoerceReferenceToValue(right, GetExprType(bin.Right))
 							: right;
-						coerced = CoerceIntegerWidth(coerced, rTy, type);
-						coerced = CoerceFloatWidth(coerced, rTy, type);
+						coerced = _coercion.CoerceIntegerWidth(coerced, rTy, type);
+						coerced = _coercion.CoerceFloatWidth(coerced, rTy, type);
 						_builder.BuildStore(coerced, ptr);
 					}
 				}
@@ -2033,10 +2002,10 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				else
 				{
 					var coerced = (bin.Right is MemberAccessExpressionSyntax or IndexExpressionSyntax)
-						? EmitRefToValue(right, GetExprType(bin.Right))
+						? _coercion.CoerceReferenceToValue(right, GetExprType(bin.Right))
 						: right;
-					coerced = CoerceIntegerWidth(coerced, rTy, globalType);
-					coerced = CoerceFloatWidth(coerced, rTy, globalType);
+					coerced = _coercion.CoerceIntegerWidth(coerced, rTy, globalType);
+					coerced = _coercion.CoerceFloatWidth(coerced, rTy, globalType);
 					_builder.BuildStore(coerced, globalPtr);
 				}
 				return right;
@@ -2056,8 +2025,8 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 							_aggregates.EmitStructInitializationInPlace(fieldReinit, fieldPtr);
 						else
 						{
-							var coerced = CoerceIntegerWidth(right, rTy, field.Type);
-							var store = _builder.BuildStore(CoerceFloatWidth(coerced, rTy, field.Type), fieldPtr);
+							var coerced = _coercion.CoerceIntegerWidth(right, rTy, field.Type);
+							var store = _builder.BuildStore(_coercion.CoerceFloatWidth(coerced, rTy, field.Type), fieldPtr);
 							ApplyTbaa(tbaa, store);
 						}
 
@@ -2074,8 +2043,8 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 							_aggregates.EmitStructInitializationInPlace(thisFieldReinit, fieldPtr);
 						else
 						{
-							var coerced = CoerceIntegerWidth(right, rTy, field.Type);
-							_builder.BuildStore(CoerceFloatWidth(coerced, rTy, field.Type), fieldPtr);
+							var coerced = _coercion.CoerceIntegerWidth(right, rTy, field.Type);
+							_builder.BuildStore(_coercion.CoerceFloatWidth(coerced, rTy, field.Type), fieldPtr);
 						}
 
 						return right;
@@ -2112,10 +2081,10 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			else
 			{
 				var coerced = (bin.Right is MemberAccessExpressionSyntax or IndexExpressionSyntax)
-					? EmitRefToValue(right, GetExprType(bin.Right))
+					? _coercion.CoerceReferenceToValue(right, GetExprType(bin.Right))
 					: right;
-				coerced = CoerceIntegerWidth(coerced, rTy, fieldType);
-				coerced = CoerceFloatWidth(coerced, rTy, fieldType);
+				coerced = _coercion.CoerceIntegerWidth(coerced, rTy, fieldType);
+				coerced = _coercion.CoerceFloatWidth(coerced, rTy, fieldType);
 				var fieldStore = _builder.BuildStore(coerced, fieldPtr);
 				ApplyTbaa(tbaa, fieldStore);
 			}
@@ -2137,10 +2106,10 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			else
 			{
 				var coerced = (bin.Right is MemberAccessExpressionSyntax or IndexExpressionSyntax)
-					? EmitRefToValue(right, GetExprType(bin.Right))
+					? _coercion.CoerceReferenceToValue(right, GetExprType(bin.Right))
 					: right;
-				coerced = CoerceIntegerWidth(coerced, rTy, elementType);
-				coerced = CoerceFloatWidth(coerced, rTy, elementType);
+				coerced = _coercion.CoerceIntegerWidth(coerced, rTy, elementType);
+				coerced = _coercion.CoerceFloatWidth(coerced, rTy, elementType);
 				var elemStore = _builder.BuildStore(coerced, elementPtr);
 				ApplyTbaa(tbaa, elemStore);
 			}
@@ -2166,10 +2135,10 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			else
 			{
 				var coerced = (bin.Right is MemberAccessExpressionSyntax or IndexExpressionSyntax)
-					? EmitRefToValue(right, GetExprType(bin.Right))
+					? _coercion.CoerceReferenceToValue(right, GetExprType(bin.Right))
 					: right;
-				coerced = CoerceIntegerWidth(coerced, rTy, targetType);
-				coerced = CoerceFloatWidth(coerced, rTy, targetType);
+				coerced = _coercion.CoerceIntegerWidth(coerced, rTy, targetType);
+				coerced = _coercion.CoerceFloatWidth(coerced, rTy, targetType);
 				_builder.BuildStore(coerced, targetPtr);
 			}
 
@@ -2197,10 +2166,10 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			else
 			{
 				var coerced = (bin.Right is MemberAccessExpressionSyntax or IndexExpressionSyntax)
-					? EmitRefToValue(right, GetExprType(bin.Right))
+					? _coercion.CoerceReferenceToValue(right, GetExprType(bin.Right))
 					: right;
-				coerced = CoerceIntegerWidth(coerced, rTy, targetType);
-				coerced = CoerceFloatWidth(coerced, rTy, targetType);
+				coerced = _coercion.CoerceIntegerWidth(coerced, rTy, targetType);
+				coerced = _coercion.CoerceFloatWidth(coerced, rTy, targetType);
 				_builder.BuildStore(coerced, targetPtr);
 			}
 
@@ -2544,7 +2513,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				if (typeSymbol is SliceTypeSymbol && valTy is ArrayTypeSymbol)
 				{
 					var arrayPtr = EmitExpression(varDecl.Initializer);
-					var sliceVal = CoerceArrayToSlice(arrayPtr, valTy, (typeSymbol as SliceTypeSymbol)!);
+					var sliceVal = _coercion.CoerceArrayToSlice(arrayPtr, valTy, (typeSymbol as SliceTypeSymbol)!);
 					_builder.BuildStore(sliceVal, alloca);
 					return;
 				}
@@ -2572,10 +2541,10 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 					var value = EmitExpression(varDecl.Initializer);
 					var coerced = typeSymbol is not PointerTypeSymbol
 						&& (varDecl.Initializer is MemberAccessExpressionSyntax or IndexExpressionSyntax)
-						? EmitRefToValue(value, GetExprType(varDecl.Initializer!))
+						? _coercion.CoerceReferenceToValue(value, GetExprType(varDecl.Initializer!))
 						: value;
-					coerced = CoerceIntegerWidth(coerced, GetExprType(varDecl.Initializer!) ?? typeSymbol, typeSymbol);
-					coerced = CoerceFloatWidth(coerced, GetExprType(varDecl.Initializer!) ?? typeSymbol, typeSymbol);
+					coerced = _coercion.CoerceIntegerWidth(coerced, GetExprType(varDecl.Initializer!) ?? typeSymbol, typeSymbol);
+					coerced = _coercion.CoerceFloatWidth(coerced, GetExprType(varDecl.Initializer!) ?? typeSymbol, typeSymbol);
 					_builder.BuildStore(coerced, alloca);
 				}
 			}
@@ -3022,21 +2991,6 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		_builder.BuildBr(_function.LoopContexts.Peek().ContinueBlock);
 	}
 
-	// Coerces an expression value that is a `ref T` into the pointed-to value when it
-	// is being consumed as a non-reference value (e.g. `var int y = opt.Some` or
-	// `v = node.Next.Some`). `opt.Some` on a null-pointer-optimized option yields the
-	// inner reference pointer; the value destination expects the pointed-to object, so
-	// dereference once. Callers that want the raw reference never pass through this
-	// (the refvar-declaration and switch-promotion paths consume the pointer directly).
-	private LLVMValueRef EmitRefToValue(LLVMValueRef value, TypeSymbol exprType)
-	{
-		if (exprType is PointerTypeSymbol ptrType && ptrType.ReferencedType is not null)
-		{
-			return _builder.BuildLoad2(GetLLVMType(ptrType.ReferencedType), value, "ref_to_value");
-		}
-
-		return value;
-	}
 
 	private string? ResolveGlobalKey(string shortName)
 	{
@@ -4187,22 +4141,6 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		return rawPtr;
 	}
 
-	private LLVMValueRef CoerceArrayToSlice(LLVMValueRef arrayPtr, TypeSymbol argTy, SliceTypeSymbol sliceTy)
-	{
-		var arrayTy = argTy is PointerTypeSymbol ptr ? ptr.ReferencedType as ArrayTypeSymbol : argTy as ArrayTypeSymbol;
-
-		var fatStructType = GetLLVMType(sliceTy);
-		var sliceAlloc = _builder.BuildAlloca(fatStructType, "slice_tmp");
-
-		var ptrField = _builder.BuildGEP2(fatStructType, sliceAlloc, new LLVMValueRef[] { LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0), LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0) }, "ptr_field");
-		var castPtr = _builder.BuildBitCast(arrayPtr, LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0));
-		_builder.BuildStore(castPtr, ptrField);
-
-		var sizeField = _builder.BuildGEP2(fatStructType, sliceAlloc, new LLVMValueRef[] { LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0), LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1) }, "size_field");
-		_builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (ulong)arrayTy!.Size), sizeField);
-
-		return _builder.BuildLoad2(fatStructType, sliceAlloc, "slice_val");
-	}
 
 	private static bool EndsWithReturn(SyntaxNode s) => s switch
 	{
