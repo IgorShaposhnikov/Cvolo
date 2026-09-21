@@ -7,10 +7,8 @@ using Cvolo.Analysis.Symbols.Structs;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
 using Cvolo.Core.AST.Expressions;
-using Cvolo.Core.AST.Statements;
 using Cvolo.Core.Diagnostics;
 using Cvolo.Emitter.LLVM.Codegen;
-using Cvolo.Emitter.LLVM.Codegen.ControlFlow;
 using Cvolo.Emitter.LLVM.Codegen.Emitters;
 using Cvolo.Emitter.LLVM.Codegen.TypeLowering;
 using Cvolo.Emitter.LLVM.Codegen.Values;
@@ -84,17 +82,6 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		_memory = new MemoryEmitter(_codegen);
 		_coercion = new ValueCoercion(_codegen);
 		_aggregates = new AggregateEmitter(_codegen, _memory, EmitExpression, GetExprType);
-		_delegates = new DelegateEmitter(
-			_codegen,
-			() => _function,
-			function => _function = function,
-			EmitExpression,
-			EmitBlock,
-			GetExprType,
-			_coercion,
-			Load,
-			(structType, fieldName) => GetFieldIndex(structType, fieldName),
-			ResolveGlobalKey);
 		_calls = new CallEmitter(
 			_codegen,
 			_cleanup,
@@ -111,14 +98,26 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			_codegen,
 			_cleanup,
 			_memory,
+			_aggregates,
+			_calls,
+			_coercion,
 			() => _function,
 			EmitExpression,
 			GetExprType,
 			GetFieldPointer,
-			EmitStatement,
-			EmitBlock,
-			EmitVariableDeclaration,
+			IsConstructorCall,
 			EmitEnumSwitchTrapDefault);
+		_delegates = new DelegateEmitter(
+			_codegen,
+			() => _function,
+			function => _function = function,
+			EmitExpression,
+			_statements.EmitBlock,
+			GetExprType,
+			_coercion,
+			Load,
+			(structType, fieldName) => GetFieldIndex(structType, fieldName),
+			ResolveGlobalKey);
 
 		_optimizer = optimizer;
 		_irVerifier = irVerifier;
@@ -981,192 +980,15 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			_calls.Emit(chainCall, thisPtr);
 		}
 
-		EmitBlock(func.Body);
+		_statements.EmitBlock(func.Body);
 
-		if (func.ReturnType == "void" && !EndsWithReturn(func.Body))
+		if (func.ReturnType == "void" && !StatementEmitter.EndsWithReturn(func.Body))
 		{
 			_cleanup.EmitScopeCleanup(_function, [.. _function.Locals.Keys], skipHeapFree: _function.OwnershipTransferFunction);
 			_builder.BuildRetVoid();
 		}
 
 		_function.UnsafeDepth = 0;
-	}
-
-	private void EmitBlock(BlockStatementSyntax block)
-	{
-		var blockVars = new List<string>();
-
-		foreach (var stmt in block.Statements)
-		{
-			if (stmt is VariableDeclarationSyntax v)
-			{
-				blockVars.Add(v.Name);
-			}
-
-			// Skip statements after a terminator (e.g. a `break L;` that already branched).
-			if (_builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
-			{
-				EmitStatement(stmt);
-			}
-		}
-
-		if (!EndsWithReturn(block))
-		{
-			_cleanup.EmitScopeCleanup(_function, blockVars, skipHeapFree: _function.OwnershipTransferFunction);
-		}
-	}
-
-	private void EmitLabeledBlockStatement(LabeledBlockStatementSyntax labeledBlock)
-	{
-		var currentFunc = _builder.InsertBlock.Parent;
-		var bodyBlock = currentFunc.AppendBasicBlock(labeledBlock.Label + ".blkbody");
-		var endBlock = currentFunc.AppendBasicBlock(labeledBlock.Label + ".blkend");
-
-		_builder.BuildBr(bodyBlock);
-
-		_function.LabeledBreaks.Push(new LabeledBreakCodegenFrame(labeledBlock.Label, endBlock));
-		_builder.PositionAtEnd(bodyBlock);
-		EmitBlock(labeledBlock.Body);
-		if (_builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
-		{
-			_builder.BuildBr(endBlock);
-		}
-		_function.LabeledBreaks.Pop();
-
-		_builder.PositionAtEnd(endBlock);
-	}
-
-	private void EmitStatement(SyntaxNode stmt)
-	{
-		switch (stmt)
-		{
-			case ReturnStatementSyntax ret:
-				EmitReturnStatement(ret);
-				break;
-			case ExpressionStatementSyntax exprStmt:
-				EmitExpression(exprStmt.Expression);
-				break;
-			case VariableDeclarationSyntax varDecl:
-				EmitVariableDeclaration(varDecl);
-				break;
-			case BlockStatementSyntax block:
-				EmitBlock(block);
-				break;
-			case LabeledBlockStatementSyntax labeledBlock:
-				EmitLabeledBlockStatement(labeledBlock);
-				break;
-			case IfStatementSyntax ifStmt:
-				_statements.EmitIfStatement(ifStmt);
-				break;
-			case SwitchStatementSyntax sw:
-				_statements.EmitSwitchStatement(sw);
-				break;
-			case WhileStatementSyntax whileStmt:
-				_statements.EmitWhileStatement(whileStmt);
-				break;
-			case ForStatementSyntax forStmt:
-				_statements.EmitForStatement(forStmt);
-				break;
-			case ForEachStatementSyntax fe:
-				_statements.EmitForEachStatement(fe);
-				break;
-			case UnsafeBlockStatementSyntax unsafeBlock:
-				_function.UnsafeDepth++;
-				EmitBlock(unsafeBlock.Body);
-				_function.UnsafeDepth--;
-				break;
-			case BreakStatementSyntax brk:
-				_statements.EmitBreakStatement(brk);
-				break;
-			case ContinueStatementSyntax cont:
-				_statements.EmitContinueStatement(cont);
-				break;
-		}
-	}
-
-	private void EmitReturnStatement(ReturnStatementSyntax ret)
-	{
-		if (ret.Expression is not null)
-		{
-			// 1. Handle Null Returns on Options (Lowers null to Option.None)
-			var expectedType = _functionReturnTypes.TryGetValue(_builder.InsertBlock.Parent.Name, out var et) ? et : TypeSymbol.Int;
-
-			if (ret.Expression is NullLiteralExpressionSyntax && expectedType is UnionTypeSymbol optionUnion && optionUnion.IsOption)
-			{
-				var unionLayout = GetLLVMType(optionUnion);
-				var tempAlloc = _builder.BuildAlloca(unionLayout, "ret_null_tmp");
-
-				// Null-Pointer Optimization: store flat nullptr (None == zero) instead of a tag.
-				if (optionUnion.IsNpoEligible)
-				{
-					_builder.BuildStore(LLVMValueRef.CreateConstPointerNull(unionLayout), tempAlloc);
-				}
-				else
-				{
-					var fieldIndex = GetFieldIndex(optionUnion, "None");
-
-					var tagPtr = _builder.BuildGEP2(unionLayout, tempAlloc, new LLVMValueRef[] {
-					LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
-					LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0)
-				}, "union_tag_ptr");
-					_builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, (ulong)fieldIndex), tagPtr);
-				}
-
-				var loadedNone = _builder.BuildLoad2(unionLayout, tempAlloc, "loaded_none");
-
-				_cleanup.EmitScopeCleanup(_function, [.. _function.Locals.Keys], skipHeapFree: _function.OwnershipTransferFunction);
-				_builder.BuildRet(loadedNone);
-				return;
-			}
-
-			// 2. Handle Standard Returns
-			var value = EmitExpression(ret.Expression);
-			var type = GetExprType(ret.Expression);
-
-			// Implicit Dereference: if expected return type is value but actual is a reference
-			if (type is PointerTypeSymbol retPtr && value.TypeOf.Kind == LLVMTypeKind.LLVMPointerTypeKind && expectedType is not PointerTypeSymbol)
-			{
-				value = _builder.BuildLoad2(GetLLVMType(retPtr.ReferencedType), value, "deref_ret");
-				type = retPtr.ReferencedType;
-			}
-
-			// Materialize memory-resident return values (structs/unions living in allocas/heap
-			// slots) BEFORE scope cleanup frees them - the loaded register is what survives.
-			// NPO-eligible unions lower to a single scalar (the flat ptr), so their emitted value
-			// is already the scalar - loading it again would double-dereference.
-			LLVMValueRef? materialized = null;
-			var isMemResident = type is StructTypeSymbol || (type is UnionTypeSymbol u && !u.IsNpoEligible);
-			if (isMemResident && value.TypeOf.Kind == LLVMTypeKind.LLVMPointerTypeKind)
-			{
-				var layout = GetLLVMType(type);
-				materialized = _builder.BuildLoad2(layout, value, "struct_ret_val");
-			}
-
-			_cleanup.EmitScopeCleanup(_function, [.. _function.Locals.Keys], skipHeapFree: _function.OwnershipTransferFunction);
-
-			if (materialized is not null)
-			{
-				_builder.BuildRet(materialized.Value);
-			}
-			else
-			{
-				// FFI bool lowering: truncate i1 back to i8 for exported functions returning bool.
-				var retValue = value;
-				if (_bindingContext?.Globals.Lookup(_builder.InsertBlock.Parent.Name) is FunctionSymbol { IsExported: true } retFuncSym
-					&& retFuncSym.ReturnType is not null && retFuncSym.ReturnType.Name == "bool"
-					&& retValue.TypeOf.Kind == LLVMTypeKind.LLVMIntegerTypeKind && retValue.TypeOf.IntWidth == 1)
-				{
-					retValue = _builder.BuildTrunc(retValue, LLVMTypeRef.Int8, "bool.ret.trunc");
-				}
-
-				_builder.BuildRet(retValue);
-			}
-		}
-		else
-		{
-			_cleanup.EmitScopeCleanup(_function, [.. _function.Locals.Keys], skipHeapFree: _function.OwnershipTransferFunction);
-			_builder.BuildRetVoid();
-		}
 	}
 
 	/// <summary>
@@ -2424,200 +2246,6 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		return false;
 	}
 
-	private void EmitVariableDeclaration(VariableDeclarationSyntax varDecl)
-	{
-		TypeSymbol? typeSymbol = null;
-		if (varDecl.Type is not null)
-		{
-			typeSymbol = _bindingContext!.ResolveType(varDecl.Type);
-		}
-
-		// Handle References / Borrows
-		if (varDecl.Type == "refvar" || varDecl.Type == "ref")
-		{
-			var val = EmitExpression(varDecl.Initializer!);
-			var valTy = GetExprType(varDecl.Initializer!);
-
-			var innerType = valTy is PointerTypeSymbol ptrType ? ptrType.ReferencedType : valTy;
-			var isMutable = varDecl.Type == "refvar";
-			var pointerType = new PointerTypeSymbol(innerType, isMutable);
-
-			var alloca = _builder.BuildAlloca(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), varDecl.Name);
-			_function.Locals[varDecl.Name] = alloca;
-			_function.VariableTypes[varDecl.Name] = pointerType;
-
-			_builder.BuildStore(val, alloca);
-			return;
-		}
-
-		// Handle Heap Allocations
-		if (varDecl.Initializer is HeapAllocationExpressionSyntax heapInit)
-		{
-			var val = EmitExpression(heapInit);
-			var valTy = GetExprType(heapInit);
-
-			var alloca = _builder.BuildAlloca(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), varDecl.Name);
-			_function.Locals[varDecl.Name] = alloca;
-			_function.VariableTypes[varDecl.Name] = valTy;
-			_function.HeapAllocatedVars.Add(varDecl.Name);
-
-			_builder.BuildStore(val, alloca);
-			return;
-		}
-		else if (varDecl.Initializer is HeapArrayAllocationExpressionSyntax heapArrInit)
-		{
-			var val = EmitExpression(heapArrInit);
-			var valTy = GetExprType(heapArrInit);
-
-			var alloca = _builder.BuildAlloca(GetLLVMType(valTy), varDecl.Name);
-			_function.Locals[varDecl.Name] = alloca;
-			_function.VariableTypes[varDecl.Name] = valTy;
-			_function.HeapAllocatedVars.Add(varDecl.Name); // Register for RAII cleanup!
-
-			_builder.BuildStore(val, alloca);
-			return;
-		}
-
-		if (typeSymbol is not null)
-		{
-			var llvmType = GetLLVMType(typeSymbol);
-			var alloca = _builder.BuildAlloca(llvmType, varDecl.Name);
-			_function.Locals[varDecl.Name] = alloca;
-			_function.VariableTypes[varDecl.Name] = typeSymbol;
-
-			// Panic-safe zero-ing: a ResourceMove-style union local is pre-set to None so that if
-			// a panic occurs while its constructor/initializer is still running, the unwinder (and
-			// any tag-checked destructor) observes a None slot instead of uninitialized garbage.
-			if (typeSymbol is UnionTypeSymbol zeroUnion && _cleanup.UnionNeedsTagCheckedCleanup(zeroUnion))
-			{
-				var zeroNone = zeroUnion.NoneVariant is not null ? GetFieldIndex(zeroUnion, zeroUnion.NoneVariant.Name) : 0;
-				var zeroTagPtr = _builder.BuildGEP2(llvmType, alloca, new LLVMValueRef[] {
-					LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
-					LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0)
-				}, "union_tag_ptr");
-				_builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, (ulong)zeroNone), zeroTagPtr);
-			}
-
-
-			if (varDecl.Initializer is not null)
-			{
-				// Handle Null Initializers on Option Types (Lowers null to Option.None)
-				if (varDecl.Initializer is NullLiteralExpressionSyntax && typeSymbol is UnionTypeSymbol optionUnion && optionUnion.IsOption)
-				{
-					// Null-Pointer Optimization: store flat nullptr (None == zero) instead of a tag.
-					if (optionUnion.IsNpoEligible)
-					{
-						_builder.BuildStore(LLVMValueRef.CreateConstPointerNull(llvmType), alloca);
-						return;
-					}
-
-					var fieldIndex = GetFieldIndex(optionUnion, "None");
-
-					var tagPtr = _builder.BuildGEP2(llvmType, alloca, new LLVMValueRef[] {
-					LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
-					LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0)
-				}, "union_tag_ptr");
-					_builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, (ulong)fieldIndex), tagPtr);
-					return;
-				}
-
-				var valTy = GetExprType(varDecl.Initializer);
-
-				if (typeSymbol is SliceTypeSymbol && valTy is ArrayTypeSymbol)
-				{
-					var arrayPtr = EmitExpression(varDecl.Initializer);
-					var sliceVal = _coercion.CoerceArrayToSlice(arrayPtr, valTy, (typeSymbol as SliceTypeSymbol)!);
-					_builder.BuildStore(sliceVal, alloca);
-					return;
-				}
-
-				if (varDecl.Initializer is StructInitializationExpressionSyntax structInit)
-				{
-					_aggregates.EmitStructInitializationInPlace(structInit, alloca);
-				}
-				else if (varDecl.Initializer is ArrayInitializationExpressionSyntax arrInit)
-				{
-					_aggregates.EmitArrayInitializationInPlace(arrInit, alloca, (typeSymbol as ArrayTypeSymbol)!);
-				}
-				else if (varDecl.Initializer is ArrayReplicationExpressionSyntax arrRepl)
-				{
-					_aggregates.EmitArrayReplicationInPlace(arrRepl, alloca, (typeSymbol as ArrayTypeSymbol)!);
-				}
-				else if (varDecl.Initializer is CallExpressionSyntax ctorCall && IsConstructorCall(ctorCall, typeSymbol))
-				{
-					// 'var T v = T(args)': the constructor populates the variable's storage
-					// in place via its implicit 'this' parameter; no value store follows.
-					_calls.Emit(ctorCall, alloca);
-				}
-				else
-				{
-					var value = EmitExpression(varDecl.Initializer);
-					var coerced = typeSymbol is not PointerTypeSymbol
-						&& (varDecl.Initializer is MemberAccessExpressionSyntax or IndexExpressionSyntax)
-						? _coercion.CoerceReferenceToValue(value, GetExprType(varDecl.Initializer!))
-						: value;
-					coerced = _coercion.CoerceIntegerWidth(coerced, GetExprType(varDecl.Initializer!) ?? typeSymbol, typeSymbol);
-					coerced = _coercion.CoerceFloatWidth(coerced, GetExprType(varDecl.Initializer!) ?? typeSymbol, typeSymbol);
-					_builder.BuildStore(coerced, alloca);
-				}
-			}
-		}
-		else
-		{
-			// Type Inference
-			var valTy = GetExprType(varDecl.Initializer!);
-			_function.VariableTypes[varDecl.Name] = valTy;
-
-			if (varDecl.Initializer is CallExpressionSyntax ctorCall && IsConstructorCall(ctorCall, valTy))
-			{
-				var llvmType = GetLLVMType(valTy);
-				var alloca = _memory.BuildEntryAlloca(llvmType, varDecl.Name);
-				_function.Locals[varDecl.Name] = alloca;
-
-				// Panic-safe zero-ing for Unions initialized via Type Inference
-				if (valTy is UnionTypeSymbol zeroUnion && _cleanup.UnionNeedsTagCheckedCleanup(zeroUnion))
-				{
-					var zeroNone = zeroUnion.NoneVariant is not null ? GetFieldIndex(zeroUnion, zeroUnion.NoneVariant.Name) : 0;
-					var zeroTagPtr = _builder.BuildGEP2(llvmType, alloca, new LLVMValueRef[] {
-						LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
-						LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0)
-					}, "union_tag_ptr");
-					_builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, (ulong)zeroNone), zeroTagPtr);
-				}
-
-				_calls.Emit(ctorCall, alloca);
-			}
-			// Register Forwarding: If the aggregate is already allocated on the stack, forward its address
-			else if (valTy is StructTypeSymbol || valTy is ArrayTypeSymbol)
-			{
-				var val = EmitExpression(varDecl.Initializer!);
-				if (val.TypeOf.Kind == LLVMTypeKind.LLVMPointerTypeKind)
-				{
-					// Struct-init/ctor/sret-style expressions already return an alloca pointer:
-					// forward it straight into _function.Locals so later GEPs/loads hit storage.
-					_function.Locals[varDecl.Name] = val;
-				}
-				else
-				{
-					// Value-returning aggregates (e.g. typeof -> const System.Type value):
-					// materialize into private storage; field access must GEP off a pointer.
-					var llvmType = GetLLVMType(valTy);
-					var alloca = _memory.BuildEntryAlloca(llvmType, varDecl.Name);
-					_function.Locals[varDecl.Name] = alloca;
-					_builder.BuildStore(val, alloca);
-				}
-			}
-			else
-			{
-				var val = EmitExpression(varDecl.Initializer!);
-				var llvmType = GetLLVMType(valTy);
-				var alloca = _memory.BuildEntryAlloca(llvmType, varDecl.Name);
-				_function.Locals[varDecl.Name] = alloca;
-				_builder.BuildStore(val, alloca);
-			}
-		}
-	}
-
 	private void EmitEnumSwitchTrapDefault()
 	{
 		if (_llvmTrap is null)
@@ -3780,13 +3408,6 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	}
 
 
-	private static bool EndsWithReturn(SyntaxNode s) => s switch
-	{
-		BlockStatementSyntax b => b.Statements.Count > 0 && b.Statements[^1] is ReturnStatementSyntax,
-		LabeledBlockStatementSyntax lb => lb.Body.Statements.Count > 0 && lb.Body.Statements[^1] is ReturnStatementSyntax,
-		ReturnStatementSyntax => true,
-		_ => false,
-	};
 	public void Dispose()
 	{
 		_builder.Dispose();

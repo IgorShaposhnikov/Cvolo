@@ -1,46 +1,445 @@
 using Cvolo.Analysis;
+using Cvolo.Analysis.Symbols;
 using Cvolo.Analysis.Symbols.Base;
 using Cvolo.Analysis.Symbols.Collections;
 using Cvolo.Analysis.Symbols.Structs;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
+using Cvolo.Core.AST.Expressions;
 using Cvolo.Core.AST.Statements;
 using Cvolo.Emitter.LLVM.Codegen.ControlFlow;
+using Cvolo.Emitter.LLVM.Codegen.Values;
 using LLVMSharp.Interop;
 
 namespace Cvolo.Emitter.LLVM.Codegen.Emitters;
 
 /// <summary>
-/// Emits statement-level LLVM control flow for conditionals, loops, foreach iteration, switch
-/// dispatch, and break/continue transfers.
+/// Owns statement-level LLVM lowering, including lexical blocks, local declarations, returns,
+/// conditionals, loops, foreach iteration, switch dispatch, unsafe blocks, and break/continue.
 /// </summary>
 /// <remarks>
-/// This extraction intentionally keeps the top-level statement dispatcher, expression emission,
-/// variable declaration emission, and block cleanup orchestration in <see cref="CodeGenerator"/>.
-/// The callbacks are a migration seam so control-flow lowering can move without changing language
-/// semantics. Return/defer/unsafe paths remain outside this class until their cleanup interactions
-/// can be moved as a separate mechanical step.
+/// Expression emission remains a migration dependency until <c>ExpressionEmitter</c> is extracted.
+/// Cleanup, aggregate materialization, call emission, memory allocation, and value coercion are
+/// delegated to their dedicated services so this class owns statement orchestration rather than
+/// duplicating those subsystems.
 /// </remarks>
 /// <remarks>
-/// Creates a statement emitter that reuses the current expression, block, variable, address,
-/// cleanup, and memory paths while statement lowering is incrementally extracted.
+/// Creates a statement emitter over the shared codegen services and the current function state.
+/// </remarks>
+/// <remarks>
+/// Expression and constructor-classification callbacks are temporary migration seams. They will
+/// disappear when expression lowering is extracted from <see cref="CodeGenerator"/>.
 /// </remarks>
 internal sealed class StatementEmitter(
 	CodegenContext codegen,
 	CleanupEmitter cleanup,
 	MemoryEmitter memory,
+	AggregateEmitter aggregates,
+	CallEmitter calls,
+	ValueCoercion coercion,
 	Func<FunctionCodegenContext> getFunction,
 	Func<ExpressionSyntax, LLVMValueRef> emitExpression,
 	Func<ExpressionSyntax, TypeSymbol> getExpressionType,
 	Func<ExpressionSyntax, (LLVMValueRef ptr, TypeSymbol type, bool valueProvenance, LLVMValueRef? tbaa)> getFieldPointer,
-	Action<SyntaxNode> emitStatement,
-	Action<BlockStatementSyntax> emitBlock,
-	Action<VariableDeclarationSyntax> emitVariableDeclaration,
+	Func<CallExpressionSyntax, TypeSymbol, bool> isConstructorCall,
 	Action emitTrapDefault)
 {
 	private LLVMBuilderRef Builder => codegen.Builder;
 	private FunctionCodegenContext Function => getFunction();
 	private BindingContext BindingContext => codegen.BindingContext ?? throw new InvalidOperationException("Statement emission requires an active binding context.");
+
+	/// <summary>
+	/// Emits a lexical block, tracks locals declared in that block, and runs scope cleanup when
+	/// control reaches the block normally without an LLVM terminator.
+	/// </summary>
+	public void EmitBlock(BlockStatementSyntax block)
+	{
+		var blockVars = new List<string>();
+
+		foreach (var stmt in block.Statements)
+		{
+			if (stmt is VariableDeclarationSyntax v)
+			{
+				blockVars.Add(v.Name);
+			}
+
+			// Skip statements after a terminator (e.g. a `break L;` that already branched).
+			if (Builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
+			{
+				EmitStatement(stmt);
+			}
+		}
+
+		if (!EndsWithReturn(block))
+		{
+			cleanup.EmitScopeCleanup(Function, blockVars, skipHeapFree: Function.OwnershipTransferFunction);
+		}
+	}
+
+	/// <summary>
+	/// Emits a labeled block and installs a matching break target for the duration of its body.
+	/// </summary>
+	private void EmitLabeledBlockStatement(LabeledBlockStatementSyntax labeledBlock)
+	{
+		var currentFunc = Builder.InsertBlock.Parent;
+		var bodyBlock = currentFunc.AppendBasicBlock(labeledBlock.Label + ".blkbody");
+		var endBlock = currentFunc.AppendBasicBlock(labeledBlock.Label + ".blkend");
+
+		Builder.BuildBr(bodyBlock);
+
+		Function.LabeledBreaks.Push(new LabeledBreakCodegenFrame(labeledBlock.Label, endBlock));
+		Builder.PositionAtEnd(bodyBlock);
+		EmitBlock(labeledBlock.Body);
+		if (Builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
+		{
+			Builder.BuildBr(endBlock);
+		}
+
+		Function.LabeledBreaks.Pop();
+
+		Builder.PositionAtEnd(endBlock);
+	}
+
+	/// <summary>
+	/// Dispatches a single statement to the concrete lowering path owned by this emitter.
+	/// </summary>
+	private void EmitStatement(SyntaxNode stmt)
+	{
+		switch (stmt)
+		{
+			case ReturnStatementSyntax ret:
+				EmitReturnStatement(ret);
+				break;
+			case ExpressionStatementSyntax exprStmt:
+				emitExpression(exprStmt.Expression);
+				break;
+			case VariableDeclarationSyntax varDecl:
+				EmitVariableDeclaration(varDecl);
+				break;
+			case BlockStatementSyntax block:
+				EmitBlock(block);
+				break;
+			case LabeledBlockStatementSyntax labeledBlock:
+				EmitLabeledBlockStatement(labeledBlock);
+				break;
+			case IfStatementSyntax ifStmt:
+				EmitIfStatement(ifStmt);
+				break;
+			case SwitchStatementSyntax sw:
+				EmitSwitchStatement(sw);
+				break;
+			case WhileStatementSyntax whileStmt:
+				EmitWhileStatement(whileStmt);
+				break;
+			case ForStatementSyntax forStmt:
+				EmitForStatement(forStmt);
+				break;
+			case ForEachStatementSyntax fe:
+				EmitForEachStatement(fe);
+				break;
+			case UnsafeBlockStatementSyntax unsafeBlock:
+				Function.UnsafeDepth++;
+				EmitBlock(unsafeBlock.Body);
+				Function.UnsafeDepth--;
+				break;
+			case BreakStatementSyntax brk:
+				EmitBreakStatement(brk);
+				break;
+			case ContinueStatementSyntax cont:
+				EmitContinueStatement(cont);
+				break;
+		}
+	}
+
+	/// <summary>
+	/// Emits a function return, including option-null lowering, aggregate materialization,
+	/// scope cleanup, implicit reference dereference, and exported-bool ABI truncation.
+	/// </summary>
+	private void EmitReturnStatement(ReturnStatementSyntax ret)
+	{
+		if (ret.Expression is not null)
+		{
+			// 1. Handle Null Returns on Options (Lowers null to Option.None)
+			var expectedType = codegen.FunctionReturnTypes.TryGetValue(Builder.InsertBlock.Parent.Name, out var et) ? et : TypeSymbol.Int;
+
+			if (ret.Expression is NullLiteralExpressionSyntax && expectedType is UnionTypeSymbol optionUnion && optionUnion.IsOption)
+			{
+				var unionLayout = codegen.Types.Lower(optionUnion);
+				var tempAlloc = Builder.BuildAlloca(unionLayout, "ret_null_tmp");
+
+				// Null-Pointer Optimization: store flat nullptr (None == zero) instead of a tag.
+				if (optionUnion.IsNpoEligible)
+				{
+					Builder.BuildStore(LLVMValueRef.CreateConstPointerNull(unionLayout), tempAlloc);
+				}
+				else
+				{
+					var fieldIndex = GetFieldIndex(optionUnion, "None");
+
+					var tagPtr = Builder.BuildGEP2(unionLayout, tempAlloc, new LLVMValueRef[]
+					{
+						LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
+						LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0)
+					}, "union_tag_ptr");
+					Builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, (ulong)fieldIndex), tagPtr);
+				}
+
+				var loadedNone = Builder.BuildLoad2(unionLayout, tempAlloc, "loaded_none");
+
+				cleanup.EmitScopeCleanup(Function, [.. Function.Locals.Keys], skipHeapFree: Function.OwnershipTransferFunction);
+				Builder.BuildRet(loadedNone);
+				return;
+			}
+
+			// 2. Handle Standard Returns
+			var value = emitExpression(ret.Expression);
+			var type = getExpressionType(ret.Expression);
+
+			// Implicit Dereference: if expected return type is value but actual is a reference
+			if (type is PointerTypeSymbol retPtr && value.TypeOf.Kind == LLVMTypeKind.LLVMPointerTypeKind && expectedType is not PointerTypeSymbol)
+			{
+				value = Builder.BuildLoad2(codegen.Types.Lower(retPtr.ReferencedType), value, "deref_ret");
+				type = retPtr.ReferencedType;
+			}
+
+			// Materialize memory-resident return values (structs/unions living in allocas/heap
+			// slots) BEFORE scope cleanup frees them - the loaded register is what survives.
+			// NPO-eligible unions lower to a single scalar (the flat ptr), so their emitted value
+			// is already the scalar - loading it again would double-dereference.
+			LLVMValueRef? materialized = null;
+			var isMemResident = type is StructTypeSymbol || (type is UnionTypeSymbol u && !u.IsNpoEligible);
+			if (isMemResident && value.TypeOf.Kind == LLVMTypeKind.LLVMPointerTypeKind)
+			{
+				var layout = codegen.Types.Lower(type);
+				materialized = Builder.BuildLoad2(layout, value, "struct_ret_val");
+			}
+
+			cleanup.EmitScopeCleanup(Function, [.. Function.Locals.Keys], skipHeapFree: Function.OwnershipTransferFunction);
+
+			if (materialized is not null)
+			{
+				Builder.BuildRet(materialized.Value);
+			}
+			else
+			{
+				// FFI bool lowering: truncate i1 back to i8 for exported functions returning bool.
+				var retValue = value;
+				if (codegen.BindingContext?.Globals.Lookup(Builder.InsertBlock.Parent.Name) is FunctionSymbol { IsExported: true } retFuncSym
+					&& retFuncSym.ReturnType is not null && retFuncSym.ReturnType.Name == "bool"
+					&& retValue.TypeOf.Kind == LLVMTypeKind.LLVMIntegerTypeKind && retValue.TypeOf.IntWidth == 1)
+				{
+					retValue = Builder.BuildTrunc(retValue, LLVMTypeRef.Int8, "bool.ret.trunc");
+				}
+
+				Builder.BuildRet(retValue);
+			}
+		}
+		else
+		{
+			cleanup.EmitScopeCleanup(Function, [.. Function.Locals.Keys], skipHeapFree: Function.OwnershipTransferFunction);
+			Builder.BuildRetVoid();
+		}
+	}
+
+	/// <summary>
+	/// Emits local variable storage and initialization while preserving reference, heap-allocation,
+	/// aggregate, constructor, option, coercion, and type-inference behavior.
+	/// </summary>
+	private void EmitVariableDeclaration(VariableDeclarationSyntax varDecl)
+	{
+		TypeSymbol? typeSymbol = null;
+		if (varDecl.Type is not null)
+		{
+			typeSymbol = codegen.BindingContext!.ResolveType(varDecl.Type);
+		}
+
+		// Handle References / Borrows
+		if (varDecl.Type == "refvar" || varDecl.Type == "ref")
+		{
+			var val = emitExpression(varDecl.Initializer!);
+			var valTy = getExpressionType(varDecl.Initializer!);
+
+			var innerType = valTy is PointerTypeSymbol ptrType ? ptrType.ReferencedType : valTy;
+			var isMutable = varDecl.Type == "refvar";
+			var pointerType = new PointerTypeSymbol(innerType, isMutable);
+
+			var alloca = Builder.BuildAlloca(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), varDecl.Name);
+			Function.Locals[varDecl.Name] = alloca;
+			Function.VariableTypes[varDecl.Name] = pointerType;
+
+			Builder.BuildStore(val, alloca);
+			return;
+		}
+
+		// Handle Heap Allocations
+		if (varDecl.Initializer is HeapAllocationExpressionSyntax heapInit)
+		{
+			var val = emitExpression(heapInit);
+			var valTy = getExpressionType(heapInit);
+
+			var alloca = Builder.BuildAlloca(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), varDecl.Name);
+			Function.Locals[varDecl.Name] = alloca;
+			Function.VariableTypes[varDecl.Name] = valTy;
+			Function.HeapAllocatedVars.Add(varDecl.Name);
+
+			Builder.BuildStore(val, alloca);
+			return;
+		}
+		else if (varDecl.Initializer is HeapArrayAllocationExpressionSyntax heapArrInit)
+		{
+			var val = emitExpression(heapArrInit);
+			var valTy = getExpressionType(heapArrInit);
+
+			var alloca = Builder.BuildAlloca(codegen.Types.Lower(valTy), varDecl.Name);
+			Function.Locals[varDecl.Name] = alloca;
+			Function.VariableTypes[varDecl.Name] = valTy;
+			Function.HeapAllocatedVars.Add(varDecl.Name); // Register for RAII cleanup!
+
+			Builder.BuildStore(val, alloca);
+			return;
+		}
+
+		if (typeSymbol is not null)
+		{
+			var llvmType = codegen.Types.Lower(typeSymbol);
+			var alloca = Builder.BuildAlloca(llvmType, varDecl.Name);
+			Function.Locals[varDecl.Name] = alloca;
+			Function.VariableTypes[varDecl.Name] = typeSymbol;
+
+			// Panic-safe zero-ing: a ResourceMove-style union local is pre-set to None so that if
+			// a panic occurs while its constructor/initializer is still running, the unwinder (and
+			// any tag-checked destructor) observes a None slot instead of uninitialized garbage.
+			if (typeSymbol is UnionTypeSymbol zeroUnion && cleanup.UnionNeedsTagCheckedCleanup(zeroUnion))
+			{
+				var zeroNone = zeroUnion.NoneVariant is not null ? GetFieldIndex(zeroUnion, zeroUnion.NoneVariant.Name) : 0;
+				var zeroTagPtr = Builder.BuildGEP2(llvmType, alloca, new LLVMValueRef[]
+				{
+					LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
+					LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0)
+				}, "union_tag_ptr");
+				Builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, (ulong)zeroNone), zeroTagPtr);
+			}
+
+
+			if (varDecl.Initializer is not null)
+			{
+				// Handle Null Initializers on Option Types (Lowers null to Option.None)
+				if (varDecl.Initializer is NullLiteralExpressionSyntax && typeSymbol is UnionTypeSymbol optionUnion && optionUnion.IsOption)
+				{
+					// Null-Pointer Optimization: store flat nullptr (None == zero) instead of a tag.
+					if (optionUnion.IsNpoEligible)
+					{
+						Builder.BuildStore(LLVMValueRef.CreateConstPointerNull(llvmType), alloca);
+						return;
+					}
+
+					var fieldIndex = GetFieldIndex(optionUnion, "None");
+
+					var tagPtr = Builder.BuildGEP2(llvmType, alloca, new LLVMValueRef[]
+					{
+						LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
+						LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0)
+					}, "union_tag_ptr");
+					Builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, (ulong)fieldIndex), tagPtr);
+					return;
+				}
+
+				var valTy = getExpressionType(varDecl.Initializer);
+
+				if (typeSymbol is SliceTypeSymbol && valTy is ArrayTypeSymbol)
+				{
+					var arrayPtr = emitExpression(varDecl.Initializer);
+					var sliceVal = coercion.CoerceArrayToSlice(arrayPtr, valTy, (typeSymbol as SliceTypeSymbol)!);
+					Builder.BuildStore(sliceVal, alloca);
+					return;
+				}
+
+				if (varDecl.Initializer is StructInitializationExpressionSyntax structInit)
+				{
+					aggregates.EmitStructInitializationInPlace(structInit, alloca);
+				}
+				else if (varDecl.Initializer is ArrayInitializationExpressionSyntax arrInit)
+				{
+					aggregates.EmitArrayInitializationInPlace(arrInit, alloca, (typeSymbol as ArrayTypeSymbol)!);
+				}
+				else if (varDecl.Initializer is ArrayReplicationExpressionSyntax arrRepl)
+				{
+					aggregates.EmitArrayReplicationInPlace(arrRepl, alloca, (typeSymbol as ArrayTypeSymbol)!);
+				}
+				else if (varDecl.Initializer is CallExpressionSyntax ctorCall && isConstructorCall(ctorCall, typeSymbol))
+				{
+					// 'var T v = T(args)': the constructor populates the variable's storage
+					// in place via its implicit 'this' parameter; no value store follows.
+					calls.Emit(ctorCall, alloca);
+				}
+				else
+				{
+					var value = emitExpression(varDecl.Initializer);
+					var coerced = typeSymbol is not PointerTypeSymbol
+						&& (varDecl.Initializer is MemberAccessExpressionSyntax or IndexExpressionSyntax)
+						? coercion.CoerceReferenceToValue(value, getExpressionType(varDecl.Initializer!))
+						: value;
+					coerced = coercion.CoerceIntegerWidth(coerced, getExpressionType(varDecl.Initializer!) ?? typeSymbol, typeSymbol);
+					coerced = coercion.CoerceFloatWidth(coerced, getExpressionType(varDecl.Initializer!) ?? typeSymbol, typeSymbol);
+					Builder.BuildStore(coerced, alloca);
+				}
+			}
+		}
+		else
+		{
+			// Type Inference
+			var valTy = getExpressionType(varDecl.Initializer!);
+			Function.VariableTypes[varDecl.Name] = valTy;
+
+			if (varDecl.Initializer is CallExpressionSyntax ctorCall && isConstructorCall(ctorCall, valTy))
+			{
+				var llvmType = codegen.Types.Lower(valTy);
+				var alloca = memory.BuildEntryAlloca(llvmType, varDecl.Name);
+				Function.Locals[varDecl.Name] = alloca;
+
+				// Panic-safe zero-ing for Unions initialized via Type Inference
+				if (valTy is UnionTypeSymbol zeroUnion && cleanup.UnionNeedsTagCheckedCleanup(zeroUnion))
+				{
+					var zeroNone = zeroUnion.NoneVariant is not null ? GetFieldIndex(zeroUnion, zeroUnion.NoneVariant.Name) : 0;
+					var zeroTagPtr = Builder.BuildGEP2(llvmType, alloca, new LLVMValueRef[] {
+						LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
+						LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0)
+					}, "union_tag_ptr");
+					Builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, (ulong)zeroNone), zeroTagPtr);
+				}
+
+				calls.Emit(ctorCall, alloca);
+			}
+			// Register Forwarding: If the aggregate is already allocated on the stack, forward its address
+			else if (valTy is StructTypeSymbol || valTy is ArrayTypeSymbol)
+			{
+				var val = emitExpression(varDecl.Initializer!);
+				if (val.TypeOf.Kind == LLVMTypeKind.LLVMPointerTypeKind)
+				{
+					// Struct-init/ctor/sret-style expressions already return an alloca pointer:
+					// forward it straight into Function.Locals so later GEPs/loads hit storage.
+					Function.Locals[varDecl.Name] = val;
+				}
+				else
+				{
+					// Value-returning aggregates (e.g. typeof -> const System.Type value):
+					// materialize into private storage; field access must GEP off a pointer.
+					var llvmType = codegen.Types.Lower(valTy);
+					var alloca = memory.BuildEntryAlloca(llvmType, varDecl.Name);
+					Function.Locals[varDecl.Name] = alloca;
+					Builder.BuildStore(val, alloca);
+				}
+			}
+			else
+			{
+				var val = emitExpression(varDecl.Initializer!);
+				var llvmType = codegen.Types.Lower(valTy);
+				var alloca = memory.BuildEntryAlloca(llvmType, varDecl.Name);
+				Function.Locals[varDecl.Name] = alloca;
+				Builder.BuildStore(val, alloca);
+			}
+		}
+	}
 
 	/// <summary>
 	/// Emits conditional control flow for an if/else statement and rejoins unterminated branches at a merge block.
@@ -57,13 +456,13 @@ internal sealed class StatementEmitter(
 		Builder.BuildCondBr(condition, thenBlock, elseBlock);
 
 		Builder.PositionAtEnd(thenBlock);
-		emitStatement(ifStmt.ThenStatement);
+		EmitStatement(ifStmt.ThenStatement);
 		if (Builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
 			Builder.BuildBr(mergeBlock);
 
 		Builder.PositionAtEnd(elseBlock);
 		if (ifStmt.ElseClause is not null)
-			emitStatement(ifStmt.ElseClause.Body);
+			EmitStatement(ifStmt.ElseClause.Body);
 		if (Builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
 			Builder.BuildBr(mergeBlock);
 
@@ -95,7 +494,7 @@ internal sealed class StatementEmitter(
 		Builder.BuildCondBr(condition, bodyBlock, endBlock);
 
 		Builder.PositionAtEnd(bodyBlock);
-		emitStatement(whileStmt.Body);
+		EmitStatement(whileStmt.Body);
 		if (Builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
 		{
 			Builder.BuildBr(condBlock);
@@ -115,7 +514,7 @@ internal sealed class StatementEmitter(
 	/// </summary>
 	public void EmitForStatement(ForStatementSyntax forStmt)
 	{
-		emitVariableDeclaration(forStmt.Initializer);
+		EmitVariableDeclaration(forStmt.Initializer);
 
 		var currentFunc = Builder.InsertBlock.Parent;
 		var prefix = !string.IsNullOrEmpty(forStmt.Label) ? forStmt.Label + "." : "";
@@ -138,7 +537,7 @@ internal sealed class StatementEmitter(
 		Builder.BuildCondBr(condition, bodyBlock, endBlock);
 
 		Builder.PositionAtEnd(bodyBlock);
-		emitStatement(forStmt.Body);
+		EmitStatement(forStmt.Body);
 		if (Builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
 		{
 			Builder.BuildBr(incBlock);
@@ -236,7 +635,7 @@ internal sealed class StatementEmitter(
 			Builder.BuildStore(elemVal, itemAlloca);
 		}
 
-		emitStatement(fe.Body);
+		EmitStatement(fe.Body);
 		if (Builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
 		{
 			Builder.BuildBr(incBlock);
@@ -312,7 +711,7 @@ internal sealed class StatementEmitter(
 			Builder.BuildStore(elemVal, itemAlloca);
 		}
 
-		emitStatement(fe.Body);
+		EmitStatement(fe.Body);
 		if (Builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
 		{
 			Builder.BuildBr(incBlock);
@@ -404,7 +803,7 @@ internal sealed class StatementEmitter(
 			Builder.BuildStore(currentVal, itemAlloca);
 		}
 
-		emitStatement(fe.Body);
+		EmitStatement(fe.Body);
 		if (Builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
 		{
 			Builder.BuildBr(condBlock);
@@ -623,7 +1022,7 @@ internal sealed class StatementEmitter(
 					Builder.BuildBr(bodyBlock);
 
 					Builder.PositionAtEnd(bodyBlock);
-					emitBlock(new BlockStatementSyntax(c.Span, c.Body));
+					EmitBlock(new BlockStatementSyntax(c.Span, c.Body));
 					if (Builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
 						Builder.BuildBr(endBlock);
 
@@ -641,7 +1040,7 @@ internal sealed class StatementEmitter(
 					Builder.BuildCondBr(cond, caseBodyBlock, nextCheckBlock);
 
 					Builder.PositionAtEnd(caseBodyBlock);
-					emitBlock(new BlockStatementSyntax(c.Span, c.Body));
+					EmitBlock(new BlockStatementSyntax(c.Span, c.Body));
 					if (Builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
 						Builder.BuildBr(endBlock);
 				}
@@ -738,8 +1137,20 @@ internal sealed class StatementEmitter(
 			}
 		}
 
-		emitBlock(new BlockStatementSyntax(c.Span, c.Body));
+		EmitBlock(new BlockStatementSyntax(c.Span, c.Body));
 	}
+
+	/// <summary>
+	/// Returns whether a syntax node ends in an explicit return according to the existing
+	/// block-termination rule used by function and lexical-block emission.
+	/// </summary>
+	public static bool EndsWithReturn(SyntaxNode syntax) => syntax switch
+	{
+		BlockStatementSyntax block => block.Statements.Count > 0 && block.Statements[^1] is ReturnStatementSyntax,
+		LabeledBlockStatementSyntax labeled => labeled.Body.Statements.Count > 0 && labeled.Body.Statements[^1] is ReturnStatementSyntax,
+		ReturnStatementSyntax => true,
+		_ => false,
+	};
 
 	/// <summary>
 	/// Returns the storage index of a named struct field using the semantic field order.
