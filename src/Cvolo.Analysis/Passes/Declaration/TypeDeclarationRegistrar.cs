@@ -20,8 +20,7 @@ namespace Cvolo.Analysis.Passes.Declaration;
 internal sealed class TypeDeclarationRegistrar(BindingContext context)
 {
 	private readonly AttributeValidator _attributes = new(context);
-	private ClassificationAnalyzer? _classification;
-	private ClassificationAnalyzer Classification => _classification ??= new ClassificationAnalyzer(context);
+	private readonly GenericDefaultCopyValidator _genericDefaultCopies = new(context);
 
 	/// <summary>
 	/// Enum storage types accepted by the existing declaration rules.
@@ -176,16 +175,7 @@ internal sealed class TypeDeclarationRegistrar(BindingContext context)
 			context.SymbolUnits[mangledName] = context.CurrentUnit!;
 			context.GenericStructTemplates[mangledName] = structDecl;
 
-			// Validate default generic parameter types are TrivialCopy (CVL1040)
-			foreach (var (paramName, defaultTypeName) in structDecl.GenericParameterDefaults)
-			{
-				var defaultType = context.ResolveType(defaultTypeName);
-				if (defaultType is not null && Classification.Classify(defaultType) != CopyKind.TrivialCopy)
-				{
-					var currentFileContext = context.FileContexts[context.CurrentUnit!];
-					context.Diagnostics.Report(currentFileContext, structDecl.Span, $"Default value for generic parameter '{paramName}' must be a Trivial Copy Type", DiagnosticIds.DefaultMustBeTrivialCopy);
-				}
-			}
+			_genericDefaultCopies.Validate(structDecl);
 
 			var placeholderFields = new List<StructFieldSymbol>();
 
@@ -326,16 +316,7 @@ internal sealed class TypeDeclarationRegistrar(BindingContext context)
 			context.SymbolUnits[mangledName] = context.CurrentUnit!;
 			context.GenericUnionTemplates[mangledName] = unionDecl;
 
-			// Validate default generic parameter types are TrivialCopy (CVL1040)
-			foreach (var (paramName, defaultTypeName) in unionDecl.GenericParameterDefaults)
-			{
-				var defaultType = context.ResolveType(defaultTypeName);
-				if (defaultType is not null && Classification.Classify(defaultType) != CopyKind.TrivialCopy)
-				{
-					var currentFileContext = context.FileContexts[context.CurrentUnit!];
-					context.Diagnostics.Report(currentFileContext, unionDecl.Span, $"Default value for generic parameter '{paramName}' must be a Trivial Copy Type", DiagnosticIds.DefaultMustBeTrivialCopy);
-				}
-			}
+			_genericDefaultCopies.Validate(unionDecl);
 
 			var placeholderFields = new List<UnionFieldSymbol>();
 			var templateSymbol = new UnionTypeSymbol(mangledName, placeholderFields)

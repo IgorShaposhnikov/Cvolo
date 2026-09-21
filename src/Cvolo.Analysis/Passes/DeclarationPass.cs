@@ -1,9 +1,9 @@
-using Cvolo.Analysis.Passes.Declaration;
 using Cvolo.Analysis.Symbols;
 using Cvolo.Analysis.Symbols.Base;
 using Cvolo.Analysis.Symbols.Collections;
 using Cvolo.Analysis.Symbols.FFI;
 using Cvolo.Analysis.Symbols.Structs;
+using Cvolo.Analysis.Passes.Declaration;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
 using Cvolo.Core.AST.Directives;
@@ -22,8 +22,7 @@ public sealed class DeclarationPass(BindingContext context)
 	private readonly EmbeddedMethodPromoter _embeddedMethods = new(context);
 	private readonly DestructorValidator _destructors = new(context);
 	private readonly GenericDefaultConstraintValidator _genericDefaults = new(context);
-	private ClassificationAnalyzer? _classification;
-	private ClassificationAnalyzer Classification => _classification ??= new ClassificationAnalyzer(context);
+	private readonly GenericDefaultCopyValidator _genericDefaultCopies = new(context);
 	/// <summary>
 	/// The compiler's built-in attribute names, without the optional <c>Attribute</c> suffix, in
 	/// declaration order. Tooling surfaces use this forwarding property to preserve the existing
@@ -753,16 +752,7 @@ public sealed class DeclarationPass(BindingContext context)
 				context.GenericExtensionTemplates[extendedType.Name] = templates;
 			}
 
-			// Validate default generic parameter types are TrivialCopy (CVL1040)
-			foreach (var (paramName, defaultTypeName) in extDecl.GenericParameterDefaults)
-			{
-				var defaultType = context.ResolveType(defaultTypeName);
-				if (defaultType is not null && Classification.Classify(defaultType) != CopyKind.TrivialCopy)
-				{
-					var currentFileContext = context.FileContexts[context.CurrentUnit!];
-					context.Diagnostics.Report(currentFileContext, extDecl.Span, $"Default value for generic parameter '{paramName}' must be a Trivial Copy Type", DiagnosticIds.DefaultMustBeTrivialCopy);
-				}
-			}
+			_genericDefaultCopies.Validate(extDecl);
 
 			templates.Add(extDecl);
 			return;
