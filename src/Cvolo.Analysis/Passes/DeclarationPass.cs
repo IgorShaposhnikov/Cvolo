@@ -17,6 +17,7 @@ public sealed class DeclarationPass(BindingContext context)
 	private readonly AttributeValidator _attributes = new(context);
 	private readonly TypeAliasValidator _aliases = new(context);
 	private readonly TypeDeclarationRegistrar _types = new(context);
+	private readonly ContractHierarchyLinker _contracts = new(context);
 	private ClassificationAnalyzer? _classification;
 	private ClassificationAnalyzer Classification => _classification ??= new ClassificationAnalyzer(context);
 	/// <summary>
@@ -93,23 +94,8 @@ public sealed class DeclarationPass(BindingContext context)
 		// (CVL1201), and aliases in `where` constraints (CVL1202).
 		_aliases.Validate(units);
 
-		// Pass 0b: Link contract hierarchy (`:` base clauses) — validate bases,
-		// compute protocol effective members (transitive closure), and rebuild the
-		// protocol symbols with the expanded member set.
-		foreach (var unit in units)
-		{
-			context.CurrentUnit = unit;
-			context.CurrentNamespace = unit.NamespaceDeclaration?.Name;
-
-			var members = context.CurrentNamespace != null ? unit.NamespaceDeclaration!.Members : unit.Members;
-			foreach (var member in members)
-			{
-				if (member is ProtocolDeclarationSyntax protocolDecl)
-					LinkProtocol(protocolDecl);
-				else if (member is InterfaceDeclarationSyntax interfaceDecl)
-					LinkInterface(interfaceDecl);
-			}
-		}
+		// Pass 0b: Link contract hierarchy (`:` base clauses) after every raw contract symbol exists.
+		_contracts.Link(units);
 
 		// Pass 0c: Link `struct T embed Base` clauses — validate the embedded type,
 		// detect cycles/generics, and rebuild struct symbols with the embedded
@@ -599,114 +585,6 @@ public sealed class DeclarationPass(BindingContext context)
 	}
 
 
-
-
-	/// <summary>
-	/// Pass 0b protocol linking: validates `:` base clauses and computes the
-	/// protocol's effective member list (its own members plus the transitive
-	/// closure of its protocol parents, with child overrides winning by name).
-	/// The registered protocol symbol is rebuilt with the expanded member set so
-	/// conformance checks, dispatch, and default lookup all see the full graph.
-	/// </summary>
-	private void LinkProtocol(ProtocolDeclarationSyntax protocolDecl)
-	{
-		var mangledName = context.GetMangledName(protocolDecl.Name, context.CurrentNamespace);
-		var currentFileContext = context.FileContexts[context.CurrentUnit!];
-
-		// Only protocols may be protocol bases; anything else is a declaration error.
-		foreach (var baseName in protocolDecl.Bases)
-		{
-			if (context.ResolveType(baseName) is not ProtocolTypeSymbol)
-			{
-				context.Diagnostics.Report(currentFileContext, protocolDecl.Span,
-					$"Unknown protocol '{baseName}' in base clause of protocol '{protocolDecl.Name}'.");
-			}
-		}
-
-		var effective = new List<(string Owner, ProtocolMethodDeclarationSyntax Member)>();
-		effective.AddRange(protocolDecl.Members.Select(m => (mangledName, m)));
-
-		if (protocolDecl.Bases.Count > 0)
-		{
-			var visited = new HashSet<string>();
-			var stack = new HashSet<string>();
-			foreach (var baseName in protocolDecl.Bases)
-				CollectProtocolBaseMembers(baseName, visited, stack, effective, protocolDecl.Span);
-		}
-
-		context.ProtocolEffectiveMembers[mangledName] = effective;
-
-		// Rebuild the symbol: expanded members + canonical tokens (each member
-		// canonicalized with its OWNER's generic parameters to preserve widths).
-		var canonical = new HashSet<string>();
-		foreach (var (owner, member) in effective)
-		{
-			var ownerGenerics = owner == mangledName
-				? protocolDecl.GenericParameters
-				: context.ProtocolTemplates.TryGetValue(owner, out var ownerDecl)
-					? ownerDecl.GenericParameters
-					: protocolDecl.GenericParameters;
-			canonical.Add(ProtocolCanonicalizer.BuildMemberToken(member, ownerGenerics, context, selfReplacement: null));
-		}
-
-		context.ProtocolTypes[mangledName] = new ProtocolTypeSymbol(
-			mangledName, effective.Select(e => e.Member).ToList(), protocolDecl.GenericParameters, protocolDecl.Constraint, canonical)
-		{
-			Visibility = protocolDecl.Visibility
-		};
-	}
-
-	private void CollectProtocolBaseMembers(
-		string baseName, HashSet<string> visited, HashSet<string> stack,
-		List<(string Owner, ProtocolMethodDeclarationSyntax Member)> effective, TextSpan span)
-	{
-		if (context.ResolveType(baseName) is not ProtocolTypeSymbol protoBase)
-			return;
-
-		if (!stack.Add(protoBase.Name))
-		{
-			context.Diagnostics.Report(context.FileContexts[context.CurrentUnit!], span,
-				$"Circular protocol inheritance involving '{baseName}'.");
-			return;
-		}
-
-		if (visited.Add(protoBase.Name))
-		{
-			if (context.ProtocolTemplates.TryGetValue(protoBase.Name, out var baseDecl))
-			{
-				foreach (var baseOfBase in baseDecl.Bases)
-					CollectProtocolBaseMembers(baseOfBase, visited, stack, effective, span);
-
-				foreach (var member in baseDecl.Members)
-				{
-					if (effective.Any(e => e.Member.Name == member.Name))
-						continue;
-					effective.Add((protoBase.Name, member));
-				}
-			}
-		}
-
-		stack.Remove(protoBase.Name);
-	}
-
-	/// <summary>
-	/// Pass 0b interface linking: validates `:` base clauses. Interface bases may
-	/// be other interfaces or protocols; the effective member set is computed
-	/// lazily during conformance registration (effective interface members).
-	/// </summary>
-	private void LinkInterface(InterfaceDeclarationSyntax interfaceDecl)
-	{
-		var currentFileContext = context.FileContexts[context.CurrentUnit!];
-		foreach (var baseName in interfaceDecl.Bases)
-		{
-			var baseType = context.ResolveType(baseName);
-			if (baseType is not (InterfaceTypeSymbol or ProtocolTypeSymbol))
-			{
-				context.Diagnostics.Report(currentFileContext, interfaceDecl.Span,
-					$"Unknown contract '{baseName}' in base clause of interface '{interfaceDecl.Name}'.");
-			}
-		}
-	}
 
 	private void DeclareFunction(FunctionDeclarationSyntax func)
 	{
