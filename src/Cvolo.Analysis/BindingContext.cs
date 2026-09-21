@@ -825,7 +825,8 @@ public sealed class BindingContext
 		{
 			if (count > 1)
 				return;
-			if (GlobalsByQualifiedName.TryGetValue(GetMangledName(memberName, ns), out var symbol))
+			var key = GetMangledName(memberName, ns);
+			if (GlobalsByQualifiedName.TryGetValue(key, out var symbol))
 			{
 				single = symbol;
 				count++;
@@ -840,6 +841,7 @@ public sealed class BindingContext
 			foreach (var ns in GetActiveUsings(CurrentUnit))
 				TryPath(GetMangledName(namespacePath, ns));
 		}
+
 
 		return count == 1 ? single : null;
 	}

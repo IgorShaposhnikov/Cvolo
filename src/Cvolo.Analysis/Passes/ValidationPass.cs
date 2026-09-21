@@ -2435,6 +2435,12 @@ public sealed class ValidationPass(BindingContext context)
 	/// receiver's type (a bound-method group) rather than a struct/union field.</summary>
 	private bool IsMethodGroupReference(MemberAccessExpressionSyntax ma, SymbolTable scope)
 	{
+		// Namespace-qualified globals are values, not method groups. Resolve the full
+		// access before inspecting its receiver so namespace prefixes are not checked
+		// as ordinary variables (for example: System.Math.Int.MaxValue).
+		if (TryResolveNamespaceGlobal(ma, out _))
+			return false;
+
 		var receiverType = GetExpressionType(ma.Expression, scope);
 		if (receiverType is PointerTypeSymbol ptr)
 			receiverType = ptr.ReferencedType;

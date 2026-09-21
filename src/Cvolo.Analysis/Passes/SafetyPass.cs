@@ -960,7 +960,20 @@ if (leftSymbol is not null)
 					[.. captures], null);
 			case MemberAccessExpressionSyntax ma:
 				// A delegate field or method group bound to a receiver: context == &receiver.
-				return new DelegateProvenance(DelegateProvenanceKind.BoundMethod, [], GetBaseIdentifierName(ma.Expression));
+				// Only classify as a bound delegate value when the accessed member is genuinely a
+				// delegate-typed field or a method group; a plain member read (e.g. 's.Id' where
+				// Id is an int field) is not a delegate value.
+				var memberReceiverType = ResolveExpressionType(ma.Expression, scope);
+				if (memberReceiverType is PointerTypeSymbol memberReceiverPtr)
+					memberReceiverType = memberReceiverPtr.ReferencedType;
+				if (memberReceiverType is StructTypeSymbol receiverStruct && receiverStruct.FindField(ma.MemberName)?.Type is DelegateTypeSymbol)
+					return new DelegateProvenance(DelegateProvenanceKind.BoundMethod, [], GetBaseIdentifierName(ma.Expression));
+				if (memberReceiverType is UnionTypeSymbol receiverUnion && receiverUnion.FindField(ma.MemberName)?.Type is DelegateTypeSymbol)
+					return new DelegateProvenance(DelegateProvenanceKind.BoundMethod, [], GetBaseIdentifierName(ma.Expression));
+				if (memberReceiverType is not null &&
+					context.GetExtensionMethodCandidates(memberReceiverType, context.CurrentUnit, ma.MemberName).Count > 0)
+					return new DelegateProvenance(DelegateProvenanceKind.BoundMethod, [], GetBaseIdentifierName(ma.Expression));
+				return new DelegateProvenance(DelegateProvenanceKind.Free, [], null);
 			case IdentifierExpressionSyntax id when scope.Lookup(id.Name) is VariableSymbol dv && dv.Type is not DelegateTypeSymbol:
 				return new DelegateProvenance(DelegateProvenanceKind.Free, [], null);
 			case IdentifierExpressionSyntax id when _delegateProvenances.TryGetValue(id.Name, out var prior):

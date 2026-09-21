@@ -1025,7 +1025,28 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 					return new ArrayInitializationExpressionSyntax(SpanOf(arrInitCtx), elements);
 				}
 			case CvoloParser.CatchExpressionContext catchCtx:
-				return new CatchExpressionSyntax(SpanOf(catchCtx), BuildExpression(catchCtx.expression(0)), BuildExpression(catchCtx.expression(1)));
+				{
+					if (catchCtx.expression(1) is CvoloParser.LambdaExpressionContext catchLambda &&
+						catchLambda.lambdaCaptureMode() is null &&
+						catchLambda.blockStatement() is { } catchLambdaBody &&
+						catchLambda.lambdaParameterList() is { } catchLambdaParams &&
+						catchLambdaParams.lambdaParameter().Length == 1 &&
+						catchLambdaParams.lambdaParameter()[0].type() is null)
+					{
+						var catchLambdaName = catchLambdaParams.lambdaParameter()[0].children
+							.OfType<ITerminalNode>()
+							.Single(t => t.Symbol.Type == CvoloParser.Identifier)
+							.GetText();
+
+						return new CatchExpressionSyntax(
+							SpanOf(catchCtx),
+							BuildExpression(catchCtx.expression(0)),
+							null,
+							new CatchLambdaExpressionSyntax(SpanOf(catchLambda), catchLambdaName, BuildBlockStatement(catchLambdaBody)));
+					}
+
+					return new CatchExpressionSyntax(SpanOf(catchCtx), BuildExpression(catchCtx.expression(0)), BuildExpression(catchCtx.expression(1)));
+				}
 			case CvoloParser.CatchLambdaExpressionContext catchLambdaCtx:
 				return new CatchExpressionSyntax(
 					SpanOf(catchLambdaCtx),
