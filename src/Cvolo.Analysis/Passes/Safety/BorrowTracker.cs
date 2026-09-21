@@ -9,8 +9,8 @@ namespace Cvolo.Analysis.Passes.Safety;
 
 /// <summary>
 /// Owns per-function borrow exclusivity state, parent-variable locks, and non-lexical
-/// early-release bookkeeping. Move analysis and safe-delegate provenance remain owned by
-/// <see cref="Cvolo.Analysis.Passes.SafetyPass"/>.
+/// early-release bookkeeping. Value-move analysis is owned by <see cref="MoveAnalyzer"/>, while
+/// safe-delegate provenance remains owned by <see cref="Cvolo.Analysis.Passes.SafetyPass"/>.
 /// </summary>
 internal sealed class BorrowTracker(
 	BindingContext context,

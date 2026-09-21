@@ -1,6 +1,5 @@
 using Cvolo.Analysis.Symbols;
 using Cvolo.Analysis.Symbols.Base;
-using Cvolo.Analysis.Symbols.Collections;
 using Cvolo.Analysis.Symbols.Structs;
 using Cvolo.Analysis.Passes.Safety;
 using Cvolo.Core.AST.Base;
@@ -17,12 +16,12 @@ public sealed class SafetyPass(BindingContext context)
 	private BorrowTracker? _borrows;
 	private readonly Stack<SafetyTier> _currentTierStack = [];
 	private readonly HashSet<string> _localRefsInUnboundScope = []; // refvar/ref variables declared inside the current unbound scope (including nested unsafe blocks)
-	private ClassificationAnalyzer? _classification;
 	private ReferenceLifetimeAnalyzer? _referenceLifetimes;
+	private MoveAnalyzer? _moves;
 
 	/// <summary>
 	/// Lazily creates the per-function borrow tracker that owns borrow exclusivity, parent locks,
-	/// and early-release bookkeeping while leaving move and delegate semantics in this pass.
+	/// and early-release bookkeeping while move analysis and delegate semantics live in dedicated layers.
 	/// </summary>
 	private BorrowTracker Borrows => _borrows ??= new BorrowTracker(
 		context,
@@ -39,6 +38,15 @@ public sealed class SafetyPass(BindingContext context)
 		GetBaseIdentifierName,
 		Borrows.HasParentLock,
 		() => CurrentTier);
+
+	/// <summary>
+	/// Lazily creates the value-move service that owns moved-state checks, by-value ownership
+	/// transfer, and large-copy diagnostics while delegate capture policy remains in this pass.
+	/// </summary>
+	private MoveAnalyzer Moves => _moves ??= new MoveAnalyzer(
+		context,
+		Borrows,
+		ResolveExpressionType);
 
 	// — Safe Delegates & Borrowed Closures pass state (todo 7) —
 	/// <summary>The function whose body is currently being walked (used for lambda block bodies).</summary>
@@ -76,7 +84,6 @@ public sealed class SafetyPass(BindingContext context)
 	/// <summary>Captured-variable sets of the lambdas currently being checked (stack for CVL1312/CVL1313).</summary>
 	private readonly Stack<HashSet<string>> _lambdaCaptureSets = [];
 
-	private ClassificationAnalyzer Classification => _classification ??= new ClassificationAnalyzer(context);
 	private SafetyTier CurrentTier => _currentTierStack.Count > 0 ? _currentTierStack.Peek() : SafetyTier.Safe;
 
 	public void Process(IEnumerable<CompilationUnitSyntax> units)
@@ -227,7 +234,7 @@ public sealed class SafetyPass(BindingContext context)
 					if (v.Initializer != null)
 					{
 						CheckExpressionSafety(v.Initializer, scope);
-						EmitLargeCopyWarningIfNeeded(v.Initializer, scope);
+						Moves.EmitLargeCopyWarningIfNeeded(v.Initializer, scope);
 
 						// Propagate origin through ref/refvar declarations
 						if (v.Type is "ref" or "refvar" && v.Initializer is BorrowExpressionSyntax borrowExpr)
@@ -452,8 +459,7 @@ public sealed class SafetyPass(BindingContext context)
 		switch (expr)
 		{
 			case IdentifierExpressionSyntax id:
-				if ((scope.Lookup(id.Name) as VariableSymbol ?? context.ResolveGlobalReference(id.Name, out _)) is { IsMoved: true })
-					context.Diagnostics.Report(context.CurrentUnit!.Context, id.Span, $"Use of moved variable '{id.Name}'");
+				Moves.VerifyReadable(id, scope);
 				break;
 
 			case NullLiteralExpressionSyntax:
@@ -503,7 +509,7 @@ public sealed class SafetyPass(BindingContext context)
 				foreach (var arg in call.Arguments)
 				{
 					CheckExpressionSafety(arg, scope);
-					HandleByValueArgument(arg, scope);
+					Moves.HandleByValueArgument(arg, scope);
 				}
 
 				break;
@@ -534,7 +540,7 @@ public sealed class SafetyPass(BindingContext context)
 							DiagnosticIds.MutableBorrowCapabilityCapture);
 					}
 					else if (lam.CaptureMode == LambdaCaptureMode.Default
-							 && Classification.Classify(capturedSym.Type) == CopyKind.ResourceMove)
+							 && Moves.IsMoveOnly(capturedSym.Type))
 					{
 						// §8.2 default mode copies a snapshot; move-only values cannot be copied.
 						context.Diagnostics.Report(context.CurrentUnit!.Context, lam.Span,
@@ -543,10 +549,10 @@ public sealed class SafetyPass(BindingContext context)
 					}
 
 					if (lam.CaptureMode == LambdaCaptureMode.Move
-						&& Classification.Classify(capturedSym.Type) == CopyKind.ResourceMove)
+						&& Moves.IsMoveOnly(capturedSym.Type))
 					{
 						// §8.3 'move' capture moves the move-only source: it becomes unavailable.
-						capturedSym.IsMoved = true;
+						Moves.MarkMoved(capturedSym);
 					}
 
 					if (lam.CaptureMode == LambdaCaptureMode.Ref)
@@ -630,8 +636,8 @@ public sealed class SafetyPass(BindingContext context)
 					if (leftSymbol is not null)
 					{
 						Borrows.VerifyUnlocked(bin.Left, "reassign");
-						leftSymbol.IsMoved = false;
-						HandleCopyAssignment(bin.Right, scope);
+						Moves.ResetMoved(leftSymbol);
+						Moves.HandleCopyAssignment(bin.Right, scope);
 
 						// CVL1008: Escape prevention — local refvar cannot escape unbound scope to globals
 						if (_currentTierStack.Contains(SafetyTier.Unbound) && leftSymbol.IsGlobal && IsLocalUnboundRef(bin.Right, scope))
@@ -728,64 +734,6 @@ public sealed class SafetyPass(BindingContext context)
 		}
 	}
 
-	private void HandleByValueArgument(ExpressionSyntax arg, SymbolTable scope)
-	{
-		if (arg is StructInitializationExpressionSyntax or BorrowExpressionSyntax)
-			return;
-
-		var type = ResolveExpressionType(arg, scope);
-
-		if (type is StructTypeSymbol or UnionTypeSymbol)
-		{
-			var kind = Classification.Classify(type);
-			switch (kind)
-			{
-				case CopyKind.ResourceMove:
-					if (arg is IdentifierExpressionSyntax aid && scope.Lookup(aid.Name) is VariableSymbol av)
-					{
-						Borrows.VerifyUnlocked(arg, "move");
-						av.IsMoved = true;
-					}
-					break;
-				case CopyKind.LargeCopy:
-					var size = Classification.CalculateByteSize(type);
-					context.Diagnostics.ReportWarning(
-						context.CurrentUnit!.Context, arg.Span,
-						$"'{type.Name}' is {size} bytes. Copying by value duplicates the payload. Consider passing by 'ref'.",
-						DiagnosticIds.LargeCopyWarning);
-					break;
-			}
-		}
-		else if (type is SliceTypeSymbol)
-		{
-			if (arg is IdentifierExpressionSyntax sid && scope.Lookup(sid.Name) is VariableSymbol sv)
-			{
-				Borrows.VerifyUnlocked(arg, "move");
-				sv.IsMoved = true;
-			}
-		}
-	}
-
-	private void EmitLargeCopyWarningIfNeeded(ExpressionSyntax expr, SymbolTable scope)
-	{
-		if (expr is StructInitializationExpressionSyntax)
-			return;
-
-		var type = ResolveExpressionType(expr, scope);
-		if (type is StructTypeSymbol st)
-		{
-			var kind = Classification.Classify(st);
-			if (kind == CopyKind.LargeCopy)
-			{
-				var size = Classification.CalculateByteSize(st);
-				context.Diagnostics.ReportWarning(
-					context.CurrentUnit!.Context, expr.Span,
-					$"'{st.Name}' is {size} bytes. Copying by value duplicates the payload. Consider passing by 'ref'.",
-					DiagnosticIds.LargeCopyWarning);
-			}
-		}
-	}
-
 	private TypeSymbol? ResolveExpressionType(ExpressionSyntax expr, SymbolTable scope)
 	{
 		return expr switch
@@ -797,26 +745,6 @@ public sealed class SafetyPass(BindingContext context)
 
 			_ => null
 		};
-	}
-
-	private void HandleCopyAssignment(ExpressionSyntax rightExpr, SymbolTable scope)
-	{
-		if (rightExpr is not IdentifierExpressionSyntax rightId)
-			return;
-
-		var rightSymbol = scope.Lookup(rightId.Name) as VariableSymbol;
-		if (rightSymbol == null || rightSymbol.Type is not StructTypeSymbol rightStruct)
-			return;
-
-		var kind = Classification.Classify(rightStruct);
-		if (kind == CopyKind.LargeCopy)
-		{
-			var size = Classification.CalculateByteSize(rightStruct);
-			context.Diagnostics.ReportWarning(
-				context.CurrentUnit!.Context, rightId.Span,
-				$"'{rightId.Name}' is {size} bytes. Copying by value duplicates the payload. Consider passing by 'ref'.",
-				DiagnosticIds.LargeCopyWarning);
-		}
 	}
 
 	/// <summary>
