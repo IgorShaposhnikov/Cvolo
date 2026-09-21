@@ -14,7 +14,6 @@ public sealed class ValidationPass(BindingContext context)
 {
 	private ClassificationAnalyzer? _classification;
 	private ClassificationAnalyzer Classification => _classification ??= new ClassificationAnalyzer(context);
-	private ClassificationAnalyzer Classification => _classification ??= new ClassificationAnalyzer(context);
 
 	private OverloadResolver? _overloadResolver;
 	/// <summary>Shared overload candidate discovery and signature scoring service.</summary>

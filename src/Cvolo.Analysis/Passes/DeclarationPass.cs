@@ -3,6 +3,7 @@ using Cvolo.Analysis.Symbols.Base;
 using Cvolo.Analysis.Symbols.Collections;
 using Cvolo.Analysis.Symbols.FFI;
 using Cvolo.Analysis.Symbols.Structs;
+using Cvolo.Analysis.Passes.Declaration;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
 using Cvolo.Core.AST.Directives;
@@ -13,48 +14,15 @@ namespace Cvolo.Analysis.Passes;
 
 public sealed class DeclarationPass(BindingContext context)
 {
+	private readonly AttributeValidator _attributes = new(context);
 	private ClassificationAnalyzer? _classification;
 	private ClassificationAnalyzer Classification => _classification ??= new ClassificationAnalyzer(context);
-	// M1 attribute model: only System.* intrinsics exist. Their [AttributeUsage]-style rules
-	// (syntactic target x safety context, per spec section 4) are modeled compiler-side until
-	// the language has enums/inheritance to declare them in source. Attributes are erased
-	// before emission - they never reach LLVM IR.
-	private static readonly Dictionary<string, (string[] Targets, SafetyTier[] Contexts)> IntrinsicAttributes = new()
-	{
-		["UnsafeBody"] = (["Function", "Method", "Constructor", "Destructor"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
-		["NoAlias"] = (["Function", "Method", "Parameter"], [SafetyTier.Unbound, SafetyTier.Unsafe]),
-		["SuppressWarning"] = (["Struct", "Function", "Method", "Constructor", "Destructor", "Parameter"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
-		["Flags"] = (["Struct"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
-		["NonExhaustive"] = (["Struct"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
-		["StrictMutability"] = (["Struct"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
-		["Intrinsic"] = (["Function", "Method"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
-		["MustUse"] = (["Function", "Method", "Constructor", "Struct", "Union", "Enum"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
-		["Error"] = (["Struct", "Union", "Enum"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
-		["Inline"] = (["Function", "Method", "Constructor"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
-		["NeverInline"] = (["Function", "Method", "Constructor"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
-		// FFI attributes are handled specially in native code declarations: they never go through
-		// VerifyAttributes with a normal syntactic target (the extern-block paths extract them
-		// directly). Registering them here only keeps them out of the unknown-attribute CVL1002
-		// stream; VerifyAttributes intercepts them before the target check with CVL1701/CVL1702.
-		["LibraryImport"] = (["ExternBlock"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
-		["ImportName"] = (["ExternBlockFunction"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
-		// [ExposeName] is only legal on functions inside an expose extern block, where the
-		// expose path extracts it directly. Registering it here keeps it out of the
-		// unknown-attribute CVL1002 stream; VerifyAttributes intercepts it with CVL1803.
-		["ExposeName"] = (["Function"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
-	};
-
 	/// <summary>
 	/// The compiler's built-in attribute names, without the optional <c>Attribute</c> suffix, in
-	/// declaration order. Tooling surfaces (attribute completion) use this to offer the canonical
-	/// spelling.
+	/// declaration order. Tooling surfaces use this forwarding property to preserve the existing
+	/// <see cref="DeclarationPass"/> API while attribute semantics live in <see cref="AttributeValidator"/>.
 	/// </summary>
-	public static IReadOnlyCollection<string> IntrinsicAttributeNames => IntrinsicAttributes.Keys;
-
-	private static readonly HashSet<string> KnownWarningIds =
-	[
-		DiagnosticIds.UnsafeBodyNoEffect, DiagnosticIds.UnknownAttribute, DiagnosticIds.UnboundNoRefParams, DiagnosticIds.AutoInferMutationWarning, DiagnosticIds.MustUseIgnoredWarning, DiagnosticIds.InlineOnRecursiveFunction
-	];
+	public static IReadOnlyCollection<string> IntrinsicAttributeNames => AttributeValidator.IntrinsicAttributeNames;
 
 	/// <summary>Export symbol names already claimed by an `expose extern` function (module scope).</summary>
 	private readonly HashSet<string> _exportSymbolNames = [];
@@ -71,8 +39,7 @@ public sealed class DeclarationPass(BindingContext context)
 	// refuse to compile rather than risk unbounded cleanup recursion.
 	private const int MaxDestructorNestingDepth = 1024;
 
-	private const string CyclicDestructorDepthError =
-		"Cyclic destructor nesting depth exceeded. Please use an arena allocator or manual cleanup.";
+	private const string CyclicDestructorDepthError = "Cyclic destructor nesting depth exceeded. Please use an arena allocator or manual cleanup.";
 
 	// Visibility tier ordering: Private < Internal < Public.
 	private static int VisibilityRank(Visibility visibility) => visibility switch
@@ -889,8 +856,8 @@ public sealed class DeclarationPass(BindingContext context)
 			return;
 		}
 
-		var appliedAttrs = VerifyAttributes(structDecl.Attributes, "Struct", []);
-		var (isMustUse, mustUseMsg) = ExtractMustUseAttribute(structDecl.Attributes);
+		var appliedAttrs = _attributes.Verify(structDecl.Attributes, "Struct", []);
+		var (isMustUse, mustUseMsg) = _attributes.ExtractMustUse(structDecl.Attributes);
 
 		// If this is a generic struct template (e.g. struct Point<T>)
 		if (structDecl.GenericParameters.Count > 0)
@@ -1255,8 +1222,8 @@ public sealed class DeclarationPass(BindingContext context)
 		};
 		var suppressedWarnings = new List<string>();
 
-		ApplyFunctionAttributes(
-			VerifyAttributes(func.Attributes, "Function", suppressedWarnings, safetyTier),
+		_attributes.ApplyFunctionAttributes(
+			_attributes.Verify(func.Attributes, "Function", suppressedWarnings, safetyTier),
 			newSymbol,
 			suppressedWarnings,
 			func.Attributes);
@@ -1265,16 +1232,10 @@ public sealed class DeclarationPass(BindingContext context)
 		if (newSymbol.IsUnsafeBody)
 			newSymbol.SafetyTier = SafetyTier.Unsafe;
 
-		WarnIfUnsafeBodyUnused(func.NameSpan, func.Body, newSymbol, suppressedWarnings);
+		_attributes.WarnIfUnsafeBodyUnused(func.NameSpan, func.Body, newSymbol, suppressedWarnings);
 
-		// [Inline] on a (directly) recursive function: LLVM may ignore the hint. Only a warning.
-		if (newSymbol.IsInline
-			&& func.HasBody
-			&& !suppressedWarnings.Contains(DiagnosticIds.InlineOnRecursiveFunction)
-			&& BodyReferencesFunction(func.Body!, func.Name))
-		{
-			ReportDeclarationWarning(func, $"Function '{func.Name}' is recursive; LLVM may ignore the '[Inline]' hint.", DiagnosticIds.InlineOnRecursiveFunction);
-		}
+		// [Inline] on a directly recursive function is advisory only; attribute diagnostics own the warning.
+		_attributes.WarnIfInlineRecursive(func, newSymbol, suppressedWarnings);
 
 		// Warn if 'unbound' is used but no ref/refvar parameters exist. A by-value factory that returns
 		// a Move type (a struct with reference fields) still gains escape-relaxation value from 'unbound'
@@ -1326,195 +1287,6 @@ public sealed class DeclarationPass(BindingContext context)
 		return context.ResolveType(type) is ProtocolTypeSymbol;
 	}
 
-	private static string? NormalizeAttributeName(string attributeName)
-	{
-		var simple = attributeName.Contains('.') ? attributeName[(attributeName.LastIndexOf('.') + 1)..] : attributeName;
-		if (simple.EndsWith("Attribute", StringComparison.Ordinal))
-			simple = simple[..^"Attribute".Length];
-
-		return IntrinsicAttributes.ContainsKey(simple) ? simple : null;
-	}
-
-	/// <summary>Verifies each attribute against its syntactic attach point and returns the canonical keys that passed.</summary>
-	private List<string> VerifyAttributes(IReadOnlyList<AttributeSyntax> attributes, string syntacticTarget, List<string>? suppressedWarnings = null, SafetyTier safetyTier = SafetyTier.Safe)
-	{
-		var applied = new List<string>();
-		var seen = new HashSet<string>();
-		var unknownAttributes = new List<AttributeSyntax>();
-		foreach (var attr in attributes)
-		{
-			var key = NormalizeAttributeName(attr.Name);
-			if (key is null)
-			{
-				// Hybrid stance: unknown names are accepted and erased at codegen, but
-				// flagged so typos stay visible. Reported after the loop so a
-				// [SuppressWarning] anywhere in the same list silences it regardless of order.
-				unknownAttributes.Add(attr);
-				continue;
-			}
-
-			// FFI attributes are only legal on extern blocks / their child functions (handled
-			// directly in DeclareExternBlock, which never reaches this method). Any appearance
-			// here is a misplaced application — report the specific spec'd error.
-			if (key == "LibraryImport")
-			{
-				ReportDeclarationDiagnostic(attr, "Attribute '[LibraryImport]' can only be applied to an extern block.", DiagnosticIds.LibraryImportOnNonBlock);
-				continue;
-			}
-
-			if (key == "ImportName")
-			{
-				ReportDeclarationDiagnostic(attr, "Attribute '[ImportName]' can only be applied to a function declaration inside an extern block.", DiagnosticIds.ImportNameOutsideBlock);
-				continue;
-			}
-
-			if (key == "ExposeName")
-			{
-				ReportDeclarationDiagnostic(attr, "[ExposeName] can only be applied to functions marked for binary export via the `expose` modifier.", DiagnosticIds.ExposeNameOutsideExport);
-				continue;
-			}
-
-			if (!seen.Add(key))
-			{
-				ReportDeclarationDiagnostic(attr, $"Duplicate attribute '[{key}]'.");
-				continue;
-			}
-
-			var (targets, contexts) = IntrinsicAttributes[key];
-			if (!targets.Contains(syntacticTarget))
-			{
-				ReportDeclarationDiagnostic(attr, $"Attribute '[{key}]' cannot be applied to {syntacticTarget.ToLowerInvariant()} declarations.");
-				continue;
-			}
-
-			if (!contexts.Contains(safetyTier))
-			{
-				ReportDeclarationDiagnostic(attr, $"Attribute '[{key}]' cannot be applied in {safetyTier} context.");
-				continue;
-			}
-
-			if (key == "SuppressWarning")
-			{
-				ApplySuppressWarning(attr, suppressedWarnings);
-				continue;
-			}
-
-			applied.Add(key);
-		}
-
-		foreach (var unknown in unknownAttributes)
-		{
-			if (suppressedWarnings?.Contains(DiagnosticIds.UnknownAttribute) == true)
-				continue;
-
-			ReportDeclarationWarning(unknown, $"Unknown attribute '{unknown.Name}'; it will be ignored.", DiagnosticIds.UnknownAttribute);
-		}
-
-		return applied;
-	}
-
-	private void ApplySuppressWarning(AttributeSyntax attr, List<string>? suppressedWarnings)
-	{
-		if (attr.Arguments.Count != 1 || attr.Arguments[0] is not StringLiteralExpressionSyntax literal)
-		{
-			ReportDeclarationDiagnostic(attr, "Attribute '[SuppressWarning]' requires exactly one string literal argument.");
-			return;
-		}
-
-		var warningId = literal.Value;
-		if (!KnownWarningIds.Contains(warningId))
-		{
-			ReportDeclarationDiagnostic(attr, $"Unknown warning id '{warningId}'.");
-			return;
-		}
-
-		suppressedWarnings?.Add(warningId);
-	}
-
-	private void ApplyFunctionAttributes(List<string> appliedKeys, FunctionSymbol symbol, List<string> suppressedWarnings, IReadOnlyList<AttributeSyntax>? attributes = null)
-	{
-		if (appliedKeys.Contains("UnsafeBody"))
-			symbol.IsUnsafeBody = true;
-
-		if (appliedKeys.Contains("NoAlias"))
-			symbol.IsNoAlias = true;
-
-		if (appliedKeys.Contains("MustUse") && attributes != null)
-		{
-			var (isMustUse, mustUseMsg) = ExtractMustUseAttribute(attributes);
-			symbol.IsMustUse = isMustUse;
-			symbol.MustUseMessage = mustUseMsg;
-		}
-
-		if (appliedKeys.Contains("Intrinsic") && attributes is not null)
-		{
-			var intrinsicAttr = attributes.FirstOrDefault(a => a.Name is "Intrinsic" or "System.Intrinsic" or "IntrinsicAttribute");
-			if (intrinsicAttr?.Arguments.Count > 0 && intrinsicAttr.Arguments[0] is StringLiteralExpressionSyntax str)
-			{
-				symbol.IntrinsicName = str.Value;
-			}
-		}
-
-		var inline = appliedKeys.Contains("Inline");
-		var neverInline = appliedKeys.Contains("NeverInline");
-		if (inline && neverInline)
-		{
-			var conflicting = attributes?.FirstOrDefault(a =>
-			{
-				var n = NormalizeAttributeName(a.Name);
-				return n is "Inline" or "NeverInline";
-			});
-			if (conflicting is not null)
-				ReportDeclarationDiagnostic(conflicting, $"Attribute '[{NormalizeAttributeName(conflicting.Name)}]' cannot be combined with the other inlining attribute on the same declaration.", DiagnosticIds.ConflictingInlineAttributes);
-		}
-		if (inline)
-			symbol.IsInline = true;
-		if (neverInline)
-			symbol.IsNeverInline = true;
-
-		foreach (var warningId in suppressedWarnings)
-			symbol.SuppressedWarnings.Add(warningId);
-	}
-
-	/// <summary>
-	/// Flags [UnsafeBody] declarations whose bodies contain nothing unsafe; suppressible via [SuppressWarning].
-	/// </summary>
-	private void WarnIfUnsafeBodyUnused(TextSpan declarationSpan, SyntaxNode body, FunctionSymbol symbol, List<string> suppressedWarnings)
-	{
-		if (body is null)
-			return;
-
-		if (!symbol.IsUnsafeBody || suppressedWarnings.Contains(DiagnosticIds.UnsafeBodyNoEffect))
-			return;
-
-		if (UnsafeOperationScanner.ContainsUnsafeOperations(body))
-			return;
-
-		context.Diagnostics.ReportWarning(
-			context.FileContexts[context.CurrentUnit!],
-			declarationSpan,
-			"'[UnsafeBody]' attribute has no effect because function contains no unsafe operations.",
-			DiagnosticIds.UnsafeBodyNoEffect);
-	}
-
-	/// <summary>
-	/// Best-effort direct-recursion scan: true when the body contains a call expression whose
-	/// simple name matches <paramref name="functionName"/>. Used only to warn on '[Inline]'.
-	/// </summary>
-	private static bool BodyReferencesFunction(SyntaxNode node, string functionName)
-	{
-		if (node is CallExpressionSyntax call && call.FunctionName == functionName)
-			return true;
-
-		foreach (var child in node.GetChildren())
-		{
-			if (BodyReferencesFunction(child, functionName))
-				return true;
-		}
-
-		return false;
-	}
-
 	/// <summary>
 	/// Resolves a parameter's type, verifies its attributes, and returns null when the type is unknown.
 	/// </summary>
@@ -1526,7 +1298,7 @@ public sealed class DeclarationPass(BindingContext context)
 
 		var symbol = new ParameterSymbol(param.Name, paramType);
 		var paramSuppressedWarnings = new List<string>();
-		if (VerifyAttributes(param.Attributes, "Parameter", paramSuppressedWarnings).Contains("NoAlias"))
+		if (_attributes.Verify(param.Attributes, "Parameter", paramSuppressedWarnings).Contains("NoAlias"))
 			symbol.IsNoAlias = true;
 
 		return symbol;
@@ -1639,7 +1411,7 @@ public sealed class DeclarationPass(BindingContext context)
 
 		foreach (var attr in block.Attributes)
 		{
-			var key = NormalizeAttributeName(attr.Name);
+			var key = _attributes.NormalizeName(attr.Name);
 			switch (key)
 			{
 				case "LibraryImport":
@@ -1650,7 +1422,7 @@ public sealed class DeclarationPass(BindingContext context)
 					}
 
 					sawLibraryImport = true;
-					(libraryName, winPath, linuxPath, macPath) = ExtractLibraryImportAttribute(attr, libraryName, winPath, linuxPath, macPath);
+					(libraryName, winPath, linuxPath, macPath) = _attributes.ExtractLibraryImport(attr, libraryName, winPath, linuxPath, macPath);
 					break;
 				case "ImportName":
 					ReportDeclarationDiagnostic(attr, "Attribute '[ImportName]' can only be applied to a function declaration inside an extern block.", DiagnosticIds.ImportNameOutsideBlock);
@@ -1730,7 +1502,7 @@ public sealed class DeclarationPass(BindingContext context)
 		var sawImportName = false;
 		foreach (var attr in fn.Attributes)
 		{
-			var key = NormalizeAttributeName(attr.Name);
+			var key = _attributes.NormalizeName(attr.Name);
 			switch (key)
 			{
 				case "ImportName":
@@ -1741,7 +1513,7 @@ public sealed class DeclarationPass(BindingContext context)
 					}
 
 					sawImportName = true;
-					importName = ExtractImportNameAttribute(attr);
+					importName = _attributes.ExtractImportName(attr);
 					break;
 				case "LibraryImport":
 					ReportDeclarationDiagnostic(attr,
@@ -1802,7 +1574,7 @@ public sealed class DeclarationPass(BindingContext context)
 
 		foreach (var attr in block.Attributes)
 		{
-			var key = NormalizeAttributeName(attr.Name);
+			var key = _attributes.NormalizeName(attr.Name);
 			if (key is null)
 			{
 				ReportDeclarationWarning(attr, $"Unknown attribute '{attr.Name}'; it will be ignored.", DiagnosticIds.UnknownAttribute);
@@ -1849,7 +1621,7 @@ public sealed class DeclarationPass(BindingContext context)
 		var filteredAttributes = new List<AttributeSyntax>();
 		foreach (var attr in func.Attributes)
 		{
-			var key = NormalizeAttributeName(attr.Name);
+			var key = _attributes.NormalizeName(attr.Name);
 			if (key == "ExposeName")
 			{
 				if (sawExposeName)
@@ -1859,7 +1631,7 @@ public sealed class DeclarationPass(BindingContext context)
 				}
 
 				sawExposeName = true;
-				exposeName = ExtractExposeNameAttribute(attr);
+				exposeName = _attributes.ExtractExposeName(attr);
 				continue;
 			}
 
@@ -1896,72 +1668,6 @@ public sealed class DeclarationPass(BindingContext context)
 		fnSym.IsExported = true;
 		fnSym.ExposeName = exportName;
 		fnSym.CallingConvention = convention;
-	}
-
-	private string? ExtractExposeNameAttribute(AttributeSyntax attr)
-	{
-		if (attr.Arguments.Count == 1 && attr.Arguments[0] is StringLiteralExpressionSyntax literal)
-			return literal.Value;
-
-		ReportDeclarationDiagnostic(attr, "Attribute '[ExposeName]' requires exactly one string literal argument naming the exported symbol.");
-		return null;
-	}
-
-	private (string? LibraryName, string? WinPath, string? LinuxPath, string? MacPath) ExtractLibraryImportAttribute(
-		AttributeSyntax attr, string? libraryName, string? winPath, string? linuxPath, string? macPath)
-	{
-		for (var i = 0; i < attr.Arguments.Count; i++)
-		{
-			var argName = attr.ArgumentNames.Count > i ? attr.ArgumentNames[i] : null;
-			var expr = attr.Arguments[i];
-			if (expr is not StringLiteralExpressionSyntax lit)
-			{
-				ReportDeclarationDiagnostic(attr, "Attribute '[LibraryImport]' arguments must be string literals (the library name, then optional 'win'/'linux'/'mac' native paths).");
-				continue;
-			}
-
-			if (argName is null)
-			{
-				if (libraryName is not null)
-				{
-					ReportDeclarationDiagnostic(attr, "Attribute '[LibraryImport]' accepts at most one positional argument: the library name.");
-					continue;
-				}
-
-				libraryName = lit.Value;
-			}
-			else
-			{
-				switch (argName)
-				{
-					case "win":
-						winPath = lit.Value;
-						break;
-					case "linux":
-						linuxPath = lit.Value;
-						break;
-					case "mac":
-						macPath = lit.Value;
-						break;
-					default:
-						ReportDeclarationDiagnostic(attr, $"Unknown [LibraryImport] named argument '{argName}'. Supported names are 'win', 'linux' and 'mac'.");
-						break;
-				}
-			}
-		}
-
-		return (libraryName, winPath, linuxPath, macPath);
-	}
-
-	private string? ExtractImportNameAttribute(AttributeSyntax attr)
-	{
-		if (attr.Arguments.Count != 1 || attr.Arguments[0] is not StringLiteralExpressionSyntax literal)
-		{
-			ReportDeclarationDiagnostic(attr, "Attribute '[ImportName]' requires exactly one string literal argument naming the native symbol.");
-			return null;
-		}
-
-		return literal.Value;
 	}
 
 	private void DeclareExtension(ExtensionDeclarationSyntax extDecl)
@@ -2091,12 +1797,12 @@ public sealed class DeclarationPass(BindingContext context)
 				DeclaringUnit = context.CurrentUnit
 			};
 			var methodSuppressedWarnings = new List<string>();
-			ApplyFunctionAttributes(
-				VerifyAttributes(method.Attributes, method.Name.StartsWith('~') ? "Destructor" : "Method", methodSuppressedWarnings),
+			_attributes.ApplyFunctionAttributes(
+				_attributes.Verify(method.Attributes, method.Name.StartsWith('~') ? "Destructor" : "Method", methodSuppressedWarnings),
 				newSymbol,
 				methodSuppressedWarnings,
 				method.Attributes);
-			WarnIfUnsafeBodyUnused(method.NameSpan, method.Body, newSymbol, methodSuppressedWarnings);
+			_attributes.WarnIfUnsafeBodyUnused(method.NameSpan, method.Body, newSymbol, methodSuppressedWarnings);
 
 			// COLLISION RULE: an extension may not re-declare a method the type already
 			// has with a matching signature (another extension block, the proto-default
@@ -2184,8 +1890,8 @@ public sealed class DeclarationPass(BindingContext context)
 				DeclaringUnit = context.CurrentUnit
 			};
 			var ctorSuppressedWarnings = new List<string>();
-			ApplyFunctionAttributes(VerifyAttributes(ctorDecl.Attributes, "Constructor", ctorSuppressedWarnings), ctorSymbol, ctorSuppressedWarnings);
-			WarnIfUnsafeBodyUnused(ctorDecl.NameSpan, ctorDecl.Body, ctorSymbol, ctorSuppressedWarnings);
+			_attributes.ApplyFunctionAttributes(_attributes.Verify(ctorDecl.Attributes, "Constructor", ctorSuppressedWarnings), ctorSymbol, ctorSuppressedWarnings);
+			_attributes.WarnIfUnsafeBodyUnused(ctorDecl.NameSpan, ctorDecl.Body, ctorSymbol, ctorSuppressedWarnings);
 
 			// COLLISION RULE: duplicate constructor signatures on the same type.
 			if (context.Globals.Lookup(ctorOverloadedName) is not null)
@@ -2647,7 +2353,7 @@ public sealed class DeclarationPass(BindingContext context)
 			return;
 		}
 
-		var (isMustUse, mustUseMsg) = ExtractMustUseAttribute(unionDecl.Attributes);
+		var (isMustUse, mustUseMsg) = _attributes.ExtractMustUse(unionDecl.Attributes);
 
 		if (unionDecl.GenericParameters.Count > 0)
 		{
@@ -2734,7 +2440,7 @@ public sealed class DeclarationPass(BindingContext context)
 			return;
 		}
 
-		var appliedAttributes = VerifyAttributes(enumDecl.Attributes, "Struct", new List<string>());
+		var appliedAttributes = _attributes.Verify(enumDecl.Attributes, "Struct", new List<string>());
 		var isFlags = appliedAttributes.Contains("Flags");
 		var isNonExhaustive = appliedAttributes.Contains("NonExhaustive");
 
@@ -2856,7 +2562,7 @@ public sealed class DeclarationPass(BindingContext context)
 			nextAuto = value + 1;
 		}
 
-		var (isMustUse, mustUseMsg) = ExtractMustUseAttribute(enumDecl.Attributes);
+		var (isMustUse, mustUseMsg) = _attributes.ExtractMustUse(enumDecl.Attributes);
 
 		var enumSymbol = new EnumTypeSymbol(mangledName, variants, storageType)
 		{
@@ -3003,24 +2709,4 @@ public sealed class DeclarationPass(BindingContext context)
 		}
 	}
 
-	private (bool IsMustUse, string? Message) ExtractMustUseAttribute(IReadOnlyList<AttributeSyntax> attributes)
-	{
-		foreach (var attr in attributes)
-		{
-			if (NormalizeAttributeName(attr.Name) == "MustUse")
-			{
-				if (attr.Arguments.Count == 0)
-					return (true, null);
-
-				if (attr.Arguments.Count == 1 && attr.Arguments[0] is StringLiteralExpressionSyntax strLit)
-					return (true, strLit.Value);
-
-				var currentFileContext = context.FileContexts[context.CurrentUnit!];
-				context.Diagnostics.Report(currentFileContext, attr.Span, "Attribute '[MustUse]' expects at most one string literal argument.");
-				return (true, null);
-			}
-		}
-
-		return (false, null);
-	}
 }
