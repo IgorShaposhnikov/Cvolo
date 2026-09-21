@@ -1,0 +1,72 @@
+/// <summary>
+/// Feature: Safe Delegates (two-word { invoke thunk, context } values).
+/// Verifies delegate declarations, function-group conversion, capturing lambdas,
+/// invocation through the uniform thunk ABI, default-capture snapshots and the
+/// read-only `ref` capture mode.
+/// </summary>
+/// <remarks>
+/// Compiler Target: Cvolo.Analysis (ValidationPass delegate binding, SafetyPass
+/// capture policy) + Cvolo.Emitter.LLVM (CodeGenerator delegate type lowering,
+/// thunk creation, closure environments, ResolvedDelegateCalls invocation).
+/// </remarks>
+using System;
+
+delegate int BinaryOp(int a, int b);
+delegate int UnaryInt(int x);
+delegate void VoidOp();
+
+int Add(int a, int b) {
+    return a + b;
+}
+
+int Negate(int x) {
+    return -x;
+}
+
+struct Processor {
+    int Base;
+    int Offset;
+}
+
+extension Processor {
+    int Process(int x) {
+        return Base + x + Offset;
+    }
+}
+
+struct Registry {
+    UnaryInt Transform;
+}
+
+extension Registry {
+    int Apply(int x) {
+        return Transform(x);
+    }
+}
+
+int main() {
+    // 1. Free function → delegate (group conversion), context == null.
+    var BinaryOp op = Add;
+    Console.WriteLine(op(5, 6));
+
+    // 2. Capturing lambda → delegate (default immutable snapshot capture).
+    int anchor = 100;
+    var UnaryInt inc = (x) => x + anchor;
+    Console.WriteLine(inc(5));
+
+    // 3. Read-only pointer-based `ref` capture: reads through the caller's lvalue.
+    int offset = 7;
+    var UnaryInt byref = ref (x) => x + offset;
+    Console.WriteLine(byref(10));
+
+    // 4. Delegate stored in a struct field and invoked through it.
+    Registry reg = Registry { Transform: Negate };
+    Console.WriteLine(reg.Apply(8));
+
+    // 5. Bound method → delegate (receiver captured in the context word).
+    Processor proc = Processor { Base: 1, Offset: 2 };
+    var UnaryInt meth = proc.Process;
+    Console.WriteLine(meth(3));
+
+    return 0;
+}

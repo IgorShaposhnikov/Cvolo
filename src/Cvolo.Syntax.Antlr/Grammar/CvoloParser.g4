@@ -32,10 +32,23 @@ declaration
 	| protocolDeclaration
 	| globalVariableDeclaration
 	| aliasDeclaration
+	| delegateDeclaration
 	;
 
 aliasDeclaration
 	: ALIAS Identifier (LT genericParameterList GT)? ASSIGN type SEMI
+	;
+
+delegateDeclaration
+	: visibilityModifier? (UNSAFE callingConvention)? DELEGATE type Identifier (LT genericParameterList GT)? LPAREN delegateParameterList? RPAREN SEMI
+	;
+
+delegateParameterList
+	: delegateParameter (COMMA delegateParameter)*
+	;
+
+delegateParameter
+	: type Identifier
 	;
 
 globalVariableDeclaration
@@ -315,6 +328,7 @@ expression
 	: expression DOT Identifier                             							# memberAccessExpression
 	| expression ARROW Identifier                          							# arrowMemberAccessExpression
 	| expression LBRACK expression RBRACK												# indexExpression
+	| lambdaCaptureMode? LPAREN lambdaParameterList? RPAREN FAT_ARROW (expression | blockStatement)	# lambdaExpression
 	| (REF | REFVAR) expression                                        					# borrowExpression
 	| expression INC                                        							# postfixIncrementExpression
 	| expression DEC                                        							# postfixDecrementExpression
@@ -376,6 +390,21 @@ expression
 	| DEFAULT LPAREN type RPAREN															# defaultExpression
 	| DEFAULT																				# defaultExpression
 	| LPAREN expression RPAREN															# parenthesizedExpression
+	;
+
+lambdaCaptureMode
+	: MOVE
+	| REF
+	| REFVAR
+	;
+
+lambdaParameterList
+	: lambdaParameter (COMMA lambdaParameter)*
+	;
+
+lambdaParameter
+	: Identifier
+	| type Identifier
 	;
 
 argumentList

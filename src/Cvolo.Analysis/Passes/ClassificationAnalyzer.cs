@@ -22,6 +22,11 @@ public sealed class ClassificationAnalyzer(BindingContext context)
 			return ClassifyStruct(s);
 		if (type is UnionTypeSymbol u)
 			return ClassifyUnion(u);
+		// A delegate is a plain two/one-word value: { invoke thunk, context } or a native
+		// function pointer. Copies share the stored context provenance but nothing is
+		// owned by the value, so it is always a trivial copy.
+		if (type is DelegateTypeSymbol)
+			return CopyKind.TrivialCopy;
 		return CopyKind.TrivialCopy;
 	}
 
@@ -104,6 +109,7 @@ public sealed class ClassificationAnalyzer(BindingContext context)
 			ArrayTypeSymbol a => CalculateByteSize(a.ElementType) * a.Size,
 			SliceTypeSymbol => 16,
 			PointerTypeSymbol => 8,
+			DelegateTypeSymbol d => d.IsNative ? 8 : DelegateTypeSymbol.SafeDelegateWordCount * 8,
 			_ => GetPrimitiveSize(type)
 		};
 	}

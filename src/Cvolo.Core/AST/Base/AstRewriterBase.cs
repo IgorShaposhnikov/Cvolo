@@ -64,6 +64,20 @@ public abstract class AstRewriterBase
 			return new FunctionDeclarationSyntax(func.Span, func.ReturnType, func.Name, func.GenericParameters, func.Parameters, rewrittenBody, func.Attributes, func.Modifier, func.Receiver, func.Visibility);
 		}
 
+		if (node is DelegateDeclarationSyntax delegateDecl)
+		{
+			var rewrittenParams = delegateDecl.Parameters.Select(p => new ParameterSyntax(p.Span, p.Type, p.Name, p.Attributes)).ToList();
+			return new DelegateDeclarationSyntax(delegateDecl.Span, delegateDecl.ReturnType, delegateDecl.Name, delegateDecl.GenericParameters, rewrittenParams, delegateDecl.SyntacticVisibility, delegateDecl.IsNative, delegateDecl.CallingConvention);
+		}
+
+		if (node is LambdaExpressionSyntax lam)
+		{
+			var rewrittenParams = lam.Parameters.Select(p => new LambdaParameterSyntax(p.Span, p.Name, p.ExplicitType)).ToList();
+			var rewrittenExprBody = lam.ExpressionBody != null ? (ExpressionSyntax)Rewrite(lam.ExpressionBody) : null;
+			var rewrittenBlockBody = lam.BlockBody != null ? (BlockStatementSyntax)Rewrite(lam.BlockBody) : null;
+			return new LambdaExpressionSyntax(lam.Span, lam.CaptureMode, rewrittenParams, lam.BodyKind, rewrittenExprBody, rewrittenBlockBody);
+		}
+
 		if (node is DestructorDeclarationSyntax dtor)
 		{
 			var rewrittenDtorBody = (BlockStatementSyntax)Rewrite(dtor.Body);

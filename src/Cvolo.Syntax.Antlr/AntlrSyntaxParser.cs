@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using Antlr4.Runtime;
+using Antlr4.Runtime.Tree;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
 using Cvolo.Core.AST.Directives;
@@ -156,6 +157,8 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			return BuildGlobalVariableDeclaration(globalDecl);
 		if (context.aliasDeclaration() is { } aliasDecl)
 			return BuildAliasDeclaration(aliasDecl);
+		if (context.delegateDeclaration() is { } delegateDecl)
+			return BuildDelegateDeclaration(delegateDecl);
 		return null;
 	}
 
@@ -169,6 +172,48 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		}
 
 		return new TypeAliasDeclarationSyntax(SpanOf(context), context.Identifier().GetText(), GetTypeName(context.type()), generics);
+	}
+
+	private DelegateDeclarationSyntax BuildDelegateDeclaration(CvoloParser.DelegateDeclarationContext context)
+	{
+		var isNative = context.UNSAFE() is not null;
+
+		string? callingConvention = null;
+		if (context.callingConvention() is { } cc)
+		{
+			callingConvention = cc.StringLiteral().GetText();
+			if (callingConvention.Length >= 2)
+				callingConvention = callingConvention[1..^1];
+		}
+
+		var generics = new List<string>();
+		if (context.genericParameterList() is { } genList)
+		{
+			foreach (var id in genList.Identifier())
+				generics.Add(id.GetText());
+		}
+
+		var parameters = new List<ParameterSyntax>();
+		if (context.delegateParameterList() is { } paramList)
+		{
+			foreach (var p in paramList.delegateParameter())
+				parameters.Add(new ParameterSyntax(SpanOf(p), GetTypeName(p.type()), p.Identifier().GetText()));
+		}
+
+		var nameToken = context.Identifier().Symbol;
+		var returnTypeCtx = context.type();
+
+		return new DelegateDeclarationSyntax(
+			SpanOf(context),
+			GetTypeName(returnTypeCtx),
+			nameToken.Text,
+			generics,
+			parameters,
+			GetVisibilityModifier(context.visibilityModifier()),
+			isNative,
+			callingConvention,
+			nameSpan: SpanOf(nameToken),
+			returnTypeSpan: SpanOf(returnTypeCtx));
 	}
 
 	private GlobalVariableDeclarationSyntax BuildGlobalVariableDeclaration(CvoloParser.GlobalVariableDeclarationContext context)
@@ -779,6 +824,39 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				return new NullLiteralExpressionSyntax(SpanOf(nullCtx));
 			case CvoloParser.IdentifierExpressionContext idCtx:
 				return new IdentifierExpressionSyntax(SpanOf(idCtx), idCtx.Identifier().GetText());
+			case CvoloParser.LambdaExpressionContext lambdaCtx:
+				{
+					var captureMode = lambdaCtx.lambdaCaptureMode()?.GetText() switch
+					{
+						"move" => LambdaCaptureMode.Move,
+						"ref" => LambdaCaptureMode.Ref,
+						"refvar" => LambdaCaptureMode.RefVar,
+						_ => LambdaCaptureMode.Default,
+					};
+
+					var parameters = new List<LambdaParameterSyntax>();
+					if (lambdaCtx.lambdaParameterList() is { } lambdaParams)
+					{
+						foreach (var lambdaParam in lambdaParams.lambdaParameter())
+						{
+							if (lambdaParam.type() is { } typeCtx)
+							{
+								var nameNode = lambdaParam.children.OfType<ITerminalNode>().Last(t => t.Symbol.Type == CvoloParser.Identifier);
+								parameters.Add(new LambdaParameterSyntax(SpanOf(lambdaParam), nameNode.GetText(), GetTypeName(typeCtx)));
+							}
+							else
+							{
+								var nameNode = lambdaParam.children.OfType<ITerminalNode>().Single(t => t.Symbol.Type == CvoloParser.Identifier);
+								parameters.Add(new LambdaParameterSyntax(SpanOf(lambdaParam), nameNode.GetText()));
+							}
+						}
+					}
+
+					if (lambdaCtx.blockStatement() is { } blockBodyCtx)
+						return new LambdaExpressionSyntax(SpanOf(lambdaCtx), captureMode, parameters, LambdaBodyKind.Block, null, BuildBlockStatement(blockBodyCtx));
+
+					return new LambdaExpressionSyntax(SpanOf(lambdaCtx), captureMode, parameters, LambdaBodyKind.Expression, BuildExpression(lambdaCtx.expression()), null);
+				}
 			case CvoloParser.ParenthesizedExpressionContext parenCtx:
 				return BuildExpression(parenCtx.expression());
 			case CvoloParser.ParenthesizedStructInitializerContext parenCtx:

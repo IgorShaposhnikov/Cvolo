@@ -1,3 +1,4 @@
+using Cvolo.Analysis.Semantics;
 using Cvolo.Analysis.Symbols;
 using Cvolo.Analysis.Symbols.Base;
 using Cvolo.Analysis.Symbols.Collections;
@@ -18,6 +19,24 @@ public sealed class ValidationPass(BindingContext context)
 	private int _unsafeDepth;
 	private bool _inUnbound;
 	private IReadOnlyList<CompilationUnitSyntax> _units = [];
+
+	/// <summary>
+	/// Placeholder used for deferred lambda / function-group arguments during overload
+	/// resolution in call expressions. Only matches DelegateTypeSymbol parameters
+	/// (with a modest score); afterwards the target-typed call binding re-checks.
+	/// </summary>
+	private static readonly TypeSymbol LambdaArgMarker = new TypeSymbol("<lambda-argument>");
+
+	/// <summary>
+	/// While checking a lambda block body this is the delegate's return type; return
+	/// statements inside lambdas are validated against it instead of the enclosing function.
+	/// </summary>
+	private TypeSymbol? _lambdaReturnContext;
+
+	/// <summary>The function whose body is currently being validated; lambdas that
+	/// appear inside expression trees use it as the enclosing function for block-body
+	/// statement checks.</summary>
+	private FunctionDeclarationSyntax? _enclosingFunction;
 
 	// Label validation state: _labelScopes mirrors the enclosing-scope-block
 	// chain for CVL1062 duplicate detection; _loopLabels mirrors the active loop
@@ -472,6 +491,8 @@ public sealed class ValidationPass(BindingContext context)
 		var baseInUnbound = _inUnbound;
 		_unsafeDepth = IsUnsafeFunction(func) ? 1 : 0;
 		_inUnbound = func.Modifier == SafetyTier.Unbound;
+		var baseEnclosingFunction = _enclosingFunction;
+		_enclosingFunction = func;
 		var localScope = new SymbolTable(context.Globals);
 
 		foreach (var param in func.Parameters)
@@ -503,6 +524,7 @@ public sealed class ValidationPass(BindingContext context)
 
 		_unsafeDepth = baseUnsafeDepth;
 		_inUnbound = baseInUnbound;
+		_enclosingFunction = baseEnclosingFunction;
 	}
 
 	private static bool IsUnsafeFunction(FunctionDeclarationSyntax func) =>
@@ -960,10 +982,64 @@ public sealed class ValidationPass(BindingContext context)
 		}
 
 		TypeSymbol? resolvedType = null;
-		if (varDecl.Initializer is not null)
+
+		// Delegate-typed declarations: a lambda or function/method-group initializer is
+		// target-typed against the declared delegate (§4.2 / §22). Without an expected
+		// delegate type a lambda has no standalone type and is rejected.
+		var declaredDelegateType = varDecl.Type is "ref" or "refvar"
+			? null
+			: varDecl.Type is null ? null : context.ResolveType(varDecl.Type) as DelegateTypeSymbol;
+
+		if (declaredDelegateType is not null)
 		{
-			CheckExpression(varDecl.Initializer, scope);
-			resolvedType = GetExpressionType(varDecl.Initializer, scope);
+			if (varDecl.Initializer is null)
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, varDecl.Span,
+					$"Delegate '{declaredDelegateType.Name}' requires an initializer; delegates are non-null and cannot be default-initialized.",
+					DiagnosticIds.DelegateNotDefaultInitializable);
+			}
+			else if (varDecl.Initializer is LambdaExpressionSyntax targetLambda)
+			{
+				CheckTargetTypedLambda(targetLambda, declaredDelegateType, scope);
+			}
+			else if (varDecl.Initializer is NullLiteralExpressionSyntax)
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, varDecl.Initializer.Span,
+					$"Cannot initialize delegate '{declaredDelegateType.Name}' with 'null'; delegates are non-null values.",
+					DiagnosticIds.NullLiteralForDelegate);
+			}
+			else if (varDecl.Initializer is IdentifierExpressionSyntax groupId && !IsKnownVariable(groupId, scope) && HasFunctionOverloads(groupId.Name))
+			{
+				CheckFunctionGroupConversion(groupId, declaredDelegateType, scope);
+			}
+			else if (varDecl.Initializer is MemberAccessExpressionSyntax groupMa && IsMethodGroupReference(groupMa, scope))
+			{
+				CheckFunctionGroupConversion(groupMa, declaredDelegateType, scope);
+			}
+			else
+			{
+				CheckExpression(varDecl.Initializer, scope);
+			}
+
+			resolvedType = declaredDelegateType;
+		}
+		else if (varDecl.Initializer is not null)
+		{
+			if (varDecl.Initializer is LambdaExpressionSyntax bareLambda)
+			{
+				// A lambda in a non-delegate context has no expected delegate type (spec §4.2).
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, bareLambda.Span,
+					"Lambda requires an expected delegate type. Declare the variable with an explicit delegate type.",
+					DiagnosticIds.LambdaRequiresExpectedDelegateType);
+			}
+			else
+			{
+				CheckExpression(varDecl.Initializer, scope);
+				resolvedType = GetExpressionType(varDecl.Initializer, scope);
+			}
 		}
 
 		if (varDecl.Type == "refvar" || varDecl.Type == "ref")
@@ -992,7 +1068,7 @@ public sealed class ValidationPass(BindingContext context)
 				context.Diagnostics.Report(currentFileContext, varDecl.Span, $"Cannot resolve type '{varDecl.Type}'.");
 			}
 
-			var initializerType = varDecl.Initializer != null ? GetExpressionType(varDecl.Initializer, scope) : null;
+			var initializerType = declaredDelegateType is null && varDecl.Initializer != null ? GetExpressionType(varDecl.Initializer, scope) : null;
 
 			// Implicit Dereference: If target is value but initializer is a pointer, unwrap it
 			if (initializerType is PointerTypeSymbol ptr && resolvedType is not PointerTypeSymbol)
@@ -1170,10 +1246,35 @@ public sealed class ValidationPass(BindingContext context)
 				break;
 			case CallExpressionSyntax call:
 				{
-					// First evaluate argument types at the call site
+					// First evaluate argument types at the call site. Lambda expressions and
+					// function/method-group references have no type of their own: they are
+					// deferred and target-typed once the callee is resolved.
 					var argTypes = new List<TypeSymbol>();
-					foreach (var arg in call.Arguments)
+					var deferredGroupArgs = new List<(ExpressionSyntax Arg, int Index)>();
+					for (var argIndex = 0; argIndex < call.Arguments.Count; argIndex++)
 					{
+						var arg = call.Arguments[argIndex];
+						if (arg is LambdaExpressionSyntax)
+						{
+							deferredGroupArgs.Add((arg, argIndex));
+							argTypes.Add(LambdaArgMarker);
+							continue;
+						}
+
+						var isDeferredGroup = arg switch
+						{
+							IdentifierExpressionSyntax idArg =>
+								!IsKnownVariable(idArg, scope) && HasFunctionOverloads(idArg.Name),
+							MemberAccessExpressionSyntax maArg => IsMethodGroupReference(maArg, scope),
+							_ => false,
+						};
+						if (isDeferredGroup)
+						{
+							deferredGroupArgs.Add((arg, argIndex));
+							argTypes.Add(LambdaArgMarker);
+							continue;
+						}
+
 						CheckExpression(arg, scope);
 						var argType = GetExpressionType(arg, scope) ?? TypeSymbol.Int;
 						argTypes.Add(argType);
@@ -1255,6 +1356,35 @@ public sealed class ValidationPass(BindingContext context)
 
 					if (func is null)
 					{
+						// Not an ordinary function: could this be a delegate value invocation
+						// ('h(42)') or a delegate-typed field invocation ('obj.Handler(42)')?
+						if (TryResolveDelegateInvocation(call, argTypes, scope, out var delegateType))
+						{
+							context.ResolvedDelegateCalls[call] = delegateType;
+
+							if (deferredGroupArgs.Count > 0)
+							{
+								for (var i = 0; i < call.Arguments.Count; i++)
+								{
+									if (i >= delegateType.Parameters.Count)
+										break;
+									foreach (var (arg, argIndex) in deferredGroupArgs)
+									{
+										if (argIndex != i)
+											continue;
+										if (delegateType.Parameters[i].Type is not DelegateTypeSymbol paramDelegateTy)
+											continue;
+										if (arg is LambdaExpressionSyntax lam)
+											CheckTargetTypedLambda(lam, paramDelegateTy, scope);
+										else
+											CheckFunctionGroupConversion(arg, paramDelegateTy, scope);
+									}
+								}
+							}
+
+							break;
+						}
+
 						var currentFileContext = context.FileContexts[context.CurrentUnit!];
 						var sigString = string.Join(", ", argTypes.Select(t => t.Name));
 						context.Diagnostics.Report(currentFileContext, call.ArgumentListSpan, $"No overload of function '{call.FunctionName}' matches argument types ({sigString})");
@@ -1263,6 +1393,35 @@ public sealed class ValidationPass(BindingContext context)
 
 					// Record the resolved overload for CodeGenerator consumption
 					context.ResolvedCalls[call] = func;
+
+					// Target-type any deferred lambda/group arguments against the callee's
+					// parameter declarations (§4.2 contextual lambda typing, §22 group conversion).
+					if (deferredGroupArgs.Count > 0)
+					{
+						var isExtensionForDeferred = func.Parameters.Count > 0 && func.Parameters[0].Name == "this";
+						foreach (var (arg, argIndex) in deferredGroupArgs)
+						{
+							var paramIndex = isExtensionForDeferred ? argIndex + 1 : argIndex;
+							if (paramIndex >= func.Parameters.Count)
+								continue;
+							var paramType = func.Parameters[paramIndex].Type;
+
+							if (paramType is DelegateTypeSymbol delegateParamType)
+							{
+								if (arg is LambdaExpressionSyntax lam)
+									CheckTargetTypedLambda(lam, delegateParamType, scope);
+								else
+									CheckFunctionGroupConversion(arg, delegateParamType, scope);
+							}
+							else
+							{
+								var currentFileContext = context.FileContexts[context.CurrentUnit!];
+								context.Diagnostics.Report(currentFileContext, arg.Span,
+									"Lambda requires an expected delegate type; the corresponding parameter is not a delegate.",
+									DiagnosticIds.LambdaRequiresExpectedDelegateType);
+							}
+						}
+					}
 
 					// Caller-side unsafe invocation check (Memory & Safety spec §6.A): a raw 'unsafe fn'
 					// (form A) must be invoked from an unsafe context. '[UnsafeBody]' functions expose a safe
@@ -1322,6 +1481,28 @@ public sealed class ValidationPass(BindingContext context)
 						{
 							CheckExpression(bin.Right, scope);
 							break;
+						}
+
+						// Delegate-typed assignment targets: a lambda / function-group RHS is
+						// target-typed against the assigned variable's delegate type (§4.2 / §22).
+						if (bin.Left is IdentifierExpressionSyntax targetId &&
+							((scope.Lookup(targetId.Name) as VariableSymbol) ?? context.ResolveGlobalReference(targetId.Name, out _)) is { Type: DelegateTypeSymbol assigneeDelegate })
+						{
+							if (bin.Right is LambdaExpressionSyntax assignLambda)
+							{
+								CheckTargetTypedLambda(assignLambda, assigneeDelegate, scope);
+								break;
+							}
+							if (bin.Right is IdentifierExpressionSyntax assignGroupId && !IsKnownVariable(assignGroupId, scope) && HasFunctionOverloads(assignGroupId.Name))
+							{
+								CheckFunctionGroupConversion(assignGroupId, assigneeDelegate, scope);
+								break;
+							}
+							if (bin.Right is MemberAccessExpressionSyntax assignGroupMa && IsMethodGroupReference(assignGroupMa, scope))
+							{
+								CheckFunctionGroupConversion(assignGroupMa, assigneeDelegate, scope);
+								break;
+							}
 						}
 
 						// 1. Evaluate the right-hand side first (reads and moves happen here)
@@ -1403,6 +1584,17 @@ public sealed class ValidationPass(BindingContext context)
 				break;
 			case VoidLiteralExpressionSyntax:
 				break;
+			case LambdaExpressionSyntax strayLambda:
+				// A lambda has no standalone type; if it reaches this point without being
+				// target-typed by a caller (declaration, assignment, return, or argument),
+				// there is no expected DelegateTypeSymbol to bind against (§4.2).
+				{
+					var currentFileContext = context.FileContexts[context.CurrentUnit!];
+					context.Diagnostics.Report(currentFileContext, strayLambda.Span,
+						"Lambda requires an expected delegate type.",
+						DiagnosticIds.LambdaRequiresExpectedDelegateType);
+				}
+				break;
 			case DefaultExpressionSyntax defaultExpr:
 				{
 					if (defaultExpr.TypeName is null)
@@ -1434,6 +1626,14 @@ public sealed class ValidationPass(BindingContext context)
 							var currentFileContext = context.FileContexts[context.CurrentUnit!];
 							context.Diagnostics.Report(currentFileContext, defaultExpr.Span, $"Type '{defaultExpr.TypeName}' cannot be used with default because it is not a Trivial Copy Type");
 						}
+					}
+					else if (defaultTy is DelegateTypeSymbol)
+					{
+						// Safe delegates are non-null / non-default-initializable (§16).
+						var currentFileContext = context.FileContexts[context.CurrentUnit!];
+						context.Diagnostics.Report(currentFileContext, defaultExpr.Span,
+							$"Type '{defaultExpr.TypeName}' is a delegate and cannot be default-initialized; delegates are non-null values and require an initializer (function, lambda, or method group).",
+							DiagnosticIds.DelegateNotDefaultInitializable);
 					}
 				}
 
@@ -1742,12 +1942,18 @@ public sealed class ValidationPass(BindingContext context)
 				nested.ResolvedStructTypeName = field.Type.Name;
 				CheckParenthesizedStructInitialization(nested, scope);
 			}
+			else if (field.Type is DelegateTypeSymbol delegateFieldType)
+			{
+				CheckDelegateValueExpression(init.Expression, delegateFieldType, scope);
+			}
 			else
 			{
 				CheckExpression(init.Expression, scope);
 			}
 
-			var initType = GetExpressionType(init.Expression, scope);
+			// Delegate fields are target-typed against the declared member type; the
+			// group/lambda check above already verified assignability.
+			var initType = field.Type is DelegateTypeSymbol ? null : GetExpressionType(init.Expression, scope);
 			if (initType is not null && !TypesAssignable(field.Type, initType))
 			{
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
@@ -1891,10 +2097,34 @@ public sealed class ValidationPass(BindingContext context)
 		if (ret.Expression is null)
 			return;
 
+		var expectedType = _lambdaReturnContext ?? context.ResolveType(currentFunc.ReturnType);
+
+		// A lambda (or function group) returned from a delegate-typed function is
+		// target-typed against the expected delegate; skip the generic expression check.
+		if (expectedType is DelegateTypeSymbol expectedDelegate)
+		{
+			if (ret.Expression is LambdaExpressionSyntax retLambda)
+			{
+				CheckTargetTypedLambda(retLambda, expectedDelegate, scope);
+				return;
+			}
+
+			if (ret.Expression is IdentifierExpressionSyntax retId && !IsKnownVariable(retId, scope) && HasFunctionOverloads(retId.Name))
+			{
+				CheckFunctionGroupConversion(retId, expectedDelegate, scope);
+				return;
+			}
+
+			if (ret.Expression is MemberAccessExpressionSyntax retMa && IsMethodGroupReference(retMa, scope))
+			{
+				CheckFunctionGroupConversion(retMa, expectedDelegate, scope);
+				return;
+			}
+		}
+
 		CheckExpression(ret.Expression, scope);
 
 		var actualType = GetExpressionType(ret.Expression, scope);
-		var expectedType = context.ResolveType(currentFunc.ReturnType);
 
 		if (actualType != null && expectedType != null)
 		{
@@ -1954,7 +2184,10 @@ public sealed class ValidationPass(BindingContext context)
 			StringLiteralExpressionSyntax => TypeSymbol.String,
 			CharacterLiteralExpressionSyntax => TypeSymbol.Char,
 			CallExpressionSyntax call when call.FunctionName == "sizeof" => TypeSymbol.Int,
-			CallExpressionSyntax call => context.ResolvedCalls.TryGetValue(call, out var resolved) ? resolved.ReturnType : null,
+			CallExpressionSyntax call => context.ResolvedCalls.TryGetValue(call, out var resolved) ? resolved.ReturnType
+				: context.ResolvedDelegateCalls.TryGetValue(call, out var resolvedDelegate) ? resolvedDelegate.ReturnType
+				: null,
+			LambdaExpressionSyntax lam => context.ResolvedLambdas.TryGetValue(lam, out var lamInfo) ? lamInfo.Delegate : null,
 			MemberAccessExpressionSyntax m => CheckMemberAccessExpression(m, scope),
 			BorrowExpressionSyntax b => new PointerTypeSymbol(GetExpressionType(b.Expression, scope) ?? TypeSymbol.Int, b.IsMutable),
 			StructInitializationExpressionSyntax s => CheckStructInitializationExpression(s, scope),
@@ -1976,6 +2209,295 @@ public sealed class ValidationPass(BindingContext context)
 			BinaryExpressionSyntax bin when bin.Operator == "+" && IsConstantStringExpression(bin.Left) && IsConstantStringExpression(bin.Right) => TypeSymbol.String,
 			_ => null
 		};
+	}
+
+	/// <summary>
+	/// Target-types a lambda against an expected DelegateTypeSymbol (§4 contextual lambda
+	/// typing): parameters bind positionally from the delegate signature, and the body is
+	/// validated against the delegate's return type. Records the binding in
+	/// <see cref="BindingContext.ResolvedLambdas"/> for the emitter.
+	/// </summary>
+	private void CheckTargetTypedLambda(LambdaExpressionSyntax lam, DelegateTypeSymbol delegateType, SymbolTable scope)
+	{
+		var currentFileContext = context.FileContexts[context.CurrentUnit!];
+
+		if (lam.CaptureMode == LambdaCaptureMode.RefVar)
+		{
+			// 'refvar' is parsed but deliberately unsupported for lambdas (§6, §21.4):
+			// there is no mutable-borrow semantics for closure environments in this increment.
+			context.Diagnostics.Report(currentFileContext, lam.Span,
+				"'refvar (...) =>' lambda mode is not supported: use 'move', 'ref', or default (immutable copy) capture.",
+				DiagnosticIds.RefvarLambdaModeUnsupported);
+			return;
+		}
+
+		if (lam.Parameters.Count != delegateType.Parameters.Count)
+		{
+			context.Diagnostics.Report(currentFileContext, lam.Span,
+				$"Lambda has {lam.Parameters.Count} parameter(s) but delegate '{delegateType.Name}' expects {delegateType.Parameters.Count}.",
+				DiagnosticIds.LambdaParameterTypeMismatch);
+			return;
+		}
+
+		// Declare lambda parameters in a child scope, resolving explicit types against
+		// the delegate's signature. Positional types dominate any explicit annotations.
+		var lambdaScope = new SymbolTable(scope);
+		for (var i = 0; i < lam.Parameters.Count; i++)
+		{
+			var lambdaParam = lam.Parameters[i];
+			var delegateParam = delegateType.Parameters[i];
+
+			if (lambdaParam.ExplicitType is not null)
+			{
+				var annotatedType = context.ResolveType(lambdaParam.ExplicitType);
+				if (annotatedType is null)
+				{
+					context.Diagnostics.Report(currentFileContext, lambdaParam.Span,
+						$"Unknown type '{lambdaParam.ExplicitType}' in lambda parameter.");
+				}
+				else if (!annotatedType.Equals(delegateParam.Type))
+				{
+					context.Diagnostics.Report(currentFileContext, lambdaParam.Span,
+						$"Lambda parameter '{lambdaParam.Name}' has type '{annotatedType.Name}' but delegate '{delegateType.Name}' declares '{delegateParam.Type.Name}'.",
+						DiagnosticIds.LambdaParameterTypeMismatch);
+				}
+			}
+
+			lambdaScope.Declare(new VariableSymbol(lambdaParam.Name, delegateParam.Type, isMutable: false)
+			{
+				IsInitialized = true,
+				Origin = OriginKind.Parameter,
+			});
+		}
+
+		context.ResolvedLambdas[lam] = new LambdaBindingInfo
+		{
+			Delegate = delegateType,
+			CaptureMode = lam.CaptureMode,
+			ParameterTypes = [.. delegateType.Parameters.Select(p => p.Type)],
+			ReturnType = delegateType.ReturnType,
+			BodyIsValueExpression = lam.BodyKind == LambdaBodyKind.Expression,
+		};
+
+		if (lam.ExpressionBody is not null)
+		{
+			CheckExpression(lam.ExpressionBody, lambdaScope);
+			var bodyType = GetExpressionType(lam.ExpressionBody, lambdaScope);
+			if (bodyType != null && !bodyType.Equals(delegateType.ReturnType))
+			{
+				context.Diagnostics.Report(currentFileContext, lam.ExpressionBody.Span,
+					$"Lambda body has type '{bodyType.Name}' but delegate '{delegateType.Name}' returns '{delegateType.ReturnType.Name}'.",
+					DiagnosticIds.LambdaReturnTypeMismatch);
+			}
+		}
+		else if (lam.BlockBody is not null)
+		{
+			var prevLambdaReturn = _lambdaReturnContext;
+			_lambdaReturnContext = delegateType.ReturnType;
+			var prevUnsafeDepth = _unsafeDepth;
+			// Lambda bodies are validated as safe-callable bodies (§21.3): the enclosing
+			// function's unsafe context must not leak into the lambda.
+			_unsafeDepth = 0;
+			try
+			{
+				CheckBlock(lam.BlockBody, lambdaScope, _enclosingFunction!);
+			}
+			finally
+			{
+				_lambdaReturnContext = prevLambdaReturn;
+				_unsafeDepth = prevUnsafeDepth;
+			}
+
+			if (!delegateType.ReturnType.Equals(TypeSymbol.Void) && !EndsWithReturn(lam.BlockBody))
+			{
+				context.Diagnostics.Report(currentFileContext, lam.BlockBody.Span,
+					$"Lambda body does not end with a return statement but delegate '{delegateType.Name}' returns '{delegateType.ReturnType.Name}'.",
+					DiagnosticIds.LambdaReturnTypeMismatch);
+			}
+		}
+	}
+
+	/// <summary>
+	/// Converts a function/method group reference (identifier, or receiver-qualified member)
+	/// to a target delegate type via contextual overload resolution (§22). Records the chosen
+	/// <see cref="FunctionSymbol"/> in <see cref="BindingContext.ResolvedFunctionConversions"/>.
+	/// </summary>
+	private void CheckFunctionGroupConversion(ExpressionSyntax groupRef, DelegateTypeSymbol delegateType, SymbolTable scope)
+	{
+		var currentFileContext = context.FileContexts[context.CurrentUnit!];
+		var candidates = new List<FunctionSymbol>();
+
+		switch (groupRef)
+		{
+			case IdentifierExpressionSyntax id:
+				GatherOverloadCandidates(id.Name, candidates);
+				break;
+			case MemberAccessExpressionSyntax ma when IsMethodGroupReference(ma, scope):
+			{
+				var receiverType = GetExpressionType(ma.Expression, scope);
+				if (receiverType is PointerTypeSymbol ptr)
+					receiverType = ptr.ReferencedType;
+				if (receiverType is null)
+					return;
+				candidates.AddRange(context
+					.GetExtensionMethodCandidates(receiverType, context.CurrentUnit, ma.MemberName)
+					.Select(candidate => candidate.Function));
+				break;
+			}
+		}
+
+		var isBoundMethod = groupRef is MemberAccessExpressionSyntax;
+		var matches = candidates
+			.Where(f =>
+			{
+				if (f.IsVariadic)
+					return false;
+				var signatureParams = isBoundMethod && f.Parameters.Count > 0 && f.Parameters[0].Name == "this"
+					? f.Parameters.Skip(1).ToList()
+					: f.Parameters;
+				return signatureParams.Count == delegateType.Parameters.Count &&
+					   f.ReturnType.Equals(delegateType.ReturnType) &&
+					   signatureParams.Zip(delegateType.Parameters, (p, d) => p.Type.Equals(d.Type)).All(match => match);
+			})
+			.ToList();
+
+		if (matches.Count == 0)
+		{
+			context.Diagnostics.Report(currentFileContext, groupRef.Span,
+				$"No function or method group named '{groupRef.ToString()}' matches delegate '{delegateType.Name}'.",
+				DiagnosticIds.InvalidFunctionConversion);
+			return;
+		}
+
+		if (matches.Count > 1)
+		{
+			var names = string.Join(", ", matches.Select(f => f.Name));
+			context.Diagnostics.Report(currentFileContext, groupRef.Span,
+				$"Function or method group '{groupRef.ToString()}' is ambiguous for delegate '{delegateType.Name}': {names}",
+				DiagnosticIds.AmbiguousFunctionConversion);
+			return;
+		}
+
+		context.ResolvedFunctionConversions[groupRef] = matches[0];
+	}
+
+	/// <summary>
+	/// Checks an expression that supplies a delegate-typed value: target-typed lambdas,
+	/// function/method group conversions, rejected null literals, or a plain value expression.
+	/// Shared by variable declarations, struct/union member initializers, and parameter passes.
+	/// </summary>
+	private void CheckDelegateValueExpression(ExpressionSyntax expr, DelegateTypeSymbol delegateType, SymbolTable scope)
+	{
+		if (expr is LambdaExpressionSyntax targetLambda)
+		{
+			CheckTargetTypedLambda(targetLambda, delegateType, scope);
+		}
+		else if (expr is NullLiteralExpressionSyntax)
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, expr.Span,
+				$"Cannot initialize delegate '{delegateType.Name}' with 'null'; delegates are non-null values.",
+				DiagnosticIds.NullLiteralForDelegate);
+		}
+		else if (expr is IdentifierExpressionSyntax groupId && !IsKnownVariable(groupId, scope) && HasFunctionOverloads(groupId.Name))
+		{
+			CheckFunctionGroupConversion(groupId, delegateType, scope);
+		}
+		else if (expr is MemberAccessExpressionSyntax groupMa && IsMethodGroupReference(groupMa, scope))
+		{
+			CheckFunctionGroupConversion(groupMa, delegateType, scope);
+		}
+		else
+		{
+			CheckExpression(expr, scope);
+		}
+	}
+
+	/// <summary>True if 'name' refers to a registered function overload group.</summary>
+	private bool HasFunctionOverloads(string name)
+	{
+		var candidates = new List<FunctionSymbol>();
+		GatherOverloadCandidates(name, candidates);
+		return candidates.Count > 0;
+	}
+
+	/// <summary>True if the identifier resolves to a variable (local, parameter, or global).</summary>
+	private bool IsKnownVariable(IdentifierExpressionSyntax id, SymbolTable scope)
+	{
+		if (scope.Lookup(id.Name) is VariableSymbol)
+			return true;
+		if (context.ResolveGlobalReference(id.Name, out _) is VariableSymbol)
+			return true;
+		return id.Name == "self" || id.Name == "this";
+	}
+
+	/// <summary>True if the member access names a zero-arg-this extension member on the
+	/// receiver's type (a bound-method group) rather than a struct/union field.</summary>
+	private bool IsMethodGroupReference(MemberAccessExpressionSyntax ma, SymbolTable scope)
+	{
+		var receiverType = GetExpressionType(ma.Expression, scope);
+		if (receiverType is PointerTypeSymbol ptr)
+			receiverType = ptr.ReferencedType;
+		if (receiverType is null)
+			return false;
+		if (receiverType is StructTypeSymbol structType && structType.FindField(ma.MemberName) is not null)
+			return false;
+		if (receiverType is UnionTypeSymbol unionType && unionType.FindField(ma.MemberName) is not null)
+			return false;
+		return context.GetExtensionMethodCandidates(receiverType, context.CurrentUnit, ma.MemberName).Count > 0;
+	}
+
+	/// <summary>
+	/// Resolves 'h(42)' / 'obj.Handler(42)' delegate-value invocations (§14). Returns true and a
+	/// bound DelegateTypeSymbol when the call target is a delegate-typed variable or struct/union
+	/// field; otherwise false. Callers record the binding in ResolvedDelegateCalls.
+	/// </summary>
+	private bool TryResolveDelegateInvocation(CallExpressionSyntax call, IReadOnlyList<TypeSymbol> argTypes, SymbolTable scope, out DelegateTypeSymbol? delegateType)
+	{
+		delegateType = null;
+		TypeSymbol? delegateMemberType = null;
+
+		if (call.FunctionName.Contains('.'))
+		{
+			var lastDot = call.FunctionName.LastIndexOf('.');
+			var receiverName = call.FunctionName[..lastDot];
+			var memberName = call.FunctionName[(lastDot + 1)..];
+
+			var receiver = scope.Lookup(receiverName) as VariableSymbol ?? context.ResolveGlobalReference(receiverName, out _) as VariableSymbol;
+			if (receiver is null)
+				return false;
+
+			var receiverType = receiver.Type;
+			if (receiverType is PointerTypeSymbol ptr)
+				receiverType = ptr.ReferencedType;
+
+			delegateMemberType = receiverType switch
+			{
+				StructTypeSymbol structType => structType.FindField(memberName)?.Type,
+				UnionTypeSymbol unionType => unionType.FindField(memberName)?.Type,
+				_ => null,
+			};
+		}
+		else
+		{
+			var variable = scope.Lookup(call.FunctionName) as VariableSymbol ?? context.ResolveGlobalReference(call.FunctionName, out _) as VariableSymbol;
+			if (variable is null)
+				return false;
+			delegateMemberType = variable.Type;
+		}
+
+		if (delegateMemberType is not DelegateTypeSymbol callableDelegate)
+			return false;
+		delegateType = callableDelegate;
+
+		if (call.Arguments.Count != callableDelegate.Parameters.Count)
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, call.ArgumentListSpan,
+				$"Delegate '{callableDelegate.Name}' expects {callableDelegate.Parameters.Count} argument(s) but received {call.Arguments.Count}");
+		}
+
+		return true;
 	}
 
 	private TypeSymbol? GetFlagsBinaryType(BinaryExpressionSyntax bin, SymbolTable scope)
@@ -3219,12 +3741,12 @@ public sealed class ValidationPass(BindingContext context)
 	{
 		// Direct or exact match search (e.g., "MyNamespace.Point.Move" or "Point.Move")
 		if (context.OverloadedFunctions.TryGetValue(name, out var directMatches))
-			targetList.AddRange(directMatches);
+			TargetListAddRangeUnique(targetList, directMatches);
 
 		// Scoped Namespace lookup
 		var localMangled = context.GetMangledName(name, context.CurrentNamespace);
 		if (context.OverloadedFunctions.TryGetValue(localMangled, out var localMatches))
-			targetList.AddRange(localMatches);
+			TargetListAddRangeUnique(targetList, localMatches);
 
 		// Search through imported namespaces (expanded with 'expose using')
 		if (context.CurrentUnit is not null)
@@ -3235,8 +3757,19 @@ public sealed class ValidationPass(BindingContext context)
 			{
 				var candidateMangled = context.GetMangledName(name, ns);
 				if (context.OverloadedFunctions.TryGetValue(candidateMangled, out var match))
-					targetList.AddRange(match);
+					TargetListAddRangeUnique(targetList, match);
 			}
+		}
+	}
+
+	// A plain identifier may resolve through both the direct table and the current-namespace
+	// mangled key (and imported namespaces), so the same FunctionSymbol can surface twice.
+	private static void TargetListAddRangeUnique(List<FunctionSymbol> targetList, IReadOnlyList<FunctionSymbol> candidates)
+	{
+		foreach (var candidate in candidates)
+		{
+			if (!targetList.Contains(candidate))
+				targetList.Add(candidate);
 		}
 	}
 
@@ -3255,6 +3788,18 @@ public sealed class ValidationPass(BindingContext context)
 		{
 			var param = paramTypes[i];
 			var arg = argTypes[i];
+
+			if (arg == LambdaArgMarker)
+			{
+				// A lambda / function-group argument has no intrinsic type; it can only
+				// satisfy a delegate-typed parameter (§4.2 / §22 target typing).
+				if (param is DelegateTypeSymbol)
+				{
+					score += 4;
+					continue;
+				}
+				return -1;
+			}
 
 			if (param.Equals(arg))
 			{

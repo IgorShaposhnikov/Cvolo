@@ -177,6 +177,146 @@ public static class DiagnosticIds
 	/// <summary>A type alias is used as a generic parameter constraint in a `where` clause.</summary>
 	public const string AliasAsConstraint = "CVL1202";
 
+	// ── Safe Delegates & Borrowed Closures (CVL13xx) ──
+
+	/// <summary>A lambda expression requires an expected delegate type target (no standalone lambda type).</summary>
+	public const string LambdaRequiresExpectedDelegateType = "CVL1300";
+
+	/// <summary>A delegate declaration used a receiver parameter ('ref this'/'refvar this').</summary>
+	public const string ReceiverParamInDelegateDeclaration = "CVL1301";
+
+	/// <summary>A function/method group cannot convert to the target delegate type (signature mismatch / no matching overload).</summary>
+	public const string InvalidFunctionConversion = "CVL1302";
+
+	/// <summary>The function/method group conversion is ambiguous: multiple overloads match the target delegate signature.</summary>
+	public const string AmbiguousFunctionConversion = "CVL1303";
+
+	/// <summary>A lambda parameter type is incompatible with the expected delegate parameter type.</summary>
+	public const string LambdaParameterTypeMismatch = "CVL1304";
+
+	/// <summary>A lambda return type is incompatible with the expected delegate return type.</summary>
+	public const string LambdaReturnTypeMismatch = "CVL1305";
+
+	/// <summary>Default capture mode cannot snapshot-copy a move-only value ('move' or 'ref' capture required).</summary>
+	public const string DefaultModeCaptureOfMoveOnly = "CVL1306";
+
+	/// <summary>The capture value carries a mutable-borrow capability; capture is rejected in every mode.</summary>
+	public const string MutableBorrowCapabilityCapture = "CVL1307";
+
+	/// <summary>Slice-typed values cannot be captured by Any closure.</summary>
+	public const string SliceCaptureForbidden = "CVL1308";
+
+	/// <summary>Generic-instantiated values with a mutable-borrow capability cannot be captured.</summary>
+	public const string GenericCaptureCapability = "CVL1309";
+
+	/// <summary>Capture from a borrowed 'ref'/'refvar' lexical binding is unsupported in this increment.</summary>
+	public const string RefBindingCaptureUnsupported = "CVL1310";
+
+	/// <summary>'refvar (...)=>' capture mode is not supported in this increment.</summary>
+	public const string RefvarLambdaModeUnsupported = "CVL1311";
+
+	/// <summary>A captured-by-value field is immutable; assignment through a captured snapshot is rejected.</summary>
+	public const string CapturedFieldAssignment = "CVL1312";
+
+	/// <summary>A captured-by-value field is immutable; mutation through a captured snapshot is rejected.</summary>
+	public const string CapturedFieldMutation = "CVL1313";
+
+	/// <summary>The 'move' capture was already consumed (moved out) and cannot be moved again.</summary>
+	public const string MoveOutOfMovedCapture = "CVL1314";
+
+	/// <summary>Use of a move-only value after it was moved into a closure capture.</summary>
+	public const string UseAfterMoveOfMoveOnly = "CVL1315";
+
+	/// <summary>A 'ref' closure captures a local whose borrow would escape the closure's scope.</summary>
+	public const string RefLambdaBorrowEscapes = "CVL1316";
+
+	/// <summary>A live borrow conflicts with this operation while a 'ref' closure alias may still invoke.</summary>
+	public const string LiveBorrowConflict = "CVL1317";
+
+	/// <summary>The capturing closure's environment escapes its owning scope.</summary>
+	public const string ClosureEnvironmentEscapes = "CVL1318";
+
+	/// <summary>A safe-delegate parameter is non-escaping by default and cannot be stored into longer-lived storage.</summary>
+	public const string DelegateParameterEscapes = "CVL1319";
+
+	/// <summary>Returning a non-escaping safe-delegate parameter from this function is unsupported in this increment.</summary>
+	public const string ParameterReturnedUnsupported = "CVL1320";
+
+	/// <summary>A bound-method delegate escapes past the lifetime of its receiver.</summary>
+	public const string BoundReceiverLifetimeEscapes = "CVL1321";
+
+	/// <summary>Receiver delegation via 'refvar this' is unsupported for bound-method delegates.</summary>
+	public const string RefvarThisDelegation = "CVL1322";
+
+	/// <summary>Capturing a receiver field that holds a mutable-borrow capability is rejected.</summary>
+	public const string RefvarThisFieldCapture = "CVL1323";
+
+	/// <summary>A plain delegate type is not default-initializable; an initializer is required.</summary>
+	public const string DelegateNotDefaultInitializable = "CVL1324";
+
+	/// <summary>Implicit zero-initialization of a delegate-typed storage is rejected.</summary>
+	public const string DelegateImplicitZeroInit = "CVL1325";
+
+	/// <summary>The null literal is not a valid delegate value; use Option.None on `Handler?` instead.</summary>
+	public const string NullLiteralForDelegate = "CVL1326";
+
+	/// <summary>No implicit conversion between distinct nominal delegate types.</summary>
+	public const string NominalDelegateConversion = "CVL1327";
+
+	/// <summary>A delegate return type bears reference/refvar provenance ('ref T'/'refvar T').</summary>
+	public const string DelegateReturnRefType = "CVL1328";
+
+	/// <summary>A delegate return type bears slice provenance (T[]).</summary>
+	public const string DelegateReturnSliceType = "CVL1329";
+
+	/// <summary>A delegate return type transitively bears provenance through an aggregate or delegate.</summary>
+	public const string DelegateReturnTransitiveProvenance = "CVL1330";
+
+	/// <summary>A generic delegate instantiation produced a provenance-bearing return type.</summary>
+	public const string DelegateReturnGenericInstantiation = "CVL1331";
+
+	/// <summary>No implicit conversion between safe and native delegate values.</summary>
+	public const string SafeNativeDelegateConversion = "CVL1332";
+
+	/// <summary>Safe and native delegates cannot be reinterpret-cast into one another.</summary>
+	public const string SafeNativeDelegateReinterpret = "CVL1333";
+
+	/// <summary>Delegate += / -= multicast operators are not supported in this increment.</summary>
+	public const string MulticastDelegateOperator = "CVL1334";
+
+	/// <summary>Delegates cannot be invoked through an arbitrary expression callee in this increment.</summary>
+	public const string ExpressionCalleeInvocation = "CVL1335";
+
+	/// <summary>A public delegate declaration does not satisfy the provenance-independent return rule and cannot be part of package API metadata.</summary>
+	public const string InvalidPublicDelegateMetadata = "CVL1336";
+
+	/// <summary>A value transitively containing a safe delegate cannot escape via a non-escaping aggregate parameter.</summary>
+	public const string AggregateParameterEscape = "CVL1337";
+
+	/// <summary>Extracting a delegate from parameter-origin storage would let it escape; projection/access is rejected.</summary>
+	public const string DelegateExtractionEscapes = "CVL1338";
+
+	/// <summary>A non-static safe delegate cannot be stored into a 'refvar'-rooted (write-through) destination.</summary>
+	public const string NonStaticThroughRefvarOrigin = "CVL1339";
+
+	/// <summary>A writable aggregate projection rooted in a render/refvar param cannot expose the stored delegate.</summary>
+	public const string WritableAggregateProjection = "CVL1340";
+
+	/// <summary>Storing a non-static delegate into mutable slice parameter storage is rejected.</summary>
+	public const string MutableSliceParamStorage = "CVL1341";
+
+	/// <summary>A raw unsafe function cannot convert to a safe delegate in this increment.</summary>
+	public const string RawUnsafeFunctionConversion = "CVL1342";
+
+	/// <summary>The lambda body violates safe-callable constraints passed down from the expected delegate contract.</summary>
+	public const string SafeCallableContractViolation = "CVL1343";
+
+	/// <summary>Optional/fixed-array/generic storage cannot retain a non-static delegate through this write.</summary>
+	public const string OptionalFixedArrayGenericStore = "CVL1344";
+
+	/// <summary>A whole-value store of a delegate-bearing aggregate would let a non-static delegate escape.</summary>
+	public const string WholeAggregateStoreEscapes = "CVL1345";
+
 	// ── foreach iteration (CVL108x-CVL109x) ──
 
 	/// <summary>Type cannot be traversed via foreach: GetEnumerator method is missing.</summary>

@@ -75,4 +75,7 @@ public enum SyntaxKind
 	AsmOperand,
 	NameOfExpression,
 	TypeOfExpression,
+	DelegateDeclaration,
+	LambdaExpression,
+	LambdaParameter,
 }

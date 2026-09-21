@@ -244,6 +244,11 @@ public sealed class CvoloSourcePrinter
 			case TypeAliasDeclarationSyntax ta:
 				return $"{ind}alias {ta.Name}{Generics(ta.GenericParameters)} = {ta.Type};\n";
 
+			case DelegateDeclarationSyntax dd:
+				var ddNative = dd.IsNative ? $"unsafe {dd.CallingConvention} " : "";
+				var ddParms = string.Join(", ", dd.Parameters.Select(Print));
+				return $"{ind}{ddNative}delegate {dd.ReturnType} {dd.Name}{Generics(dd.GenericParameters)}({ddParms});\n";
+
 			case SwitchStatementSyntax sw:
 				var swCases = string.Join("", sw.Cases.Select(sc => $"{ind}    case {(sc.IsDefault ? "default" : sc.VariableName != null ? $"{sc.VariantName} {sc.VariableName}" : sc.VariantName)}:\n{string.Join("", sc.Body.Select(s => Print(s, indent + 2)))}"));
 				return $"{ind}switch ({Print(sw.Expression)}) {{\n{swCases}{ind}}}\n";
@@ -285,6 +290,21 @@ public sealed class CvoloSourcePrinter
 
 			case CatchLambdaExpressionSyntax clb:
 				return $"({clb.ErrorName}) => {Print(clb.Body)}";
+
+			case LambdaExpressionSyntax lam:
+				var lamMode = lam.CaptureMode switch
+				{
+					LambdaCaptureMode.Move => "move ",
+					LambdaCaptureMode.Ref => "ref ",
+					LambdaCaptureMode.RefVar => "refvar ",
+					_ => "",
+				};
+				var lamParms = string.Join(", ", lam.Parameters.Select(Print));
+				var lamBody = lam.BlockBody is not null ? Print(lam.BlockBody) : Print(lam.ExpressionBody!);
+				return $"{lamMode}({lamParms}) => {lamBody}";
+
+			case LambdaParameterSyntax lp:
+				return lp.ExplicitType != null ? $"{lp.ExplicitType} {lp.Name}" : lp.Name;
 
 			case BreakStatementSyntax brk:
 				return brk.TargetLabel is not null ? $"{ind}break {brk.TargetLabel};\n" : $"{ind}break;\n";

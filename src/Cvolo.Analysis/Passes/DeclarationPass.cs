@@ -121,6 +121,8 @@ public sealed class DeclarationPass(BindingContext context)
 					DeclareProtocol(protocolDecl);
 				else if (member is EnumDeclarationSyntax enumDecl)
 					DeclareEnum(enumDecl);
+				else if (member is DelegateDeclarationSyntax delegateDecl)
+					DeclareDelegate(delegateDecl);
 			}
 		}
 
@@ -311,12 +313,129 @@ public sealed class DeclarationPass(BindingContext context)
 		|| context.UnionTypes.ContainsKey(name)
 		|| context.EnumTypes.ContainsKey(name)
 		|| context.InterfaceTypes.ContainsKey(name)
-		|| context.ProtocolTypes.ContainsKey(name);
+		|| context.ProtocolTypes.ContainsKey(name)
+		|| context.DelegateTypes.ContainsKey(name);
 
 	private void ReportDeclarationDiagnostic(SyntaxNode node, string message, string diagnosticId)
 	{
 		var currentFileContext = context.FileContexts[context.CurrentUnit!];
 		context.Diagnostics.Report(currentFileContext, node.Span, message, diagnosticId);
+	}
+
+	private void DeclareDelegate(DelegateDeclarationSyntax delegateDecl)
+	{
+		var mangledName = context.GetMangledName(delegateDecl.Name, context.CurrentNamespace);
+
+		if (context.DelegateTypes.ContainsKey(mangledName)
+			|| context.StructTypes.ContainsKey(mangledName)
+			|| context.UnionTypes.ContainsKey(mangledName)
+			|| context.InterfaceTypes.ContainsKey(mangledName)
+			|| context.ProtocolTypes.ContainsKey(mangledName)
+			|| context.EnumTypes.ContainsKey(mangledName)
+			|| TypeSymbol.FromName(delegateDecl.Name) is not null)
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, delegateDecl.Span, $"Duplicate type definition '{delegateDecl.Name}'");
+			return;
+		}
+
+		context.SymbolUnits[mangledName] = context.CurrentUnit!;
+
+		var isNative = delegateDecl.IsNative;
+		var callingConvention = delegateDecl.CallingConvention;
+
+		// Generic delegate template: register the template; parameters/return are resolved
+		// per-instantiation (mirroring generic structs).
+		if (delegateDecl.GenericParameters.Count > 0)
+		{
+			context.GenericDelegateTemplates[mangledName] = delegateDecl;
+
+			var activeParams = new HashSet<string>(delegateDecl.GenericParameters);
+			context.ActiveGenericParametersStack.Push(activeParams);
+			try
+			{
+				var templateReturn = context.ResolveType(delegateDecl.ReturnType);
+				var templateParams = delegateDecl.Parameters
+					.Select(p => new ParameterSymbol(p.Name, context.ResolveType(p.Type) ?? TypeSymbol.Void))
+					.ToList();
+				var templateSymbol = new DelegateTypeSymbol(
+					mangledName,
+					templateReturn ?? TypeSymbol.Void,
+					templateParams,
+					delegateDecl.GenericParameters,
+					Array.Empty<TypeSymbol>(),
+					isNative,
+					callingConvention)
+				{
+					Visibility = delegateDecl.Visibility,
+				};
+				context.DelegateTypes[mangledName] = templateSymbol;
+			}
+			finally
+			{
+				context.ActiveGenericParametersStack.Pop();
+			}
+			return;
+		}
+
+		var returnType = context.ResolveType(delegateDecl.ReturnType);
+		if (returnType is null)
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, delegateDecl.ReturnTypeSpan,
+				$"Unknown return type '{delegateDecl.ReturnType}' in delegate declaration '{delegateDecl.Name}'");
+			return;
+		}
+
+		if (!DelegateTypeHelpers.IsProvenanceIndependentReturn(returnType))
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			var provenanceId = returnType switch
+			{
+				PointerTypeSymbol => DiagnosticIds.DelegateReturnRefType,
+				SliceTypeSymbol => DiagnosticIds.DelegateReturnSliceType,
+				_ => DiagnosticIds.DelegateReturnTransitiveProvenance,
+			};
+			context.Diagnostics.Report(currentFileContext, delegateDecl.ReturnTypeSpan,
+				$"Invalid delegate return type '{returnType.Name}': delegate '{delegateDecl.Name}' may not return a provenance-bearing type (§3.2).",
+				provenanceId);
+		}
+
+		var parameters = new List<ParameterSymbol>();
+		foreach (var p in delegateDecl.Parameters)
+		{
+			// Receiver forms ('ref this'/'refvar this') are not permitted on delegate parameters.
+			if (p.Name == "this")
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, p.Span,
+					$"Delegate parameter may not be a receiver ('{p.Type} this'); delegates declare ordinary value/reference parameters only.",
+					DiagnosticIds.ReceiverParamInDelegateDeclaration);
+				continue;
+			}
+
+			var paramType = context.ResolveType(p.Type);
+			if (paramType is null)
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, p.Span,
+					$"Unknown parameter type '{p.Type}' in delegate declaration '{delegateDecl.Name}'");
+				continue;
+			}
+			parameters.Add(new ParameterSymbol(p.Name, paramType));
+		}
+
+		context.DelegateTypes[mangledName] = new DelegateTypeSymbol(
+			mangledName,
+			returnType,
+			parameters,
+			Array.Empty<string>(),
+			Array.Empty<TypeSymbol>(),
+			isNative,
+			callingConvention)
+		{
+			Visibility = delegateDecl.Visibility,
+		};
 	}
 
 	/// <summary>
@@ -2329,7 +2448,35 @@ public sealed class DeclarationPass(BindingContext context)
 			return;
 		}
 
-		if (!IsCompileTimeConstant(globalDecl.Initializer))
+		// §16: safe delegates are non-null / non-default-initializable; a delegate-typed
+		// global must carry an explicit initializer, and 'null' is never a legal value.
+		if (type is DelegateTypeSymbol)
+		{
+			if (globalDecl.Initializer is null)
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, globalDecl.Span,
+					$"Global delegate '{globalDecl.Name}' requires an initializer; delegates are non-null and cannot be default-initialized.");
+				return;
+			}
+
+			if (globalDecl.Initializer is NullLiteralExpressionSyntax)
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, globalDecl.Initializer.Span,
+					$"Cannot initialize delegate '{globalDecl.Name}' with 'null'; delegates are non-null values.",
+					DiagnosticIds.NullLiteralForDelegate);
+				return;
+			}
+		}
+
+		// Globals may reference a function group when the slot is delegate-typed; the actual
+		// conversion is resolved and recorded during validation for the emitter.
+		if (type is DelegateTypeSymbol && globalDecl.Initializer is IdentifierExpressionSyntax)
+		{
+			// Fall through: function references are treated as usable global initializers.
+		}
+		else if (!IsCompileTimeConstant(globalDecl.Initializer))
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
 			context.Diagnostics.Report(currentFileContext, globalDecl.Span, $"Global variable '{globalDecl.Name}' must be initialized with a compile-time constant.", DiagnosticIds.GlobalInitializerNotConstant);

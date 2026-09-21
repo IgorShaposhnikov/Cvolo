@@ -57,6 +57,8 @@ WHERE: 'where';
 IS: 'is';
 ALIAS: 'alias';
 DEFER: 'defer';
+MOVE: 'move';
+DELEGATE: 'delegate';
 ASM: 'asm';
 VOLATILE: 'volatile';
 ALIGNSTACK: 'alignstack';

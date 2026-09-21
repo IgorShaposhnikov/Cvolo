@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using Cvolo.Analysis.Passes;
+using Cvolo.Analysis.Semantics;
 using Cvolo.Analysis.Symbols;
 using Cvolo.Analysis.Symbols.Base;
 using Cvolo.Analysis.Symbols.Collections;
@@ -36,6 +37,24 @@ public sealed class BindingContext
 	public Dictionary<string, CompilationUnitSyntax> SymbolUnits { get; } = [];
 	public Dictionary<string, List<FunctionSymbol>> OverloadedFunctions { get; } = [];
 	public Dictionary<CallExpressionSyntax, FunctionSymbol> ResolvedCalls { get; } = [];
+
+	/// <summary>
+	/// Lambda expressions bound against an expected delegate type (§4/§5).
+	/// Keyed by the lambda AST node so the safety pass and code generator can find them.
+	/// </summary>
+	public Dictionary<LambdaExpressionSyntax, LambdaBindingInfo> ResolvedLambdas { get; } = [];
+
+	/// <summary>
+	/// Call expressions that resolve to a delegate value invocation (h(42), obj.Handler(42)).
+	/// Parallel to <see cref="ResolvedCalls"/> which only holds function-symbol calls.
+	/// </summary>
+	public Dictionary<CallExpressionSyntax, DelegateTypeSymbol> ResolvedDelegateCalls { get; } = [];
+
+	/// <summary>
+	/// Function/method-group conversions against a target delegate (§22):
+	/// expression → resolved FunctionSymbol that was selected for the conversion.
+	/// </summary>
+	public Dictionary<ExpressionSyntax, FunctionSymbol> ResolvedFunctionConversions { get; } = [];
 	// Native libraries requested via [LibraryImport] on extern blocks, keyed by the bare
 	// library identifier; consumed by the linker strategy to emit -l/--library flags.
 	public Dictionary<string, NativeLibraryInfo> NativeLibraries { get; } = [];
@@ -66,6 +85,11 @@ public sealed class BindingContext
 	public Dictionary<string, UnionTypeSymbol> UnionTypes { get; } = [];
 	public Dictionary<string, UnionDeclarationSyntax> GenericUnionTemplates { get; } = [];
 	public Dictionary<string, EnumTypeSymbol> EnumTypes { get; } = [];
+
+	// Nominal delegate declarations (mangled name -> symbol) and generic templates.
+	// Registered during DeclarationPass Pass 0a; resolved like any nominal type name.
+	public Dictionary<string, DelegateTypeSymbol> DelegateTypes { get; } = [];
+	public Dictionary<string, DelegateDeclarationSyntax> GenericDelegateTemplates { get; } = [];
 
 	// Zero-cost type aliases ('alias Name = Type;'), keyed by the mangled alias name
 	// (namespace-aware, mirroring type registration). Resolved at bind time and erased
@@ -445,6 +469,21 @@ public sealed class BindingContext
 				_typeCache[name] = instantiatedProtocol;
 				return instantiatedProtocol;
 			}
+			else if (baseType is DelegateTypeSymbol baseDelegate && GenericDelegateTemplates.TryGetValue(baseDelegate.Name, out var delegateDecl))
+			{
+				if (!TryResolveTypeArguments(argsPart, out var delegateTypeArgs))
+					return null;
+				if (delegateTypeArgs.Count != delegateDecl.GenericParameters.Count)
+					return null;
+
+				var instantiatedType = InstantiateGenericDelegate(delegateDecl, baseDelegate.Name, delegateTypeArgs, name);
+				if (instantiatedType is not null)
+				{
+					DelegateTypes[name] = instantiatedType;
+					_typeCache[name] = instantiatedType;
+				}
+				return instantiatedType;
+			}
 		}
 
 		// 5c. Check Primitives
@@ -483,6 +522,8 @@ public sealed class BindingContext
 				candidates.Add(localProtocol);
 			if (EnumTypes.TryGetValue(localMangled, out var localEnum))
 				candidates.Add(localEnum);
+			if (DelegateTypes.TryGetValue(localMangled, out var localDelegate))
+				candidates.Add(localDelegate);
 		}
 
 		// Priority 2: Exact/Global Match (Only used if no local namespace match is found)
@@ -498,6 +539,8 @@ public sealed class BindingContext
 				candidates.Add(exactProtocolMatch);
 			if (EnumTypes.TryGetValue(name, out var exactEnumMatch))
 				candidates.Add(exactEnumMatch);
+			if (DelegateTypes.TryGetValue(name, out var exactDelegateMatch))
+				candidates.Add(exactDelegateMatch);
 		}
 
 		if (candidates.Count == 1)
@@ -529,6 +572,8 @@ public sealed class BindingContext
 					candidates.Add(protocolMatch);
 				if (EnumTypes.TryGetValue(candidateMangled, out var enumMatch))
 					candidates.Add(enumMatch);
+				if (DelegateTypes.TryGetValue(candidateMangled, out var delegateMatch))
+					candidates.Add(delegateMatch);
 			}
 		}
 
@@ -1110,6 +1155,101 @@ public sealed class BindingContext
 		MonomorphizeExtensionsForType(instantiatedType, typeArgs, templateMangledName);
 
 		return instantiatedType;
+	}
+
+	/// <summary>
+	/// Instantiates a generic delegate template (e.g. Predicate&lt;T&gt; with T = int).
+	/// Performs §3.2 provenance-independent re-validation on the instantiated return type
+	/// and erases aliases before caching. Mirror of InstantiateGenericStruct.
+	/// </summary>
+	private DelegateTypeSymbol? InstantiateGenericDelegate(DelegateDeclarationSyntax templateDecl, string templateMangledName, List<TypeSymbol> typeArgs, string sourceName)
+	{
+		var instName = $"{templateMangledName}<{string.Join(", ", typeArgs.Select(t => t.Name))}>";
+
+		var prevUnit = CurrentUnit;
+		var prevNamespace = CurrentNamespace;
+
+		var originalUnit = SymbolUnits.TryGetValue(templateMangledName, out var u) ? u : null;
+		CurrentUnit = originalUnit;
+		CurrentNamespace = originalUnit?.NamespaceDeclaration?.Name;
+
+		var substitutionMap = new Dictionary<string, TypeSymbol>();
+		for (var i = 0; i < templateDecl.GenericParameters.Count; i++)
+			substitutionMap[templateDecl.GenericParameters[i]] = typeArgs[i];
+
+		var placeholder = new DelegateTypeSymbol(
+			instName,
+			TypeSymbol.Void,
+			Array.Empty<ParameterSymbol>(),
+			templateDecl.GenericParameters,
+			typeArgs,
+			templateDecl.IsNative,
+			templateDecl.CallingConvention)
+		{
+			Visibility = templateDecl.Visibility,
+		};
+		DelegateTypes[instName] = placeholder;
+		_typeCache[instName] = placeholder;
+
+		var returnTypeName = SubstituteTypeString(templateDecl.ReturnType, substitutionMap);
+		var returnType = ResolveType(returnTypeName);
+		if (returnType is null)
+		{
+			CurrentUnit = prevUnit;
+			CurrentNamespace = prevNamespace;
+			return null;
+		}
+
+		if (!DelegateTypeHelpers.IsProvenanceIndependentReturn(returnType))
+		{
+			var currentFileContext = FileContexts[CurrentUnit!];
+			Diagnostics.Report(currentFileContext, templateDecl.ReturnTypeSpan,
+				$"Invalid delegate return type '{returnType.Name}': the instantiated delegate '{instName}' returns a provenance-bearing type (§3.2).",
+				DiagnosticIds.DelegateReturnGenericInstantiation);
+		}
+
+		var parameters = new List<ParameterSymbol>();
+		foreach (var p in templateDecl.Parameters)
+		{
+			var paramTypeName = SubstituteTypeString(p.Type, substitutionMap);
+			var paramType = ResolveType(paramTypeName);
+			if (paramType is null)
+			{
+				CurrentUnit = prevUnit;
+				CurrentNamespace = prevNamespace;
+				return null;
+			}
+			parameters.Add(new ParameterSymbol(p.Name, paramType));
+		}
+
+		CurrentUnit = prevUnit;
+		CurrentNamespace = prevNamespace;
+
+		var instantiated = new DelegateTypeSymbol(
+			instName,
+			returnType,
+			parameters,
+			templateDecl.GenericParameters,
+			typeArgs,
+			templateDecl.IsNative,
+			templateDecl.CallingConvention)
+		{
+			Visibility = templateDecl.Visibility,
+		};
+		DelegateTypes[instName] = instantiated;
+		_typeCache[instName] = instantiated;
+		_typeCache[sourceName] = instantiated;
+		return instantiated;
+	}
+
+	private static string SubstituteTypeString(string typeName, Dictionary<string, TypeSymbol> substitutionMap)
+	{
+		var result = typeName;
+		foreach (var kv in substitutionMap)
+		{
+			result = Regex.Replace(result, $@"\b{Regex.Escape(kv.Key)}\b", kv.Value.Name);
+		}
+		return result;
 	}
 
 	public string NormalizeGenericName(string name)
