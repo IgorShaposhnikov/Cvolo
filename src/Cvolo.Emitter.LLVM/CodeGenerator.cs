@@ -23,6 +23,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	private readonly CleanupEmitter _cleanup;
 	private readonly AggregateEmitter _aggregates;
 	private readonly CallEmitter _calls;
+	private readonly DelegateEmitter _delegates;
 	private readonly ILLVMOptimizer? _optimizer;
 	private readonly IRVerifier? _irVerifier;
 
@@ -58,7 +59,6 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	private readonly HashSet<string> _exportedSymbols = [];
 	private readonly bool _checkedFfiBounds;
 	private readonly IReadOnlySet<string>? _definedGlobalNames;
-	private int _delegateFunctionCounter;
 
 	static CodeGenerator()
 	{
@@ -78,6 +78,17 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		_codegen = new CodegenContext(llvmContext, module, builder, targetLayout);
 		_cleanup = new CleanupEmitter(_codegen);
 		_aggregates = new AggregateEmitter(_codegen, EmitExpression, GetExprType);
+		_delegates = new DelegateEmitter(
+			_codegen,
+			() => _function,
+			function => _function = function,
+			EmitExpression,
+			EmitBlock,
+			GetExprType,
+			CoerceIntegerWidth,
+			Load,
+			(structType, fieldName) => GetFieldIndex(structType, fieldName),
+			ResolveGlobalKey);
 		_calls = new CallEmitter(
 			_codegen,
 			_cleanup,
@@ -1186,9 +1197,9 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	private LLVMValueRef EmitExpression(ExpressionSyntax expr)
 	{
 		if (_bindingContext!.ResolvedFunctionConversions.TryGetValue(expr, out var groupFn))
-			return EmitFunctionGroupConversion(expr, groupFn);
+			return _delegates.EmitFunctionGroupConversion(expr, groupFn);
 		if (expr is LambdaExpressionSyntax lamExpr)
-			return EmitLambdaExpression(lamExpr);
+			return _delegates.EmitLambdaExpression(lamExpr);
 
 		switch (expr)
 		{
@@ -1665,327 +1676,6 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			   resolved.Parameters.Count > 0 &&
 			   resolved.Parameters[0].Name == "this";
 	}
-
-	// ============================================================
-	// Safe delegate emission (todo 8): two-word { invoke thunk, context }
-	// A safe delegate is a 16-byte value: word0 = uniform thunk pointer
-	// R thunk(void* ctx, P...), word1 = context (closure env / receiver / null).
-	// ============================================================
-
-	private DelegateTypeSymbol BuildGroupDelegateType(FunctionSymbol fnSym, bool isBound)
-	{
-		var start = isBound && fnSym.Parameters.Count > 0 ? 1 : 0;
-		var parameters = new List<ParameterSymbol>();
-		for (var i = start; i < fnSym.Parameters.Count; i++)
-			parameters.Add(fnSym.Parameters[i]);
-
-		return new DelegateTypeSymbol(
-			"$group." + fnSym.Name,
-			fnSym.ReturnType,
-			parameters,
-			[], [], false, null);
-	}
-
-	private static IEnumerable<TSyntax> EnumerateNodes<TSyntax>(SyntaxNode? root)
-		where TSyntax : SyntaxNode
-	{
-		if (root is null) yield break;
-		if (root is TSyntax match) yield return match;
-		foreach (var child in root.GetChildren())
-			foreach (var nested in EnumerateNodes<TSyntax>(child))
-				yield return nested;
-	}
-
-	// Compute which by-value locals/params the lambda body references. Globals and the
-	// lambda's own parameters are not captured. Mirrors SafetyPass.ComputeCapturedNames.
-	private List<(string Name, TypeSymbol Type)> ComputeLambdaCaptures(LambdaExpressionSyntax lam)
-	{
-		var result = new List<(string Name, TypeSymbol Type)>();
-		var seen = new HashSet<string>();
-		var paramNames = new HashSet<string>(lam.Parameters.Select(p => p.Name));
-
-		var root = lam.ExpressionBody is not null ? (SyntaxNode)lam.ExpressionBody : lam.BlockBody;
-		foreach (var id in EnumerateNodes<IdentifierExpressionSyntax>(root))
-		{
-			var name = id.Name;
-			if (!seen.Add(name)) continue;
-			if (name == "this" || paramNames.Contains(name)) continue;
-			if (_globalShortNames.ContainsKey(name) || _globalVariables.ContainsKey(name)) continue;
-			if (_function.VariableTypes.TryGetValue(name, out var ty))
-				result.Add((name, ty));
-		}
-		return result;
-	}
-
-	private bool TryResolveReceiverPointer(string receiverName, out LLVMValueRef receiverPtr, out TypeSymbol receiverType)
-	{
-		receiverPtr = default;
-		if (_function.Locals.TryGetValue(receiverName, out var localPtr))
-		{
-			receiverPtr = localPtr;
-			receiverType = _function.VariableTypes[receiverName];
-			return true;
-		}
-		if ((_globalVariables.ContainsKey(receiverName) ? receiverName : ResolveGlobalKey(receiverName)) is { } recvKey
-			&& _globalVariables.TryGetValue(recvKey, out var globalPtr))
-		{
-			receiverPtr = globalPtr;
-			receiverType = _globalVariableTypes[recvKey];
-			return true;
-		}
-		if (_function.Locals.TryGetValue("this", out var thisPtr)
-			&& _function.VariableTypes["this"] is PointerTypeSymbol thisTy
-			&& thisTy.ReferencedType is StructTypeSymbol selfStruct
-			&& selfStruct.FindField(receiverName) is { } field)
-		{
-			var actualThisPtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), thisPtr, "loaded_this_ptr");
-			var zero = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0);
-			var index = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)GetFieldIndex(selfStruct, receiverName));
-			receiverPtr = _builder.BuildGEP2(GetLLVMType(selfStruct), actualThisPtr, new LLVMValueRef[] { zero, index }, "this_field_ptr");
-			receiverType = field.Type;
-			return true;
-		}
-		receiverType = null!;
-		return false;
-	}
-
-	// Materialize the two-word delegate value { invoke-thunk ptr, context } in a register.
-	private LLVMValueRef BuildDelegateValue(LLVMValueRef invokeFn, LLVMValueRef ctxValue, DelegateTypeSymbol delegateType)
-	{
-		var wordTy = GetLLVMType(delegateType);
-		var slot = _builder.BuildAlloca(wordTy, "$delegate_slot");
-		var zero = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0);
-		var one = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1);
-		var i8PtrTy = LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0);
-
-		var invokeSlot = _builder.BuildGEP2(wordTy, slot, new LLVMValueRef[] { zero, zero }, "delegate_invoke_slot");
-		_builder.BuildStore(_builder.BuildPointerCast(invokeFn, i8PtrTy, "invoke_ptr"), invokeSlot);
-		var ctxSlot = _builder.BuildGEP2(wordTy, slot, new LLVMValueRef[] { zero, one }, "delegate_ctx_slot");
-		_builder.BuildStore(ctxValue, ctxSlot);
-
-		return _builder.BuildLoad2(wordTy, slot, "delegate_val");
-	}
-
-	// Create a uniform thunk R(void* ctx, P...) whose body is emitted by emitBody. The entire
-	// per-function emission state is swapped so the lambda body sees a fresh function scope,
-	// then restored when emission returns to the enclosing function.
-	private LLVMValueRef CreateDelegateThunk(
-		string thunkName,
-		TypeSymbol returnType,
-		IReadOnlyList<(string Name, TypeSymbol Type)> visibleParams,
-		Action<LLVMValueRef> emitBody)
-	{
-		var i8PtrTy = LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0);
-		var paramTys = new List<LLVMTypeRef> { i8PtrTy };
-		foreach (var (_, t) in visibleParams) paramTys.Add(GetLLVMType(t));
-		var fnTy = LLVMTypeRef.CreateFunction(GetLLVMType(returnType), [.. paramTys]);
-		var fn = _module.AddFunction(thunkName, fnTy);
-		_globals[thunkName] = fn;
-		_functionTypes[thunkName] = fnTy;
-		_functionReturnTypes[thunkName] = returnType;
-		_functionParameterTypes[thunkName] = [.. visibleParams.Select(p => p.Type).ToList()];
-
-		var savedBlock = _builder.InsertBlock;
-		var savedFunction = _function;
-		_function = new FunctionCodegenContext();
-
-		foreach (var g in _globalVariables)
-		{
-			if (!_function.Locals.ContainsKey(g.Key)) _function.Locals[g.Key] = g.Value;
-		}
-		foreach (var g in _globalVariableTypes)
-		{
-			if (!_function.VariableTypes.ContainsKey(g.Key)) _function.VariableTypes[g.Key] = g.Value;
-		}
-		foreach (var (shortName, keys) in _globalShortNames)
-		{
-			if (_function.Locals.ContainsKey(shortName)) continue;
-			if (ResolveGlobalKey(shortName) is { } key && _globalVariables.TryGetValue(key, out var stored))
-			{
-				_function.Locals[shortName] = stored;
-				_function.VariableTypes[shortName] = _globalVariableTypes[key];
-			}
-		}
-
-		var entry = fn.AppendBasicBlock("entry");
-		_builder.PositionAtEnd(entry);
-
-		for (var i = 0; i < visibleParams.Count; i++)
-		{
-			var pName = visibleParams[i].Name;
-			var pTy = GetLLVMType(visibleParams[i].Type);
-			var alloca = _builder.BuildAlloca(pTy, pName);
-			_builder.BuildStore(fn.GetParam((uint)(i + 1)), alloca);
-			_function.Locals[pName] = alloca;
-			_function.VariableTypes[pName] = visibleParams[i].Type;
-		}
-
-		emitBody(fn.GetParam(0));
-
-		_builder.PositionAtEnd(savedBlock);
-		_function = savedFunction;
-
-		return fn;
-	}
-
-	private LLVMValueRef EmitLambdaExpression(LambdaExpressionSyntax lam)
-	{
-		var info = _bindingContext!.ResolvedLambdas[lam];
-		var delegateType = info.Delegate;
-		var captures = ComputeLambdaCaptures(lam);
-		var i8PtrTy = LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0);
-
-		LLVMValueRef? envAlloc = null;
-		LLVMTypeRef? envTy = null;
-		if (captures.Count > 0)
-		{
-			var fieldTypes = new List<LLVMTypeRef>();
-			foreach (var (_, t) in captures)
-				fieldTypes.Add(info.CaptureMode == LambdaCaptureMode.Ref ? i8PtrTy : GetLLVMType(t));
-			envTy = LLVMTypeRef.CreateStruct([.. fieldTypes], false);
-			envAlloc = _builder.BuildAlloca(envTy.Value, "$lambda_env");
-			var zero = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0);
-			for (var i = 0; i < captures.Count; i++)
-			{
-				var (cName, cType) = captures[i];
-				var fieldPtr = _builder.BuildGEP2(envTy.Value, envAlloc.Value, new LLVMValueRef[] { zero, LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)i) }, "$lambda_cap");
-				if (info.CaptureMode == LambdaCaptureMode.Ref)
-				{
-					_builder.BuildStore(_builder.BuildPointerCast(_function.Locals[cName], i8PtrTy, "cap_ref"), fieldPtr);
-				}
-				else
-				{
-					_builder.BuildStore(Load(cName), fieldPtr);
-					if (info.CaptureMode == LambdaCaptureMode.Move)
-					{
-						_function.MovedVars.Add(cName);
-					}
-				}
-			}
-		}
-
-		var thunkName = $"$lambda.{++_delegateFunctionCounter}";
-		var visibleParams = new List<(string Name, TypeSymbol Type)>();
-		for (var i = 0; i < lam.Parameters.Count && i < delegateType.Parameters.Count; i++)
-			visibleParams.Add((lam.Parameters[i].Name, delegateType.Parameters[i].Type));
-
-		var thunk = CreateDelegateThunk(thunkName, delegateType.ReturnType, visibleParams, ctxParam =>
-		{
-			if (captures.Count > 0 && envTy is { } envT)
-			{
-				var envPtr = _builder.BuildPointerCast(ctxParam, LLVMTypeRef.CreatePointer(envT, 0), "lambda_ctx");
-				var zero = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0);
-				for (var i = 0; i < captures.Count; i++)
-				{
-					var (cName, cType) = captures[i];
-					var fieldPtr = _builder.BuildGEP2(envT, envPtr, new LLVMValueRef[] { zero, LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)i) }, "$lambda_cap_ptr");
-					if (info.CaptureMode == LambdaCaptureMode.Ref)
-					{
-						var slot = _builder.BuildLoad2(i8PtrTy, fieldPtr, "cap_ref_slot");
-						_function.Locals[cName] = _builder.BuildPointerCast(slot, LLVMTypeRef.CreatePointer(GetLLVMType(cType), 0), "cap_ref_local");
-					}
-					else
-					{
-						_function.Locals[cName] = fieldPtr;
-					}
-					_function.VariableTypes[cName] = cType;
-				}
-			}
-
-			if (info.BodyIsValueExpression && lam.ExpressionBody is not null)
-			{
-				var bodyVal = EmitExpression(lam.ExpressionBody);
-				if (delegateType.ReturnType.Equals(TypeSymbol.Void))
-					_builder.BuildRetVoid();
-				else
-					_builder.BuildRet(CoerceIntegerWidth(bodyVal, GetExprType(lam.ExpressionBody), delegateType.ReturnType));
-			}
-			else if (lam.BlockBody is not null)
-			{
-				EmitBlock(lam.BlockBody);
-				if (_builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
-					_builder.BuildRetVoid();
-			}
-			else
-			{
-				_builder.BuildRetVoid();
-			}
-		});
-
-		var ctxValue = envAlloc is { } env
-			? _builder.BuildPointerCast(env, i8PtrTy, "lambda_env_ptr")
-			: LLVMValueRef.CreateConstPointerNull(i8PtrTy);
-		return BuildDelegateValue(thunk, ctxValue, delegateType);
-	}
-
-	private LLVMValueRef EmitFunctionGroupConversion(ExpressionSyntax expr, FunctionSymbol fnSym)
-	{
-		var isBound = expr is MemberAccessExpressionSyntax
-			|| (fnSym.Parameters.Count > 0 && fnSym.Parameters[0].Name == "this");
-		var i8PtrTy = LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0);
-
-		LLVMValueRef? receiverStorage = null;
-		TypeSymbol? receiverType = null;
-		if (expr is MemberAccessExpressionSyntax ma)
-		{
-			if (TryResolveReceiverPointer(GetIdentifierName(ma.Expression) ?? "", out var rPtr, out var rTy))
-			{
-				receiverStorage = rPtr;
-				receiverType = rTy;
-			}
-		}
-		else if (isBound && _function.Locals.TryGetValue("this", out var thisPtr))
-		{
-			receiverStorage = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), thisPtr, "loaded_this_ptr");
-			receiverType = (_function.VariableTypes["this"] as PointerTypeSymbol)?.ReferencedType;
-		}
-
-		var start = isBound ? 1 : 0;
-		var visibleParams = new List<(string Name, TypeSymbol Type)>();
-		for (var i = start; i < fnSym.Parameters.Count; i++)
-			visibleParams.Add((fnSym.Parameters[i].Name, fnSym.Parameters[i].Type));
-
-		var thunkName = $"$group.{++_delegateFunctionCounter}";
-		var thunk = CreateDelegateThunk(thunkName, fnSym.ReturnType, visibleParams, ctxParam =>
-		{
-			var cargs = new List<LLVMValueRef>();
-			if (isBound)
-			{
-				LLVMValueRef receiverArg = ctxParam;
-				if (receiverType is PointerTypeSymbol)
-					receiverArg = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), ctxParam, "recv_load");
-				cargs.Add(receiverArg);
-			}
-			for (var i = start; i < fnSym.Parameters.Count; i++)
-			{
-				var pLocal = _function.Locals[visibleParams[i - start].Name];
-				cargs.Add(_builder.BuildLoad2(GetLLVMType(fnSym.Parameters[i].Type), pLocal, "group_arg"));
-			}
-
-			var instName = fnSym.ReturnType.Equals(TypeSymbol.Void) ? "" : "group_call";
-			var callVal = _builder.BuildCall2(_functionTypes[fnSym.Name], _globals[fnSym.Name], cargs.ToArray(), instName);
-			if (fnSym.ReturnType.Equals(TypeSymbol.Void))
-				_builder.BuildRetVoid();
-			else
-				_builder.BuildRet(callVal);
-		});
-
-		var ctxValue = receiverStorage is { } rs
-			? _builder.BuildPointerCast(rs, i8PtrTy, "receiver_ctx")
-			: LLVMValueRef.CreateConstPointerNull(i8PtrTy);
-		return BuildDelegateValue(thunk, ctxValue, BuildGroupDelegateType(fnSym, isBound));
-	}
-
-	private static string? GetIdentifierName(ExpressionSyntax expr)
-	{
-		return expr switch
-		{
-			IdentifierExpressionSyntax id => id.Name,
-			MemberAccessExpressionSyntax ma => GetIdentifierName(ma.Expression),
-			_ => null,
-		};
-	}
-
 
 	private LLVMValueRef EmitBinaryExpression(BinaryExpressionSyntax bin)
 	{
@@ -3557,7 +3247,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		if (expr is LambdaExpressionSyntax lamTy && _bindingContext!.ResolvedLambdas.TryGetValue(lamTy, out var lamTyInfo))
 			return lamTyInfo.Delegate;
 		if (_bindingContext!.ResolvedFunctionConversions.TryGetValue(expr, out var convFnTy))
-			return BuildGroupDelegateType(convFnTy, expr is MemberAccessExpressionSyntax);
+			return _delegates.BuildGroupDelegateType(convFnTy, expr is MemberAccessExpressionSyntax);
 
 		return expr switch
 		{

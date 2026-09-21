@@ -79,16 +79,7 @@ internal sealed class CallEmitter(
 			&& nameFunc.Name.StartsWith("$Name$", StringComparison.Ordinal))
 		{
 			var receiverName = call.FunctionName[..call.FunctionName.IndexOf('.')];
-			var receiverType = Function.VariableTypes[receiverName];
-			var enumType = receiverType is PointerTypeSymbol namePtr
-				? namePtr.ReferencedType as EnumTypeSymbol
-				: receiverType as EnumTypeSymbol;
-
-			if (enumType is not null)
-			{
-				throw new InvalidOperationException($"Name() requires an enum receiver but found '{receiverName}'.");
-			}
-
+			var enumType = GetBoundEnumReceiverType(nameFunc) ?? throw new InvalidOperationException($"Name() requires an enum receiver but found '{receiverName}'.");
 			var receiverValue = load(receiverName);
 			var storageTy = codegen.Types.Lower(enumType);
 			var nameResult = Builder.BuildGlobalStringPtr("(unknown)", $"enum_name_{enumType.Name}_unknown");
@@ -663,6 +654,24 @@ internal sealed class CallEmitter(
 		codegen.Globals[fullIntrinsicName] = func;
 		codegen.FunctionTypes[fullIntrinsicName] = funcType;
 		return func;
+	}
+
+	/// <summary>
+	/// Returns the enum type carried by a binder-synthesized instance-call receiver parameter.
+	/// Synthetic enum methods bind their <c>this</c> parameter as a pointer to the exact
+	/// <see cref="EnumTypeSymbol"/>, which is more authoritative than reconstructing the type from
+	/// the function-local storage table during LLVM emission.
+	/// </summary>
+	private static EnumTypeSymbol? GetBoundEnumReceiverType(FunctionSymbol function)
+	{
+		if (function.Parameters.Count == 0)
+			return null;
+
+		var receiverType = function.Parameters[0].Type;
+		if (receiverType is PointerTypeSymbol pointerType)
+			receiverType = pointerType.ReferencedType;
+
+		return receiverType as EnumTypeSymbol;
 	}
 
 	private static int GetFieldIndex(StructTypeSymbol type, string name)
