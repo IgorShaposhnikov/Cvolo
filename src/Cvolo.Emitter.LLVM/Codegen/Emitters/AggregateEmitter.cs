@@ -25,9 +25,14 @@ namespace Cvolo.Emitter.LLVM.Codegen.Emitters;
 /// Creates an aggregate emitter backed by the module-lifetime code generation context.
 /// </remarks>
 /// <param name="codegen">Shared LLVM and semantic state for the current module emission.</param>
+/// <param name="memory">Low-level memory emitter used for zeroing and target store-size queries.</param>
 /// <param name="emitExpression">Existing expression emitter used for scalar and nested values.</param>
 /// <param name="getExpressionType">Existing semantic expression-type resolver used by array inference.</param>
-internal sealed class AggregateEmitter(CodegenContext codegen, Func<ExpressionSyntax, LLVMValueRef> emitExpression, Func<ExpressionSyntax, TypeSymbol> getExpressionType)
+internal sealed class AggregateEmitter(
+	CodegenContext codegen,
+	MemoryEmitter memory,
+	Func<ExpressionSyntax, LLVMValueRef> emitExpression,
+	Func<ExpressionSyntax, TypeSymbol> getExpressionType)
 {
 	private LLVMBuilderRef Builder => codegen.Builder;
 	private BindingContext BindingContext => codegen.BindingContext ?? throw new InvalidOperationException("Aggregate emission requires an active binding context.");
@@ -343,7 +348,7 @@ internal sealed class AggregateEmitter(CodegenContext codegen, Func<ExpressionSy
 
 		if (TypeIsZeroInitSafe(elementType))
 		{
-			EmitMemset(destPtr, GetLLVMStoreSize(codegen.Types.Lower(arrayType)));
+			memory.ZeroMemory(destPtr, memory.GetStoreSize(codegen.Types.Lower(arrayType)));
 			return;
 		}
 
@@ -371,7 +376,7 @@ internal sealed class AggregateEmitter(CodegenContext codegen, Func<ExpressionSy
 				continue;
 			}
 
-			EmitMemset(elementPtr, GetLLVMStoreSize(codegen.Types.Lower(elementType)));
+			memory.ZeroMemory(elementPtr, memory.GetStoreSize(codegen.Types.Lower(elementType)));
 		}
 	}
 
@@ -399,37 +404,6 @@ internal sealed class AggregateEmitter(CodegenContext codegen, Func<ExpressionSy
 		}
 
 		return true;
-	}
-
-	/// <summary>
-	/// Emits the existing runtime memset call used by aggregate zero initialization.
-	/// </summary>
-	private void EmitMemset(LLVMValueRef destPtr, long byteCount)
-	{
-		if (byteCount <= 0)
-			return;
-
-		var memsetFunc = codegen.Globals["memset"];
-		var memsetType = codegen.FunctionTypes["memset"];
-		var destCasted = Builder.BuildBitCast(
-			destPtr,
-			LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0),
-			"zero_dest");
-		Builder.BuildCall2(memsetType, memsetFunc, new LLVMValueRef[]
-		{
-			destCasted,
-			LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
-			LLVMValueRef.CreateConstInt(LLVMTypeRef.Int64, (ulong)byteCount)
-		}, "");
-	}
-
-	/// <summary>
-	/// Reads the LLVM store size, including ABI padding, from the module's existing data layout.
-	/// </summary>
-	private long GetLLVMStoreSize(LLVMTypeRef type)
-	{
-		var targetData = LLVMTargetDataRef.FromStringRepresentation(codegen.Module.DataLayout);
-		return (long)targetData.StoreSizeOfType(type);
 	}
 
 	private static int GetFieldIndex(StructTypeSymbol type, string name)

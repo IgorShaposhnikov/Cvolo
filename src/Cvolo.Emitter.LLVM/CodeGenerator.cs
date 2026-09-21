@@ -21,6 +21,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 {
 	private readonly CodegenContext _codegen;
 	private readonly CleanupEmitter _cleanup;
+	private readonly MemoryEmitter _memory;
 	private readonly AggregateEmitter _aggregates;
 	private readonly CallEmitter _calls;
 	private readonly DelegateEmitter _delegates;
@@ -77,7 +78,8 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		targetLayout.Apply(module, LLVMTargetRef.DefaultTriple);
 		_codegen = new CodegenContext(llvmContext, module, builder, targetLayout);
 		_cleanup = new CleanupEmitter(_codegen);
-		_aggregates = new AggregateEmitter(_codegen, EmitExpression, GetExprType);
+		_memory = new MemoryEmitter(_codegen);
+		_aggregates = new AggregateEmitter(_codegen, _memory, EmitExpression, GetExprType);
 		_delegates = new DelegateEmitter(
 			_codegen,
 			() => _function,
@@ -2587,7 +2589,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			if (varDecl.Initializer is CallExpressionSyntax ctorCall && IsConstructorCall(ctorCall, valTy))
 			{
 				var llvmType = GetLLVMType(valTy);
-				var alloca = BuildEntryAlloca(llvmType, varDecl.Name);
+				var alloca = _memory.BuildEntryAlloca(llvmType, varDecl.Name);
 				_function.Locals[varDecl.Name] = alloca;
 
 				// Panic-safe zero-ing for Unions initialized via Type Inference
@@ -2618,7 +2620,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 					// Value-returning aggregates (e.g. typeof -> const System.Type value):
 					// materialize into private storage; field access must GEP off a pointer.
 					var llvmType = GetLLVMType(valTy);
-					var alloca = BuildEntryAlloca(llvmType, varDecl.Name);
+					var alloca = _memory.BuildEntryAlloca(llvmType, varDecl.Name);
 					_function.Locals[varDecl.Name] = alloca;
 					_builder.BuildStore(val, alloca);
 				}
@@ -2627,7 +2629,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			{
 				var val = EmitExpression(varDecl.Initializer!);
 				var llvmType = GetLLVMType(valTy);
-				var alloca = BuildEntryAlloca(llvmType, varDecl.Name);
+				var alloca = _memory.BuildEntryAlloca(llvmType, varDecl.Name);
 				_function.Locals[varDecl.Name] = alloca;
 				_builder.BuildStore(val, alloca);
 			}
@@ -2762,11 +2764,11 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	{
 		var (collectionAlloca, _, _, _) = GetFieldPointer(fe.Collection);
 
-		var counterAlloca = BuildEntryAlloca(LLVMTypeRef.Int32, "__fe_i");
+		var counterAlloca = _memory.BuildEntryAlloca(LLVMTypeRef.Int32, "__fe_i");
 		_builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0), counterAlloca);
 
 		var itemSlotTy = fe.IsReferenceBinding ? LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0) : GetLLVMType(itemType);
-		var itemAlloca = BuildEntryAlloca(itemSlotTy, fe.ItemName);
+		var itemAlloca = _memory.BuildEntryAlloca(itemSlotTy, fe.ItemName);
 		_function.Locals[fe.ItemName] = itemAlloca;
 		_function.VariableTypes[fe.ItemName] = fe.IsReferenceBinding ? new PointerTypeSymbol(itemType, isMutable: fe.BindingKind == ForEachVariableKind.RefVar) : itemType;
 
@@ -2832,11 +2834,11 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		}, "__fe_len_field");
 		var length = _builder.BuildLoad2(LLVMTypeRef.Int32, lenPtrField, "__fe_len");
 
-		var counterAlloca = BuildEntryAlloca(LLVMTypeRef.Int32, "__fe_i");
+		var counterAlloca = _memory.BuildEntryAlloca(LLVMTypeRef.Int32, "__fe_i");
 		_builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0), counterAlloca);
 
 		var itemSlotTy = fe.IsReferenceBinding ? LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0) : GetLLVMType(itemType);
-		var itemAlloca = BuildEntryAlloca(itemSlotTy, fe.ItemName);
+		var itemAlloca = _memory.BuildEntryAlloca(itemSlotTy, fe.ItemName);
 		_function.Locals[fe.ItemName] = itemAlloca;
 		_function.VariableTypes[fe.ItemName] = fe.IsReferenceBinding ? new PointerTypeSymbol(itemType, isMutable: fe.BindingKind == ForEachVariableKind.RefVar) : itemType;
 
@@ -2914,11 +2916,11 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		var receiverType = LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0);
 		var getEnumeratorResult = _builder.BuildCall2(getEnumeratorFuncType, getEnumeratorCallee, new LLVMValueRef[] { collectionAlloca }, "__fe_enum");
 
-		var enumeratorAlloca = BuildEntryAlloca(enumeratorLlvmType, "__fe_enumerator");
+		var enumeratorAlloca = _memory.BuildEntryAlloca(enumeratorLlvmType, "__fe_enumerator");
 		_builder.BuildStore(getEnumeratorResult, enumeratorAlloca);
 
 		var itemSlotTy = fe.IsReferenceBinding ? LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0) : GetLLVMType(itemType);
-		var itemAlloca = BuildEntryAlloca(itemSlotTy, fe.ItemName);
+		var itemAlloca = _memory.BuildEntryAlloca(itemSlotTy, fe.ItemName);
 		_function.Locals[fe.ItemName] = itemAlloca;
 		_function.VariableTypes[fe.ItemName] = fe.IsReferenceBinding ? new PointerTypeSymbol(itemType, isMutable: fe.BindingKind == ForEachVariableKind.RefVar) : itemType;
 
@@ -4168,15 +4170,8 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			throw new InvalidOperationException($"Unsupported heap allocation target '{expr.Expression.Kind}'.");
 		}
 
-		// Size the allocation from the real LLVM store size (handles alignment padding),
-		// not a heuristic field count.
-		var structSize = LLVMValueRef.CreateConstInt(
-			LLVMTypeRef.Int64,
-			(ulong)Math.Max(1, GetLLVMStoreSize(GetLLVMType(typeSymbol))));
-
-		var mallocFunc = _globals["malloc"];
-		var mallocType = _functionTypes["malloc"];
-		var rawPtr = _builder.BuildCall2(mallocType, mallocFunc, new LLVMValueRef[] { structSize }, "heap_alloc");
+		// Allocate using the real LLVM store size, including target padding.
+		var rawPtr = _memory.AllocateHeap(GetLLVMType(typeSymbol));
 
 		if (expr.Expression is StructInitializationExpressionSyntax litInit)
 		{
@@ -4190,14 +4185,6 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		}
 
 		return rawPtr;
-	}
-
-	// The real storage size of an LLVM type (including alignment padding), from the module
-	// data layout. GetByteSize reflects the semantic size and can under-report padded structs.
-	private long GetLLVMStoreSize(LLVMTypeRef type)
-	{
-		var targetData = LLVMTargetDataRef.FromStringRepresentation(_module.DataLayout);
-		return (long)targetData.StoreSizeOfType(type);
 	}
 
 	private LLVMValueRef CoerceArrayToSlice(LLVMValueRef arrayPtr, TypeSymbol argTy, SliceTypeSymbol sliceTy)
@@ -4235,24 +4222,11 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		var elementType = _bindingContext!.ResolveType(expr.ElementTypeName);
 		var elementLlvmType = GetLLVMType(elementType!);
 
-		// 1. Evaluate the dynamic count requested by the user
+		// Evaluate the dynamic count, then delegate raw storage sizing/allocation to MemoryEmitter.
 		var countVal = EmitExpression(expr.CountExpression);
-		var count64 = _builder.BuildZExt(countVal, LLVMTypeRef.Int64, "count_64");
+		var rawPtr = _memory.AllocateHeapArray(elementLlvmType, countVal);
 
-		// 2. Calculate runtime size (count * sizeof(T))
-		// We use a GEP trick to get the exact size of the element type from LLVM safely
-		var nullPtr = LLVMValueRef.CreateConstPointerNull(LLVMTypeRef.CreatePointer(elementLlvmType, 0));
-		var sizePtr = _builder.BuildGEP2(elementLlvmType, nullPtr, new LLVMValueRef[] { LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1) }, "size_ptr");
-		var elementSize64 = _builder.BuildPtrToInt(sizePtr, LLVMTypeRef.Int64, "element_size");
-
-		var totalSize = _builder.BuildMul(count64, elementSize64, "total_alloc_size");
-
-		// 3. Call malloc
-		var mallocFunc = _globals["malloc"];
-		var mallocType = _functionTypes["malloc"];
-		var rawPtr = _builder.BuildCall2(mallocType, mallocFunc, new LLVMValueRef[] { totalSize }, "heap_arr_alloc");
-
-		// 4. Assemble the Slice Fat Pointer { ptr, i32 }
+		// Assemble the Slice Fat Pointer { ptr, i32 }.
 		var sliceType = new SliceTypeSymbol(elementType!);
 		var sliceLayout = GetLLVMType(sliceType);
 		var sliceAlloc = _builder.BuildAlloca(sliceLayout, "slice_tmp");
@@ -4586,28 +4560,4 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		return _builder.BuildBitCast(value, targetType, name);
 	}
 
-	/// <summary>
-	/// Emits an alloca instruction in the entry block of the current function.
-	/// Placing allocas in the entry block is required for LLVM mem2reg / SROA optimizations.
-	/// </summary>
-	private LLVMValueRef BuildEntryAlloca(LLVMTypeRef type, string name)
-	{
-		var currentBlock = _builder.InsertBlock;
-		var currentFunc = currentBlock.Parent;
-		var entryBlock = currentFunc.EntryBasicBlock;
-
-		// Move builder to the top of the function (before the first instruction)
-		if (entryBlock.FirstInstruction.Handle != IntPtr.Zero)
-			_builder.PositionBefore(entryBlock.FirstInstruction);
-		else
-			_builder.PositionAtEnd(entryBlock);
-
-		// Allocate memory
-		var alloca = _builder.BuildAlloca(type, name);
-
-		// Restore builder to where it was
-		_builder.PositionAtEnd(currentBlock);
-
-		return alloca;
-	}
 }
