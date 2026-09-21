@@ -1,14 +1,15 @@
+using Cvolo.Analysis.Passes.Safety;
 using Cvolo.Analysis.Symbols;
 using Cvolo.Analysis.Symbols.Base;
 using Cvolo.Analysis.Symbols.Borrowing;
 using Cvolo.Analysis.Symbols.Collections;
 using Cvolo.Analysis.Symbols.Structs;
+using Cvolo.Analysis.VisibilityChecks;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
 using Cvolo.Core.AST.Expressions;
 using Cvolo.Core.AST.Statements;
 using Cvolo.Core.Diagnostics;
-using Cvolo.Analysis.VisibilityChecks;
 
 namespace Cvolo.Analysis.Passes;
 
@@ -17,12 +18,21 @@ public sealed class SafetyPass(BindingContext context)
 	private readonly List<BorrowSymbol> _activeBorrows = [];
 	private readonly Dictionary<string, (string BorrowedName, bool IsMutable, int LastUseEnd, TextSpan DeclSpan)> _activeRefs = [];
 	private readonly Dictionary<string, HashSet<string>> _parentLocks = []; // parentVar -> set of refVar names
-	private readonly Dictionary<string, HashSet<string>> _structRefTargets = []; // structVar -> set of variable names that ref fields point to
 	private readonly Stack<SafetyTier> _currentTierStack = [];
 	private readonly HashSet<string> _localRefsInUnboundScope = []; // refvar/ref variables declared inside the current unbound scope (including nested unsafe blocks)
-	private readonly Dictionary<string, string> _refVarTargets = []; // ref/refvar (and nullable-reference-option) variable -> base identifier it currently points to
-	private readonly HashSet<string> _heapVariables = []; // local variables initialized with `heap ...` (their storage outlives the function — heap-relative provenance)
 	private ClassificationAnalyzer? _classification;
+	private ReferenceLifetimeAnalyzer? _referenceLifetimes;
+
+	/// <summary>
+	/// Lazily creates the reference-lifetime service while keeping borrow-lock and safety-tier
+	/// ownership in this pass. The callbacks preserve the existing expression/type semantics.
+	/// </summary>
+	private ReferenceLifetimeAnalyzer ReferenceLifetimes => _referenceLifetimes ??= new ReferenceLifetimeAnalyzer(
+		context,
+		ResolveExpressionType,
+		GetBaseIdentifierName,
+		name => _parentLocks.ContainsKey(name),
+		() => CurrentTier);
 
 	// — Safe Delegates & Borrowed Closures pass state (todo 7) —
 	/// <summary>The function whose body is currently being walked (used for lambda block bodies).</summary>
@@ -135,10 +145,8 @@ public sealed class SafetyPass(BindingContext context)
 		_activeBorrows.Clear();
 		_activeRefs.Clear();
 		_parentLocks.Clear();
-		_structRefTargets.Clear();
+		ReferenceLifetimes.Reset();
 		_localRefsInUnboundScope.Clear();
-		_refVarTargets.Clear();
-		_heapVariables.Clear();
 		_delegateProvenances.Clear();
 		_delegateParams.Clear();
 		_refCapturedVars.Clear();
@@ -205,8 +213,7 @@ public sealed class SafetyPass(BindingContext context)
 		{
 			_activeRefs.Remove(name);
 			ReleaseParentLock(name);
-			_structRefTargets.Remove(name);
-			_refVarTargets.Remove(name);
+			ReferenceLifetimes.RemoveVariable(name);
 		}
 	}
 
@@ -322,16 +329,12 @@ public sealed class SafetyPass(BindingContext context)
 						// Heap-relative provenance: variables initialized with `heap ...` own
 						// heap-allocated storage that deliberately outlives the function.
 						if (v.Initializer is HeapAllocationExpressionSyntax)
-							_heapVariables.Add(v.Name);
+							ReferenceLifetimes.MarkHeapVariable(v.Name);
 
 						// Track what ref/refvar and nullable-reference-option variables point to,
 						// so return-time provenance can resolve through reference chains.
 						if (sym.Type is PointerTypeSymbol || (sym.Type is UnionTypeSymbol optU && optU.IsOption && optU.IsNpoEligible))
-						{
-							var targetBase = TryGetPayloadBase(v.Initializer, scope);
-							if (targetBase != null)
-								_refVarTargets[v.Name] = targetBase;
-						}
+							ReferenceLifetimes.TrackReferenceTarget(v.Name, v.Initializer, scope, clearWhenMissing: false);
 
 						// Track refvar/ref declarations inside unbound scope for CVL1008
 						// Uses stack check (not CurrentTier) so nested unsafe blocks inside unbound are still tracked
@@ -340,7 +343,7 @@ public sealed class SafetyPass(BindingContext context)
 
 						// Track ref field targets for struct variables (§3C)
 						if (v.Type is not "ref" and not "refvar" && sym.Type is StructTypeSymbol)
-							TrackStructRefTargets(v.Name, v.Initializer, scope);
+							ReferenceLifetimes.TrackStructRefTargets(v.Name, v.Initializer, scope);
 
 						// Track delegate provenance so escape rules can be enforced later (§13)
 						if (sym.Type is DelegateTypeSymbol && v.Initializer != null)
@@ -367,7 +370,7 @@ public sealed class SafetyPass(BindingContext context)
 				if (r.Expression != null) CheckExpressionSafety(r.Expression, scope);
 				if (r.Expression != null && IsDelegateValueExpr(r.Expression, scope))
 					CheckDelegateEscape(r.Expression, scope, r.Expression.Span, isReturn: true);
-				VerifyReturnLifetime(r, func, scope);
+				ReferenceLifetimes.VerifyReturnLifetime(r, func, scope);
 				break;
 
 			case ExpressionStatementSyntax e:
@@ -595,54 +598,54 @@ public sealed class SafetyPass(BindingContext context)
 				break;
 
 			case LambdaExpressionSyntax lam:
-                // §8.7 capture sources are outer locals + by-value parameters only; borrowed-ref
-                // lexical bindings are never capture sources (§8.8). Compute the set from the
-                // enclosing scope: any identifier in the body resolving to a non-global variable.
-                var capturedNames = ComputeCapturedNames(lam, scope);
+				// §8.7 capture sources are outer locals + by-value parameters only; borrowed-ref
+				// lexical bindings are never capture sources (§8.8). Compute the set from the
+				// enclosing scope: any identifier in the body resolving to a non-global variable.
+				var capturedNames = ComputeCapturedNames(lam, scope);
 
-                // Capture-policy validation (§8.2/8.3/8.5/8.7/8.9)
-                foreach (var name in capturedNames)
-                {
-                    if (scope.Lookup(name) is not VariableSymbol capturedSym) continue;
+				// Capture-policy validation (§8.2/8.3/8.5/8.7/8.9)
+				foreach (var name in capturedNames)
+				{
+					if (scope.Lookup(name) is not VariableSymbol capturedSym) continue;
 
-                    if (capturedSym.Type is PointerTypeSymbol)
-                    {
-                        // §8.8 borrowed-ref lexical bindings are never capture sources in any mode.
-                        context.Diagnostics.Report(context.CurrentUnit!.Context, lam.Span,
-                            $"Cannot capture reference binding '{name}' in a lambda; capture sources must be by-value locals and parameters.",
-                            DiagnosticIds.RefBindingCaptureUnsupported);
-                    }
-                    else if (DelegateTypeHelpers.ContainsMutableBorrowCapability(capturedSym.Type))
-                    {
-                        // §8.9 the captured value carries a mutable-borrow capability.
-                        context.Diagnostics.Report(context.CurrentUnit!.Context, lam.Span,
-                            $"Cannot capture '{name}' of type '{capturedSym.Type.Name}': the type carries a mutable-borrow capability (refvar/slice/aggregate) which may not be captured.",
-                            DiagnosticIds.MutableBorrowCapabilityCapture);
-                    }
-                    else if (lam.CaptureMode == LambdaCaptureMode.Default
-                             && Classification.Classify(capturedSym.Type) == CopyKind.ResourceMove)
-                    {
-                        // §8.2 default mode copies a snapshot; move-only values cannot be copied.
-                        context.Diagnostics.Report(context.CurrentUnit!.Context, lam.Span,
-                            $"Cannot capture '{name}' in default mode: '{capturedSym.Type.Name}' is move-only and cannot be copied; use 'move' or 'ref' capture.",
-                            DiagnosticIds.DefaultModeCaptureOfMoveOnly);
-                    }
+					if (capturedSym.Type is PointerTypeSymbol)
+					{
+						// §8.8 borrowed-ref lexical bindings are never capture sources in any mode.
+						context.Diagnostics.Report(context.CurrentUnit!.Context, lam.Span,
+							$"Cannot capture reference binding '{name}' in a lambda; capture sources must be by-value locals and parameters.",
+							DiagnosticIds.RefBindingCaptureUnsupported);
+					}
+					else if (DelegateTypeHelpers.ContainsMutableBorrowCapability(capturedSym.Type))
+					{
+						// §8.9 the captured value carries a mutable-borrow capability.
+						context.Diagnostics.Report(context.CurrentUnit!.Context, lam.Span,
+							$"Cannot capture '{name}' of type '{capturedSym.Type.Name}': the type carries a mutable-borrow capability (refvar/slice/aggregate) which may not be captured.",
+							DiagnosticIds.MutableBorrowCapabilityCapture);
+					}
+					else if (lam.CaptureMode == LambdaCaptureMode.Default
+							 && Classification.Classify(capturedSym.Type) == CopyKind.ResourceMove)
+					{
+						// §8.2 default mode copies a snapshot; move-only values cannot be copied.
+						context.Diagnostics.Report(context.CurrentUnit!.Context, lam.Span,
+							$"Cannot capture '{name}' in default mode: '{capturedSym.Type.Name}' is move-only and cannot be copied; use 'move' or 'ref' capture.",
+							DiagnosticIds.DefaultModeCaptureOfMoveOnly);
+					}
 
-                    if (lam.CaptureMode == LambdaCaptureMode.Move
-                        && Classification.Classify(capturedSym.Type) == CopyKind.ResourceMove)
-                    {
-                        // §8.3 'move' capture moves the move-only source: it becomes unavailable.
-                        capturedSym.IsMoved = true;
-                    }
+					if (lam.CaptureMode == LambdaCaptureMode.Move
+						&& Classification.Classify(capturedSym.Type) == CopyKind.ResourceMove)
+					{
+						// §8.3 'move' capture moves the move-only source: it becomes unavailable.
+						capturedSym.IsMoved = true;
+					}
 
-                    if (lam.CaptureMode == LambdaCaptureMode.Ref)
-                    {
-                        // §8.6 active immutable-borrow lock while the lambda may be invoked:
-                        // mutation, move, and incompatible mutable borrows of the captured
-                        // variable are blocked while the borrow is live.
-                        RegisterRefCaptureLock(name, lam.Span);
-                    }
-                }
+					if (lam.CaptureMode == LambdaCaptureMode.Ref)
+					{
+						// §8.6 active immutable-borrow lock while the lambda may be invoked:
+						// mutation, move, and incompatible mutable borrows of the captured
+						// variable are blocked while the borrow is live.
+						RegisterRefCaptureLock(name, lam.Span);
+					}
+				}
 
 				// Lambda bodies are validated as safe-callable bodies regardless of the
 				// enclosing tier (§21.3). Check the body inside a child scope holding the
@@ -713,7 +716,7 @@ public sealed class SafetyPass(BindingContext context)
 				{
 					var leftSymbol = scope.Lookup(leftId.Name) as VariableSymbol
 						?? context.ResolveGlobalReference(leftId.Name, out _);
-if (leftSymbol is not null)
+					if (leftSymbol is not null)
 					{
 						VerifyBorrowLock(bin.Left, scope, "reassign");
 						leftSymbol.IsMoved = false;
@@ -728,17 +731,11 @@ if (leftSymbol is not null)
 
 						// Track ref field targets for struct reassignment (§3C)
 						if (leftSymbol.Type is StructTypeSymbol)
-							TrackStructRefTargets(leftId.Name, bin.Right, scope);
+							ReferenceLifetimes.TrackStructRefTargets(leftId.Name, bin.Right, scope);
 
 						// Track ref/refvar and nullable-reference-option reassignment for return-time provenance
 						if (leftSymbol.Type is PointerTypeSymbol || (leftSymbol.Type is UnionTypeSymbol optU && optU.IsOption && optU.IsNpoEligible))
-						{
-							var targetBase = TryGetPayloadBase(bin.Right, scope);
-							if (targetBase != null)
-								_refVarTargets[leftId.Name] = targetBase;
-							else
-								_refVarTargets.Remove(leftId.Name);
-						}
+							ReferenceLifetimes.TrackReferenceTarget(leftId.Name, bin.Right, scope, clearWhenMissing: true);
 
 						// Propagate origin on ref/refvar reassignment
 						if (leftSymbol.Type is PointerTypeSymbol)
@@ -1105,302 +1102,6 @@ if (leftSymbol is not null)
 				_activeBorrows.Add(new BorrowSymbol(varDecl.Name, borrowedName, isMutable, varDecl.Span));
 				_activeRefs[varDecl.Name] = (borrowedName, isMutable, varDecl.Span.End, varDecl.Span);
 				RegisterParentLock(borrowedName, varDecl.Name);
-			}
-		}
-	}
-
-	private void VerifyReturnLifetime(ReturnStatementSyntax ret, FunctionDeclarationSyntax func, SymbolTable scope)
-	{
-		if (ret.Expression == null) return;
-
-		// Lifetime checks are disabled in unsafe tier
-		if (CurrentTier == SafetyTier.Unsafe)
-			return;
-
-		// Case 1: return ref expr; — BorrowExpressionSyntax wrapping an identifier
-		if (ret.Expression is BorrowExpressionSyntax borrow && borrow.Expression is IdentifierExpressionSyntax bid)
-		{
-			if (IsDanglingTarget(bid.Name, scope))
-			{
-				context.Diagnostics.Report(context.CurrentUnit!.Context, ret.Expression.Span, $"Cannot return reference to local variable '{bid.Name}' (dangling reference)");
-			}
-			return;
-		}
-
-		// Case 2: return r; where r is a ref/refvar variable (PointerTypeSymbol)
-		if (ret.Expression is IdentifierExpressionSyntax id)
-		{
-			if (scope.Lookup(id.Name) is VariableSymbol idSym && idSym.Type is PointerTypeSymbol && IsDanglingTarget(id.Name, scope))
-			{
-				context.Diagnostics.Report(context.CurrentUnit!.Context, ret.Expression.Span, $"Cannot return reference to local variable '{id.Name}' (dangling reference)");
-			}
-
-			// Case 3: return by value of a variable whose fields are currently borrowed
-			if (_parentLocks.ContainsKey(id.Name))
-			{
-				context.Diagnostics.Report(context.CurrentUnit!.Context, ret.Expression.Span,
-					$"Cannot return '{id.Name}' by value while a field borrow is still active");
-			}
-
-			// Case 4: return by value of a struct whose ref fields point to locals (§3C)
-			if (scope.Lookup(id.Name) is VariableSymbol retSym && retSym.Type is StructTypeSymbol retStruct)
-			{
-				VerifyStructByValueReturn(retStruct, id.Name, ret.Expression.Span, scope);
-			}
-
-			return;
-		}
-
-		// Case 5: return a pointer-bearing value constructed inline (struct literal, non-nullable
-		// reference option literal, or a reference-field member access). Every reachable reference
-		// payload must ultimately point at heap, global, or parameter storage; a non-heap stack local
-		// would dangle once the caller takes ownership of the returned graph (heap-relative provenance).
-		if (ResolveExpressionType(ret.Expression, scope) is { } returnType && TypeTransitivelyHasRefs(returnType))
-			VerifyHeapRelativeReturn(ret.Expression, returnType, ret.Expression.Span, scope);
-	}
-
-	/// <summary>
-	/// Verify that a struct being returned by value doesn't have ref fields pointing to local-origin variables (§3C).
-	/// Uses cycle detection to handle self-referential structs.
-	/// </summary>
-	private void VerifyStructByValueReturn(StructTypeSymbol structType, string varName, TextSpan span, SymbolTable scope)
-	{
-		VerifyStructByValueReturnCore(structType, varName, span, [], scope);
-	}
-
-	private void VerifyStructByValueReturnCore(StructTypeSymbol structType, string varName, TextSpan span, HashSet<string> visited, SymbolTable scope)
-	{
-		if (!visited.Add(structType.Name))
-			return; // cycle-cut: already visited this type, stop recursion
-
-		foreach (var field in structType.Fields)
-		{
-			if (field.IsCycleCut) continue;
-
-			if (field.Type is PointerTypeSymbol ptr && ptr.ReferencedType is StructTypeSymbol innerStruct)
-			{
-				// Ref field pointing to a struct: recurse into that struct's fields
-				if (_structRefTargets.TryGetValue(varName, out var targets))
-				{
-					foreach (var target in targets)
-					{
-						if (IsDanglingTarget(target, scope))
-						{
-							context.Diagnostics.Report(context.CurrentUnit!.Context, span,
-								$"Cannot return '{varName}' by value: reference field '{field.Name}' targets local variable '{target}' (dangling reference)");
-							return;
-						}
-					}
-				}
-
-				VerifyStructByValueReturnCore(innerStruct, varName, span, visited, scope);
-			}
-			else if (field.Type is PointerTypeSymbol ptrScalar && ptrScalar.ReferencedType is not StructTypeSymbol)
-			{
-				// Ref field pointing to a scalar: check tracked targets
-				if (_structRefTargets.TryGetValue(varName, out var targets))
-				{
-					foreach (var target in targets)
-					{
-						if (IsDanglingTarget(target, scope))
-						{
-							context.Diagnostics.Report(context.CurrentUnit!.Context, span,
-								$"Cannot return '{varName}' by value: reference field '{field.Name}' targets local variable '{target}' (dangling reference)");
-							return;
-						}
-					}
-				}
-			}
-		}
-	}
-
-	/// <summary>
-	/// For a ref/refvar or nullable-reference-option initializer, return the base identifier the
-	/// reference ultimately points at (the payload expression for a reference option literal).
-	/// </summary>
-	private string? TryGetPayloadBase(ExpressionSyntax expr, SymbolTable scope)
-	{
-		if (expr is StructInitializationExpressionSyntax init && init.Initializers.Count == 1)
-		{
-			if (ResolveExpressionType(init, scope) is UnionTypeSymbol ut)
-			{
-				var variant = ut.FindField(init.Initializers[0].MemberName);
-				if (variant?.Type is PointerTypeSymbol)
-					return GetBaseIdentifierName(init.Initializers[0].Expression);
-				return null;
-			}
-		}
-
-		return GetBaseIdentifierName(expr);
-	}
-
-	/// <summary>
-	/// Resolve a variable name through reference chains to the concrete variable whose storage the
-	/// reference ultimately points at (heap-relative provenance). Cycle-safe.
-	/// </summary>
-	private string? ResolveUltimateTarget(string name, SymbolTable scope)
-	{
-		var visited = new HashSet<string>();
-		var current = name;
-		while (current != null && visited.Add(current) && _refVarTargets.TryGetValue(current, out var next))
-			current = next;
-		return current;
-	}
-
-	/// <summary>
-	/// True when a reference target points at a non-heap stack-local variable that would dangle once
-	/// ownership of the returned graph transfers to a caller. Heap allocations, globals, and parameters
-	/// all outlive the function and are therefore safe escape targets.
-	/// </summary>
-	private bool IsDanglingTarget(string targetName, SymbolTable scope)
-	{
-		var ultimate = ResolveUltimateTarget(targetName, scope) ?? targetName;
-		if (_heapVariables.Contains(ultimate)) return false;
-		if (scope.Lookup(ultimate) is not VariableSymbol symbol) return false;
-		return symbol.Origin == OriginKind.Local;
-	}
-
-	private static bool TypeTransitivelyHasRefs(TypeSymbol type)
-	{
-		return type switch
-		{
-			PointerTypeSymbol => true,
-			StructTypeSymbol st => st.Fields.Any(f => TypeTransitivelyHasRefs(f.Type)),
-			UnionTypeSymbol ut => ut.Fields.Any(f => !f.IsVoidVariant && TypeTransitivelyHasRefs(f.Type)),
-			ArrayTypeSymbol arr => TypeTransitivelyHasRefs(arr.ElementType),
-			SliceTypeSymbol sl => TypeTransitivelyHasRefs(sl.ElementType),
-			_ => false
-		};
-	}
-
-	/// <summary>
-	/// Verify a pointer-bearing value returned by value: every reachable reference payload must not
-	/// dangle. Collects the base identifiers of all reference payloads in the expression, then checks
-	/// each one against heap/global/parameter provenance.
-	/// </summary>
-	private void VerifyHeapRelativeReturn(ExpressionSyntax retExpr, TypeSymbol retType, TextSpan span, SymbolTable scope)
-	{
-		var targets = new HashSet<string>();
-		CollectPointerPayloadBases(retExpr, retType, scope, targets, []);
-
-		foreach (var target in targets)
-		{
-			if (IsDanglingTarget(target, scope))
-			{
-				context.Diagnostics.Report(context.CurrentUnit!.Context, span,
-					$"Cannot return value: reference '{target}' targets local variable '{ResolveUltimateTarget(target, scope)}' (dangling reference)");
-				return;
-			}
-		}
-	}
-
-	private void CollectPointerPayloadBases(ExpressionSyntax expr, TypeSymbol type, SymbolTable scope,
-		HashSet<string> targets, HashSet<string> visited)
-	{
-		if (type is PointerTypeSymbol)
-		{
-			var baseId = GetBaseIdentifierName(expr);
-			if (baseId != null)
-				targets.Add(baseId);
-			return;
-		}
-
-		if (expr is StructInitializationExpressionSyntax init)
-		{
-			if (type is StructTypeSymbol st)
-			{
-				if (!visited.Add("S:" + st.Name)) return;
-				foreach (var memberInit in init.Initializers)
-				{
-					var field = st.FindField(memberInit.MemberName);
-					if (field == null) continue;
-					if (field.Type is PointerTypeSymbol)
-					{
-						var baseId = GetBaseIdentifierName(memberInit.Expression);
-						if (baseId != null)
-							targets.Add(baseId);
-					}
-					else if (field.Type is StructTypeSymbol or UnionTypeSymbol)
-					{
-						CollectPointerPayloadBases(memberInit.Expression, field.Type, scope, targets, visited);
-					}
-				}
-			}
-			else if (type is UnionTypeSymbol ut && init.Initializers.Count == 1)
-			{
-				var variant = ut.FindField(init.Initializers[0].MemberName);
-				if (variant == null || variant.IsVoidVariant) return;
-				if (variant.Type is PointerTypeSymbol)
-				{
-					var baseId2 = GetBaseIdentifierName(init.Initializers[0].Expression);
-					if (baseId2 != null)
-						targets.Add(baseId2);
-				}
-				else if (variant.Type is StructTypeSymbol or UnionTypeSymbol)
-				{
-					CollectPointerPayloadBases(init.Initializers[0].Expression, variant.Type, scope, targets, visited);
-				}
-			}
-			return;
-		}
-
-		// Non-literal pointer-bearing expression (reference-field member access, graph-handle call, or
-		// a reference/option variable): fall back to the base identifier; chains resolve via _refVarTargets.
-		var baseId3 = GetBaseIdentifierName(expr);
-		if (baseId3 != null)
-			targets.Add(baseId3);
-	}
-
-	/// <summary>
-	/// When a struct variable is initialized (struct literal or function call),
-	/// scan ref fields and record what each ref field points to in _structRefTargets.
-	/// </summary>
-	private void TrackStructRefTargets(string varName, ExpressionSyntax initializer, SymbolTable scope)
-	{
-		var type = ResolveExpressionType(initializer, scope);
-		if (type is not StructTypeSymbol structType) return;
-
-		var refTargets = new HashSet<string>();
-		CollectRefTargets(structType, initializer, scope, refTargets, []);
-
-		if (refTargets.Count > 0)
-			_structRefTargets[varName] = refTargets;
-	}
-
-	private void CollectRefTargets(StructTypeSymbol structType, ExpressionSyntax expr, SymbolTable scope,
-		HashSet<string> targets, HashSet<string> visited)
-	{
-		if (!visited.Add(structType.Name)) return; // cycle-cut
-
-		if (expr is StructInitializationExpressionSyntax init)
-		{
-			foreach (var memberInit in init.Initializers)
-			{
-				var field = structType.FindField(memberInit.MemberName);
-				if (field == null || field.Type is not PointerTypeSymbol ptrType) continue;
-
-				var fieldExpr = memberInit.Expression;
-				var borrowedName = GetBaseIdentifierName(fieldExpr);
-				if (borrowedName != null)
-					targets.Add(borrowedName);
-
-				// Recurse into nested struct fields
-				if (ptrType.ReferencedType is StructTypeSymbol innerStruct && fieldExpr is StructInitializationExpressionSyntax innerInit)
-					CollectRefTargets(innerStruct, innerInit, scope, targets, visited);
-			}
-		}
-		else if (expr is CallExpressionSyntax call && context.ResolvedCalls.TryGetValue(call, out var callee))
-		{
-			// Function call returning a struct: we can't track per-field origins without interprocedural analysis.
-			// Record the function parameters as potential ref targets (conservative).
-			for (var i = 0; i < call.Arguments.Count && i < callee.Parameters.Count; i++)
-			{
-				if (callee.Parameters[i].Type is PointerTypeSymbol)
-				{
-					var argName = GetBaseIdentifierName(call.Arguments[i]);
-					if (argName != null)
-						targets.Add(argName);
-				}
 			}
 		}
 	}
