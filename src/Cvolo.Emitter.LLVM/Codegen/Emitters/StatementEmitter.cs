@@ -18,7 +18,7 @@ namespace Cvolo.Emitter.LLVM.Codegen.Emitters;
 /// conditionals, loops, foreach iteration, switch dispatch, unsafe blocks, and break/continue.
 /// </summary>
 /// <remarks>
-/// Expression and semantic-type resolution remain migration dependencies supplied by the orchestration layer.
+/// Semantic expression typing is shared through <see cref="ExpressionTypeResolver"/>.
 /// Cleanup, aggregate/address emission, call emission, memory allocation, and value coercion are
 /// delegated to their dedicated services so this class owns statement orchestration rather than
 /// duplicating those subsystems.
@@ -27,8 +27,9 @@ namespace Cvolo.Emitter.LLVM.Codegen.Emitters;
 /// Creates a statement emitter over the shared codegen services and the current function state.
 /// </remarks>
 /// <remarks>
-/// Expression/type and constructor-classification callbacks are temporary migration seams. Aggregate
-/// address resolution is owned directly by <see cref="AggregateEmitter"/>.
+/// Expression emission remains a migration callback while semantic typing and constructor
+/// classification are owned by <see cref="ExpressionTypeResolver"/>. Aggregate address resolution
+/// is owned directly by <see cref="AggregateEmitter"/>.
 /// </remarks>
 internal sealed class StatementEmitter(
 	CodegenContext codegen,
@@ -39,8 +40,7 @@ internal sealed class StatementEmitter(
 	ValueCoercion coercion,
 	Func<FunctionCodegenContext> getFunction,
 	Func<ExpressionSyntax, LLVMValueRef> emitExpression,
-	Func<ExpressionSyntax, TypeSymbol> getExpressionType,
-	Func<CallExpressionSyntax, TypeSymbol, bool> isConstructorCall,
+	ExpressionTypeResolver expressionTypes,
 	Action emitTrapDefault)
 {
 	private LLVMBuilderRef Builder => codegen.Builder;
@@ -192,7 +192,7 @@ internal sealed class StatementEmitter(
 
 			// 2. Handle Standard Returns
 			var value = emitExpression(ret.Expression);
-			var type = getExpressionType(ret.Expression);
+			var type = expressionTypes.Resolve(ret.Expression);
 
 			// Implicit Dereference: if expected return type is value but actual is a reference
 			if (type is PointerTypeSymbol retPtr && value.TypeOf.Kind == LLVMTypeKind.LLVMPointerTypeKind && expectedType is not PointerTypeSymbol)
@@ -256,7 +256,7 @@ internal sealed class StatementEmitter(
 		if (varDecl.Type == "refvar" || varDecl.Type == "ref")
 		{
 			var val = emitExpression(varDecl.Initializer!);
-			var valTy = getExpressionType(varDecl.Initializer!);
+			var valTy = expressionTypes.Resolve(varDecl.Initializer!);
 
 			var innerType = valTy is PointerTypeSymbol ptrType ? ptrType.ReferencedType : valTy;
 			var isMutable = varDecl.Type == "refvar";
@@ -274,7 +274,7 @@ internal sealed class StatementEmitter(
 		if (varDecl.Initializer is HeapAllocationExpressionSyntax heapInit)
 		{
 			var val = emitExpression(heapInit);
-			var valTy = getExpressionType(heapInit);
+			var valTy = expressionTypes.Resolve(heapInit);
 
 			var alloca = Builder.BuildAlloca(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), varDecl.Name);
 			Function.Locals[varDecl.Name] = alloca;
@@ -287,7 +287,7 @@ internal sealed class StatementEmitter(
 		else if (varDecl.Initializer is HeapArrayAllocationExpressionSyntax heapArrInit)
 		{
 			var val = emitExpression(heapArrInit);
-			var valTy = getExpressionType(heapArrInit);
+			var valTy = expressionTypes.Resolve(heapArrInit);
 
 			var alloca = Builder.BuildAlloca(codegen.Types.Lower(valTy), varDecl.Name);
 			Function.Locals[varDecl.Name] = alloca;
@@ -343,7 +343,7 @@ internal sealed class StatementEmitter(
 					return;
 				}
 
-				var valTy = getExpressionType(varDecl.Initializer);
+				var valTy = expressionTypes.Resolve(varDecl.Initializer);
 
 				if (typeSymbol is SliceTypeSymbol && valTy is ArrayTypeSymbol)
 				{
@@ -365,7 +365,7 @@ internal sealed class StatementEmitter(
 				{
 					aggregates.EmitArrayReplicationInPlace(arrRepl, alloca, (typeSymbol as ArrayTypeSymbol)!);
 				}
-				else if (varDecl.Initializer is CallExpressionSyntax ctorCall && isConstructorCall(ctorCall, typeSymbol))
+				else if (varDecl.Initializer is CallExpressionSyntax ctorCall && expressionTypes.IsConstructorCall(ctorCall, typeSymbol))
 				{
 					// 'var T v = T(args)': the constructor populates the variable's storage
 					// in place via its implicit 'this' parameter; no value store follows.
@@ -376,10 +376,10 @@ internal sealed class StatementEmitter(
 					var value = emitExpression(varDecl.Initializer);
 					var coerced = typeSymbol is not PointerTypeSymbol
 						&& (varDecl.Initializer is MemberAccessExpressionSyntax or IndexExpressionSyntax)
-						? coercion.CoerceReferenceToValue(value, getExpressionType(varDecl.Initializer!))
+						? coercion.CoerceReferenceToValue(value, expressionTypes.Resolve(varDecl.Initializer!))
 						: value;
-					coerced = coercion.CoerceIntegerWidth(coerced, getExpressionType(varDecl.Initializer!) ?? typeSymbol, typeSymbol);
-					coerced = coercion.CoerceFloatWidth(coerced, getExpressionType(varDecl.Initializer!) ?? typeSymbol, typeSymbol);
+					coerced = coercion.CoerceIntegerWidth(coerced, expressionTypes.Resolve(varDecl.Initializer!) ?? typeSymbol, typeSymbol);
+					coerced = coercion.CoerceFloatWidth(coerced, expressionTypes.Resolve(varDecl.Initializer!) ?? typeSymbol, typeSymbol);
 					Builder.BuildStore(coerced, alloca);
 				}
 			}
@@ -387,10 +387,10 @@ internal sealed class StatementEmitter(
 		else
 		{
 			// Type Inference
-			var valTy = getExpressionType(varDecl.Initializer!);
+			var valTy = expressionTypes.Resolve(varDecl.Initializer!);
 			Function.VariableTypes[varDecl.Name] = valTy;
 
-			if (varDecl.Initializer is CallExpressionSyntax ctorCall && isConstructorCall(ctorCall, valTy))
+			if (varDecl.Initializer is CallExpressionSyntax ctorCall && expressionTypes.IsConstructorCall(ctorCall, valTy))
 			{
 				var llvmType = codegen.Types.Lower(valTy);
 				var alloca = memory.BuildEntryAlloca(llvmType, varDecl.Name);
@@ -559,7 +559,7 @@ internal sealed class StatementEmitter(
 	/// </summary>
 	public void EmitForEachStatement(ForEachStatementSyntax fe)
 	{
-		var rawCollectionType = getExpressionType(fe.Collection);
+		var rawCollectionType = expressionTypes.Resolve(fe.Collection);
 		var underlyingCollectionType = rawCollectionType;
 		if (underlyingCollectionType is PointerTypeSymbol colPtr)
 		{
@@ -882,7 +882,7 @@ internal sealed class StatementEmitter(
 	/// </summary>
 	public void EmitSwitchStatement(SwitchStatementSyntax sw)
 	{
-		var switchTargetType = getExpressionType(sw.Expression);
+		var switchTargetType = expressionTypes.Resolve(sw.Expression);
 		EnumTypeSymbol? enumTarget = null;
 		if (switchTargetType is EnumTypeSymbol et)
 		{
@@ -901,8 +901,8 @@ internal sealed class StatementEmitter(
 		}
 
 		var (targetVal, unionType, _, _) = aggregates.GetFieldPointer(sw.Expression);
-		var isRefTarget = getExpressionType(sw.Expression) is PointerTypeSymbol;
-		var isMutableRef = getExpressionType(sw.Expression) is PointerTypeSymbol ptrSymbol && ptrSymbol.IsMutable; // Capture original reference mutability
+		var isRefTarget = expressionTypes.Resolve(sw.Expression) is PointerTypeSymbol;
+		var isMutableRef = expressionTypes.Resolve(sw.Expression) is PointerTypeSymbol ptrSymbol && ptrSymbol.IsMutable; // Capture original reference mutability
 
 		if (unionType is PointerTypeSymbol ptr)
 		{

@@ -1,5 +1,4 @@
 using Cvolo.Analysis;
-using Cvolo.Analysis.Symbols;
 using Cvolo.Analysis.Symbols.Base;
 using Cvolo.Analysis.Symbols.Collections;
 using Cvolo.Analysis.Symbols.Structs;
@@ -26,6 +25,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	private readonly CallEmitter _calls;
 	private readonly DelegateEmitter _delegates;
 	private readonly ValueCoercion _coercion;
+	private readonly ExpressionTypeResolver _expressionTypes;
 	private readonly StatementEmitter _statements;
 	private readonly FunctionEmitter _functions;
 	private readonly ExpressionEmitter _expressions;
@@ -36,20 +36,13 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	// not hundreds of emission call sites at once.
 	private LLVMModuleRef _module => _codegen.Module;
 	private LLVMBuilderRef _builder => _codegen.Builder;
-	private LLVMContextRef _context => _codegen.LLVMContext;
 	private LlvmTypeLowering _types => _codegen.Types;
-	private Dictionary<string, LLVMValueRef> _globals => _codegen.Globals;
-	private Dictionary<string, LLVMTypeRef> _functionTypes => _codegen.FunctionTypes;
-	private Dictionary<string, TypeSymbol> _functionReturnTypes => _codegen.FunctionReturnTypes;
-	private Dictionary<string, LLVMValueRef> _globalVariables => _codegen.GlobalVariables;
-	private Dictionary<string, TypeSymbol> _globalVariableTypes => _codegen.GlobalVariableTypes;
 	private Dictionary<string, List<string>> _globalShortNames => _codegen.GlobalShortNames;
 	private BindingContext? _bindingContext { get => _codegen.BindingContext; set => _codegen.BindingContext = value; }
 	private CompilationContext? _compilationContext { get => _codegen.CompilationContext; set => _codegen.CompilationContext = value; }
 	private CompilationUnitSyntax? _currentUnit { get => _codegen.CurrentUnit; set => _codegen.CurrentUnit = value; }
 
 	private FunctionCodegenContext _function = new();
-	private readonly Dictionary<string, StructDeclarationSyntax> _astStructs = [];
 	private (LLVMTypeRef Type, LLVMValueRef Func)? _llvmTrap;
 
 	static CodeGenerator()
@@ -73,13 +66,14 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		_cleanup = new CleanupEmitter(_codegen);
 		_memory = new MemoryEmitter(_codegen);
 		_coercion = new ValueCoercion(_codegen);
+		_expressionTypes = new ExpressionTypeResolver(_codegen, () => _function);
 		_aggregates = new AggregateEmitter(
 			_codegen,
 			_memory,
 			() => _function,
 			EmitExpression,
 			EmitStringLiteral,
-			GetExprType,
+			_expressionTypes,
 			EmitCallForAggregateAddress,
 			enableTbaa);
 		_calls = new CallEmitter(
@@ -88,7 +82,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			_aggregates,
 			() => _function,
 			EmitExpression,
-			GetExprType,
+			_expressionTypes,
 			_coercion,
 			Load,
 			_declarations.ExternDeclarations,
@@ -102,8 +96,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			_coercion,
 			() => _function,
 			EmitExpression,
-			GetExprType,
-			IsConstructorCall,
+			_expressionTypes,
 			EmitEnumSwitchTrapDefault);
 		_functions = new FunctionEmitter(
 			_codegen,
@@ -124,7 +117,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			function => _function = function,
 			EmitExpression,
 			_statements.EmitBlock,
-			GetExprType,
+			_expressionTypes,
 			_coercion,
 			Load,
 			ResolveGlobalKey);
@@ -137,7 +130,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			_delegates,
 			_coercion,
 			() => _function,
-			GetExprType,
+			_expressionTypes,
 			Load,
 			ResolveGlobalKey,
 			TypeEscapesHeap,
@@ -325,14 +318,6 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		return _module.PrintToString();
 	}
 
-	private bool ComputeOwnershipTransfer(TypeSymbol returnType)
-	{
-		if (!TypeEscapesHeap(returnType))
-			return false;
-
-		var funcName = _builder.InsertBlock.Parent.Name;
-		return _bindingContext?.Globals.Lookup(funcName) is FunctionSymbol fs && fs.SafetyTier == SafetyTier.Unbound;
-	}
 
 	/// <summary>
 	/// True if the given type (or any type it transitively contains: struct fields, union
@@ -378,16 +363,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	/// </summary>
 	private LLVMValueRef EmitStringLiteral(string value) => _expressions.EmitStringLiteral(value);
 
-	/// <summary>
-	/// Returns the semantic type of an inline-assembly expression using expression-emitter rules.
-	/// </summary>
-	private TypeSymbol GetAsmExprType(AsmExpressionSyntax asm) => _expressions.GetAsmExpressionType(asm);
 
-	/// <summary>
-	/// Tests whether a call is the constructor form for the requested target type.
-	/// </summary>
-	private bool IsConstructorCall(CallExpressionSyntax call, TypeSymbol targetType)
-		=> _expressions.IsConstructorCall(call, targetType);
 
 	private void EmitEnumSwitchTrapDefault()
 	{
@@ -495,246 +471,6 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 
 
-
-	private TypeSymbol GetExprType(ExpressionSyntax expr)
-	{
-		if (expr is BorrowExpressionSyntax bb)
-		{
-			var res = new PointerTypeSymbol(GetExprType(bb.Expression), bb.IsMutable);
-			return res;
-		}
-
-		if (expr is LambdaExpressionSyntax lamTy && _bindingContext!.ResolvedLambdas.TryGetValue(lamTy, out var lamTyInfo))
-			return lamTyInfo.Delegate;
-		if (_bindingContext!.ResolvedFunctionConversions.TryGetValue(expr, out var convFnTy))
-			return _delegates.BuildGroupDelegateType(convFnTy, expr is MemberAccessExpressionSyntax);
-
-		return expr switch
-		{
-			IntegerLiteralExpressionSyntax intLit => intLit.LiteralType switch
-			{
-				"uint" => TypeSymbol.UInt,
-				"long" => TypeSymbol.Long,
-				"ulong" => TypeSymbol.ULong,
-				_ => intLit.Value <= (ulong)int.MaxValue ? TypeSymbol.Int : TypeSymbol.Long,
-			},
-			DoubleLiteralExpressionSyntax dblLit => dblLit.IsFloat ? TypeSymbol.Float : TypeSymbol.Double,
-			BooleanLiteralExpressionSyntax => TypeSymbol.Bool,
-			StringLiteralExpressionSyntax => TypeSymbol.String,
-			CharacterLiteralExpressionSyntax => TypeSymbol.Char,
-			IdentifierExpressionSyntax id => GetExprTypeIdentifier(id),
-			MemberAccessExpressionSyntax m => GetMemberAccessType(m),
-			IndexExpressionSyntax idx => GetIndexExpressionType(idx),
-			BorrowExpressionSyntax b => new PointerTypeSymbol(GetExprType(b.Expression), false),
-			StructInitializationExpressionSyntax s => _bindingContext!.ResolveType(s.StructTypeName)!,
-			UnaryExpressionSyntax u => ResolveUnaryExprType(u),
-			AsmExpressionSyntax asm => GetAsmExprType(asm),
-			NameofExpressionSyntax => TypeSymbol.String,
-			TypeofExpressionSyntax t => _bindingContext!.ResolveType("System.Type") ?? TypeSymbol.String,
-			TernaryExpressionSyntax t => GetExprType(t.ThenExpression),
-			CallExpressionSyntax call => ResolveCallReturnType(call),
-			BinaryExpressionSyntax bin => ResolveBinaryExpressionType(bin),
-			HeapAllocationExpressionSyntax h => GetExprType(h.Expression),
-			HeapArrayAllocationExpressionSyntax ha => new SliceTypeSymbol(_bindingContext!.ResolveType(ha.ElementTypeName)!),
-			ArrayInitializationExpressionSyntax a => new ArrayTypeSymbol(a.Elements.Count > 0 ? GetExprType(a.Elements[0]) : TypeSymbol.Int, a.Elements.Count),
-			_ => TypeSymbol.Int
-		};
-	}
-
-	private TypeSymbol GetExprTypeIdentifier(IdentifierExpressionSyntax id)
-	{
-		if (_function.VariableTypes.TryGetValue(id.Name, out var type))
-		{
-			// Enum 'this' in an extension body reads as the scalar enum value,
-			// not the injected receiver pointer.
-			if (type is PointerTypeSymbol ptrId && ptrId.ReferencedType is EnumTypeSymbol enumId)
-				return enumId;
-			return type;
-		}
-
-		// Unqualified enum variant access inside an enum extension body.
-		if (_function.VariableTypes.TryGetValue("this", out var thisTy)
-			&& thisTy is PointerTypeSymbol thisPtr
-			&& thisPtr.ReferencedType is EnumTypeSymbol enumSelf
-			&& enumSelf.FindVariant(id.Name) is not null)
-		{
-			return enumSelf;
-		}
-
-		// Unqualified struct field access inside a receiver/extension body
-		// (e.g. `ptr` meaning `this.ptr`). Mirror the Load() field lookup so
-		// type inference (pointer arithmetic etc.) sees the real field type.
-		if (_function.VariableTypes.TryGetValue("this", out var thisFieldTy)
-			&& thisFieldTy is PointerTypeSymbol thisFieldPtr
-			&& thisFieldPtr.ReferencedType is StructTypeSymbol thisFieldStruct
-			&& thisFieldStruct.FindField(id.Name) is { } field)
-		{
-			return field.Type;
-		}
-
-		return TypeSymbol.Int;
-	}
-
-	private TypeSymbol ResolveUnaryExprType(UnaryExpressionSyntax u)
-	{
-		if (u.Operator == "*")
-		{
-			var innerType = GetExprType(u.Operand);
-			if (innerType is RawPointerTypeSymbol rawPtr)
-				return rawPtr.ElementType;
-			return TypeSymbol.Int;
-		}
-		if (u.Operator == "&")
-			return new RawPointerTypeSymbol(GetExprType(u.Operand));
-		if (u.Operator.StartsWith("(") && u.Operator.EndsWith(")"))
-		{
-			var typeName = u.Operator.Substring(1, u.Operator.Length - 2);
-			var result = _bindingContext!.ResolveType(typeName)!;
-			if (result is EnumTypeSymbol castEnum && _function.UnsafeDepth == 0)
-			{
-				// Mirrors ValidationPass.GetUnaryExpressionType: safe-zone enum casts
-				// from integers produce Option<Enum>; unsafe code gets the raw enum.
-				var operandType = GetExprType(u.Operand);
-				if (operandType is not EnumTypeSymbol && TypeSymbol.IsIntegerType(operandType))
-					return _bindingContext.ResolveType($"Option<{castEnum.Name}>") ?? result;
-			}
-
-			return result;
-		}
-
-		return GetExprType(u.Operand);
-	}
-
-	private TypeSymbol ResolveCallReturnType(CallExpressionSyntax call)
-	{
-		if (_bindingContext!.ResolvedDelegateCalls.TryGetValue(call, out var delegCallTy))
-		{
-			return delegCallTy.ReturnType;
-		}
-
-		if (_bindingContext!.ResolvedCalls.TryGetValue(call, out var resolvedFunc))
-		{
-			return resolvedFunc.ReturnType;
-		}
-
-		var mangledName = ResolveFunctionName(call.FunctionName, _currentUnit!);
-		if (call.TypeArguments.Count > 0)
-		{
-			mangledName = $"{mangledName}<{string.Join(", ", call.TypeArguments)}>";
-		}
-
-		return _functionReturnTypes.TryGetValue(mangledName, out var type) ? type : TypeSymbol.Int;
-	}
-
-	private TypeSymbol ResolveBinaryExpressionType(BinaryExpressionSyntax bin)
-	{
-		if (bin.Operator == "+" && ExpressionEmitter.IsConstantStringTree(bin.Left) && ExpressionEmitter.IsConstantStringTree(bin.Right))
-		{
-			return TypeSymbol.String;
-		}
-
-		if (bin.Operator == "==" || bin.Operator == "!=" || bin.Operator == "<" ||
-			bin.Operator == ">" || bin.Operator == "<=" || bin.Operator == ">=")
-		{
-			return TypeSymbol.Bool;
-		}
-
-		var lTy = GetExprType(bin.Left);
-		var rTy = GetExprType(bin.Right);
-		if (lTy.Equals(TypeSymbol.Double) || rTy.Equals(TypeSymbol.Double))
-		{
-			return TypeSymbol.Double;
-		}
-
-		// Integer width promotion: mixed widths yield the wider operand's type
-		if (TypeSymbol.IsIntegerType(lTy) && TypeSymbol.IsIntegerType(rTy))
-		{
-			var lWidth = TypeSymbol.IntegerBitWidth(lTy);
-			var rWidth = TypeSymbol.IntegerBitWidth(rTy);
-			if (rWidth > lWidth) return rTy;
-		}
-
-		return lTy;
-	}
-
-	private TypeSymbol GetMemberAccessType(MemberAccessExpressionSyntax m)
-	{
-		// Enum scoped-variant access: the receiver is an enum type name, not a value.
-		// Also exposes the metaprogramming surface: Values (slice), Min/Max/Count (int).
-		if (_aggregates.TryResolveEnumVariantReceiver(m) is { } enumMetaType)
-		{
-			if (enumMetaType.FindVariant(m.MemberName) is not null)
-				return enumMetaType;
-			if (m.MemberName == "Values")
-				return new SliceTypeSymbol(enumMetaType);
-			if (m.MemberName is "Min" or "Max" or "Count")
-				return TypeSymbol.Int;
-			return enumMetaType;
-		}
-
-		var parentType = GetExprType(m.Expression);
-		if (parentType is PointerTypeSymbol ptr)
-		{
-			parentType = ptr.ReferencedType;
-		}
-
-		if (parentType is SliceTypeSymbol && m.MemberName == "Length")
-			return TypeSymbol.Int;
-
-		if (parentType is StructTypeSymbol structType)
-		{
-			var field = structType.FindField(m.MemberName);
-			if (field is not null)
-				return field.Type;
-		}
-
-		if (parentType is UnionTypeSymbol unionType)
-		{
-			var field = unionType.FindField(m.MemberName);
-			if (field is not null)
-				return field.Type;
-		}
-
-		return TypeSymbol.Int;
-	}
-
-	private TypeSymbol GetIndexExpressionType(IndexExpressionSyntax idx)
-	{
-		var parentType = GetExprType(idx.Left);
-		return parentType switch
-		{
-			ArrayTypeSymbol arrayType => arrayType.ElementType,
-			SliceTypeSymbol sliceType => sliceType.ElementType,
-			_ => TypeSymbol.Int,
-		};
-	}
-
-
-	private string ResolveFunctionName(string name, CompilationUnitSyntax activeUnit)
-	{
-		if (name == "main" || name == "Main")
-			return "main";
-
-		if (_globals.ContainsKey(name) || _bindingContext!.GenericFunctionTemplates.ContainsKey(name))
-			return name;
-
-		var ns = activeUnit.NamespaceDeclaration?.Name;
-		var localMangled = string.IsNullOrEmpty(ns) ? name : $"{ns}.{name}";
-		if (_globals.ContainsKey(localMangled) || _bindingContext!.GenericFunctionTemplates.ContainsKey(localMangled))
-			return localMangled;
-
-		// Use expanded usings from BindingContext
-		var activeUsings = _bindingContext!.GetActiveUsings(activeUnit);
-
-		foreach (var importNs in activeUsings)
-		{
-			var candidateMangled = $"{importNs}.{name}";
-			if (_globals.ContainsKey(candidateMangled) || _bindingContext!.GenericFunctionTemplates.ContainsKey(candidateMangled))
-				return candidateMangled;
-		}
-
-		return name;
-	}
 
 	private LLVMTypeRef GetLLVMType(TypeSymbol t)
 		=> _types.Lower(t);

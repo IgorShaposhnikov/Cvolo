@@ -19,7 +19,8 @@ namespace Cvolo.Emitter.LLVM.Codegen.Emitters;
 /// This extraction intentionally preserves the existing call semantics. Binding, overload
 /// resolution, delegate value construction, native ABI classification, and general expression
 /// emission remain outside this class. Aggregate/member/index addressing is delegated to
-/// <see cref="AggregateEmitter"/>, while expression/type callbacks remain migration seams.
+/// <see cref="AggregateEmitter"/>, while semantic expression typing is shared through
+/// <see cref="ExpressionTypeResolver"/>.
 /// </remarks>
 /// <remarks>
 /// Creates a call emitter backed by module-level codegen state and the current function frame.
@@ -30,7 +31,7 @@ internal sealed class CallEmitter(
 	AggregateEmitter aggregates,
 	Func<FunctionCodegenContext> getFunction,
 	Func<ExpressionSyntax, LLVMValueRef> emitExpression,
-	Func<ExpressionSyntax, TypeSymbol> getExpressionType,
+	ExpressionTypeResolver expressionTypes,
 	ValueCoercion coercion,
 	Func<string, LLVMValueRef> load,
 	IReadOnlyDictionary<string, ExternDeclarationSyntax> astExterns,
@@ -203,7 +204,7 @@ internal sealed class CallEmitter(
 		{
 			var argExpr = call.Arguments[i];
 			LLVMValueRef val;
-			var valTy = getExpressionType(argExpr);
+			var valTy = expressionTypes.Resolve(argExpr);
 			var paramTy = GetParamType(emitName, i + actualParamOffset);
 
 			var targetSlice = paramTy is SliceTypeSymbol sl
@@ -420,7 +421,7 @@ internal sealed class CallEmitter(
 			var argExpr = call.Arguments[i];
 			var argVal = emitExpression(argExpr);
 			if (i < delegateType.Parameters.Count)
-				argVal = coercion.CoerceIntegerWidth(argVal, getExpressionType(argExpr), delegateType.Parameters[i].Type);
+				argVal = coercion.CoerceIntegerWidth(argVal, expressionTypes.Resolve(argExpr), delegateType.Parameters[i].Type);
 			args.Add(argVal);
 		}
 
@@ -444,7 +445,7 @@ internal sealed class CallEmitter(
 			for (var i = 0; i < args.Count; i++)
 			{
 				var paramTy = func.Parameters[i].Type;
-				var argTy = getExpressionType(call.Arguments[i]);
+				var argTy = expressionTypes.Resolve(call.Arguments[i]);
 				if (TypeSymbol.IsIntegerType(argTy) && TypeSymbol.IsIntegerType(paramTy))
 				{
 					args[i] = coercion.CoerceIntegerWidth(args[i], argTy, paramTy);
@@ -471,23 +472,23 @@ internal sealed class CallEmitter(
 				break;
 			case "rotl":
 			case "rotr":
-			{
-				var rotateAmount = args[^1];
-				var valueType = args[0].TypeOf;
-				var shiftType = rotateAmount.TypeOf;
-				if (shiftType.Kind != LLVMTypeKind.LLVMIntegerTypeKind || shiftType.IntWidth != valueType.IntWidth)
 				{
-					rotateAmount = valueType.IntWidth > shiftType.IntWidth
-						? Builder.BuildZExt(rotateAmount, valueType, "rot_zext")
-						: Builder.BuildTrunc(rotateAmount, valueType, "rot_trunc");
-				}
+					var rotateAmount = args[^1];
+					var valueType = args[0].TypeOf;
+					var shiftType = rotateAmount.TypeOf;
+					if (shiftType.Kind != LLVMTypeKind.LLVMIntegerTypeKind || shiftType.IntWidth != valueType.IntWidth)
+					{
+						rotateAmount = valueType.IntWidth > shiftType.IntWidth
+							? Builder.BuildZExt(rotateAmount, valueType, "rot_zext")
+							: Builder.BuildTrunc(rotateAmount, valueType, "rot_trunc");
+					}
 
-				var widthMask = LLVMValueRef.CreateConstInt(valueType, (ulong)valueType.IntWidth - 1);
-				rotateAmount = Builder.BuildAnd(rotateAmount, widthMask, "rot_mask");
-				args = new List<LLVMValueRef> { args[0], args[0], rotateAmount };
-				baseName = baseName == "rotl" ? "fshl" : "fshr";
-				break;
-			}
+					var widthMask = LLVMValueRef.CreateConstInt(valueType, (ulong)valueType.IntWidth - 1);
+					rotateAmount = Builder.BuildAnd(rotateAmount, widthMask, "rot_mask");
+					args = new List<LLVMValueRef> { args[0], args[0], rotateAmount };
+					baseName = baseName == "rotl" ? "fshl" : "fshr";
+					break;
+				}
 			case "fpc.nan":
 			case "fpc.inf":
 			case "fpc.finite":

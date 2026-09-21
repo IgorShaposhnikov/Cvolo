@@ -20,9 +20,9 @@ namespace Cvolo.Emitter.LLVM.Codegen.Emitters;
 /// <see cref="CallEmitter"/>, while destruction of captured values remains in
 /// <see cref="CleanupEmitter"/>.
 ///
-/// The callback seam deliberately reuses the current expression, statement, coercion, and local
-/// loading paths while <see cref="CodeGenerator"/> is decomposed. It does not introduce new
-/// delegate semantics.
+/// Expression and statement emission remain delegated through the existing orchestration seam,
+/// while semantic expression typing is shared through <see cref="ExpressionTypeResolver"/>. This
+/// extraction does not introduce new delegate semantics.
 /// </remarks>
 /// <remarks>
 /// Creates a delegate emitter backed by module-level codegen state and callbacks into the
@@ -34,7 +34,7 @@ internal sealed class DelegateEmitter(
 	Action<FunctionCodegenContext> setFunction,
 	Func<ExpressionSyntax, LLVMValueRef> emitExpression,
 	Action<BlockStatementSyntax> emitBlock,
-	Func<ExpressionSyntax, TypeSymbol> getExpressionType,
+	ExpressionTypeResolver expressionTypes,
 	ValueCoercion coercion,
 	Func<string, LLVMValueRef> load,
 	Func<string, string?> resolveGlobalKey)
@@ -46,27 +46,6 @@ internal sealed class DelegateEmitter(
 	private FunctionCodegenContext Function => getFunction();
 	private BindingContext BindingContext => codegen.BindingContext ?? throw new InvalidOperationException("Delegate emission requires an active binding context.");
 
-	/// <summary>
-	/// Builds the synthetic delegate signature used when a function or bound method is converted
-	/// to a safe delegate value.
-	/// </summary>
-	/// <param name="function">Resolved function represented by the method group.</param>
-	/// <param name="isBound">Whether the receiver is already captured in the delegate context.</param>
-	public DelegateTypeSymbol BuildGroupDelegateType(FunctionSymbol function, bool isBound)
-	{
-		var start = isBound && function.Parameters.Count > 0 ? 1 : 0;
-		var parameters = new List<ParameterSymbol>();
-		for (var i = start; i < function.Parameters.Count; i++)
-		{
-			parameters.Add(function.Parameters[i]);
-		}
-
-		return new DelegateTypeSymbol(
-			"$group." + function.Name,
-			function.ReturnType,
-			parameters,
-			[], [], false, null);
-	}
 
 	/// <summary>
 	/// Emits a lambda as a safe delegate by materializing its capture environment and generating a
@@ -168,7 +147,7 @@ internal sealed class DelegateEmitter(
 				{
 					Builder.BuildRet(coercion.CoerceIntegerWidth(
 						bodyValue,
-						getExpressionType(lambda.ExpressionBody),
+						expressionTypes.Resolve(lambda.ExpressionBody),
 						delegateType.ReturnType));
 				}
 			}
@@ -262,7 +241,7 @@ internal sealed class DelegateEmitter(
 			? Builder.BuildPointerCast(storage, i8PtrTy, "receiver_ctx")
 			: LLVMValueRef.CreateConstPointerNull(i8PtrTy);
 
-		return BuildDelegateValue(thunk, contextValue, BuildGroupDelegateType(function, isBound));
+		return BuildDelegateValue(thunk, contextValue, expressionTypes.BuildGroupDelegateType(function, isBound));
 	}
 
 	/// <summary>

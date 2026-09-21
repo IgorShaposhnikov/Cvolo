@@ -1,6 +1,5 @@
 using System.Text;
 using Cvolo.Analysis;
-using Cvolo.Analysis.Symbols;
 using Cvolo.Analysis.Symbols.Base;
 using Cvolo.Analysis.Symbols.Collections;
 using Cvolo.Analysis.Symbols.Structs;
@@ -17,8 +16,9 @@ namespace Cvolo.Emitter.LLVM.Codegen.Emitters;
 /// <remarks>
 /// This class owns expression dispatch, operators, casts, borrows, inline assembly, and heap-expression
 /// orchestration. Calls, aggregate construction, delegate construction, cleanup, memory primitives, and
-/// value coercion remain delegated to their dedicated components. Semantic type resolution remains a
-/// migration callback, while aggregate/member/index addressing is delegated to <see cref="AggregateEmitter"/>.
+/// value coercion remain delegated to their dedicated components. Semantic type resolution is
+/// shared through <see cref="ExpressionTypeResolver"/>, while aggregate/member/index addressing is
+/// delegated to <see cref="AggregateEmitter"/>.
 /// </remarks>
 /// <remarks>
 /// Creates an expression emitter over the shared codegen run and the currently active function frame.
@@ -32,7 +32,7 @@ internal sealed class ExpressionEmitter(
 	DelegateEmitter delegates,
 	ValueCoercion coercion,
 	Func<FunctionCodegenContext> getFunction,
-	Func<ExpressionSyntax, TypeSymbol> getExpressionType,
+	ExpressionTypeResolver expressionTypes,
 	Func<string, LLVMValueRef> load,
 	Func<string, string?> resolveGlobalKey,
 	Func<TypeSymbol, bool> typeEscapesHeap,
@@ -123,7 +123,7 @@ internal sealed class ExpressionEmitter(
 					}
 					else
 					{
-						operandType = getExpressionType(isPat.Operand);
+						operandType = expressionTypes.Resolve(isPat.Operand);
 						if (operandType is PointerTypeSymbol aliasPtr && aliasPtr.ReferencedType is UnionTypeSymbol)
 						{
 							// refvar alias: the operand's value is a pointer to the option union.
@@ -203,7 +203,7 @@ internal sealed class ExpressionEmitter(
 							: isBorrowTarget
 								? new PointerTypeSymbol(
 									unionTypeSym.FindField(isPat.VariantName)?.Type ?? unionTypeSym,
-									isMutable: getExpressionType(isPat.Operand) is PointerTypeSymbol borrowPtr && borrowPtr.IsMutable)
+									isMutable: expressionTypes.Resolve(isPat.Operand) is PointerTypeSymbol borrowPtr && borrowPtr.IsMutable)
 								: unionTypeSym.FindField(isPat.VariantName)?.Type ?? unionTypeSym;
 
 						if (!Function.Locals.TryGetValue(isPat.BoundName, out var bindSlot))
@@ -411,7 +411,7 @@ internal sealed class ExpressionEmitter(
 		if (asm.ResultType is not null && BindingContext.ResolveType(asm.ResultType) is { } rt)
 			resultType = rt;
 		else if (outputs.Count > 0)
-			resultType = getExpressionType(outputs[0].Expression);
+			resultType = expressionTypes.Resolve(outputs[0].Expression);
 		else
 			resultType = TypeSymbol.Void;
 
@@ -428,7 +428,7 @@ internal sealed class ExpressionEmitter(
 
 		var fnType = LLVMTypeRef.CreateFunction(
 			LowerType(resultType),
-			[.. inputs.Select(i => LowerType(getExpressionType(i.Expression)))]);
+			[.. inputs.Select(i => LowerType(expressionTypes.Resolve(i.Expression)))]);
 
 		var asmFn = LLVMValueRef.CreateConstInlineAsm(
 			fnType,
@@ -479,17 +479,6 @@ internal sealed class ExpressionEmitter(
 		return sb.ToString();
 	}
 
-	/// <summary>
-	/// Determines the semantic result type produced by an inline-assembly expression.
-	/// </summary>
-	public TypeSymbol GetAsmExpressionType(AsmExpressionSyntax asm)
-	{
-		if (asm.ResultType is not null && BindingContext.ResolveType(asm.ResultType) is { } rt)
-			return rt;
-
-		var output = asm.Operands.FirstOrDefault(o => o.IsOutput);
-		return output is not null ? getExpressionType(output.Expression) : TypeSymbol.Void;
-	}
 
 	/// <summary>
 	/// Returns whether an expression is a compile-time string literal concatenation tree.
@@ -519,45 +508,6 @@ internal sealed class ExpressionEmitter(
 		};
 	}
 
-	/// <summary>
-	/// Determines whether a bound call resolves to a constructor for the requested target type.
-	/// </summary>
-	public bool IsConstructorCall(CallExpressionSyntax call, TypeSymbol targetType)
-	{
-		// Strip generics from the target type name to match the call's function name (e.g. Point<int> -> Point)
-		var targetTypeName = targetType.Name;
-		if (targetTypeName.Contains('<'))
-		{
-			targetTypeName = targetTypeName.Substring(0, targetTypeName.IndexOf('<'));
-		}
-
-		// Get short names to ignore namespace differences
-		var shortTargetTypeName = targetTypeName.Contains('.')
-			? targetTypeName[(targetTypeName.LastIndexOf('.') + 1)..]
-			: targetTypeName;
-
-		var shortCallName = call.FunctionName.Contains('.')
-			? call.FunctionName[(call.FunctionName.LastIndexOf('.') + 1)..]
-			: call.FunctionName;
-
-		if (!string.Equals(shortCallName, shortTargetTypeName, StringComparison.Ordinal))
-			return false;
-
-		// Look up either the concrete instantiated constructor or the base template constructor.
-		// Constructors are keyed by their unqualified source name (e.g. "Window"), so also try
-		// the namespace-stripped short name when the type symbol name is qualified (e.g. "App.Window").
-		var ctors = BindingContext.Constructors;
-		if (!ctors.TryGetValue(targetType.Name, out var constructorList) &&
-			!ctors.TryGetValue(targetTypeName, out constructorList) &&
-			!ctors.TryGetValue(shortTargetTypeName, out constructorList))
-		{
-			return false;
-		}
-
-		return BindingContext.ResolvedCalls.TryGetValue(call, out var resolved) &&
-			   resolved.Parameters.Count > 0 &&
-			   resolved.Parameters[0].Name == "this";
-	}
 
 	/// <summary>
 	/// Lowers binary operators, including arithmetic, comparisons, logical operations, and assignments.
@@ -578,8 +528,8 @@ internal sealed class ExpressionEmitter(
 
 		var left = Emit(bin.Left);
 		var right = Emit(bin.Right);
-		var lTy = getExpressionType(bin.Left);
-		var rTy = getExpressionType(bin.Right);
+		var lTy = expressionTypes.Resolve(bin.Left);
+		var rTy = expressionTypes.Resolve(bin.Right);
 
 		if (lTy is PointerTypeSymbol lPtr && left.TypeOf.Kind == LLVMTypeKind.LLVMPointerTypeKind)
 		{
@@ -728,11 +678,11 @@ internal sealed class ExpressionEmitter(
 			return Emit(bin.Right);
 		}
 
-		var rTy = getExpressionType(bin.Right);
+		var rTy = expressionTypes.Resolve(bin.Right);
 
 		// 2. Handle in-place constructor assignments (e.g. x = Resource(10) or arr[0] = Resource(100))
 		// Must be checked BEFORE evaluating bin.Right to prevent void-store LLVM crashes.
-		if (bin.Right is CallExpressionSyntax ctorCall && IsConstructorCall(ctorCall, rTy))
+		if (bin.Right is CallExpressionSyntax ctorCall && expressionTypes.IsConstructorCall(ctorCall, rTy))
 		{
 			if (bin.Left is IdentifierExpressionSyntax ctorId)
 			{
@@ -792,7 +742,7 @@ internal sealed class ExpressionEmitter(
 		if (bin.Right is IdentifierExpressionSyntax heapId
 			&& Function.HeapAllocatedVars.Contains(heapId.Name)
 			&& Function.Locals.TryGetValue(heapId.Name, out var handleSlot)
-			&& getExpressionType(bin.Left) is PointerTypeSymbol)
+			&& expressionTypes.Resolve(bin.Left) is PointerTypeSymbol)
 		{
 			right = Builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), handleSlot, "handle_addr");
 			if (rTy is StructTypeSymbol handleStruct)
@@ -868,7 +818,7 @@ internal sealed class ExpressionEmitter(
 					else
 					{
 						var coerced = (bin.Right is MemberAccessExpressionSyntax or IndexExpressionSyntax)
-							? coercion.CoerceReferenceToValue(right, getExpressionType(bin.Right))
+							? coercion.CoerceReferenceToValue(right, expressionTypes.Resolve(bin.Right))
 							: right;
 						coerced = coercion.CoerceIntegerWidth(coerced, rTy, type);
 						coerced = coercion.CoerceFloatWidth(coerced, rTy, type);
@@ -886,7 +836,7 @@ internal sealed class ExpressionEmitter(
 				else
 				{
 					var coerced = (bin.Right is MemberAccessExpressionSyntax or IndexExpressionSyntax)
-						? coercion.CoerceReferenceToValue(right, getExpressionType(bin.Right))
+						? coercion.CoerceReferenceToValue(right, expressionTypes.Resolve(bin.Right))
 						: right;
 					coerced = coercion.CoerceIntegerWidth(coerced, rTy, globalType);
 					coerced = coercion.CoerceFloatWidth(coerced, rTy, globalType);
@@ -942,7 +892,7 @@ internal sealed class ExpressionEmitter(
 			var (fieldPtr, fieldType, _, tbaa) = aggregates.GetFieldPointer(m);
 
 			// Set active variant tag when assigning a union variant (e.g. 'this.Some = value')
-			if (getExpressionType(m.Expression) is UnionTypeSymbol unionType && !unionType.IsNpoEligible)
+			if (expressionTypes.Resolve(m.Expression) is UnionTypeSymbol unionType && !unionType.IsNpoEligible)
 			{
 				var (unionPtr, _, _, _) = aggregates.GetFieldPointer(m.Expression);
 				var variantIndex = codegen.AggregateLayout.GetFieldIndex(unionType, m.MemberName);
@@ -966,7 +916,7 @@ internal sealed class ExpressionEmitter(
 			else
 			{
 				var coerced = (bin.Right is MemberAccessExpressionSyntax or IndexExpressionSyntax)
-					? coercion.CoerceReferenceToValue(right, getExpressionType(bin.Right))
+					? coercion.CoerceReferenceToValue(right, expressionTypes.Resolve(bin.Right))
 					: right;
 				coerced = coercion.CoerceIntegerWidth(coerced, rTy, fieldType);
 				coerced = coercion.CoerceFloatWidth(coerced, rTy, fieldType);
@@ -991,7 +941,7 @@ internal sealed class ExpressionEmitter(
 			else
 			{
 				var coerced = (bin.Right is MemberAccessExpressionSyntax or IndexExpressionSyntax)
-					? coercion.CoerceReferenceToValue(right, getExpressionType(bin.Right))
+					? coercion.CoerceReferenceToValue(right, expressionTypes.Resolve(bin.Right))
 					: right;
 				coerced = coercion.CoerceIntegerWidth(coerced, rTy, elementType);
 				coerced = coercion.CoerceFloatWidth(coerced, rTy, elementType);
@@ -1004,7 +954,7 @@ internal sealed class ExpressionEmitter(
 		else if (bin.Left is UnaryExpressionSyntax { Operator: "*" } deref)
 		{
 			var targetPtr = Emit(deref.Operand);
-			var targetType = getExpressionType(bin.Left);
+			var targetType = expressionTypes.Resolve(bin.Left);
 
 			if (targetType is UnionTypeSymbol elemUnion
 				&& cleanup.UnionNeedsTagCheckedCleanup(elemUnion)
@@ -1020,7 +970,7 @@ internal sealed class ExpressionEmitter(
 			else
 			{
 				var coerced = (bin.Right is MemberAccessExpressionSyntax or IndexExpressionSyntax)
-					? coercion.CoerceReferenceToValue(right, getExpressionType(bin.Right))
+					? coercion.CoerceReferenceToValue(right, expressionTypes.Resolve(bin.Right))
 					: right;
 				coerced = coercion.CoerceIntegerWidth(coerced, rTy, targetType);
 				coerced = coercion.CoerceFloatWidth(coerced, rTy, targetType);
@@ -1031,7 +981,7 @@ internal sealed class ExpressionEmitter(
 		}
 		else if (bin.Left is CallExpressionSyntax callLeft)
 		{
-			var callRetType = getExpressionType(callLeft);
+			var callRetType = expressionTypes.Resolve(callLeft);
 			var targetType = callRetType is PointerTypeSymbol ptrTy ? ptrTy.ReferencedType : callRetType;
 
 			// Emit the call. Because it returns 'refvar', LLVM returns the pointer directly.
@@ -1051,7 +1001,7 @@ internal sealed class ExpressionEmitter(
 			else
 			{
 				var coerced = (bin.Right is MemberAccessExpressionSyntax or IndexExpressionSyntax)
-					? coercion.CoerceReferenceToValue(right, getExpressionType(bin.Right))
+					? coercion.CoerceReferenceToValue(right, expressionTypes.Resolve(bin.Right))
 					: right;
 				coerced = coercion.CoerceIntegerWidth(coerced, rTy, targetType);
 				coerced = coercion.CoerceFloatWidth(coerced, rTy, targetType);
@@ -1082,7 +1032,7 @@ internal sealed class ExpressionEmitter(
 			var targetTypeSymbol = BindingContext.ResolveType(targetTypeName)!;
 			var targetType = LowerType(targetTypeSymbol);
 
-			var operandType = getExpressionType(unary.Operand);
+			var operandType = expressionTypes.Resolve(unary.Operand);
 			var operandLlvmType = LowerType(operandType);
 
 			// Safe/unbound zone: (Enum)integer yields Option<Enum> â€” a checked conversion
@@ -1217,7 +1167,7 @@ internal sealed class ExpressionEmitter(
 				{
 					// (Â§3.B) On a [Flags] enum, '~' is the masked bitwise complement:
 					// (~value) & CombinedAtomicMask, truncated/width-locked to storage width.
-					if (getExpressionType(unary.Operand) is EnumTypeSymbol { IsFlags: true } flagsEnum)
+					if (expressionTypes.Resolve(unary.Operand) is EnumTypeSymbol { IsFlags: true } flagsEnum)
 					{
 						var storeTy = LowerType(flagsEnum);
 						var notVal = Builder.BuildNot(operand, "flags_not");
@@ -1235,7 +1185,7 @@ internal sealed class ExpressionEmitter(
 				}
 			case "*":
 				{
-					var operandType = getExpressionType(unary.Operand);
+					var operandType = expressionTypes.Resolve(unary.Operand);
 					if (operandType is RawPointerTypeSymbol rawPtr)
 					{
 						var elemLlvmType = LowerType(rawPtr.ElementType);
@@ -1272,7 +1222,7 @@ internal sealed class ExpressionEmitter(
 	/// </summary>
 	private bool TryFoldConstantNegation(UnaryExpressionSyntax unary, LLVMValueRef operand, out LLVMValueRef folded)
 	{
-		var operandType = getExpressionType(unary.Operand);
+		var operandType = expressionTypes.Resolve(unary.Operand);
 
 		switch (unary.Operand)
 		{
@@ -1370,7 +1320,7 @@ internal sealed class ExpressionEmitter(
 		var thenVal = Emit(expr.ThenExpression);
 		var elseVal = Emit(expr.ElseExpression);
 
-		var type = getExpressionType(expr.ThenExpression);
+		var type = expressionTypes.Resolve(expr.ThenExpression);
 		var llvmTy = LowerType(type);
 
 		var currentFunc = Builder.InsertBlock.Parent;
@@ -1415,7 +1365,7 @@ internal sealed class ExpressionEmitter(
 			// (e.g. the instantiated `GBox<int>`), which carries the real fields for sizing.
 			// Re-resolving the name during codegen returns the empty generic template
 			// placeholder (store size 1), which yields a 1-byte malloc.
-			typeSymbol = getExpressionType(ctorCall) as StructTypeSymbol
+			typeSymbol = expressionTypes.Resolve(ctorCall) as StructTypeSymbol
 				?? BindingContext.ResolveType(ctorCall.FunctionName) as StructTypeSymbol
 				?? throw new InvalidOperationException($"heap allocation requires a struct type, but '{ctorCall.FunctionName}' did not resolve to one.");
 		}

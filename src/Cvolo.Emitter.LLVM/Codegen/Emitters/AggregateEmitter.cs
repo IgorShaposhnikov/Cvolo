@@ -5,6 +5,7 @@ using Cvolo.Analysis.Symbols.Structs;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Expressions;
 using Cvolo.Core.Diagnostics;
+using Cvolo.Emitter.LLVM.Codegen.Values;
 using LLVMSharp.Interop;
 
 namespace Cvolo.Emitter.LLVM.Codegen.Emitters;
@@ -26,7 +27,7 @@ namespace Cvolo.Emitter.LLVM.Codegen.Emitters;
 /// <param name="getFunction">Returns the function-local code generation state active at the call site.</param>
 /// <param name="emitExpression">Emits scalar and nested expressions without introducing a second dispatcher.</param>
 /// <param name="emitStringLiteral">Emits diagnostic strings used by runtime bounds failures.</param>
-/// <param name="getExpressionType">Resolves the semantic type of an expression.</param>
+/// <param name="expressionTypes">Shared semantic expression-type resolver.</param>
 /// <param name="emitCall">Emits a call when an addressable aggregate is returned by a call expression.</param>
 /// <param name="enableTbaa">Whether field accesses may attach type-based alias analysis metadata.</param>
 internal sealed class AggregateEmitter(
@@ -35,7 +36,7 @@ internal sealed class AggregateEmitter(
 	Func<FunctionCodegenContext> getFunction,
 	Func<ExpressionSyntax, LLVMValueRef> emitExpression,
 	Func<string, LLVMValueRef> emitStringLiteral,
-	Func<ExpressionSyntax, TypeSymbol> getExpressionType,
+	ExpressionTypeResolver expressionTypes,
 	Func<CallExpressionSyntax, LLVMValueRef> emitCall,
 	bool enableTbaa)
 {
@@ -191,7 +192,7 @@ internal sealed class AggregateEmitter(
 	/// </summary>
 	public LLVMValueRef EmitArrayInitialization(ArrayInitializationExpressionSyntax expr)
 	{
-		var elementType = getExpressionType(expr.Elements[0]);
+		var elementType = expressionTypes.Resolve(expr.Elements[0]);
 		var arrayTypeSymbol = new ArrayTypeSymbol(elementType, expr.Elements.Count);
 		var arrayLayout = codegen.Types.Lower(arrayTypeSymbol);
 
@@ -243,7 +244,7 @@ internal sealed class AggregateEmitter(
 	/// </summary>
 	public LLVMValueRef EmitArrayReplication(ArrayReplicationExpressionSyntax expr)
 	{
-		var valueType = getExpressionType(expr.Value);
+		var valueType = expressionTypes.Resolve(expr.Value);
 		var countVal = expr.Count is IntegerLiteralExpressionSyntax countLit ? (int)countLit.Value : 0;
 		var arrayTypeSymbol = new ArrayTypeSymbol(valueType, countVal);
 		var arrayLayout = codegen.Types.Lower(arrayTypeSymbol);
@@ -634,7 +635,7 @@ internal sealed class AggregateEmitter(
 			var castTypeName = castExpr.Operator.Substring(1, castExpr.Operator.Length - 2);
 			if (BindingContext.ResolveType(castTypeName) is EnumTypeSymbol castEnum)
 			{
-				var castOperandType = getExpressionType(castExpr.Operand);
+				var castOperandType = expressionTypes.Resolve(castExpr.Operand);
 				if (castOperandType is not EnumTypeSymbol
 					&& TypeSymbol.IsIntegerType(castOperandType)
 					&& BindingContext.ResolveType($"Option<{castEnum.Name}>") is UnionTypeSymbol castOption)
@@ -648,7 +649,7 @@ internal sealed class AggregateEmitter(
 
 		if (expr is CallExpressionSyntax call)
 		{
-			var retType = getExpressionType(call);
+			var retType = expressionTypes.Resolve(call);
 			var callVal = emitCall(call);
 			if (retType is PointerTypeSymbol ptrType)
 			{
