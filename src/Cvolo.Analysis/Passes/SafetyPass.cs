@@ -259,29 +259,9 @@ public sealed class SafetyPass(BindingContext context)
 						CheckExpressionSafety(v.Initializer, scope);
 						Moves.EmitLargeCopyWarningIfNeeded(v.Initializer, scope);
 
-						// Propagate origin through ref/refvar declarations
-						if (v.Type is "ref" or "refvar" && v.Initializer is BorrowExpressionSyntax borrowExpr)
-						{
-							var borrowedName = GetBaseIdentifierName(borrowExpr.Expression);
-							if (borrowedName != null && scope.Lookup(borrowedName) is VariableSymbol borrowed)
-								sym.Origin = borrowed.Origin;
-						}
-
-						// Heap-relative provenance: variables initialized with `heap ...` own
-						// heap-allocated storage that deliberately outlives the function.
-						if (v.Initializer is HeapAllocationExpressionSyntax)
-							ReferenceLifetimes.MarkHeapVariable(v.Name);
-
-						// Track what ref/refvar and nullable-reference-option variables point to,
-						// so return-time provenance can resolve through reference chains.
-						if (sym.Type is PointerTypeSymbol || (sym.Type is UnionTypeSymbol optU && optU.IsOption && optU.IsNpoEligible))
-							ReferenceLifetimes.TrackReferenceTarget(v.Name, v.Initializer, scope, clearWhenMissing: false);
+						ReferenceLifetimes.TrackDeclaration(v, sym, scope);
 
 						Unbound.TrackLocalReferenceDeclaration(v);
-
-						// Track ref field targets for struct variables (§3C)
-						if (v.Type is not "ref" and not "refvar" && sym.Type is StructTypeSymbol)
-							ReferenceLifetimes.TrackStructRefTargets(v.Name, v.Initializer, scope);
 
 						// Track delegate provenance so escape rules can be enforced later (§13)
 						if (sym.Type is DelegateTypeSymbol && v.Initializer != null)
@@ -426,54 +406,54 @@ public sealed class SafetyPass(BindingContext context)
 				break;
 
 			case LambdaExpressionSyntax lam:
-                // §8.7 capture sources are outer locals + by-value parameters only; borrowed-ref
-                // lexical bindings are never capture sources (§8.8). Compute the set from the
-                // enclosing scope: any identifier in the body resolving to a non-global variable.
-                var capturedNames = ComputeCapturedNames(lam, scope);
+				// §8.7 capture sources are outer locals + by-value parameters only; borrowed-ref
+				// lexical bindings are never capture sources (§8.8). Compute the set from the
+				// enclosing scope: any identifier in the body resolving to a non-global variable.
+				var capturedNames = ComputeCapturedNames(lam, scope);
 
-                // Capture-policy validation (§8.2/8.3/8.5/8.7/8.9)
-                foreach (var name in capturedNames)
-                {
-                    if (scope.Lookup(name) is not VariableSymbol capturedSym) continue;
+				// Capture-policy validation (§8.2/8.3/8.5/8.7/8.9)
+				foreach (var name in capturedNames)
+				{
+					if (scope.Lookup(name) is not VariableSymbol capturedSym) continue;
 
-                    if (capturedSym.Type is PointerTypeSymbol)
-                    {
-                        // §8.8 borrowed-ref lexical bindings are never capture sources in any mode.
-                        context.Diagnostics.Report(context.CurrentUnit!.Context, lam.Span,
-                            $"Cannot capture reference binding '{name}' in a lambda; capture sources must be by-value locals and parameters.",
-                            DiagnosticIds.RefBindingCaptureUnsupported);
-                    }
-                    else if (DelegateTypeHelpers.ContainsMutableBorrowCapability(capturedSym.Type))
-                    {
-                        // §8.9 the captured value carries a mutable-borrow capability.
-                        context.Diagnostics.Report(context.CurrentUnit!.Context, lam.Span,
-                            $"Cannot capture '{name}' of type '{capturedSym.Type.Name}': the type carries a mutable-borrow capability (refvar/slice/aggregate) which may not be captured.",
-                            DiagnosticIds.MutableBorrowCapabilityCapture);
-                    }
-                    else if (lam.CaptureMode == LambdaCaptureMode.Default
-                             && Moves.IsMoveOnly(capturedSym.Type))
-                    {
-                        // §8.2 default mode copies a snapshot; move-only values cannot be copied.
-                        context.Diagnostics.Report(context.CurrentUnit!.Context, lam.Span,
-                            $"Cannot capture '{name}' in default mode: '{capturedSym.Type.Name}' is move-only and cannot be copied; use 'move' or 'ref' capture.",
-                            DiagnosticIds.DefaultModeCaptureOfMoveOnly);
-                    }
+					if (capturedSym.Type is PointerTypeSymbol)
+					{
+						// §8.8 borrowed-ref lexical bindings are never capture sources in any mode.
+						context.Diagnostics.Report(context.CurrentUnit!.Context, lam.Span,
+							$"Cannot capture reference binding '{name}' in a lambda; capture sources must be by-value locals and parameters.",
+							DiagnosticIds.RefBindingCaptureUnsupported);
+					}
+					else if (DelegateTypeHelpers.ContainsMutableBorrowCapability(capturedSym.Type))
+					{
+						// §8.9 the captured value carries a mutable-borrow capability.
+						context.Diagnostics.Report(context.CurrentUnit!.Context, lam.Span,
+							$"Cannot capture '{name}' of type '{capturedSym.Type.Name}': the type carries a mutable-borrow capability (refvar/slice/aggregate) which may not be captured.",
+							DiagnosticIds.MutableBorrowCapabilityCapture);
+					}
+					else if (lam.CaptureMode == LambdaCaptureMode.Default
+							 && Moves.IsMoveOnly(capturedSym.Type))
+					{
+						// §8.2 default mode copies a snapshot; move-only values cannot be copied.
+						context.Diagnostics.Report(context.CurrentUnit!.Context, lam.Span,
+							$"Cannot capture '{name}' in default mode: '{capturedSym.Type.Name}' is move-only and cannot be copied; use 'move' or 'ref' capture.",
+							DiagnosticIds.DefaultModeCaptureOfMoveOnly);
+					}
 
-                    if (lam.CaptureMode == LambdaCaptureMode.Move
-                        && Moves.IsMoveOnly(capturedSym.Type))
-                    {
-                        // §8.3 'move' capture moves the move-only source: it becomes unavailable.
-                        Moves.MarkMoved(capturedSym);
-                    }
+					if (lam.CaptureMode == LambdaCaptureMode.Move
+						&& Moves.IsMoveOnly(capturedSym.Type))
+					{
+						// §8.3 'move' capture moves the move-only source: it becomes unavailable.
+						Moves.MarkMoved(capturedSym);
+					}
 
-                    if (lam.CaptureMode == LambdaCaptureMode.Ref)
-                    {
-                        // §8.6 active immutable-borrow lock while the lambda may be invoked:
-                        // mutation, move, and incompatible mutable borrows of the captured
-                        // variable are blocked while the borrow is live.
-                        RegisterRefCaptureLock(name, lam.Span);
-                    }
-                }
+					if (lam.CaptureMode == LambdaCaptureMode.Ref)
+					{
+						// §8.6 active immutable-borrow lock while the lambda may be invoked:
+						// mutation, move, and incompatible mutable borrows of the captured
+						// variable are blocked while the borrow is live.
+						RegisterRefCaptureLock(name, lam.Span);
+					}
+				}
 
 				// Lambda bodies are validated as safe-callable bodies regardless of the
 				// enclosing tier (§21.3). Check the body inside a child scope holding the
@@ -544,52 +524,15 @@ public sealed class SafetyPass(BindingContext context)
 				{
 					var leftSymbol = scope.Lookup(leftId.Name) as VariableSymbol
 						?? context.ResolveGlobalReference(leftId.Name, out _);
-if (leftSymbol is not null)
+					if (leftSymbol is not null)
 					{
 						Borrows.VerifyUnlocked(bin.Left, "reassign");
 						Moves.ResetMoved(leftSymbol);
 						Moves.HandleCopyAssignment(bin.Right, scope);
 
 						Unbound.ValidateGlobalAssignmentEscape(bin, leftSymbol, scope);
+						ReferenceLifetimes.TrackAssignment(leftId, leftSymbol, bin.Right, bin.Span, scope);
 
-						// Track ref field targets for struct reassignment (§3C)
-						if (leftSymbol.Type is StructTypeSymbol)
-							ReferenceLifetimes.TrackStructRefTargets(leftId.Name, bin.Right, scope);
-
-						// Track ref/refvar and nullable-reference-option reassignment for return-time provenance
-						if (leftSymbol.Type is PointerTypeSymbol || (leftSymbol.Type is UnionTypeSymbol optU && optU.IsOption && optU.IsNpoEligible))
-							ReferenceLifetimes.TrackReferenceTarget(leftId.Name, bin.Right, scope, clearWhenMissing: true);
-
-						// Propagate origin on ref/refvar reassignment
-						if (leftSymbol.Type is PointerTypeSymbol)
-						{
-							if (bin.Right is BorrowExpressionSyntax rb)
-							{
-								var rightName = GetBaseIdentifierName(rb.Expression);
-								if (rightName != null && scope.Lookup(rightName) is VariableSymbol rightSym)
-								{
-									leftSymbol.Origin = rightSym.Origin;
-
-									// §3F Global Lifetime Inequality: only global-origin refs may be stored in globals
-									if (leftSymbol.IsGlobal && rightSym.Origin != OriginKind.Global)
-									{
-										context.Diagnostics.Report(context.CurrentUnit!.Context, bin.Span,
-											$"Cannot assign {rightSym.Origin.ToString().ToLower()}-origin reference to global variable '{leftId.Name}': only global-origin references may be stored in globals");
-									}
-								}
-							}
-							else if (bin.Right is IdentifierExpressionSyntax rightId && scope.Lookup(rightId.Name) is VariableSymbol rightSym2 && rightSym2.Type is PointerTypeSymbol)
-							{
-								leftSymbol.Origin = rightSym2.Origin;
-
-								// §3F Global Lifetime Inequality
-								if (leftSymbol.IsGlobal && rightSym2.Origin != OriginKind.Global)
-								{
-									context.Diagnostics.Report(context.CurrentUnit!.Context, bin.Span,
-										$"Cannot assign {rightSym2.Origin.ToString().ToLower()}-origin reference to global variable '{leftId.Name}': only global-origin references may be stored in globals");
-								}
-							}
-						}
 					}
 				}
 				else

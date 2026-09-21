@@ -53,6 +53,84 @@ internal sealed class ReferenceLifetimeAnalyzer(
 	public void MarkHeapVariable(string name) => _heapVariables.Add(name);
 
 	/// <summary>
+	/// Records reference provenance introduced by a variable declaration, including origin
+	/// propagation for ref/refvar borrows, heap ownership, reference chains, and struct ref fields.
+	/// </summary>
+	public void TrackDeclaration(VariableDeclarationSyntax declaration, VariableSymbol symbol, SymbolTable scope)
+	{
+		if (declaration.Initializer is not { } initializer)
+			return;
+
+		if (declaration.Type is "ref" or "refvar" && initializer is BorrowExpressionSyntax borrowExpr)
+		{
+			var borrowedName = _getBaseIdentifierName(borrowExpr.Expression);
+			if (borrowedName != null && scope.Lookup(borrowedName) is VariableSymbol borrowed)
+				symbol.Origin = borrowed.Origin;
+		}
+
+		if (initializer is HeapAllocationExpressionSyntax)
+			MarkHeapVariable(declaration.Name);
+
+		if (IsTrackedReferenceType(symbol.Type))
+			TrackReferenceTarget(declaration.Name, initializer, scope, clearWhenMissing: false);
+
+		if (declaration.Type is not "ref" and not "refvar" && symbol.Type is StructTypeSymbol)
+			TrackStructRefTargets(declaration.Name, initializer, scope);
+	}
+
+	/// <summary>
+	/// Updates reference provenance after assignment to a named variable and enforces the global
+	/// lifetime inequality for ref/refvar values.
+	/// </summary>
+	public void TrackAssignment(
+		IdentifierExpressionSyntax left,
+		VariableSymbol leftSymbol,
+		ExpressionSyntax right,
+		TextSpan span,
+		SymbolTable scope)
+	{
+		if (leftSymbol.Type is StructTypeSymbol)
+			TrackStructRefTargets(left.Name, right, scope);
+
+		if (IsTrackedReferenceType(leftSymbol.Type))
+			TrackReferenceTarget(left.Name, right, scope, clearWhenMissing: true);
+
+		if (leftSymbol.Type is not PointerTypeSymbol)
+			return;
+
+		VariableSymbol? rightSymbol = null;
+		if (right is BorrowExpressionSyntax borrow)
+		{
+			var rightName = _getBaseIdentifierName(borrow.Expression);
+			if (rightName != null)
+				rightSymbol = scope.Lookup(rightName) as VariableSymbol;
+		}
+		else if (right is IdentifierExpressionSyntax rightId
+			&& scope.Lookup(rightId.Name) is VariableSymbol candidate
+			&& candidate.Type is PointerTypeSymbol)
+		{
+			rightSymbol = candidate;
+		}
+
+		if (rightSymbol is null)
+			return;
+
+		leftSymbol.Origin = rightSymbol.Origin;
+		if (leftSymbol.IsGlobal && rightSymbol.Origin != OriginKind.Global)
+		{
+			context.Diagnostics.Report(context.CurrentUnit!.Context, span,
+				$"Cannot assign {rightSymbol.Origin.ToString().ToLower()}-origin reference to global variable '{left.Name}': only global-origin references may be stored in globals");
+		}
+	}
+
+	/// <summary>Returns whether a type participates in tracked reference-chain provenance.</summary>
+	private static bool IsTrackedReferenceType(TypeSymbol type)
+	{
+		return type is PointerTypeSymbol
+			|| type is UnionTypeSymbol { IsOption: true, IsNpoEligible: true };
+	}
+
+	/// <summary>
 	/// Records the base storage targeted by a ref/refvar or nullable-reference-option value.
 	/// Reassignments may request removal when the new value has no trackable payload.
 	/// </summary>
