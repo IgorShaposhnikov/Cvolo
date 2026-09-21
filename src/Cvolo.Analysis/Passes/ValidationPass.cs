@@ -9,6 +9,7 @@ using Cvolo.Core.AST.Expressions;
 using Cvolo.Core.AST.Statements;
 using Cvolo.Core.Diagnostics;
 using Cvolo.Analysis.VisibilityChecks;
+using Cvolo.Analysis.Passes.Validation;
 
 namespace Cvolo.Analysis.Passes;
 
@@ -16,49 +17,27 @@ public sealed class ValidationPass(BindingContext context)
 {
 	private ClassificationAnalyzer? _classification;
 	private ClassificationAnalyzer Classification => _classification ??= new ClassificationAnalyzer(context);
-	private int _unsafeDepth;
-	private bool _inUnbound;
-	private IReadOnlyList<CompilationUnitSyntax> _units = [];
 
 	/// <summary>
-	/// Placeholder used for deferred lambda / function-group arguments during overload
-	/// resolution in call expressions. Only matches DelegateTypeSymbol parameters
-	/// (with a modest score); afterwards the target-typed call binding re-checks.
+	/// Placeholder used for deferred lambda and function-group arguments during overload resolution.
+	/// It is a semantic resolver sentinel rather than mutable validation traversal state.
 	/// </summary>
-	private static readonly TypeSymbol LambdaArgMarker = new TypeSymbol("<lambda-argument>");
-
+	/// <remarks>
+	/// The marker only matches delegate-typed parameters during candidate scoring; target-typed
+	/// validation resolves the actual lambda or method-group conversion after overload selection.
+	/// </remarks>
+	private static readonly TypeSymbol LambdaArgMarker = new("<lambda-argument>");
 	/// <summary>
-	/// While checking a lambda block body this is the delegate's return type; return
-	/// statements inside lambdas are validated against it instead of the enclosing function.
+	/// Mutable traversal state for the validation run. The state object is kept separate from the
+	/// semantic services owned by <see cref="BindingContext"/> so later validators can share the same
+	/// single-pass traversal state without depending on <see cref="ValidationPass"/> itself.
 	/// </summary>
-	private TypeSymbol? _lambdaReturnContext;
-
-	/// <summary>The function whose body is currently being validated; lambdas that
-	/// appear inside expression trees use it as the enclosing function for block-body
-	/// statement checks.</summary>
-	private FunctionDeclarationSyntax? _enclosingFunction;
-
-	// Label validation state: _labelScopes mirrors the enclosing-scope-block
-	// chain for CVL1062 duplicate detection; _loopLabels mirrors the active loop
-	// ancestry for CVL1063 resolution and CVL1070 in-loop enforcement; _blockLabels
-	// mirrors the active labeled-block ancestry (break-targetable only).
-	private readonly Stack<HashSet<string>> _labelScopes = new();
-	private readonly Stack<string?> _loopLabels = [];
-	private readonly Stack<string?> _blockLabels = [];
-
-	// Read-only `foreach` item names (val/explicit-type) in the current body chain,
-	// used to report the dedicated CVL1082 diagnostic on assignment.
-	private readonly Stack<HashSet<string>> _readOnlyForeachItems = new();
-
-	// Depth of switch frames whose CASE BODIES are being validated. An unlabeled `break;` is
-	// legal inside a switch case (C-style exit) even when no loop encloses it; `continue;` is
-	// still loop-only.
-	private int _switchDepth;
+	private readonly ValidationContext _validation = new();
 
 	public void Process(IEnumerable<CompilationUnitSyntax> units)
 	{
-		_units = units as IReadOnlyList<CompilationUnitSyntax> ?? units.ToList();
-		foreach (var unit in _units)
+		_validation.Units = units as IReadOnlyList<CompilationUnitSyntax> ?? units.ToList();
+		foreach (var unit in _validation.Units)
 		{
 			context.CurrentUnit = unit;
 			context.CurrentNamespace = unit.NamespaceDeclaration?.Name;
@@ -345,7 +324,7 @@ public sealed class ValidationPass(BindingContext context)
 		var paramSig = symbol.Parameters.Skip(1).Select(p => p.Type.Name).ToList();
 		var extendedTypeName = symbol.Parameters[0].Type.Name;
 
-		foreach (var unit in _units)
+		foreach (var unit in _validation.Units)
 		{
 			var members = unit.NamespaceDeclaration != null ? unit.NamespaceDeclaration.Members : unit.Members;
 			foreach (var decl in members)
@@ -487,12 +466,12 @@ public sealed class ValidationPass(BindingContext context)
 			return;
 		}
 
-		var baseUnsafeDepth = _unsafeDepth;
-		var baseInUnbound = _inUnbound;
-		_unsafeDepth = IsUnsafeFunction(func) ? 1 : 0;
-		_inUnbound = func.Modifier == SafetyTier.Unbound;
-		var baseEnclosingFunction = _enclosingFunction;
-		_enclosingFunction = func;
+		var baseUnsafeDepth = _validation.UnsafeDepth;
+		var baseInUnbound = _validation.InUnbound;
+		_validation.UnsafeDepth = IsUnsafeFunction(func) ? 1 : 0;
+		_validation.InUnbound = func.Modifier == SafetyTier.Unbound;
+		var baseEnclosingFunction = _validation.EnclosingFunction;
+		_validation.EnclosingFunction = func;
 		var localScope = new SymbolTable(context.Globals);
 
 		foreach (var param in func.Parameters)
@@ -522,9 +501,9 @@ public sealed class ValidationPass(BindingContext context)
 			);
 		}
 
-		_unsafeDepth = baseUnsafeDepth;
-		_inUnbound = baseInUnbound;
-		_enclosingFunction = baseEnclosingFunction;
+		_validation.UnsafeDepth = baseUnsafeDepth;
+		_validation.InUnbound = baseInUnbound;
+		_validation.EnclosingFunction = baseEnclosingFunction;
 	}
 
 	private static bool IsUnsafeFunction(FunctionDeclarationSyntax func) =>
@@ -536,7 +515,7 @@ public sealed class ValidationPass(BindingContext context)
 		if (block is null)
 			return;
 
-		_labelScopes.Push([]);
+		_validation.LabelScopes.Push([]);
 		try
 		{
 			foreach (var stmt in block.Statements)
@@ -546,7 +525,7 @@ public sealed class ValidationPass(BindingContext context)
 		}
 		finally
 		{
-			_labelScopes.Pop();
+			_validation.LabelScopes.Pop();
 		}
 	}
 
@@ -569,7 +548,7 @@ public sealed class ValidationPass(BindingContext context)
 				break;
 			case LabeledBlockStatementSyntax labeledBlock:
 				{
-					var currentScope = _labelScopes.Count > 0 ? _labelScopes.Peek() : null;
+					var currentScope = _validation.LabelScopes.Count > 0 ? _validation.LabelScopes.Peek() : null;
 					if (currentScope is not null && !currentScope.Add(labeledBlock.Label))
 					{
 						var currentFileContext = context.FileContexts[context.CurrentUnit!];
@@ -578,9 +557,9 @@ public sealed class ValidationPass(BindingContext context)
 							DiagnosticIds.DuplicateLabel);
 					}
 
-					_blockLabels.Push(labeledBlock.Label);
+					_validation.BlockLabels.Push(labeledBlock.Label);
 					CheckBlock(labeledBlock.Body, new SymbolTable(scope), currentFunc);
-					_blockLabels.Pop();
+					_validation.BlockLabels.Pop();
 					break;
 				}
 			case IfStatementSyntax ifStmt:
@@ -615,9 +594,9 @@ public sealed class ValidationPass(BindingContext context)
 					break;
 				}
 			case UnsafeBlockStatementSyntax unsafeBlock:
-				_unsafeDepth++;
+				_validation.UnsafeDepth++;
 				CheckBlock(unsafeBlock.Body, new SymbolTable(scope), currentFunc);
-				_unsafeDepth--;
+				_validation.UnsafeDepth--;
 				break;
 			case SwitchStatementSyntax sw:
 				CheckSwitchStatement(sw, scope, currentFunc);
@@ -660,7 +639,7 @@ public sealed class ValidationPass(BindingContext context)
 	{
 		if (label is not null)
 		{
-			var currentScope = _labelScopes.Count > 0 ? _labelScopes.Peek() : null;
+			var currentScope = _validation.LabelScopes.Count > 0 ? _validation.LabelScopes.Peek() : null;
 			if (currentScope is not null && !currentScope.Add(label))
 			{
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
@@ -670,13 +649,13 @@ public sealed class ValidationPass(BindingContext context)
 			}
 		}
 
-		_loopLabels.Push(label);
+		_validation.LoopLabels.Push(label);
 	}
 
 	private void ExitLoop()
 	{
-		if (_loopLabels.Count > 0)
-			_loopLabels.Pop();
+		if (_validation.LoopLabels.Count > 0)
+			_validation.LoopLabels.Pop();
 	}
 
 	private void ReportDiagnostics(TextSpan span, string message, string diagnosticId)
@@ -843,14 +822,14 @@ public sealed class ValidationPass(BindingContext context)
 		scope.Declare(itemSymbol);
 		context.VariableSymbols[new VariableDeclarationSyntax(forEach.Span, isMutable, forEach.ItemBindingTypeName, forEach.ItemName, null)] = itemSymbol;
 
-		_readOnlyForeachItems.Push(forEach.BindingKind == ForEachVariableKind.Var ? [] : new HashSet<string> { forEach.ItemName });
+		_validation.ReadOnlyForeachItems.Push(forEach.BindingKind == ForEachVariableKind.Var ? [] : new HashSet<string> { forEach.ItemName });
 		try
 		{
 			CheckStatement(forEach.Body, scope, currentFunc);
 		}
 		finally
 		{
-			_readOnlyForeachItems.Pop();
+			_validation.ReadOnlyForeachItems.Pop();
 		}
 	}
 
@@ -931,8 +910,8 @@ public sealed class ValidationPass(BindingContext context)
 	{
 		if (label is null)
 		{
-			var inLoop = _loopLabels.Count > 0;
-			var inSwitch = _switchDepth > 0;
+			var inLoop = _validation.LoopLabels.Count > 0;
+			var inSwitch = _validation.SwitchDepth > 0;
 
 			// An unlabeled break is legal inside a switch case (C-style switch exit) even with
 			// no enclosing loop; continue is strictly a loop construct. This version requires a
@@ -950,11 +929,11 @@ public sealed class ValidationPass(BindingContext context)
 			return;
 		}
 
-		var foundLoop = _loopLabels.Contains(label);
+		var foundLoop = _validation.LoopLabels.Contains(label);
 		if (foundLoop)
 			return;
 
-		if (isBreak && _blockLabels.Contains(label))
+		if (isBreak && _validation.BlockLabels.Contains(label))
 			return;
 
 		var reportContext = context.FileContexts[context.CurrentUnit!];
@@ -1095,7 +1074,7 @@ public sealed class ValidationPass(BindingContext context)
 					&& TypeSymbol.IsFloatingPointType(initializerType)
 					&& resolvedType.Equals(TypeSymbol.Double);
 
-				if (initializerType.Equals(TypeSymbol.Null) && _unsafeDepth > 0)
+				if (initializerType.Equals(TypeSymbol.Null) && _validation.UnsafeDepth > 0)
 				{
 					// In safe/unbound code the blanket 'null is not allowed' (CVL1104)
 					// from SafetyPass applies; these pointer-shape rules only matter
@@ -1428,7 +1407,7 @@ public sealed class ValidationPass(BindingContext context)
 					// API (form B) and are exempt, as are calls already inside an unsafe context.
 					// Enforce CVL1009: Calling a raw 'unsafe function' from code that is not in an unsafe context
 					// Note: [UnsafeBody] functions are encapsulated and exempt from this call-site restriction.
-					if (func.SafetyTier == SafetyTier.Unsafe && !func.IsUnsafeBody && _unsafeDepth == 0)
+					if (func.SafetyTier == SafetyTier.Unsafe && !func.IsUnsafeBody && _validation.UnsafeDepth == 0)
 					{
 						var currentFileContext = context.FileContexts[context.CurrentUnit!];
 						context.Diagnostics.Report(
@@ -1519,7 +1498,7 @@ public sealed class ValidationPass(BindingContext context)
 								if (!isMutable)
 								{
 									var currentFileContext = context.FileContexts[context.CurrentUnit!];
-									if (_readOnlyForeachItems.Count > 0 && _readOnlyForeachItems.Peek().Contains(id.Name))
+									if (_validation.ReadOnlyForeachItems.Count > 0 && _validation.ReadOnlyForeachItems.Peek().Contains(id.Name))
 									{
 										context.Diagnostics.Report(currentFileContext, id.Span,
 																				$"The loop variable '{id.Name}' is read-only and cannot be reassigned inside the execution block.",
@@ -1708,7 +1687,7 @@ public sealed class ValidationPass(BindingContext context)
 			}
 
 			if (!context.LegacyVisibility && !VisibilityChecker.IsAccessible(variantField.Visibility, context.CurrentUnit, GetDeclaringUnit(unionType)) &&
-				!(_inUnbound && variantField.Type is PointerTypeSymbol))
+				!(_validation.InUnbound && variantField.Type is PointerTypeSymbol))
 			{
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
 				context.Diagnostics.Report(currentFileContext, expr.Span,
@@ -1735,7 +1714,7 @@ public sealed class ValidationPass(BindingContext context)
 		}
 
 		if (!context.LegacyVisibility && !VisibilityChecker.IsAccessible(field.Visibility, context.CurrentUnit, GetDeclaringUnit(structType)) &&
-			!(_inUnbound && field.Type is PointerTypeSymbol))
+			!(_validation.InUnbound && field.Type is PointerTypeSymbol))
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
 			context.Diagnostics.Report(currentFileContext, expr.Span,
@@ -1891,7 +1870,7 @@ public sealed class ValidationPass(BindingContext context)
 				if (!isValidNull)
 				{
 					var currentFileContext = context.FileContexts[context.CurrentUnit!];
-					if (_unsafeDepth > 0 && initType.Equals(TypeSymbol.Null))
+					if (_validation.UnsafeDepth > 0 && initType.Equals(TypeSymbol.Null))
 					{
 						context.Diagnostics.Report(currentFileContext, init.Span, "The 'null' literal requires a pointer type (Option or raw pointer).");
 					}
@@ -1968,7 +1947,7 @@ public sealed class ValidationPass(BindingContext context)
 				// Rule 10 (Deferred Reference Initialization): inside an unbound context, reference
 				// fields (`ref`/`refvar`) that point to self-referential structures are exempted from
 				// strict immediate-initialization; they are filled in subsequently within the unbound body.
-				if ((_inUnbound || _unsafeDepth > 0) && field.Type is PointerTypeSymbol)
+				if ((_validation.InUnbound || _validation.UnsafeDepth > 0) && field.Type is PointerTypeSymbol)
 					continue;
 
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
@@ -2020,7 +1999,7 @@ public sealed class ValidationPass(BindingContext context)
 	private bool IsExpressionMutable(ExpressionSyntax expr, SymbolTable scope)
 	{
 		// 1. In unsafe context / [UnsafeBody], raw pointer dereferences are mutable l-values
-		if (_unsafeDepth > 0 && expr is UnaryExpressionSyntax { Operator: "*" })
+		if (_validation.UnsafeDepth > 0 && expr is UnaryExpressionSyntax { Operator: "*" })
 			return true;
 
 		if (expr is UnaryExpressionSyntax { Operator: "*" } deref)
@@ -2097,7 +2076,7 @@ public sealed class ValidationPass(BindingContext context)
 		if (ret.Expression is null)
 			return;
 
-		var expectedType = _lambdaReturnContext ?? context.ResolveType(currentFunc.ReturnType);
+		var expectedType = _validation.LambdaReturnType ?? context.ResolveType(currentFunc.ReturnType);
 
 		// A lambda (or function group) returned from a delegate-typed function is
 		// target-typed against the expected delegate; skip the generic expression check.
@@ -2153,7 +2132,7 @@ public sealed class ValidationPass(BindingContext context)
 				if (!isValidNull)
 				{
 					var currentFileContext = context.FileContexts[context.CurrentUnit!];
-					if (_unsafeDepth > 0 && actualType.Equals(TypeSymbol.Null))
+					if (_validation.UnsafeDepth > 0 && actualType.Equals(TypeSymbol.Null))
 					{
 						context.Diagnostics.Report(currentFileContext, ret.Expression.Span, "The 'null' literal requires a pointer type (Option or raw pointer).");
 					}
@@ -2292,20 +2271,20 @@ public sealed class ValidationPass(BindingContext context)
 		}
 		else if (lam.BlockBody is not null)
 		{
-			var prevLambdaReturn = _lambdaReturnContext;
-			_lambdaReturnContext = delegateType.ReturnType;
-			var prevUnsafeDepth = _unsafeDepth;
+			var prevLambdaReturn = _validation.LambdaReturnType;
+			_validation.LambdaReturnType = delegateType.ReturnType;
+			var prevUnsafeDepth = _validation.UnsafeDepth;
 			// Lambda bodies are validated as safe-callable bodies (§21.3): the enclosing
 			// function's unsafe context must not leak into the lambda.
-			_unsafeDepth = 0;
+			_validation.UnsafeDepth = 0;
 			try
 			{
-				CheckBlock(lam.BlockBody, lambdaScope, _enclosingFunction!);
+				CheckBlock(lam.BlockBody, lambdaScope, _validation.EnclosingFunction!);
 			}
 			finally
 			{
-				_lambdaReturnContext = prevLambdaReturn;
-				_unsafeDepth = prevUnsafeDepth;
+				_validation.LambdaReturnType = prevLambdaReturn;
+				_validation.UnsafeDepth = prevUnsafeDepth;
 			}
 
 			if (!delegateType.ReturnType.Equals(TypeSymbol.Void) && !EndsWithReturn(lam.BlockBody))
@@ -3932,10 +3911,10 @@ public sealed class ValidationPass(BindingContext context)
 			// this-free scope (no receiver object or flat struct fields exist).
 			// A default body may only reference globals/functions and its own
 			// explicit parameters.
-			var baseUnsafeDepth = _unsafeDepth;
-			_unsafeDepth = IsUnsafeFunction(method) ? 1 : 0;
-			var baseInUnboundP = _inUnbound;
-			_inUnbound = method.Modifier == SafetyTier.Unbound;
+			var baseUnsafeDepth = _validation.UnsafeDepth;
+			_validation.UnsafeDepth = IsUnsafeFunction(method) ? 1 : 0;
+			var baseInUnboundP = _validation.InUnbound;
+			_validation.InUnbound = method.Modifier == SafetyTier.Unbound;
 			var protoScope = new SymbolTable(context.Globals);
 			foreach (var p in method.Parameters)
 			{
@@ -3947,8 +3926,8 @@ public sealed class ValidationPass(BindingContext context)
 			}
 
 			CheckBlock(method.Body, protoScope, method);
-			_unsafeDepth = baseUnsafeDepth;
-			_inUnbound = baseInUnboundP;
+			_validation.UnsafeDepth = baseUnsafeDepth;
+			_validation.InUnbound = baseInUnboundP;
 			return;
 		}
 
@@ -3956,10 +3935,10 @@ public sealed class ValidationPass(BindingContext context)
 		if (extendedType is not (StructTypeSymbol or UnionTypeSymbol) && extendedType?.GetType().Name != "EnumTypeSymbol")
 			return;
 
-		var baseUnsafeDepth2 = _unsafeDepth;
-		_unsafeDepth = IsUnsafeFunction(method) ? 1 : 0;
-		var baseInUnbound2 = _inUnbound;
-		_inUnbound = method.Modifier == SafetyTier.Unbound;
+		var baseUnsafeDepth2 = _validation.UnsafeDepth;
+		_validation.UnsafeDepth = IsUnsafeFunction(method) ? 1 : 0;
+		var baseInUnbound2 = _validation.InUnbound;
+		_validation.InUnbound = method.Modifier == SafetyTier.Unbound;
 
 		var structType = extendedType as StructTypeSymbol;
 		bool isMutating;
@@ -4084,8 +4063,8 @@ public sealed class ValidationPass(BindingContext context)
 		CheckBlock(method.Body, localScope, method);
 
 		// Restore original depth context
-		_unsafeDepth = baseUnsafeDepth2;
-		_inUnbound = baseInUnbound2;
+		_validation.UnsafeDepth = baseUnsafeDepth2;
+		_validation.InUnbound = baseInUnbound2;
 	}
 
 	private bool DetectFieldMutation(SyntaxNode node, StructTypeSymbol structType)
@@ -4136,7 +4115,7 @@ public sealed class ValidationPass(BindingContext context)
 		var matchedVariants = new HashSet<string>();
 		var hasDefault = false;
 
-		_switchDepth++;
+		_validation.SwitchDepth++;
 		try
 		{
 			foreach (var c in sw.Cases)
@@ -4216,7 +4195,7 @@ public sealed class ValidationPass(BindingContext context)
 		}
 		finally
 		{
-			_switchDepth--;
+			_validation.SwitchDepth--;
 		}
 
 		// Exhaustive Switch-Matching check
@@ -4238,7 +4217,7 @@ public sealed class ValidationPass(BindingContext context)
 		var matchedVariants = new HashSet<string>();
 		var hasDefault = false;
 
-		_switchDepth++;
+		_validation.SwitchDepth++;
 		try
 		{
 			foreach (var c in sw.Cases)
@@ -4271,7 +4250,7 @@ public sealed class ValidationPass(BindingContext context)
 		}
 		finally
 		{
-			_switchDepth--;
+			_validation.SwitchDepth--;
 		}
 
 		// (§6.A) 'Exhaustive Switch-Matching check'. [Flags] enums are RELAXED: composite
@@ -4470,7 +4449,7 @@ public sealed class ValidationPass(BindingContext context)
 
 	private void CheckAsmExpression(AsmExpressionSyntax asm, SymbolTable scope)
 	{
-		if (_unsafeDepth == 0)
+		if (_validation.UnsafeDepth == 0)
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
 			context.Diagnostics.Report(currentFileContext, asm.Span,
@@ -4627,7 +4606,7 @@ public sealed class ValidationPass(BindingContext context)
 		}
 
 		if (targetType is not null && targetType.Equals(TypeSymbol.Char) &&
-			operandType.Equals(TypeSymbol.String) && _unsafeDepth == 0)
+			operandType.Equals(TypeSymbol.String) && _validation.UnsafeDepth == 0)
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
 			context.Diagnostics.Report(currentFileContext, unary.Span,
@@ -4727,7 +4706,7 @@ public sealed class ValidationPass(BindingContext context)
 		if (unary.Operator.Length >= 3 && unary.Operator.StartsWith('(') && unary.Operator.EndsWith(')'))
 		{
 			var result = context.ResolveType(unary.Operator[1..^1]);
-			if (result is EnumTypeSymbol castEnum && _unsafeDepth == 0)
+			if (result is EnumTypeSymbol castEnum && _validation.UnsafeDepth == 0)
 			{
 				// Safe/unbound zone: an explicit (Enum)integer cast is a checked
 				// conversion yielding Option<Enum> (None when the value matches no
