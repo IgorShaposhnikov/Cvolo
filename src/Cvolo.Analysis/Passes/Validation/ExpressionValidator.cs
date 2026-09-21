@@ -19,9 +19,9 @@ namespace Cvolo.Analysis.Passes.Validation;
 /// <remarks>
 /// The validator owns expression dispatch, expression typing, aggregate and borrow checks, target-typed
 /// delegate values, casts, and expression-specific diagnostics. Inline assembly and compiler intrinsics are
-/// delegated to dedicated validators. Generic/interface/protocol
-/// monomorphization and block traversal remain orchestration responsibilities supplied through callbacks so
-/// this service does not create a second AST pass or depend on <see cref="ValidationPass"/>.
+/// delegated to dedicated validators. Explicit generic and interface/protocol monomorphization are delegated
+/// to <see cref="GenericFunctionInstantiator"/>, while block validation returns to the single shared traversal.
+/// This service does not create a second AST pass or depend on <see cref="ValidationPass"/>.
 /// </remarks>
 internal sealed class ExpressionValidator(
 	BindingContext context,
@@ -32,12 +32,7 @@ internal sealed class ExpressionValidator(
 	InlineAsmValidator inlineAsm,
 	IntrinsicValidator intrinsics,
 	Action<BlockStatementSyntax?, SymbolTable, FunctionDeclarationSyntax> validateBlock,
-	Func<string, SymbolTable, string?> resolveFunctionTemplateName,
-	Func<FunctionDeclarationSyntax, List<TypeSymbol>, SymbolTable, FunctionSymbol> instantiateGenericFunction,
-	Func<string, SymbolTable, string?> resolveInterfaceFunctionTemplateName,
-	Func<CallExpressionSyntax, IReadOnlyList<TypeSymbol>, SymbolTable, FunctionSymbol?> tryResolveInterfaceCall,
-	Func<string, SymbolTable, string?> resolveProtocolFunctionTemplateName,
-	Func<CallExpressionSyntax, IReadOnlyList<TypeSymbol>, SymbolTable, FunctionSymbol?> tryResolveProtocolCall,
+	GenericFunctionInstantiator generics,
 	Func<SyntaxNode, bool> endsWithReturn)
 {
 	private readonly ValidationContext _validation = validation;
@@ -46,31 +41,11 @@ internal sealed class ExpressionValidator(
 	private CallResolver Calls => calls;
 	private InlineAsmValidator InlineAsm => inlineAsm;
 	private IntrinsicValidator Intrinsics => intrinsics;
+	private GenericFunctionInstantiator Generics => generics;
 
 	/// <summary>Delegates lambda block validation back to the single validation traversal.</summary>
 	private void CheckBlock(BlockStatementSyntax? block, SymbolTable scope, FunctionDeclarationSyntax currentFunction)
 		=> validateBlock(block, scope, currentFunction);
-
-	/// <summary>Resolves an explicit generic function template name through the orchestration layer.</summary>
-	private string? ResolveFunctionTemplateName(string name, SymbolTable scope) => resolveFunctionTemplateName(name, scope);
-
-	/// <summary>Instantiates an explicit generic function through the existing validation pipeline.</summary>
-	private FunctionSymbol InstantiateGenericFunction(FunctionDeclarationSyntax template, List<TypeSymbol> typeArguments, SymbolTable scope)
-		=> instantiateGenericFunction(template, typeArguments, scope);
-
-	/// <summary>Resolves an interface-parameterized function template name without owning its monomorphization.</summary>
-	private string? ResolveInterfaceFunctionTemplateName(string name, SymbolTable scope) => resolveInterfaceFunctionTemplateName(name, scope);
-
-	/// <summary>Delegates interface-call monomorphization to the validation orchestrator.</summary>
-	private FunctionSymbol? TryResolveInterfaceCall(CallExpressionSyntax call, IReadOnlyList<TypeSymbol> argumentTypes, SymbolTable scope)
-		=> tryResolveInterfaceCall(call, argumentTypes, scope);
-
-	/// <summary>Resolves a protocol-parameterized function template name without owning its monomorphization.</summary>
-	private string? ResolveProtocolFunctionTemplateName(string name, SymbolTable scope) => resolveProtocolFunctionTemplateName(name, scope);
-
-	/// <summary>Delegates protocol-call monomorphization to the validation orchestrator.</summary>
-	private FunctionSymbol? TryResolveProtocolCall(CallExpressionSyntax call, IReadOnlyList<TypeSymbol> argumentTypes, SymbolTable scope)
-		=> tryResolveProtocolCall(call, argumentTypes, scope);
 
 	/// <summary>Uses the validation pass's existing terminal-return classification for lambda block bodies.</summary>
 	private bool EndsWithReturn(SyntaxNode node) => endsWithReturn(node);
@@ -215,11 +190,11 @@ internal sealed class ExpressionValidator(
 						else
 						{
 							// Fallback to standard generic function monomorphization
-							var templateName = ResolveFunctionTemplateName(call.FunctionName, scope);
+							var templateName = Generics.ResolveFunctionTemplateName(call.FunctionName, scope);
 							if (templateName != null && context.GenericFunctionTemplates.TryGetValue(templateName, out var templateDecl))
 							{
 								var typeArgs = call.TypeArguments.Select(t => context.ResolveType(t)!).ToList();
-								func = InstantiateGenericFunction(templateDecl, typeArgs, scope);
+								func = Generics.InstantiateGenericFunction(templateDecl, typeArgs, scope);
 							}
 						}
 					}
@@ -230,12 +205,12 @@ internal sealed class ExpressionValidator(
 
 						// No concrete overload matched: fall back to interface-parameterized dispatch
 						// (implicit generic templates monomorphized with the concrete conforming arg types).
-						if (func is null && ResolveInterfaceFunctionTemplateName(call.FunctionName, scope) is not null)
+						if (func is null && Generics.ResolveInterfaceFunctionTemplateName(call.FunctionName, scope) is not null)
 						{
 							// The callee is an interface template: specific conformance/arg-count
 							// diagnostics are reported inside. Return early so the generic
 							// "no overload" message is not also emitted.
-							func = TryResolveInterfaceCall(call, argTypes, scope);
+							func = Generics.TryResolveInterfaceCall(call, argTypes, scope);
 							if (func is null)
 								return;
 						}
@@ -243,12 +218,12 @@ internal sealed class ExpressionValidator(
 						// No concrete overload matched: fall back to protocol-parameterized
 						// dispatch (structural duck typing against the protocol's canonical
 						// member tokens; monomorphized with the structurally conforming arg types).
-						if (func is null && ResolveProtocolFunctionTemplateName(call.FunctionName, scope) is not null)
+						if (func is null && Generics.ResolveProtocolFunctionTemplateName(call.FunctionName, scope) is not null)
 						{
 							// The callee is a protocol template: specific structural-conformance/
 							// arg-count diagnostics are reported inside. Return early so the
 							// generic "no overload" message is not also emitted.
-							func = TryResolveProtocolCall(call, argTypes, scope);
+							func = Generics.TryResolveProtocolCall(call, argTypes, scope);
 							if (func is null)
 								return;
 						}

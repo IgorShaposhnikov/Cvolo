@@ -22,7 +22,7 @@ internal sealed class FunctionBodyValidator(
 	ValidationContext validation,
 	StatementValidator statements,
 	IntrinsicValidator intrinsics,
-	Action<TextSpan, TypeSymbol?, string> validateGenericVisibilityLeak,
+	VisibilityValidator visibility,
 	Func<ExpressionSyntax, string?> getBaseIdentifierName)
 {
 	/// <summary>
@@ -34,12 +34,12 @@ internal sealed class FunctionBodyValidator(
 		if (func.Visibility == Visibility.Public)
 		{
 			var retType = context.ResolveType(func.ReturnType);
-			validateGenericVisibilityLeak(func.NameSpan, retType, func.Name);
+			visibility.CheckGenericVisibilityLeak(func.NameSpan, retType);
 
 			foreach (var param in func.Parameters)
 			{
 				var paramType = context.ResolveType(param.Type);
-				validateGenericVisibilityLeak(param.Span, paramType, func.Name);
+				visibility.CheckGenericVisibilityLeak(param.Span, paramType);
 			}
 		}
 
@@ -307,4 +307,5 @@ internal sealed class FunctionBodyValidator(
 
 		return false;
 	}
+
 }
