@@ -21,6 +21,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 {
 	private readonly CodegenContext _codegen;
 	private readonly CleanupEmitter _cleanup;
+	private readonly AggregateEmitter _aggregates;
 	private readonly ILLVMOptimizer? _optimizer;
 	private readonly IRVerifier? _irVerifier;
 
@@ -75,6 +76,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		targetLayout.Apply(module, LLVMTargetRef.DefaultTriple);
 		_codegen = new CodegenContext(llvmContext, module, builder, targetLayout);
 		_cleanup = new CleanupEmitter(_codegen);
+		_aggregates = new AggregateEmitter(_codegen, EmitExpression, GetExprType);
 
 		_optimizer = optimizer;
 		_irVerifier = irVerifier;
@@ -987,7 +989,6 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		{
 			_builder.BuildBr(endBlock);
 		}
-
 		_function.LabeledBreaks.Pop();
 
 		_builder.PositionAtEnd(endBlock);
@@ -1420,13 +1421,13 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			case HeapArrayAllocationExpressionSyntax hArr:
 				return EmitHeapArrayAllocation(hArr);
 			case StructInitializationExpressionSyntax s:
-				return EmitStructInitialization(s);
+				return _aggregates.EmitStructInitialization(s);
 			case ArrayInitializationExpressionSyntax a:
-				return EmitArrayInitialization(a);
+				return _aggregates.EmitArrayInitialization(a);
 			case ArrayReplicationExpressionSyntax arrRepl:
-				return EmitArrayReplication(arrRepl);
+				return _aggregates.EmitArrayReplication(arrRepl);
 			case ParenthesizedStructInitializerExpressionSyntax parenStruct:
-				return EmitParenthesizedStructInitialization(parenStruct);
+				return _aggregates.EmitParenthesizedStructInitialization(parenStruct);
 			case CallExpressionSyntax call:
 				return EmitCallExpression(call);
 			case BinaryExpressionSyntax bin:
@@ -2731,7 +2732,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 					if (type is UnionTypeSymbol && bin.Right is StructInitializationExpressionSyntax reinit)
 					{
-						EmitStructInitializationInPlace(reinit, ptr);
+						_aggregates.EmitStructInitializationInPlace(reinit, ptr);
 					}
 					else
 					{
@@ -2750,7 +2751,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			{
 				var globalType = _globalVariableTypes[globalKey];
 				if (globalType is UnionTypeSymbol && bin.Right is StructInitializationExpressionSyntax globalReinit)
-					EmitStructInitializationInPlace(globalReinit, globalPtr);
+					_aggregates.EmitStructInitializationInPlace(globalReinit, globalPtr);
 				else
 				{
 					var coerced = (bin.Right is MemberAccessExpressionSyntax or IndexExpressionSyntax)
@@ -2760,6 +2761,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 					coerced = CoerceFloatWidth(coerced, rTy, globalType);
 					_builder.BuildStore(coerced, globalPtr);
 				}
+
 				return right;
 			}
 			else if (_function.Locals.TryGetValue("this", out var thisPtr))
@@ -2774,7 +2776,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 					{
 						var (fieldPtr, _, _, tbaa) = GetFieldPointer(id);
 						if (field.Type is UnionTypeSymbol && bin.Right is StructInitializationExpressionSyntax fieldReinit)
-							EmitStructInitializationInPlace(fieldReinit, fieldPtr);
+							_aggregates.EmitStructInitializationInPlace(fieldReinit, fieldPtr);
 						else
 						{
 							var coerced = CoerceIntegerWidth(right, rTy, field.Type);
@@ -2792,7 +2794,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 					{
 						var (fieldPtr, _, _, _) = GetFieldPointer(id);
 						if (bin.Right is StructInitializationExpressionSyntax thisFieldReinit)
-							EmitStructInitializationInPlace(thisFieldReinit, fieldPtr);
+							_aggregates.EmitStructInitializationInPlace(thisFieldReinit, fieldPtr);
 						else
 						{
 							var coerced = CoerceIntegerWidth(right, rTy, field.Type);
@@ -2829,7 +2831,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			}
 
 			if (fieldType is UnionTypeSymbol && bin.Right is StructInitializationExpressionSyntax fieldReinit)
-				EmitStructInitializationInPlace(fieldReinit, fieldPtr);
+				_aggregates.EmitStructInitializationInPlace(fieldReinit, fieldPtr);
 			else
 			{
 				var coerced = (bin.Right is MemberAccessExpressionSyntax or IndexExpressionSyntax)
@@ -2854,7 +2856,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			}
 
 			if (elementType is UnionTypeSymbol && bin.Right is StructInitializationExpressionSyntax elemReinit)
-				EmitStructInitializationInPlace(elemReinit, elementPtr);
+				_aggregates.EmitStructInitializationInPlace(elemReinit, elementPtr);
 			else
 			{
 				var coerced = (bin.Right is MemberAccessExpressionSyntax or IndexExpressionSyntax)
@@ -2882,7 +2884,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 			if (targetType is UnionTypeSymbol && bin.Right is StructInitializationExpressionSyntax elemReinit)
 			{
-				EmitStructInitializationInPlace(elemReinit, targetPtr);
+				_aggregates.EmitStructInitializationInPlace(elemReinit, targetPtr);
 			}
 			else
 			{
@@ -2913,7 +2915,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 			if (targetType is UnionTypeSymbol && bin.Right is StructInitializationExpressionSyntax elemReinit)
 			{
-				EmitStructInitializationInPlace(elemReinit, targetPtr);
+				_aggregates.EmitStructInitializationInPlace(elemReinit, targetPtr);
 			}
 			else
 			{
@@ -3272,15 +3274,15 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 				if (varDecl.Initializer is StructInitializationExpressionSyntax structInit)
 				{
-					EmitStructInitializationInPlace(structInit, alloca);
+					_aggregates.EmitStructInitializationInPlace(structInit, alloca);
 				}
 				else if (varDecl.Initializer is ArrayInitializationExpressionSyntax arrInit)
 				{
-					EmitArrayInitializationInPlace(arrInit, alloca, (typeSymbol as ArrayTypeSymbol)!);
+					_aggregates.EmitArrayInitializationInPlace(arrInit, alloca, (typeSymbol as ArrayTypeSymbol)!);
 				}
 				else if (varDecl.Initializer is ArrayReplicationExpressionSyntax arrRepl)
 				{
-					EmitArrayReplicationInPlace(arrRepl, alloca, (typeSymbol as ArrayTypeSymbol)!);
+					_aggregates.EmitArrayReplicationInPlace(arrRepl, alloca, (typeSymbol as ArrayTypeSymbol)!);
 				}
 				else if (varDecl.Initializer is CallExpressionSyntax ctorCall && IsConstructorCall(ctorCall, typeSymbol))
 				{
@@ -4874,134 +4876,6 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		return (tmp, optionUnion);
 	}
 
-	private LLVMValueRef EmitStructInitialization(StructInitializationExpressionSyntax expr)
-	{
-		var typeSymbol = _bindingContext!.ResolveType(expr.StructTypeName);
-		var structLayout = GetLLVMType(typeSymbol!);
-		var tempAlloc = _builder.BuildAlloca(structLayout, "struct_tmp");
-		EmitStructInitializationInPlace(expr, tempAlloc);
-
-		// NPO-eligible unions lower to a single scalar (the flat pointer), so the expression's
-		// VALUE is the loaded scalar, not the address of its materialization slot.
-		if (typeSymbol is UnionTypeSymbol { IsNpoEligible: true })
-		{
-			return _builder.BuildLoad2(structLayout, tempAlloc, $"struct_val_{expr.StructTypeName}");
-		}
-
-		return tempAlloc;
-	}
-
-	private void EmitStructInitializationInPlace(StructInitializationExpressionSyntax expr, LLVMValueRef destPtr)
-	{
-		var typeSymbol = _bindingContext!.ResolveType(expr.StructTypeName);
-
-		if (typeSymbol is UnionTypeSymbol unionType)
-		{
-			var unionLayout = GetLLVMType(unionType);
-			var init = expr.Initializers[0];
-			var fieldIndex = GetFieldIndex(unionType, init.MemberName);
-			var field = unionType.Fields[fieldIndex];
-
-			// Null-Pointer Optimization: the flat slot IS the pointer. Some(x) stores the ref
-			// value directly into the slot; None stores nullptr. No tag, no payload struct.
-			if (unionType.IsNpoEligible)
-			{
-				if (field.IsVoidVariant)
-				{
-					_builder.BuildStore(LLVMValueRef.CreateConstPointerNull(unionLayout), destPtr);
-				}
-				else
-				{
-					var value = EmitExpression(init.Expression);
-					_builder.BuildStore(value, destPtr);
-				}
-				return;
-			}
-
-			// 1. Store the active variant index into the i8 tag field (Index 0)
-			var tagPtr = _builder.BuildGEP2(unionLayout, destPtr, new LLVMValueRef[] {
-				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
-				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0)
-			}, "union_tag_ptr");
-			_builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, (ulong)fieldIndex), tagPtr);
-
-			// 2. Store the variant value into the payload field (Index 1) if not void
-			if (!field.IsVoidVariant)
-			{
-				var payloadPtr = _builder.BuildGEP2(unionLayout, destPtr, new LLVMValueRef[] {
-					LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
-					LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1)
-				}, "union_payload_ptr");
-
-				var castPtr = _builder.BuildBitCast(payloadPtr, LLVMTypeRef.CreatePointer(GetLLVMType(field.Type), 0), "payload_cast_ptr");
-
-				// Aggregate variants are materialized in place (EmitStructInitialization returns an
-				// alloca pointer, not an aggregate value); store scalars by value.
-				if (init.Expression is StructInitializationExpressionSyntax structVariant)
-				{
-					EmitStructInitializationInPlace(structVariant, castPtr);
-				}
-				else if (init.Expression is ParenthesizedStructInitializerExpressionSyntax parenVariant)
-				{
-					EmitParenthesizedStructInitializationInPlace(parenVariant, castPtr);
-				}
-				else
-				{
-					var value = EmitExpression(init.Expression);
-					_builder.BuildStore(value, castPtr);
-				}
-			}
-
-			return;
-		}
-
-		// Struct fallback: Cast the resolved typeSymbol to StructTypeSymbol
-		var structType = (StructTypeSymbol)typeSymbol!;
-		var structLayout = GetLLVMType(structType);
-
-		var providedFields = new HashSet<string>();
-		foreach (var init in expr.Initializers)
-		{
-			var fieldIndex = GetFieldIndex(structType, init.MemberName);
-			providedFields.Add(init.MemberName);
-			var targetFieldPtr = _builder.BuildGEP2(structLayout, destPtr, new LLVMValueRef[]
-			{
-				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0), LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)fieldIndex)
-			}, "init_field_ptr");
-
-			if (init.Expression is ParenthesizedStructInitializerExpressionSyntax nestedParen)
-			{
-				EmitParenthesizedStructInitializationInPlace(nestedParen, targetFieldPtr);
-			}
-			else if (init.Expression is StructInitializationExpressionSyntax structInit)
-			{
-				EmitStructInitializationInPlace(structInit, targetFieldPtr);
-			}
-			else
-			{
-				var value = EmitExpression(init.Expression);
-				_builder.BuildStore(value, targetFieldPtr);
-			}
-		}
-
-		// Deferred Reference Initialization (spec Â§5 Rule 10): reference fields (`ref`/`refvar`) that were
-		// omitted from the initializer (permitted inside unbound for self-referential structures) are seeded
-		// with a null marker. The compile-time dataflow pass guarantees they are overwritten with a valid
-		// reference before the unbound boundary is crossed, so this null is never dereferenced at runtime.
-		for (var f = 0; f < structType.Fields.Count; f++)
-		{
-			var field = structType.Fields[f];
-			if (field.Type is PointerTypeSymbol && !providedFields.Contains(field.Name))
-			{
-				var fieldPtr = _builder.BuildGEP2(structLayout, destPtr, new LLVMValueRef[]
-				{
-					LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0), LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)f)
-				}, "deferred_field_ptr");
-				_builder.BuildStore(LLVMValueRef.CreateConstPointerNull(GetLLVMType(field.Type)), fieldPtr);
-			}
-		}
-	}
-
 	private LLVMValueRef EmitHeapAllocation(HeapAllocationExpressionSyntax expr)
 	{
 		// The heap target is either a struct literal (`heap Node { ... }`) or a constructor
@@ -5040,7 +4914,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 		if (expr.Expression is StructInitializationExpressionSyntax litInit)
 		{
-			EmitStructInitializationInPlace(litInit, rawPtr);
+			_aggregates.EmitStructInitializationInPlace(litInit, rawPtr);
 		}
 		else if (expr.Expression is CallExpressionSyntax callInit)
 		{
@@ -5052,133 +4926,12 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		return rawPtr;
 	}
 
-	private LLVMValueRef EmitArrayInitialization(ArrayInitializationExpressionSyntax expr)
-	{
-		var elementType = GetExprType(expr.Elements[0]);
-		var arrayTypeSymbol = new ArrayTypeSymbol(elementType, expr.Elements.Count);
-		var arrayLayout = GetLLVMType(arrayTypeSymbol);
-
-		var tempAlloc = _builder.BuildAlloca(arrayLayout, "arr_tmp");
-		EmitArrayInitializationInPlace(expr, tempAlloc, arrayTypeSymbol);
-		return tempAlloc;
-	}
-
-	private void EmitArrayInitializationInPlace(ArrayInitializationExpressionSyntax expr, LLVMValueRef destPtr, ArrayTypeSymbol arrayType)
-	{
-		// `{}` empty initializer on an explicitly-sized array: zero-initialize per Memory spec Â§5.
-		if (expr.Elements.Count == 0 && arrayType.Size > 0)
-		{
-			EmitZeroInitArray(destPtr, arrayType);
-			return;
-		}
-
-		var arrayLayout = GetLLVMType(arrayType);
-
-		for (var i = 0; i < expr.Elements.Count; i++)
-		{
-			var elementPtr = _builder.BuildGEP2(arrayLayout, destPtr, new LLVMValueRef[]
-			{
-				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0), LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)i)
-			}, "arr_el");
-			var elementExpr = expr.Elements[i];
-
-			if (elementExpr is StructInitializationExpressionSyntax structInit)
-			{
-				EmitStructInitializationInPlace(structInit, elementPtr);
-			}
-			else if (elementExpr is ArrayInitializationExpressionSyntax nestedArr)
-			{
-				EmitArrayInitializationInPlace(nestedArr, elementPtr, (arrayType.ElementType as ArrayTypeSymbol)!);
-			}
-			else
-			{
-				var val = EmitExpression(elementExpr);
-				_builder.BuildStore(val, elementPtr);
-			}
-		}
-	}
-
-	private void EmitMemset(LLVMValueRef destPtr, long byteCount)
-	{
-		if (byteCount <= 0) return;
-		var memsetFunc = _globals["memset"];
-		var memsetType = _functionTypes["memset"];
-		var destCasted = _builder.BuildBitCast(destPtr, LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), "zero_dest");
-		_builder.BuildCall2(memsetType, memsetFunc, new LLVMValueRef[]
-		{
-			destCasted,
-			LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
-			LLVMValueRef.CreateConstInt(LLVMTypeRef.Int64, (ulong)byteCount)
-		}, "");
-	}
-
 	// The real storage size of an LLVM type (including alignment padding), from the module
 	// data layout. GetByteSize reflects the semantic size and can under-report padded structs.
 	private long GetLLVMStoreSize(LLVMTypeRef type)
 	{
 		var targetData = LLVMTargetDataRef.FromStringRepresentation(_module.DataLayout);
 		return (long)targetData.StoreSizeOfType(type);
-	}
-
-	// Whether zeroing every byte of a value yields a valid empty state:
-	// primitives/pointers/slices/strings and NPO options (None == flat address 0) are safe;
-	// tagged unions (None tag != 0) and types with custom destructors (ResourceMove) are not.
-	private bool TypeIsZeroInitSafe(TypeSymbol t)
-	{
-		if (t is ArrayTypeSymbol arr) return TypeIsZeroInitSafe(arr.ElementType);
-		if (t is UnionTypeSymbol us)
-		{
-			// Null-Pointer-Optimized option: None is the flat zero pointer â€” memset is safe.
-			if (us.IsNpoEligible) return true;
-			return false; // tagged union: None requires an explicit tag store, never raw zeroing
-		}
-		if (t is StructTypeSymbol st)
-		{
-			if (_bindingContext!.OverloadedFunctions.ContainsKey($"{st.Name}.~{st.Name}")) return false;
-			return st.Fields.All(f => TypeIsZeroInitSafe(f.Type));
-		}
-		return true;
-	}
-
-	private void EmitZeroInitArray(LLVMValueRef destPtr, ArrayTypeSymbol arrayType)
-	{
-		var elementType = arrayType.ElementType;
-
-		// Fast path: Trivial/Large-Copy element (incl. NPO option fields) â†’ single memset.
-		// Byte count comes from LLVM's real storage size to account for struct padding.
-		if (TypeIsZeroInitSafe(elementType))
-		{
-			EmitMemset(destPtr, GetLLVMStoreSize(GetLLVMType(arrayType)));
-			return;
-		}
-
-		// Linear restriction (Memory spec Â§5): no raw whole-array memset for
-		// tagged unions or types with custom destructors. Initialize per element.
-		var arrayLayout = GetLLVMType(arrayType);
-		for (var i = 0; i < arrayType.Size; i++)
-		{
-			var elementPtr = _builder.BuildGEP2(arrayLayout, destPtr, new LLVMValueRef[]
-			{
-				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0), LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)i)
-			}, "zero_el");
-
-			// A tagged union's empty state is its None tag; store it explicitly.
-			if (elementType is UnionTypeSymbol unionEl)
-			{
-				var unionLayout = GetLLVMType(unionEl);
-				var tagPtr = _builder.BuildGEP2(unionLayout, elementPtr, new LLVMValueRef[]
-				{
-					LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0), LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0)
-				}, "zero_tag");
-				var noneTag = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, (ulong)GetFieldIndex(unionEl, unionEl.NoneVariant.Name));
-				_builder.BuildStore(noneTag, tagPtr);
-				continue;
-			}
-
-			// Struct with a destructor (ResourceMove) or a nested tagged union:
-			// explicit per-element zero init (no single pooled memset).
-			EmitMemset(elementPtr, GetLLVMStoreSize(GetLLVMType(elementType)));
-		}
 	}
 
 	private LLVMValueRef CoerceArrayToSlice(LLVMValueRef arrayPtr, TypeSymbol argTy, SliceTypeSymbol sliceTy)
@@ -5209,108 +4962,6 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	{
 		_builder.Dispose();
 		_module.Dispose();
-	}
-
-	private LLVMValueRef EmitArrayReplication(ArrayReplicationExpressionSyntax expr)
-	{
-		var valueType = GetExprType(expr.Value);
-		var countVal = (expr.Count is IntegerLiteralExpressionSyntax countLit) ? (int)countLit.Value : 0;
-		var arrayTypeSymbol = new ArrayTypeSymbol(valueType, countVal);
-		var arrayLayout = GetLLVMType(arrayTypeSymbol);
-
-		var tempAlloc = _builder.BuildAlloca(arrayLayout, "arr_repl_tmp");
-		EmitArrayReplicationInPlace(expr, tempAlloc, arrayTypeSymbol);
-		return tempAlloc;
-	}
-
-	private void EmitArrayReplicationInPlace(ArrayReplicationExpressionSyntax expr, LLVMValueRef destPtr, ArrayTypeSymbol arrayType)
-	{
-		var arrayLayout = GetLLVMType(arrayType);
-
-		var currentFunc = _builder.InsertBlock.Parent;
-		var condBlock = currentFunc.AppendBasicBlock("repl_cond");
-		var bodyBlock = currentFunc.AppendBasicBlock("repl_body");
-		var endBlock = currentFunc.AppendBasicBlock("repl_end");
-
-		// Initialize counter: alloca and store 0
-		var counterAlloc = _builder.BuildAlloca(LLVMTypeRef.Int32, "repl_i");
-		_builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0), counterAlloc);
-		_builder.BuildBr(condBlock);
-
-		// Condition verification
-		_builder.PositionAtEnd(condBlock);
-		var iVal = _builder.BuildLoad2(LLVMTypeRef.Int32, counterAlloc, "i_val");
-		var limitVal = EmitExpression(expr.Count);
-		var cmp = _builder.BuildICmp(LLVMIntPredicate.LLVMIntSLT, iVal, limitVal, "repl_cmp");
-		_builder.BuildCondBr(cmp, bodyBlock, endBlock);
-
-		// Loop fill body
-		_builder.PositionAtEnd(bodyBlock);
-		var elementPtr = _builder.BuildGEP2(arrayLayout, destPtr, new LLVMValueRef[]
-		{
-		LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0), iVal
-		}, "repl_el");
-
-		if (expr.Value is ParenthesizedStructInitializerExpressionSyntax nestedParen)
-		{
-			EmitParenthesizedStructInitializationInPlace(nestedParen, elementPtr);
-		}
-		else if (expr.Value is StructInitializationExpressionSyntax structInit)
-		{
-			EmitStructInitializationInPlace(structInit, elementPtr);
-		}
-		else
-		{
-			var val = EmitExpression(expr.Value);
-			_builder.BuildStore(val, elementPtr);
-		}
-
-		// Increment index
-		var nextI = _builder.BuildAdd(iVal, LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1), "next_i");
-		_builder.BuildStore(nextI, counterAlloc);
-		_builder.BuildBr(condBlock);
-
-		_builder.PositionAtEnd(endBlock);
-	}
-
-	private LLVMValueRef EmitParenthesizedStructInitialization(ParenthesizedStructInitializerExpressionSyntax expr)
-	{
-		var typeSymbol = _bindingContext!.ResolveType(expr.ResolvedStructTypeName!);
-		var structLayout = GetLLVMType(typeSymbol!);
-		var tempAlloc = _builder.BuildAlloca(structLayout, "struct_tmp");
-		EmitParenthesizedStructInitializationInPlace(expr, tempAlloc);
-		return tempAlloc;
-	}
-
-	private void EmitParenthesizedStructInitializationInPlace(ParenthesizedStructInitializerExpressionSyntax expr, LLVMValueRef destPtr)
-	{
-		var typeSymbol = _bindingContext!.ResolveType(expr.ResolvedStructTypeName!);
-		if (typeSymbol is not StructTypeSymbol structType)
-			return;
-		var structLayout = GetLLVMType(structType);
-
-		foreach (var init in expr.Initializers)
-		{
-			var fieldIndex = GetFieldIndex(structType, init.MemberName);
-			var targetFieldPtr = _builder.BuildGEP2(structLayout, destPtr, new LLVMValueRef[]
-			{
-			LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0), LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)fieldIndex)
-			}, "init_field_ptr");
-
-			if (init.Expression is ParenthesizedStructInitializerExpressionSyntax nestedInit)
-			{
-				EmitParenthesizedStructInitializationInPlace(nestedInit, targetFieldPtr);
-			}
-			else if (init.Expression is StructInitializationExpressionSyntax structInit)
-			{
-				EmitStructInitializationInPlace(structInit, targetFieldPtr);
-			}
-			else
-			{
-				var value = EmitExpression(init.Expression);
-				_builder.BuildStore(value, targetFieldPtr);
-			}
-		}
 	}
 
 	private LLVMValueRef EmitHeapArrayAllocation(HeapArrayAllocationExpressionSyntax expr)
