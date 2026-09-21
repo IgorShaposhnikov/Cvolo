@@ -1,5 +1,6 @@
 using System.Text;
 using Cvolo.Analysis;
+using Cvolo.Analysis.Symbols;
 using Cvolo.Analysis.Symbols.Base;
 using Cvolo.Analysis.Symbols.Collections;
 using Cvolo.Analysis.Symbols.Structs;
@@ -38,7 +39,6 @@ internal sealed class ExpressionEmitter(
 	Func<ExpressionSyntax, string?> tryExtractQualifiedGlobalKey,
 	Func<MemberAccessExpressionSyntax, EnumTypeSymbol?> tryResolveEnumVariantReceiver,
 	Func<EnumTypeSymbol, (LLVMValueRef ptr, TypeSymbol type)> emitEnumValuesSlicePointer,
-	Func<UnionTypeSymbol, string, int> getUnionFieldIndex,
 	Action<LLVMValueRef?, LLVMValueRef> applyTbaa,
 	Func<TypeSymbol, bool> typeEscapesHeap,
 	Func<LLVMValueRef, LLVMTypeRef, string, LLVMValueRef> safeBitCast,
@@ -170,7 +170,7 @@ internal sealed class ExpressionEmitter(
 						var tagValue = Builder.BuildLoad2(LLVMTypeRef.Int8, tagPtr, "is_tag_val2");
 
 						var matchVariant = isPat.VariantName;
-						var matchIndex = getUnionFieldIndex(unionTypeSym!, matchVariant);
+						var matchIndex = codegen.AggregateLayout.GetFieldIndex(unionTypeSym!, matchVariant);
 						isSome = Builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, tagValue,
 							LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, (ulong)matchIndex),
 							isNoneVariant ? "is_none" : "is_some");
@@ -830,7 +830,7 @@ internal sealed class ExpressionEmitter(
 					}
 					else
 					{
-						var fieldIndex = getUnionFieldIndex(optionUnion, "None");
+						var fieldIndex = codegen.AggregateLayout.GetFieldIndex(optionUnion, "None");
 
 						var tagPtr = Builder.BuildGEP2(unionLayout, ptr, new LLVMValueRef[] {
 							LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
@@ -951,7 +951,7 @@ internal sealed class ExpressionEmitter(
 			if (getExpressionType(m.Expression) is UnionTypeSymbol unionType && !unionType.IsNpoEligible)
 			{
 				var (unionPtr, _, _, _) = getFieldPointer(m.Expression);
-				var variantIndex = getUnionFieldIndex(unionType, m.MemberName);
+				var variantIndex = codegen.AggregateLayout.GetFieldIndex(unionType, m.MemberName);
 				var unionLayout = LowerType(unionType);
 				var tagPtr = Builder.BuildGEP2(unionLayout, unionPtr, new LLVMValueRef[] {
 					LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),

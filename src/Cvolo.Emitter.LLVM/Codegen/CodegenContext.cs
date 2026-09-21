@@ -38,6 +38,7 @@ internal sealed class CodegenContext
 		// The lowering service observes the same named aggregate registry that declaration emission
 		// populates, so later lowering sees newly declared struct/union LLVM types immediately.
 		Types = new LlvmTypeLowering(LlvmStructTypes);
+		AggregateLayout = new AggregateLayout();
 	}
 
 	/// <summary>
@@ -106,4 +107,8 @@ internal sealed class CodegenContext
 	/// Shared semantic-type to internal-LLVM-type lowering service for this module.
 	/// </summary>
 	public LlvmTypeLowering Types { get; }
+	/// <summary>
+	/// Shared aggregate layout helpers used by emitters for field indices and the current byte-size rules.
+	/// </summary>
+	public AggregateLayout AggregateLayout { get; }
 }

@@ -20,12 +20,11 @@ namespace Cvolo.Emitter.LLVM.Codegen.Emitters;
 /// </remarks>
 /// <remarks>
 /// Creates a declaration emitter over the shared module context while preserving the existing
-/// FFI type-lowering and byte-size behavior through migration callbacks.
+/// FFI type-lowering behavior through the existing migration callback and shared layout service.
 /// </remarks>
 internal sealed class DeclarationEmitter(
 	CodegenContext codegen,
 	Func<TypeSymbol, LLVMTypeRef> lowerFfiType,
-	Func<TypeSymbol, int> getByteSize,
 	IReadOnlySet<string>? definedGlobalNames)
 {
 	private readonly Dictionary<string, ExternDeclarationSyntax> _externDeclarations = [];
@@ -129,7 +128,7 @@ internal sealed class DeclarationEmitter(
 			var llvmUnion = codegen.LlvmStructTypes[unionType.Name];
 			var maxPayloadSize = unionType.Fields
 				.Where(f => !f.IsVoidVariant)
-				.Select(f => getByteSize(f.Type))
+				.Select(f => codegen.AggregateLayout.GetByteSize(f.Type))
 				.DefaultIfEmpty(0)
 				.Max();
 			llvmUnion.StructSetBody(

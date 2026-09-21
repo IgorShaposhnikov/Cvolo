@@ -37,7 +37,6 @@ internal sealed class DelegateEmitter(
 	Func<ExpressionSyntax, TypeSymbol> getExpressionType,
 	ValueCoercion coercion,
 	Func<string, LLVMValueRef> load,
-	Func<StructTypeSymbol, string, int> getStructFieldIndex,
 	Func<string, string?> resolveGlobalKey)
 {
 	private int _delegateFunctionCounter;
@@ -347,7 +346,7 @@ internal sealed class DelegateEmitter(
 			var zero = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0);
 			var index = LLVMValueRef.CreateConstInt(
 				LLVMTypeRef.Int32,
-				(uint)getStructFieldIndex(selfStruct, receiverName));
+				(uint)codegen.AggregateLayout.GetFieldIndex(selfStruct, receiverName));
 			receiverPointer = Builder.BuildGEP2(
 				codegen.Types.Lower(selfStruct),
 				actualThisPointer,

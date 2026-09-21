@@ -174,7 +174,7 @@ internal sealed class StatementEmitter(
 				}
 				else
 				{
-					var fieldIndex = GetFieldIndex(optionUnion, "None");
+					var fieldIndex = codegen.AggregateLayout.GetFieldIndex(optionUnion, "None");
 
 					var tagPtr = Builder.BuildGEP2(unionLayout, tempAlloc, new LLVMValueRef[]
 					{
@@ -311,7 +311,7 @@ internal sealed class StatementEmitter(
 			// any tag-checked destructor) observes a None slot instead of uninitialized garbage.
 			if (typeSymbol is UnionTypeSymbol zeroUnion && cleanup.UnionNeedsTagCheckedCleanup(zeroUnion))
 			{
-				var zeroNone = zeroUnion.NoneVariant is not null ? GetFieldIndex(zeroUnion, zeroUnion.NoneVariant.Name) : 0;
+				var zeroNone = zeroUnion.NoneVariant is not null ? codegen.AggregateLayout.GetFieldIndex(zeroUnion, zeroUnion.NoneVariant.Name) : 0;
 				var zeroTagPtr = Builder.BuildGEP2(llvmType, alloca, new LLVMValueRef[]
 				{
 					LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
@@ -333,7 +333,7 @@ internal sealed class StatementEmitter(
 						return;
 					}
 
-					var fieldIndex = GetFieldIndex(optionUnion, "None");
+					var fieldIndex = codegen.AggregateLayout.GetFieldIndex(optionUnion, "None");
 
 					var tagPtr = Builder.BuildGEP2(llvmType, alloca, new LLVMValueRef[]
 					{
@@ -400,8 +400,9 @@ internal sealed class StatementEmitter(
 				// Panic-safe zero-ing for Unions initialized via Type Inference
 				if (valTy is UnionTypeSymbol zeroUnion && cleanup.UnionNeedsTagCheckedCleanup(zeroUnion))
 				{
-					var zeroNone = zeroUnion.NoneVariant is not null ? GetFieldIndex(zeroUnion, zeroUnion.NoneVariant.Name) : 0;
-					var zeroTagPtr = Builder.BuildGEP2(llvmType, alloca, new LLVMValueRef[] {
+					var zeroNone = zeroUnion.NoneVariant is not null ? codegen.AggregateLayout.GetFieldIndex(zeroUnion, zeroUnion.NoneVariant.Name) : 0;
+					var zeroTagPtr = Builder.BuildGEP2(llvmType, alloca, new LLVMValueRef[]
+					{
 						LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
 						LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0)
 					}, "union_tag_ptr");
@@ -954,7 +955,7 @@ internal sealed class StatementEmitter(
 				else
 				{
 					var unionTypeSym = unionType as UnionTypeSymbol;
-					var fieldIndex = GetFieldIndex(unionTypeSym!, c.VariantName);
+					var fieldIndex = codegen.AggregateLayout.GetFieldIndex(unionTypeSym!, c.VariantName);
 
 					var caseBodyBlock = currentFunc.AppendBasicBlock($"case_{c.VariantName}_body");
 					nextCheckBlock = currentFunc.AppendBasicBlock($"case_{c.VariantName}_next");
@@ -1073,7 +1074,7 @@ internal sealed class StatementEmitter(
 
 		if (c.VariableName is not null && !isDefault)
 		{
-			var fieldIndex = GetFieldIndex(unionTypeSym!, variantName);
+			var fieldIndex = codegen.AggregateLayout.GetFieldIndex(unionTypeSym!, variantName);
 			var field = unionTypeSym.Fields[fieldIndex];
 			var isNpo = unionTypeSym.IsNpoEligible;
 
@@ -1131,7 +1132,7 @@ internal sealed class StatementEmitter(
 						LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
 						LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0)
 					}, "move_src_tag_ptr");
-					var moveNoneIdx = unionTypeSym.NoneVariant is not null ? GetFieldIndex(unionTypeSym, unionTypeSym.NoneVariant.Name) : 0;
+					var moveNoneIdx = unionTypeSym.NoneVariant is not null ? codegen.AggregateLayout.GetFieldIndex(unionTypeSym, unionTypeSym.NoneVariant.Name) : 0;
 					Builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, (ulong)moveNoneIdx), srcTagPtr);
 				}
 			}
@@ -1152,31 +1153,4 @@ internal sealed class StatementEmitter(
 		_ => false,
 	};
 
-	/// <summary>
-	/// Returns the storage index of a named struct field using the semantic field order.
-	/// </summary>
-	private static int GetFieldIndex(StructTypeSymbol type, string name)
-	{
-		for (var i = 0; i < type.Fields.Count; i++)
-		{
-			if (type.Fields[i].Name == name)
-				return i;
-		}
-
-		throw new KeyNotFoundException($"Field {name} not found in struct {type.Name}");
-	}
-
-	/// <summary>
-	/// Returns the storage index of a named union variant using the semantic variant order.
-	/// </summary>
-	private static int GetFieldIndex(UnionTypeSymbol type, string name)
-	{
-		for (var i = 0; i < type.Fields.Count; i++)
-		{
-			if (type.Fields[i].Name == name)
-				return i;
-		}
-
-		throw new KeyNotFoundException($"Variant {name} not found in union {type.Name}");
-	}
 }

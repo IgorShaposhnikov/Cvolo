@@ -71,7 +71,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		var builder = llvmContext.CreateBuilder();
 		targetLayout.Apply(module, LLVMTargetRef.DefaultTriple);
 		_codegen = new CodegenContext(llvmContext, module, builder, targetLayout);
-		_declarations = new DeclarationEmitter(_codegen, GetFFIType, GetByteSize, definedGlobalNames);
+		_declarations = new DeclarationEmitter(_codegen, GetFFIType, definedGlobalNames);
 		_globalEmitter = new GlobalEmitter(_codegen, definedGlobalNames);
 		_cleanup = new CleanupEmitter(_codegen);
 		_memory = new MemoryEmitter(_codegen);
@@ -86,7 +86,6 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			GetFieldPointer,
 			_coercion,
 			Load,
-			GetByteSize,
 			_declarations.ExternDeclarations,
 			_declarations.ExternBlockFunctions);
 		_statements = new StatementEmitter(
@@ -124,7 +123,6 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			GetExprType,
 			_coercion,
 			Load,
-			(structType, fieldName) => GetFieldIndex(structType, fieldName),
 			ResolveGlobalKey);
 		_expressions = new ExpressionEmitter(
 			_codegen,
@@ -142,7 +140,6 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			TryExtractQualifiedGlobalKey,
 			TryResolveEnumVariantReceiver,
 			EmitEnumValuesSlicePointer,
-			(unionType, fieldName) => GetFieldIndex(unionType, fieldName),
 			ApplyTbaa,
 			TypeEscapesHeap,
 			SafeBitCast,
@@ -474,7 +471,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				{
 					var actualThisPtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), thisPtr, "loaded_this_ptr");
 
-					var fieldIndex = GetFieldIndex(structType, name);
+					var fieldIndex = _codegen.AggregateLayout.GetFieldIndex(structType, name);
 					var structLayoutTy = GetLLVMType(structType);
 					var zero = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0);
 					var index = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)fieldIndex);
@@ -852,7 +849,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 						{
 							var actualThisPtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), thisPtr, "loaded_this_ptr");
 
-							var fieldIndex = GetFieldIndex(structType, id.Name);
+							var fieldIndex = _codegen.AggregateLayout.GetFieldIndex(structType, id.Name);
 							var structLayoutTy = GetLLVMType(structType);
 							var zero = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0);
 							var index = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)fieldIndex);
@@ -873,7 +870,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 							if (unionType.IsNpoEligible && !field.IsVoidVariant)
 								return (actualThisPtr, field.Type, false, null);
 
-							var fieldIndex = GetFieldIndex(unionType, id.Name);
+							var fieldIndex = _codegen.AggregateLayout.GetFieldIndex(unionType, id.Name);
 							var structLayoutTy = GetLLVMType(unionType);
 
 							// For unions, access the payload (index 1 of the struct) and cast it to the variant's concrete type
@@ -946,7 +943,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				if (refStruct is not null)
 				{
 					var rawPtr = _builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), parentPtr, "reffield_load");
-					var refFieldIndex = GetFieldIndex(refStruct, m.MemberName);
+					var refFieldIndex = _codegen.AggregateLayout.GetFieldIndex(refStruct, m.MemberName);
 					var refFieldType = refStruct.Fields[refFieldIndex].Type;
 
 					var refStructLayoutTy = GetLLVMType(refStruct);
@@ -974,7 +971,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 					throw new InvalidOperationException($"Cannot resolve struct type for arrow operator on '{parentType.Name}'");
 				}
 
-				var fieldIndex = GetFieldIndex(structType, m.MemberName);
+				var fieldIndex = _codegen.AggregateLayout.GetFieldIndex(structType, m.MemberName);
 				var fieldType = structType.Fields[fieldIndex].Type;
 
 				var structLayoutTy = GetLLVMType(structType);
@@ -993,7 +990,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 			if (parentType is UnionTypeSymbol unionType)
 			{
-				var fieldIndex = GetFieldIndex(unionType, m.MemberName);
+				var fieldIndex = _codegen.AggregateLayout.GetFieldIndex(unionType, m.MemberName);
 				var fieldType = unionType.Fields[fieldIndex].Type;
 
 				// Null-Pointer Optimization: the flat slot IS the ref/refvar value. Reading u.Some
@@ -1019,7 +1016,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 				throw new InvalidOperationException($"Type '{parentType.Name}' is not a struct; cannot access member '{m.MemberName}'");
 			}
 
-			var dotFieldIndex = GetFieldIndex(dotStructType, m.MemberName);
+			var dotFieldIndex = _codegen.AggregateLayout.GetFieldIndex(dotStructType, m.MemberName);
 			var dotFieldType = dotStructType.Fields[dotFieldIndex].Type;
 
 			var dotStructLayoutTy = GetLLVMType(dotStructType);
@@ -1147,32 +1144,6 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			instruction.SetMetadata(Tbaa.TbaaKindId, tag.Value);
 	}
 
-	private int GetFieldIndex(StructTypeSymbol type, string name)
-	{
-		for (var i = 0; i < type.Fields.Count; i++)
-		{
-			if (type.Fields[i].Name == name)
-			{
-				return i;
-			}
-		}
-
-		throw new KeyNotFoundException($"Field {name} not found in struct {type.Name}");
-	}
-
-	private int GetFieldIndex(UnionTypeSymbol type, string name)
-	{
-		for (var i = 0; i < type.Fields.Count; i++)
-		{
-			if (type.Fields[i].Name == name)
-			{
-				return i;
-			}
-		}
-
-		throw new KeyNotFoundException($"Variant {name} not found in union {type.Name}");
-	}
-
 	/// <summary>
 	/// (Â§5.B) Materializes EnumName.Values as a read-only slice backed by a single
 	/// .rodata global. Returns the address of a stack temp holding the slice.
@@ -1241,8 +1212,8 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		var unionLayout = GetLLVMType(optionUnion);
 		var tmp = _builder.BuildAlloca(unionLayout, "ecast_tmp");
 
-		var someIndex = GetFieldIndex(optionUnion, "Some");
-		var noneIndex = GetFieldIndex(optionUnion, "None");
+		var someIndex = _codegen.AggregateLayout.GetFieldIndex(optionUnion, "Some");
+		var noneIndex = _codegen.AggregateLayout.GetFieldIndex(optionUnion, "None");
 		var someTag = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, (ulong)someIndex);
 		var noneTag = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, (ulong)noneIndex);
 
@@ -1289,47 +1260,6 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		_module.Dispose();
 	}
 
-
-	public int GetByteSize(TypeSymbol type)
-	{
-		if (type is null) return 0;
-		if (type.Equals(TypeSymbol.String) || type is PointerTypeSymbol or RawPointerTypeSymbol) return 8; // 64-bit pointers
-		if (type is SliceTypeSymbol) return 16; // Fat Pointer: { ptr, i32 }
-		if (type is DelegateTypeSymbol) return 16; // Two-word safe delegate: { invoke thunk, context }
-		if (type.Equals(TypeSymbol.Int) || type.Equals(TypeSymbol.UInt) || type.Equals(TypeSymbol.Float)) return 4;
-		if (type.Equals(TypeSymbol.Long) || type.Equals(TypeSymbol.ULong) || type.Equals(TypeSymbol.NInt) || type.Equals(TypeSymbol.NUInt) || type.Equals(TypeSymbol.Double)) return 8;
-		if (type.Equals(TypeSymbol.Short) || type.Equals(TypeSymbol.UShort)) return 2;
-		if (type.Equals(TypeSymbol.SByte) || type.Equals(TypeSymbol.Byte) || type.Equals(TypeSymbol.Bool) || type.Equals(TypeSymbol.Char)) return 1;
-		if (type is ArrayTypeSymbol arr) return GetByteSize(arr.ElementType) * arr.Size;
-		if (type is StructTypeSymbol structType)
-		{
-			var size = 0;
-			foreach (var field in structType.Fields)
-			{
-				size += GetByteSize(field.Type);
-			}
-
-			return size;
-		}
-
-		if (type is UnionTypeSymbol unionType)
-		{
-			// Null-Pointer Optimization: a flat Option<ref T> / <refvar T> is a single 8-byte pointer.
-			if (unionType.IsNpoEligible)
-				return 8;
-
-			// Tagged union: 1-byte tag + (largest non-void variant) payload.
-			var maxPayload = unionType.Fields.Where(f => !f.IsVoidVariant).Select(f => GetByteSize(f.Type)).DefaultIfEmpty(0).Max();
-			return 1 + maxPayload;
-		}
-
-		if (type is EnumTypeSymbol enumType)
-			return GetByteSize(enumType.StorageType);
-
-		return 4; // Fallback
-	}
-
-					/// <summary>
 
 	private LLVMValueRef SafeBitCast(LLVMValueRef value, LLVMTypeRef targetType, string name = "")
 	{

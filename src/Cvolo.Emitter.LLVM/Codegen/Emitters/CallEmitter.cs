@@ -34,7 +34,6 @@ internal sealed class CallEmitter(
 	Func<ExpressionSyntax, (LLVMValueRef ptr, TypeSymbol type, bool valueProvenance, LLVMValueRef? tbaa)> getFieldPointer,
 	ValueCoercion coercion,
 	Func<string, LLVMValueRef> load,
-	Func<TypeSymbol, int> getByteSize,
 	IReadOnlyDictionary<string, ExternDeclarationSyntax> astExterns,
 	IReadOnlyDictionary<string, ExternBlockFunctionSyntax> astExternBlockFunctions)
 {
@@ -59,7 +58,7 @@ internal sealed class CallEmitter(
 		{
 			var targetTypeName = call.TypeArguments[0];
 			var targetType = BindingContext.ResolveType(targetTypeName)!;
-			var size = getByteSize(targetType);
+			var size = codegen.AggregateLayout.GetByteSize(targetType);
 			return LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (ulong)size);
 		}
 
@@ -168,7 +167,7 @@ internal sealed class CallEmitter(
 				if (field is not null)
 				{
 					var actualThisPtr = Builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), thisPtr, "loaded_this_ptr");
-					var fieldIndex = GetFieldIndex(structType!, receiverName);
+					var fieldIndex = codegen.AggregateLayout.GetFieldIndex(structType!, receiverName);
 					var structLayoutTy = codegen.Types.Lower(structType!);
 					var zero = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0);
 					var index = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)fieldIndex);
@@ -366,7 +365,7 @@ internal sealed class CallEmitter(
 				LLVMValueRef basePtr = recvPtr;
 				if (recvTy is PointerTypeSymbol)
 					basePtr = Builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), recvPtr, "receiver_loaded_ptr");
-				var fieldIdx = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)GetFieldIndex(receiverStruct, memberName));
+				var fieldIdx = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)codegen.AggregateLayout.GetFieldIndex(receiverStruct, memberName));
 				delegatePtr = Builder.BuildGEP2(codegen.Types.Lower(receiverStruct), basePtr, new LLVMValueRef[] { zero, fieldIdx }, "delegate_field_ptr");
 			}
 			else
@@ -392,7 +391,7 @@ internal sealed class CallEmitter(
 				&& thisField.Type is DelegateTypeSymbol)
 			{
 				var actualThisPtr = Builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), thisPtr, "loaded_this_ptr");
-				var fieldIdx = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)GetFieldIndex(thisStruct, call.FunctionName));
+				var fieldIdx = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)codegen.AggregateLayout.GetFieldIndex(thisStruct, call.FunctionName));
 				delegatePtr = Builder.BuildGEP2(codegen.Types.Lower(thisStruct), actualThisPtr, new LLVMValueRef[] { zero, fieldIdx }, "delegate_field_ptr");
 			}
 			else
@@ -553,7 +552,7 @@ internal sealed class CallEmitter(
 		{
 			var actualThisPtr = Builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), thisPtr, "loaded_this_ptr");
 			var zero = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0);
-			var index = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)GetFieldIndex(selfStruct, receiverName));
+			var index = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)codegen.AggregateLayout.GetFieldIndex(selfStruct, receiverName));
 			receiverPtr = Builder.BuildGEP2(codegen.Types.Lower(selfStruct), actualThisPtr, new LLVMValueRef[] { zero, index }, "this_field_ptr");
 			receiverType = field.Type;
 			return true;
@@ -674,17 +673,10 @@ internal sealed class CallEmitter(
 		return receiverType as EnumTypeSymbol;
 	}
 
-	private static int GetFieldIndex(StructTypeSymbol type, string name)
-	{
-		for (var i = 0; i < type.Fields.Count; i++)
-		{
-			if (type.Fields[i].Name == name)
-				return i;
-		}
-
-		throw new KeyNotFoundException($"Field {name} not found in struct {type.Name}");
-	}
-
+	/// <summary>
+	/// Maps a floating-point classification intrinsic name to the LLVM is.fpclass bit mask
+	/// expected by the synthesized intrinsic call.
+	/// </summary>
 	private static ulong FpClassMask(string baseName) => baseName switch
 	{
 		"fpc.nan" => 1 | 2,
@@ -698,6 +690,10 @@ internal sealed class CallEmitter(
 		_ => 0,
 	};
 
+	/// <summary>
+	/// Returns the LLVM intrinsic suffix for the scalar type used by the current intrinsic call.
+	/// Unsupported types intentionally produce an empty suffix to preserve the existing lowering behavior.
+	/// </summary>
 	private static string GetTypeSuffix(LLVMTypeRef type) => type.Kind switch
 	{
 		LLVMTypeKind.LLVMDoubleTypeKind => "f64",
@@ -708,4 +704,5 @@ internal sealed class CallEmitter(
 		LLVMTypeKind.LLVMIntegerTypeKind when type.IntWidth == 8 => "i8",
 		_ => "",
 	};
+
 }

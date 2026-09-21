@@ -157,7 +157,7 @@ internal sealed class CleanupEmitter(CodegenContext codegen)
 	{
 		var dropped = unionType.Fields
 			.Where(f => !f.IsVoidVariant)
-			.Select(f => (Field: f, Index: GetFieldIndex(unionType, f!.Name)))
+			.Select(f => (Field: f, Index: codegen.AggregateLayout.GetFieldIndex(unionType, f!.Name)))
 			.Where(t => TypeNeedsDestruction(t.Field.Type))
 			.ToList();
 
@@ -176,7 +176,7 @@ internal sealed class CleanupEmitter(CodegenContext codegen)
 		}, "union_tag_ptr");
 		var tagVal = Builder.BuildLoad2(LLVMTypeRef.Int8, tagPtr, "union_tag_val");
 
-		var noneIndex = unionType.NoneVariant is not null ? GetFieldIndex(unionType, unionType.NoneVariant.Name) : 0;
+		var noneIndex = unionType.NoneVariant is not null ? codegen.AggregateLayout.GetFieldIndex(unionType, unionType.NoneVariant.Name) : 0;
 		var noneTag = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, (ulong)noneIndex);
 		var after = currentFunc.AppendBasicBlock($"{name}_cleanup_after");
 
@@ -310,7 +310,7 @@ internal sealed class CleanupEmitter(CodegenContext codegen)
 			var fieldPtr = Builder.BuildGEP2(structLayout, valuePtr, new LLVMValueRef[]
 			{
 				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
-				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (ulong)GetFieldIndex(structType, field.Name))
+				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (ulong)codegen.AggregateLayout.GetFieldIndex(structType, field.Name))
 			}, $"{name}_f_{field.Name}");
 			EmitElementDestructor(fieldPtr, field.Type, name);
 		}
@@ -329,29 +329,4 @@ internal sealed class CleanupEmitter(CodegenContext codegen)
 		_ => false
 	};
 
-	private static int GetFieldIndex(StructTypeSymbol type, string name)
-	{
-		for (var i = 0; i < type.Fields.Count; i++)
-		{
-			if (type.Fields[i].Name == name)
-			{
-				return i;
-			}
-		}
-
-		throw new KeyNotFoundException($"Field {name} not found in struct {type.Name}");
-	}
-
-	private static int GetFieldIndex(UnionTypeSymbol type, string name)
-	{
-		for (var i = 0; i < type.Fields.Count; i++)
-		{
-			if (type.Fields[i].Name == name)
-			{
-				return i;
-			}
-		}
-
-		throw new KeyNotFoundException($"Variant {name} not found in union {type.Name}");
-	}
 }
