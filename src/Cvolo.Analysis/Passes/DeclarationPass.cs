@@ -18,6 +18,7 @@ public sealed class DeclarationPass(BindingContext context)
 	private readonly TypeAliasValidator _aliases = new(context);
 	private readonly TypeDeclarationRegistrar _types = new(context);
 	private readonly ContractHierarchyLinker _contracts = new(context);
+	private readonly EmbedLinker _embeds = new(context);
 	private ClassificationAnalyzer? _classification;
 	private ClassificationAnalyzer Classification => _classification ??= new ClassificationAnalyzer(context);
 	/// <summary>
@@ -100,7 +101,7 @@ public sealed class DeclarationPass(BindingContext context)
 		// Pass 0c: Link `struct T embed Base` clauses — validate the embedded type,
 		// detect cycles/generics, and rebuild struct symbols with the embedded
 		// fields flattened at the FRONT of their layout.
-		LinkEmbeds(units);
+		_embeds.Link(units);
 
 		// Pass 1: Register all Function/Extern signatures across all files
 		foreach (var unit in units)
@@ -325,112 +326,6 @@ public sealed class DeclarationPass(BindingContext context)
 		return 0;
 	}
 
-	/// <summary>
-	/// Pass 0c. Flatten `struct T embed Base` compositions: every field of Base
-	/// (recursively, chains included) is prepended to T's own fields so the LLVM
-	/// layout, field lookup, struct literals and byte size all treat them as T's
-	/// own. Generic struct templates cannot be embedded (their fields are not
-	/// materialized as symbols) — rejected with a diagnostic.
-	/// </summary>
-	private void LinkEmbeds(IEnumerable<CompilationUnitSyntax> units)
-	{
-		var structDecls = new Dictionary<string, StructDeclarationSyntax>();
-		foreach (var unit in units)
-		{
-			var members = unit.NamespaceDeclaration is not null ? unit.NamespaceDeclaration.Members : unit.Members;
-			foreach (var member in members)
-			{
-				if (member is StructDeclarationSyntax structDecl)
-					structDecls[context.GetMangledName(structDecl.Name, unit.NamespaceDeclaration?.Name)] = structDecl;
-			}
-		}
-
-		var flattened = new Dictionary<string, List<StructFieldSymbol>>();
-		foreach (var (mangledName, decl) in structDecls)
-		{
-			if (decl.EmbeddedType is null)
-				continue;
-
-			FlattenStructFields(mangledName, decl, structDecls, flattened, new HashSet<string>());
-		}
-	}
-
-	private List<StructFieldSymbol> FlattenStructFields(
-		string mangledName,
-		StructDeclarationSyntax decl,
-		Dictionary<string, StructDeclarationSyntax> structDecls,
-		Dictionary<string, List<StructFieldSymbol>> flattened,
-		HashSet<string> stack)
-	{
-		if (flattened.TryGetValue(mangledName, out var cached))
-			return cached;
-
-		var currentFileContext = context.FileContexts[context.CurrentUnit!];
-
-		var ownFields = context.StructTypes[mangledName].Fields.ToList();
-		if (decl.EmbeddedType is null)
-		{
-			flattened[mangledName] = ownFields;
-			return ownFields;
-		}
-
-		if (context.GenericStructTemplates.ContainsKey(mangledName))
-		{
-			context.Diagnostics.Report(currentFileContext, decl.Span, $"Cannot use embed in generic struct template '{decl.Name}'.");
-			flattened[mangledName] = ownFields;
-			return ownFields;
-		}
-
-		var embeddedName = decl.EmbeddedType;
-		var baseType = context.ResolveType(embeddedName) as StructTypeSymbol;
-		if (baseType is null || !structDecls.ContainsKey(baseType.Name))
-		{
-			context.Diagnostics.Report(currentFileContext, decl.Span, $"Unknown struct '{embeddedName}' in embed clause of struct '{decl.Name}'.");
-			flattened[mangledName] = ownFields;
-			return ownFields;
-		}
-
-		if (context.GenericStructTemplates.ContainsKey(baseType.Name))
-		{
-			context.Diagnostics.Report(currentFileContext, decl.Span, $"Cannot embed generic struct template '{embeddedName}' in struct '{decl.Name}'.");
-			flattened[mangledName] = ownFields;
-			return ownFields;
-		}
-
-		if (!stack.Add(baseType.Name))
-		{
-			context.Diagnostics.Report(currentFileContext, decl.Span, $"Circular embed clause involving struct '{decl.Name}'.");
-			flattened[mangledName] = ownFields;
-			return ownFields;
-		}
-
-		var baseDecl = structDecls[baseType.Name];
-		var baseFields = FlattenStructFields(baseType.Name, baseDecl, structDecls, flattened, stack);
-		stack.Remove(baseType.Name);
-
-		var conflict = ownFields.FirstOrDefault(f => baseFields.Any(b => b.Name == f.Name));
-		if (conflict is not null)
-		{
-			context.Diagnostics.Report(currentFileContext, decl.Span,
-				$"Field '{conflict.Name}' of struct '{decl.Name}' conflicts with embedded field from '{embeddedName}'.");
-			flattened[mangledName] = ownFields;
-			return ownFields;
-		}
-
-		var combined = new List<StructFieldSymbol>(baseFields.Count + ownFields.Count);
-		combined.AddRange(baseFields);
-		combined.AddRange(ownFields);
-
-		var rebuiltEmbed = baseType; // the (already flattened) embedded composition
-		var rebuilt = new StructTypeSymbol(mangledName, combined, rebuiltEmbed)
-		{
-			Visibility = decl.Visibility
-		};
-		context.StructTypes[mangledName] = rebuilt;
-		context.ReplaceTypeInCache(mangledName, rebuilt);
-		flattened[mangledName] = combined;
-		return combined;
-	}
 
 	/// <summary>
 	/// Pass 1.5. For every struct that embeds another type, register carbon copies
