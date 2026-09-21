@@ -24,6 +24,7 @@ namespace Cvolo.Emitter.LLVM.Codegen.Emitters;
 /// </remarks>
 /// <param name="codegen">Shared LLVM and semantic state for the current module emission.</param>
 /// <param name="memory">Low-level memory emitter used for zeroing and target store-size queries.</param>
+/// <param name="coercion">Shared value coercion helpers used for representation-preserving casts.</param>
 /// <param name="getFunction">Returns the function-local code generation state active at the call site.</param>
 /// <param name="emitExpression">Emits scalar and nested expressions without introducing a second dispatcher.</param>
 /// <param name="emitStringLiteral">Emits diagnostic strings used by runtime bounds failures.</param>
@@ -33,6 +34,7 @@ namespace Cvolo.Emitter.LLVM.Codegen.Emitters;
 internal sealed class AggregateEmitter(
 	CodegenContext codegen,
 	MemoryEmitter memory,
+	ValueCoercion coercion,
 	Func<FunctionCodegenContext> getFunction,
 	Func<ExpressionSyntax, LLVMValueRef> emitExpression,
 	Func<string, LLVMValueRef> emitStringLiteral,
@@ -569,7 +571,7 @@ internal sealed class AggregateEmitter(
 					LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
 					LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1)
 				}, "union_payload_ptr");
-				var castPtr = SafeBitCast(payloadPtr, LLVMTypeRef.CreatePointer(codegen.Types.Lower(fieldType), 0), "payload_cast_ptr");
+				var castPtr = coercion.SafeBitCast(payloadPtr, LLVMTypeRef.CreatePointer(codegen.Types.Lower(fieldType), 0), "payload_cast_ptr");
 				return (castPtr, fieldType, false, null);
 			}
 
@@ -901,16 +903,5 @@ internal sealed class AggregateEmitter(
 	/// </summary>
 	private static bool IsPowerOfTwo(long value) => value > 0 && (value & (value - 1)) == 0;
 
-	/// <summary>
-	/// Preserves the existing opaque-pointer bitcast behavior used by aggregate payload addressing.
-	/// </summary>
-	private LLVMValueRef SafeBitCast(LLVMValueRef value, LLVMTypeRef targetType, string name)
-	{
-		if (value.TypeOf.Handle == targetType.Handle)
-			return value;
-		if (value.TypeOf.Kind == LLVMTypeKind.LLVMPointerTypeKind && targetType.Kind == LLVMTypeKind.LLVMPointerTypeKind)
-			return value;
-		return Builder.BuildBitCast(value, targetType, name);
-	}
 
 }

@@ -60,6 +60,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		_aggregates = new AggregateEmitter(
 			_codegen,
 			_memory,
+			_coercion,
 			() => _function,
 			EmitExpression,
 			EmitStringLiteral,
