@@ -16,6 +16,7 @@ public sealed class SafetyPass(BindingContext context)
 	private MoveAnalyzer? _moves;
 	private UnboundValidator? _unbound;
 	private ForEachSafetyValidator? _forEachSafety;
+	private LambdaCaptureAnalyzer? _lambdaCaptures;
 	private SafeDelegateAnalyzer? _safeDelegates;
 	private SafetyTraversal? _traversal;
 	private FunctionSafetyAnalyzer? _functionSafety;
@@ -91,18 +92,27 @@ public sealed class SafetyPass(BindingContext context)
 		GetBaseIdentifierName);
 
 	/// <summary>
-	/// Lazily creates the safe-delegate analyzer that owns lambda capture policy, delegate
-	/// provenance, and escape checks while reusing the existing recursive safety traversal.
+	/// Lazily creates the lambda-capture analyzer that owns capture discovery, capture policy,
+	/// move/ref capture transitions, and safe-tier lambda-body validation.
 	/// </summary>
-	private SafeDelegateAnalyzer SafeDelegates => _safeDelegates ??= new SafeDelegateAnalyzer(
+	private LambdaCaptureAnalyzer LambdaCaptures => _lambdaCaptures ??= new LambdaCaptureAnalyzer(
 		context,
 		Borrows,
 		Moves,
 		UnsafeContext,
-		ResolveExpressionType,
 		GetBaseIdentifierName,
 		(expr, scope) => Traversal.CheckExpressionSafety(expr, scope),
 		(block, scope, func) => Traversal.CheckBlockSafety(block, scope, func));
+
+	/// <summary>
+	/// Lazily creates the safe-delegate analyzer that owns delegate provenance and escape checks
+	/// while lambda capture policy lives in <see cref="LambdaCaptureAnalyzer"/>.
+	/// </summary>
+	private SafeDelegateAnalyzer SafeDelegates => _safeDelegates ??= new SafeDelegateAnalyzer(
+		context,
+		LambdaCaptures,
+		ResolveExpressionType,
+		GetBaseIdentifierName);
 
 	/// <summary>
 	/// Lazily creates the per-function safety session coordinator that resets analyzer state,
