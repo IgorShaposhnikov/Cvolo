@@ -8,9 +8,10 @@ using Cvolo.Core.Diagnostics;
 namespace Cvolo.Analysis.Passes.Safety;
 
 /// <summary>
-/// Owns per-function borrow exclusivity state, parent-variable locks, and non-lexical
-/// early-release bookkeeping. Value-move analysis is owned by <see cref="MoveAnalyzer"/>, while
-/// safe-delegate provenance is owned by <see cref="SafeDelegateAnalyzer"/>.
+/// Owns per-function borrow exclusivity state and parent-variable locks. Non-lexical borrow-use
+/// scanning is delegated to <see cref="BorrowLivenessAnalyzer"/>. Value-move analysis is owned by
+/// <see cref="MoveAnalyzer"/>, while safe-delegate provenance remains owned by
+/// <see cref="Cvolo.Analysis.Passes.SafetyPass"/>.
 /// </summary>
 internal sealed class BorrowTracker(
 	BindingContext context,
@@ -22,6 +23,10 @@ internal sealed class BorrowTracker(
 	private readonly Dictionary<string, HashSet<string>> _parentLocks = [];
 	private readonly Func<ExpressionSyntax, string?> _getBaseIdentifierName = getBaseIdentifierName;
 	private readonly Func<SafetyTier> _getCurrentTier = getCurrentTier;
+	private BorrowLivenessAnalyzer? _livenessAnalyzer;
+
+	/// <summary>Provides non-lexical borrow-use scanning over the shared active-reference state.</summary>
+	private BorrowLivenessAnalyzer LivenessAnalyzer => _livenessAnalyzer ??= new BorrowLivenessAnalyzer(_activeRefs, RemoveBorrower);
 
 	/// <summary>Snapshot used to release borrows and reference names created inside one lexical block.</summary>
 	internal readonly record struct BlockState(int BorrowCount, HashSet<string> RefNames);
@@ -65,30 +70,7 @@ internal sealed class BorrowTracker(
 	/// </summary>
 	public void ReleaseExpiredBorrows(int currentStatementStart, BlockStatementSyntax block, int startIndex)
 	{
-		_ = currentStatementStart;
-		var stmts = block.Statements;
-		var toRelease = new List<string>();
-
-		foreach (var kv in _activeRefs)
-		{
-			var refName = kv.Key;
-			var hasUseAfterCurrent = false;
-
-			for (var j = startIndex; j < stmts.Count; j++)
-			{
-				if (NodeContainsRefUse(stmts[j], refName))
-				{
-					hasUseAfterCurrent = true;
-					break;
-				}
-			}
-
-			if (!hasUseAfterCurrent)
-				toRelease.Add(refName);
-		}
-
-		foreach (var refName in toRelease)
-			RemoveBorrower(refName);
+		LivenessAnalyzer.ReleaseExpiredBorrows(currentStatementStart, block, startIndex);
 	}
 
 	/// <summary>
@@ -159,50 +141,6 @@ internal sealed class BorrowTracker(
 		}
 	}
 
-	/// <summary>Checks recursively whether an expression references the supplied identifier.</summary>
-	internal static bool ExpressionContainsRefUse(ExpressionSyntax expr, string refName)
-	{
-		return expr switch
-		{
-			IdentifierExpressionSyntax id => id.Name == refName,
-			MemberAccessExpressionSyntax m => ExpressionContainsRefUse(m.Expression, refName),
-			IndexExpressionSyntax idx => ExpressionContainsRefUse(idx.Left, refName) || ExpressionContainsRefUse(idx.Index, refName),
-			BorrowExpressionSyntax borrow => ExpressionContainsRefUse(borrow.Expression, refName),
-			CallExpressionSyntax call => call.Arguments.Any(a => ExpressionContainsRefUse(a, refName)),
-			BinaryExpressionSyntax bin => ExpressionContainsRefUse(bin.Left, refName) || ExpressionContainsRefUse(bin.Right, refName),
-			StructInitializationExpressionSyntax init => init.Initializers.Any(f => ExpressionContainsRefUse(f.Expression, refName)),
-			_ => false
-		};
-	}
-
-	/// <summary>Checks recursively whether a syntax node references the supplied identifier.</summary>
-	private static bool NodeContainsRefUse(SyntaxNode node, string refName)
-	{
-		return node switch
-		{
-			BlockStatementSyntax block => block.Statements.Any(s => NodeContainsRefUse(s, refName)),
-			IfStatementSyntax ifStmt =>
-				NodeContainsRefUse(ifStmt.Condition, refName) ||
-				NodeContainsRefUse(ifStmt.ThenStatement, refName) ||
-				(ifStmt.ElseClause != null && NodeContainsRefUse(ifStmt.ElseClause.Body, refName)),
-			WhileStatementSyntax whileStmt =>
-				NodeContainsRefUse(whileStmt.Condition, refName) ||
-				NodeContainsRefUse(whileStmt.Body, refName),
-			ForStatementSyntax forStmt =>
-				(forStmt.Initializer != null && NodeContainsRefUse(forStmt.Initializer, refName)) ||
-				NodeContainsRefUse(forStmt.Condition, refName) ||
-				NodeContainsRefUse(forStmt.Increment, refName) ||
-				NodeContainsRefUse(forStmt.Body, refName),
-			ForEachStatementSyntax forEach =>
-				NodeContainsRefUse(forEach.Collection, refName) ||
-				NodeContainsRefUse(forEach.Body, refName),
-			ReturnStatementSyntax ret => ret.Expression != null && ExpressionContainsRefUse(ret.Expression, refName),
-			ExpressionStatementSyntax exprStmt => ExpressionContainsRefUse(exprStmt.Expression, refName),
-			VariableDeclarationSyntax varDecl => varDecl.Initializer != null && ExpressionContainsRefUse(varDecl.Initializer, refName),
-			ExpressionSyntax expr => ExpressionContainsRefUse(expr, refName),
-			_ => false
-		};
-	}
 
 	/// <summary>Adds a child-reference lock for the parent value.</summary>
 	private void RegisterParentLock(string parentName, string refName)
@@ -212,6 +150,7 @@ internal sealed class BorrowTracker(
 			refs = [];
 			_parentLocks[parentName] = refs;
 		}
+
 		refs.Add(refName);
 	}
 

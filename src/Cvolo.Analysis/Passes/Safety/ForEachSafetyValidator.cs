@@ -48,7 +48,7 @@ internal sealed class ForEachSafetyValidator(
 	{
 		foreach (var ret in EnumerateNodes<ReturnStatementSyntax>(body))
 		{
-			if (ret.Expression is not null && BorrowTracker.ExpressionContainsRefUse(ret.Expression, itemName))
+			if (ret.Expression is not null && BorrowLivenessAnalyzer.ExpressionContainsRefUse(ret.Expression, itemName))
 			{
 				ReportReferenceEscape(ret.Span, itemName);
 			}
@@ -72,7 +72,7 @@ internal sealed class ForEachSafetyValidator(
 			var lhsBase = getBaseIdentifierName(assign.Left);
 			if (lhsBase is not null &&
 				!safeTargets.Contains(lhsBase) &&
-				BorrowTracker.ExpressionContainsRefUse(assign.Right, itemName))
+				BorrowLivenessAnalyzer.ExpressionContainsRefUse(assign.Right, itemName))
 			{
 				ReportReferenceEscape(assign.Span, itemName);
 			}
@@ -93,7 +93,7 @@ internal sealed class ForEachSafetyValidator(
 			for (var i = 0; i < call.Arguments.Count && i < callee.Parameters.Count; i++)
 			{
 				if (callee.Parameters[i].Type is PointerTypeSymbol &&
-					BorrowTracker.ExpressionContainsRefUse(call.Arguments[i], itemName))
+					BorrowLivenessAnalyzer.ExpressionContainsRefUse(call.Arguments[i], itemName))
 				{
 					ReportReferenceEscape(call.Arguments[i].Span, itemName);
 				}
