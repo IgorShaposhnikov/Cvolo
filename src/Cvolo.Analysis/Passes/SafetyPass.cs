@@ -18,6 +18,7 @@ public sealed class SafetyPass(BindingContext context)
 	private ForEachSafetyValidator? _forEachSafety;
 	private SafeDelegateAnalyzer? _safeDelegates;
 	private SafetyTraversal? _traversal;
+	private FunctionSafetyAnalyzer? _functionSafety;
 
 	/// <summary>
 	/// Lazily creates the unsafe-context validator that owns tier-stack transitions and
@@ -103,6 +104,19 @@ public sealed class SafetyPass(BindingContext context)
 		(expr, scope) => Traversal.CheckExpressionSafety(expr, scope),
 		(block, scope, func) => Traversal.CheckBlockSafety(block, scope, func));
 
+	/// <summary>
+	/// Lazily creates the per-function safety session coordinator that resets analyzer state,
+	/// establishes the function tier and scope, and starts the shared traversal.
+	/// </summary>
+	private FunctionSafetyAnalyzer FunctionSafety => _functionSafety ??= new FunctionSafetyAnalyzer(
+		context,
+		() => Borrows,
+		() => UnsafeContext,
+		() => ReferenceLifetimes,
+		() => Unbound,
+		() => SafeDelegates,
+		() => Traversal);
+
 	public void Process(IEnumerable<CompilationUnitSyntax> units)
 	{
 		foreach (var unit in units)
@@ -115,14 +129,14 @@ public sealed class SafetyPass(BindingContext context)
 			{
 				if (member is FunctionDeclarationSyntax func && func.GenericParameters.Count == 0 && !func.Name.Contains('<'))
 				{
-					CheckFunctionSafety(func);
+					FunctionSafety.Check(func);
 				}
 				else if (member is ExposeExternBlockSyntax exportBlock)
 				{
 					foreach (var exportFunc in exportBlock.Functions)
 					{
 						if (exportFunc.GenericParameters.Count == 0 && !exportFunc.Name.Contains('<'))
-							CheckFunctionSafety(exportFunc);
+							FunctionSafety.Check(exportFunc);
 					}
 				}
 				else if (member is ExtensionDeclarationSyntax extDecl)
@@ -137,12 +151,12 @@ public sealed class SafetyPass(BindingContext context)
 					foreach (var method in extDecl.Methods
 						.Concat(extDecl.Destructors.Select(static d => d.ToFunctionDeclaration())))
 					{
-						CheckFunctionSafety(method);
+						FunctionSafety.Check(method);
 					}
 
 					foreach (var ctor in extDecl.Constructors)
 					{
-						CheckFunctionSafety(ctor.ToFunctionDeclaration());
+						FunctionSafety.Check(ctor.ToFunctionDeclaration());
 					}
 				}
 			}
@@ -151,65 +165,20 @@ public sealed class SafetyPass(BindingContext context)
 		// Enforce safety pass on all monomorphized generic functions and extension methods!
 		foreach (var instDecl in context.MonomorphizedFunctionDecls)
 		{
-			CheckFunctionSafety(instDecl);
+			FunctionSafety.Check(instDecl);
 		}
 
 		foreach (var decl in context.MonomorphizedExtensionDecls)
 		{
 			if (decl is FunctionDeclarationSyntax func)
 			{
-				CheckFunctionSafety(func);
+				FunctionSafety.Check(func);
 			}
 			else if (decl is ConstructorDeclarationSyntax ctor)
 			{
-				CheckFunctionSafety(ctor.ToFunctionDeclaration());
+				FunctionSafety.Check(ctor.ToFunctionDeclaration());
 			}
 		}
-	}
-
-	private void CheckFunctionSafety(FunctionDeclarationSyntax func)
-	{
-		if (!func.HasBody)
-			return;
-
-		Borrows.Reset();
-		ReferenceLifetimes.Reset();
-		Unbound.Reset();
-		SafeDelegates.Reset(func);
-
-		// Look up the resolved function symbol to get the actual tier
-		var baseName = func.Name == "main" ? "main" : context.GetMangledName(func.Name, context.CurrentNamespace);
-		var paramTypes = func.Parameters.Select(p => context.ResolveType(p.Type) ?? TypeSymbol.Int).ToList();
-		var overloadedName = context.GetOverloadedMangledName(baseName, paramTypes);
-		var funcSymbol = context.Globals.Lookup(overloadedName) as FunctionSymbol;
-		// Determine tier from attributes ([UnsafeBody]), modifier, or global symbol table
-		var isUnsafeBody = func.Attributes.Any(a => string.Equals(a.Name, "UnsafeBody", StringComparison.OrdinalIgnoreCase) ||
-													string.Equals(a.Name, "System.UnsafeBody", StringComparison.OrdinalIgnoreCase) ||
-													string.Equals(a.Name, "UnsafeBodyAttribute", StringComparison.OrdinalIgnoreCase));
-
-		var tier = isUnsafeBody || func.Modifier == SafetyTier.Unsafe
-			? SafetyTier.Unsafe
-			: (func.Modifier == SafetyTier.Unbound ? SafetyTier.Unbound : SafetyTier.Safe);
-
-		UnsafeContext.Reset(tier);
-
-		// Unsafe tier: skip all safety checks entirely
-		if (tier == SafetyTier.Unsafe)
-			return;
-
-		var scope = new SymbolTable(context.Globals);
-		foreach (var param in func.Parameters)
-		{
-			var type = context.ResolveType(param.Type);
-			if (type != null)
-			{
-				scope.Declare(new VariableSymbol(param.Name, type, false) { IsInitialized = true, Origin = OriginKind.Parameter });
-				SafeDelegates.TrackParameter(param.Name, type);
-			}
-		}
-
-		// Unbound tier: relaxed checks (skip borrow exclusivity, but still do basic flow)
-		Traversal.CheckBlockSafety(func.Body, scope, func);
 	}
 
 	private TypeSymbol? ResolveExpressionType(ExpressionSyntax expr, SymbolTable scope)
@@ -233,5 +202,4 @@ public sealed class SafetyPass(BindingContext context)
 		if (expr is BorrowExpressionSyntax b) return GetBaseIdentifierName(b.Expression);
 		return null;
 	}
-
 }
