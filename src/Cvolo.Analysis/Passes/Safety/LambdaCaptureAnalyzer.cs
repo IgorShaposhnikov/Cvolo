@@ -1,4 +1,5 @@
 using Cvolo.Analysis.Symbols;
+using Cvolo.Analysis.Symbols.Base;
 using Cvolo.Analysis.Symbols.Structs;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
@@ -22,8 +23,6 @@ internal sealed class LambdaCaptureAnalyzer(
 	Action<ExpressionSyntax, SymbolTable> checkExpressionSafety,
 	Action<BlockStatementSyntax, SymbolTable, FunctionDeclarationSyntax> checkBlockSafety)
 {
-	/// <summary>Variables holding an active immutable ref-lambda borrow.</summary>
-	private readonly HashSet<string> _refCapturedVars = [];
 	private readonly LambdaBodySafetyValidator _bodySafety = new(
 		context,
 		unsafeContext,
@@ -34,7 +33,6 @@ internal sealed class LambdaCaptureAnalyzer(
 	/// <summary>Clears per-function lambda-capture state and resets lambda-body safety state.</summary>
 	public void Reset(FunctionDeclarationSyntax func)
 	{
-		_refCapturedVars.Clear();
 		_bodySafety.Reset(func);
 	}
 
@@ -115,5 +113,4 @@ internal sealed class LambdaCaptureAnalyzer(
 		var lockName = "$refλ:" + name;
 		borrows.RegisterBorrow(lockName, name, false, span);
 	}
-
 }

@@ -23,9 +23,6 @@ internal sealed class SafeDelegateProvenanceTracker(
 	/// </summary>
 	private readonly Dictionary<string, DelegateProvenance> _delegateProvenances = [];
 
-	/// <summary>Names of delegate-typed locals/globals whose context must not escape.</summary>
-	private readonly Dictionary<string, DelegateProvenance> _nonEscapingDelegates = [];
-
 	private readonly Func<ExpressionSyntax, SymbolTable, TypeSymbol?> _resolveExpressionType = resolveExpressionType;
 	private readonly Func<ExpressionSyntax, string?> _getBaseIdentifierName = getBaseIdentifierName;
 
