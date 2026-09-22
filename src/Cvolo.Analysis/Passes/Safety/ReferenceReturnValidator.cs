@@ -1,6 +1,5 @@
 using Cvolo.Analysis.Symbols;
 using Cvolo.Analysis.Symbols.Base;
-using Cvolo.Analysis.Symbols.Collections;
 using Cvolo.Analysis.Symbols.Structs;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
@@ -31,6 +30,16 @@ internal sealed class ReferenceReturnValidator(
 	private readonly Func<ExpressionSyntax, string?> _getBaseIdentifierName = getBaseIdentifierName;
 	private readonly Func<string, bool> _hasParentLock = hasParentLock;
 	private readonly Func<SafetyTier> _getCurrentTier = getCurrentTier;
+	private AggregateReturnLifetimeValidator? _aggregateReturns;
+
+	/// <summary>
+	/// Lazily creates the validator for inline pointer-bearing aggregate return values.
+	/// </summary>
+	private AggregateReturnLifetimeValidator AggregateReturns => _aggregateReturns ??= new AggregateReturnLifetimeValidator(
+		context,
+		_getBaseIdentifierName,
+		IsDanglingTarget,
+		ResolveUltimateTarget);
 
 	/// <summary>
 	/// Validates reference lifetimes for a return statement, including direct references,
@@ -84,8 +93,8 @@ internal sealed class ReferenceReturnValidator(
 		// reference option literal, or a reference-field member access). Every reachable reference
 		// payload must ultimately point at heap, global, or parameter storage; a non-heap stack local
 		// would dangle once the caller takes ownership of the returned graph (heap-relative provenance).
-		if (_resolveExpressionType(ret.Expression, scope) is { } returnType && TypeTransitivelyHasRefs(returnType))
-			VerifyHeapRelativeReturn(ret.Expression, returnType, ret.Expression.Span, scope);
+		if (_resolveExpressionType(ret.Expression, scope) is { } returnType && AggregateReturnLifetimeValidator.TypeTransitivelyHasRefs(returnType))
+			AggregateReturns.VerifyHeapRelativeReturn(ret.Expression, returnType, ret.Expression.Span, scope);
 	}
 
 	/// <summary>
@@ -173,106 +182,5 @@ internal sealed class ReferenceReturnValidator(
 		if (scope.Lookup(ultimate) is not VariableSymbol symbol)
 			return false;
 		return symbol.Origin == OriginKind.Local;
-	}
-
-	/// <summary>
-	/// Returns whether a type contains reference-bearing storage directly or through value aggregates.
-	/// </summary>
-	private static bool TypeTransitivelyHasRefs(TypeSymbol type)
-	{
-		return type switch
-		{
-			PointerTypeSymbol => true,
-			StructTypeSymbol st => st.Fields.Any(f => TypeTransitivelyHasRefs(f.Type)),
-			UnionTypeSymbol ut => ut.Fields.Any(f => !f.IsVoidVariant && TypeTransitivelyHasRefs(f.Type)),
-			ArrayTypeSymbol arr => TypeTransitivelyHasRefs(arr.ElementType),
-			SliceTypeSymbol sl => TypeTransitivelyHasRefs(sl.ElementType),
-			_ => false
-		};
-	}
-
-	/// <summary>
-	/// Verify a pointer-bearing value returned by value: every reachable reference payload must not
-	/// dangle. Collects the base identifiers of all reference payloads in the expression, then checks
-	/// each one against heap/global/parameter provenance.
-	/// </summary>
-	private void VerifyHeapRelativeReturn(ExpressionSyntax retExpr, TypeSymbol retType, TextSpan span, SymbolTable scope)
-	{
-		var targets = new HashSet<string>();
-		CollectPointerPayloadBases(retExpr, retType, scope, targets, []);
-
-		foreach (var target in targets)
-		{
-			if (IsDanglingTarget(target, scope))
-			{
-				context.Diagnostics.Report(context.CurrentUnit!.Context, span,
-					$"Cannot return value: reference '{target}' targets local variable '{ResolveUltimateTarget(target, scope)}' (dangling reference)");
-				return;
-			}
-		}
-	}
-
-	/// <summary>
-	/// Collects base identifiers for reference payloads reachable from an expression of the supplied type.
-	/// </summary>
-	private void CollectPointerPayloadBases(ExpressionSyntax expr, TypeSymbol type, SymbolTable scope,
-		HashSet<string> targets, HashSet<string> visited)
-	{
-		if (type is PointerTypeSymbol)
-		{
-			var baseId = _getBaseIdentifierName(expr);
-			if (baseId != null)
-				targets.Add(baseId);
-			return;
-		}
-
-		if (expr is StructInitializationExpressionSyntax init)
-		{
-			if (type is StructTypeSymbol st)
-			{
-				if (!visited.Add("S:" + st.Name))
-					return;
-				foreach (var memberInit in init.Initializers)
-				{
-					var field = st.FindField(memberInit.MemberName);
-					if (field == null)
-						continue;
-					if (field.Type is PointerTypeSymbol)
-					{
-						var baseId = _getBaseIdentifierName(memberInit.Expression);
-						if (baseId != null)
-							targets.Add(baseId);
-					}
-					else if (field.Type is StructTypeSymbol or UnionTypeSymbol)
-					{
-						CollectPointerPayloadBases(memberInit.Expression, field.Type, scope, targets, visited);
-					}
-				}
-			}
-			else if (type is UnionTypeSymbol ut && init.Initializers.Count == 1)
-			{
-				var variant = ut.FindField(init.Initializers[0].MemberName);
-				if (variant == null || variant.IsVoidVariant)
-					return;
-				if (variant.Type is PointerTypeSymbol)
-				{
-					var baseId2 = _getBaseIdentifierName(init.Initializers[0].Expression);
-					if (baseId2 != null)
-						targets.Add(baseId2);
-				}
-				else if (variant.Type is StructTypeSymbol or UnionTypeSymbol)
-				{
-					CollectPointerPayloadBases(init.Initializers[0].Expression, variant.Type, scope, targets, visited);
-				}
-			}
-
-			return;
-		}
-
-		// Non-literal pointer-bearing expression (reference-field member access, graph-handle call, or
-		// a reference/option variable): fall back to the base identifier; chains resolve via _refVarTargets.
-		var baseId3 = _getBaseIdentifierName(expr);
-		if (baseId3 != null)
-			targets.Add(baseId3);
 	}
 }
