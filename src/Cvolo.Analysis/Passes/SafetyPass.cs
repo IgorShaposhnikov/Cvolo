@@ -107,8 +107,8 @@ public sealed class SafetyPass(BindingContext context)
 		(block, scope, func) => Traversal.CheckBlockSafety(block, scope, func));
 
 	/// <summary>
-	/// Lazily creates the safe-delegate analyzer that owns delegate provenance and escape checks
-	/// while lambda capture policy lives in <see cref="LambdaCaptureAnalyzer"/>.
+	/// Lazily creates the safe-delegate coordinator that preserves the existing traversal hooks while
+	/// capture, escape, and provenance responsibilities live in dedicated collaborators.
 	/// </summary>
 	private SafeDelegateAnalyzer SafeDelegates => _safeDelegates ??= new SafeDelegateAnalyzer(
 		context,
@@ -192,6 +192,4 @@ public sealed class SafetyPass(BindingContext context)
 			}
 		}
 	}
-
-
 }

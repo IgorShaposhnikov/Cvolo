@@ -9,7 +9,7 @@ namespace Cvolo.Analysis.Passes.Safety;
 
 /// <summary>
 /// Owns safe-delegate provenance state and expression classification, including propagation through
-/// delegate declarations and reassignments while escape policy remains in <see cref="SafeDelegateAnalyzer"/>.
+/// delegate declarations and reassignments while escape policy remains in <see cref="SafeDelegateEscapeValidator"/>.
 /// </summary>
 internal sealed class SafeDelegateProvenanceTracker(
 	BindingContext context,
