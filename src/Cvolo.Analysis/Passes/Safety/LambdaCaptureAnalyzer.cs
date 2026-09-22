@@ -9,13 +9,14 @@ using Cvolo.Core.Diagnostics;
 namespace Cvolo.Analysis.Passes.Safety;
 
 /// <summary>
-/// Owns lambda capture discovery and capture-policy enforcement, including move/ref capture
-/// transitions, while lambda-body safety is delegated to a dedicated collaborator.
+/// Owns lambda capture-policy enforcement, including move/ref capture transitions, while capture
+/// discovery and lambda-body safety are delegated to dedicated collaborators.
 /// </summary>
 internal sealed class LambdaCaptureAnalyzer(
 	BindingContext context,
 	BorrowTracker borrows,
 	MoveAnalyzer moves,
+	LambdaCaptureResolver captureResolver,
 	UnsafeContextValidator unsafeContext,
 	Func<ExpressionSyntax, string?> getBaseIdentifierName,
 	Action<ExpressionSyntax, SymbolTable> checkExpressionSafety,
@@ -46,7 +47,7 @@ internal sealed class LambdaCaptureAnalyzer(
 		// §8.7 capture sources are outer locals + by-value parameters only; borrowed-ref
 		// lexical bindings are never capture sources (§8.8). Compute the set from the
 		// enclosing scope: any identifier in the body resolving to a non-global variable.
-		var capturedNames = ComputeCapturedNames(lambda, scope);
+		var capturedNames = captureResolver.ComputeCapturedNames(lambda, scope);
 
 		// Capture-policy validation (§8.2/8.3/8.5/8.7/8.9)
 		foreach (var name in capturedNames)
@@ -106,28 +107,6 @@ internal sealed class LambdaCaptureAnalyzer(
 	}
 
 	/// <summary>
-	/// Computes the set of by-value outer locals and parameters referenced by a lambda body.
-	/// References to globals or to identities shadowed inside the body are not captures.
-	/// </summary>
-	public HashSet<string> ComputeCapturedNames(LambdaExpressionSyntax lambda, SymbolTable scope)
-	{
-		var captured = new HashSet<string>();
-		var body = lambda.BlockBody is not null ? (SyntaxNode)lambda.BlockBody : lambda.ExpressionBody!;
-		if (body is null)
-			return captured;
-
-		foreach (var id in EnumerateNodes<IdentifierExpressionSyntax>(body))
-		{
-			if (captured.Contains(id.Name))
-				continue;
-			if (scope.Lookup(id.Name) is VariableSymbol v && !v.IsGlobal)
-				captured.Add(id.Name);
-		}
-
-		return captured;
-	}
-
-	/// <summary>
 	/// Registers the immutable borrow lock held by a ref-capturing lambda for the lifetime of the
 	/// resulting delegate value.
 	/// </summary>
@@ -137,17 +116,4 @@ internal sealed class LambdaCaptureAnalyzer(
 		borrows.RegisterBorrow(lockName, name, false, span);
 	}
 
-	/// <summary>Enumerates syntax nodes of the requested type using the existing recursive shape.</summary>
-	private static IEnumerable<TSyntax> EnumerateNodes<TSyntax>(SyntaxNode root) where TSyntax : SyntaxNode
-	{
-		if (root is TSyntax match)
-			yield return match;
-		foreach (var child in root.GetChildren())
-		{
-			foreach (var nested in EnumerateNodes<TSyntax>(child))
-			{
-				yield return nested;
-			}
-		}
-	}
 }

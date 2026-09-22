@@ -13,12 +13,13 @@ namespace Cvolo.Analysis.Passes.Safety;
 internal sealed class SafeDelegateAnalyzer(
 	BindingContext context,
 	LambdaCaptureAnalyzer lambdaCaptures,
+	LambdaCaptureResolver captureResolver,
 	Func<ExpressionSyntax, SymbolTable, TypeSymbol?> resolveExpressionType,
 	Func<ExpressionSyntax, string?> getBaseIdentifierName)
 {
 	private readonly SafeDelegateProvenanceTracker _provenance = new(
 		context,
-		lambdaCaptures,
+		captureResolver,
 		resolveExpressionType,
 		getBaseIdentifierName);
 	private readonly SafeDelegateEscapeValidator _escapes = new(context, getBaseIdentifierName);

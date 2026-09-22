@@ -13,7 +13,7 @@ namespace Cvolo.Analysis.Passes.Safety;
 /// </summary>
 internal sealed class SafeDelegateProvenanceTracker(
 	BindingContext context,
-	LambdaCaptureAnalyzer lambdaCaptures,
+	LambdaCaptureResolver captureResolver,
 	Func<ExpressionSyntax, SymbolTable, TypeSymbol?> resolveExpressionType,
 	Func<ExpressionSyntax, string?> getBaseIdentifierName)
 {
@@ -78,7 +78,7 @@ internal sealed class SafeDelegateProvenanceTracker(
 		switch (expr)
 		{
 			case LambdaExpressionSyntax lam:
-				var captures = lambdaCaptures.ComputeCapturedNames(lam, scope);
+				var captures = captureResolver.ComputeCapturedNames(lam, scope);
 				if (captures.Count == 0)
 					return new DelegateProvenance(DelegateProvenanceKind.Free, [], null);
 				return new DelegateProvenance(

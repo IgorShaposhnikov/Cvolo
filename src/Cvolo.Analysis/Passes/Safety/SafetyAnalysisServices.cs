@@ -12,6 +12,7 @@ internal sealed class SafetyAnalysisServices(BindingContext context)
 	private MoveAnalyzer? _moves;
 	private UnboundValidator? _unbound;
 	private ForEachSafetyValidator? _forEachSafety;
+	private LambdaCaptureResolver? _lambdaCaptureResolver;
 	private LambdaCaptureAnalyzer? _lambdaCaptures;
 	private SafeDelegateAnalyzer? _safeDelegates;
 	private SafetyTraversal? _traversal;
@@ -94,13 +95,19 @@ internal sealed class SafetyAnalysisServices(BindingContext context)
 		ExpressionFacts.GetBaseIdentifierName);
 
 	/// <summary>
-	/// Lazily creates the lambda-capture analyzer that owns capture discovery, capture policy,
-	/// move/ref capture transitions, and safe-tier lambda-body validation.
+	/// Lazily creates the shared lambda-capture resolver used by capture policy and delegate provenance.
+	/// </summary>
+	private LambdaCaptureResolver LambdaCaptureResolver => _lambdaCaptureResolver ??= new LambdaCaptureResolver();
+
+	/// <summary>
+	/// Lazily creates the lambda-capture analyzer that owns capture policy, move/ref capture
+	/// transitions, and safe-tier lambda-body validation.
 	/// </summary>
 	private LambdaCaptureAnalyzer LambdaCaptures => _lambdaCaptures ??= new LambdaCaptureAnalyzer(
 		context,
 		Borrows,
 		Moves,
+		LambdaCaptureResolver,
 		UnsafeContext,
 		ExpressionFacts.GetBaseIdentifierName,
 		(expr, scope) => Traversal.CheckExpressionSafety(expr, scope),
@@ -113,6 +120,7 @@ internal sealed class SafetyAnalysisServices(BindingContext context)
 	private SafeDelegateAnalyzer SafeDelegates => _safeDelegates ??= new SafeDelegateAnalyzer(
 		context,
 		LambdaCaptures,
+		LambdaCaptureResolver,
 		ExpressionFacts.ResolveExpressionType,
 		ExpressionFacts.GetBaseIdentifierName);
 
