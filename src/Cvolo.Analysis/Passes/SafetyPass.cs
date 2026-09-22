@@ -1,10 +1,6 @@
 using Cvolo.Analysis.Passes.Safety;
-using Cvolo.Analysis.Symbols;
-using Cvolo.Analysis.Symbols.Base;
-using Cvolo.Analysis.Symbols.Structs;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
-using Cvolo.Core.AST.Expressions;
 
 namespace Cvolo.Analysis.Passes;
 
@@ -20,6 +16,12 @@ public sealed class SafetyPass(BindingContext context)
 	private SafeDelegateAnalyzer? _safeDelegates;
 	private SafetyTraversal? _traversal;
 	private FunctionSafetyAnalyzer? _functionSafety;
+	private SafetyExpressionFacts? _expressionFacts;
+
+	/// <summary>
+	/// Lazily creates the shared read-only expression fact provider used by safety analyzers.
+	/// </summary>
+	private SafetyExpressionFacts ExpressionFacts => _expressionFacts ??= new SafetyExpressionFacts(context);
 
 	/// <summary>
 	/// Lazily creates the unsafe-context validator that owns tier-stack transitions and
@@ -33,7 +35,7 @@ public sealed class SafetyPass(BindingContext context)
 	/// </summary>
 	private BorrowTracker Borrows => _borrows ??= new BorrowTracker(
 		context,
-		GetBaseIdentifierName,
+		ExpressionFacts.GetBaseIdentifierName,
 		() => UnsafeContext.CurrentTier);
 
 	/// <summary>
@@ -42,8 +44,8 @@ public sealed class SafetyPass(BindingContext context)
 	/// </summary>
 	private ReferenceLifetimeAnalyzer ReferenceLifetimes => _referenceLifetimes ??= new ReferenceLifetimeAnalyzer(
 		context,
-		ResolveExpressionType,
-		GetBaseIdentifierName,
+		ExpressionFacts.ResolveExpressionType,
+		ExpressionFacts.GetBaseIdentifierName,
 		Borrows.HasParentLock,
 		() => UnsafeContext.CurrentTier);
 
@@ -54,7 +56,7 @@ public sealed class SafetyPass(BindingContext context)
 	private MoveAnalyzer Moves => _moves ??= new MoveAnalyzer(
 		context,
 		Borrows,
-		ResolveExpressionType);
+		ExpressionFacts.ResolveExpressionType);
 
 	/// <summary>
 	/// Lazily creates the unbound-sandbox validator that owns structural reference-field mutation,
@@ -63,7 +65,7 @@ public sealed class SafetyPass(BindingContext context)
 	/// </summary>
 	private UnboundValidator Unbound => _unbound ??= new UnboundValidator(
 		context,
-		GetBaseIdentifierName,
+		ExpressionFacts.GetBaseIdentifierName,
 		() => UnsafeContext.CurrentTier,
 		() => UnsafeContext.IsInsideUnbound);
 
@@ -73,7 +75,7 @@ public sealed class SafetyPass(BindingContext context)
 	/// </summary>
 	private ForEachSafetyValidator ForEachSafety => _forEachSafety ??= new ForEachSafetyValidator(
 		context,
-		GetBaseIdentifierName);
+		ExpressionFacts.GetBaseIdentifierName);
 
 	/// <summary>
 	/// Lazily creates the single safety traversal that coordinates the extracted analyzers while
@@ -88,8 +90,8 @@ public sealed class SafetyPass(BindingContext context)
 		Unbound,
 		ForEachSafety,
 		SafeDelegates,
-		ResolveExpressionType,
-		GetBaseIdentifierName);
+		ExpressionFacts.ResolveExpressionType,
+		ExpressionFacts.GetBaseIdentifierName);
 
 	/// <summary>
 	/// Lazily creates the lambda-capture analyzer that owns capture discovery, capture policy,
@@ -100,7 +102,7 @@ public sealed class SafetyPass(BindingContext context)
 		Borrows,
 		Moves,
 		UnsafeContext,
-		GetBaseIdentifierName,
+		ExpressionFacts.GetBaseIdentifierName,
 		(expr, scope) => Traversal.CheckExpressionSafety(expr, scope),
 		(block, scope, func) => Traversal.CheckBlockSafety(block, scope, func));
 
@@ -111,8 +113,8 @@ public sealed class SafetyPass(BindingContext context)
 	private SafeDelegateAnalyzer SafeDelegates => _safeDelegates ??= new SafeDelegateAnalyzer(
 		context,
 		LambdaCaptures,
-		ResolveExpressionType,
-		GetBaseIdentifierName);
+		ExpressionFacts.ResolveExpressionType,
+		ExpressionFacts.GetBaseIdentifierName);
 
 	/// <summary>
 	/// Lazily creates the per-function safety session coordinator that resets analyzer state,
@@ -191,25 +193,5 @@ public sealed class SafetyPass(BindingContext context)
 		}
 	}
 
-	private TypeSymbol? ResolveExpressionType(ExpressionSyntax expr, SymbolTable scope)
-	{
-		return expr switch
-		{
-			IdentifierExpressionSyntax id => scope.Lookup(id.Name) is VariableSymbol v ? v.Type : null,
-			CallExpressionSyntax call => context.ResolvedCalls.TryGetValue(call, out var func) ? func.ReturnType : null,
-			StructInitializationExpressionSyntax init => context.ResolveType(init.StructTypeName),
-			BorrowExpressionSyntax borrow => new PointerTypeSymbol(ResolveExpressionType(borrow.Expression, scope) ?? TypeSymbol.Int, borrow.IsMutable),
 
-			_ => null
-		};
-	}
-
-	private string? GetBaseIdentifierName(ExpressionSyntax expr)
-	{
-		if (expr is IdentifierExpressionSyntax id) return id.Name;
-		if (expr is MemberAccessExpressionSyntax m) return GetBaseIdentifierName(m.Expression);
-		if (expr is IndexExpressionSyntax idx) return GetBaseIdentifierName(idx.Left);
-		if (expr is BorrowExpressionSyntax b) return GetBaseIdentifierName(b.Expression);
-		return null;
-	}
 }
