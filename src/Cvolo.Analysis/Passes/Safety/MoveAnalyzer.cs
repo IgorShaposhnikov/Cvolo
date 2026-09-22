@@ -10,8 +10,8 @@ namespace Cvolo.Analysis.Passes.Safety;
 
 /// <summary>
 /// Owns ordinary moved-value state transitions, by-value ownership transfer, and large-copy
-/// diagnostics for one safety traversal. Safe-delegate capture and escape policy remain owned by
-/// <see cref="Cvolo.Analysis.Passes.SafetyPass"/>.
+/// diagnostics for one safety traversal. Safe-delegate capture and escape policy are owned by
+/// <see cref="SafeDelegateAnalyzer"/>.
 /// </summary>
 internal sealed class MoveAnalyzer(
 	BindingContext context,
