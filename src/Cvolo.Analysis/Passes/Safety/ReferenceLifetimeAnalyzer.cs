@@ -10,9 +10,9 @@ using Cvolo.Core.Diagnostics;
 namespace Cvolo.Analysis.Passes.Safety;
 
 /// <summary>
-/// Tracks ordinary reference provenance for one function and validates that reference-bearing
-/// return values do not outlive stack-local storage. Safe-delegate provenance is intentionally
-/// owned by <see cref="Cvolo.Analysis.Passes.SafetyPass"/> and is not part of this service.
+/// Tracks ordinary ref/refvar and nullable-reference-option provenance for one function. Struct
+/// reference-field provenance is delegated to <see cref="StructReferenceProvenanceTracker"/>, while
+/// return-time validation is delegated to <see cref="ReferenceReturnValidator"/>.
 /// </summary>
 internal sealed class ReferenceLifetimeAnalyzer(
 	BindingContext context,
@@ -21,7 +21,7 @@ internal sealed class ReferenceLifetimeAnalyzer(
 	Func<string, bool> hasParentLock,
 	Func<SafetyTier> getCurrentTier)
 {
-	private readonly Dictionary<string, HashSet<string>> _structRefTargets = [];
+	private readonly StructReferenceProvenanceTracker _structReferences = new(context, resolveExpressionType, getBaseIdentifierName);
 	private readonly Dictionary<string, string> _refVarTargets = [];
 	private readonly HashSet<string> _heapVariables = [];
 	private readonly Func<ExpressionSyntax, SymbolTable, TypeSymbol?> _resolveExpressionType = resolveExpressionType;
@@ -35,7 +35,7 @@ internal sealed class ReferenceLifetimeAnalyzer(
 	/// </summary>
 	private ReferenceReturnValidator ReturnValidator => _returnValidator ??= new ReferenceReturnValidator(
 		context,
-		_structRefTargets,
+		_structReferences.Targets,
 		_refVarTargets,
 		_heapVariables,
 		_resolveExpressionType,
@@ -46,7 +46,7 @@ internal sealed class ReferenceLifetimeAnalyzer(
 	/// <summary>Clears all per-function reference provenance state.</summary>
 	public void Reset()
 	{
-		_structRefTargets.Clear();
+		_structReferences.Reset();
 		_refVarTargets.Clear();
 		_heapVariables.Clear();
 	}
@@ -58,7 +58,7 @@ internal sealed class ReferenceLifetimeAnalyzer(
 	/// </summary>
 	public void RemoveVariable(string name)
 	{
-		_structRefTargets.Remove(name);
+		_structReferences.RemoveVariable(name);
 		_refVarTargets.Remove(name);
 	}
 
@@ -88,7 +88,7 @@ internal sealed class ReferenceLifetimeAnalyzer(
 			TrackReferenceTarget(declaration.Name, initializer, scope, clearWhenMissing: false);
 
 		if (declaration.Type is not "ref" and not "refvar" && symbol.Type is StructTypeSymbol)
-			TrackStructRefTargets(declaration.Name, initializer, scope);
+			_structReferences.TrackStructRefTargets(declaration.Name, initializer, scope);
 	}
 
 	/// <summary>
@@ -103,7 +103,7 @@ internal sealed class ReferenceLifetimeAnalyzer(
 		SymbolTable scope)
 	{
 		if (leftSymbol.Type is StructTypeSymbol)
-			TrackStructRefTargets(left.Name, right, scope);
+			_structReferences.TrackStructRefTargets(left.Name, right, scope);
 
 		if (IsTrackedReferenceType(leftSymbol.Type))
 			TrackReferenceTarget(left.Name, right, scope, clearWhenMissing: true);
@@ -182,63 +182,6 @@ internal sealed class ReferenceLifetimeAnalyzer(
 		}
 
 		return _getBaseIdentifierName(expr);
-	}
-
-	/// <summary>
-	/// When a struct variable is initialized (struct literal or function call),
-	/// scan ref fields and record what each ref field points to in _structRefTargets.
-	/// </summary>
-	public void TrackStructRefTargets(string varName, ExpressionSyntax initializer, SymbolTable scope)
-	{
-		var type = _resolveExpressionType(initializer, scope);
-		if (type is not StructTypeSymbol structType) return;
-
-		var refTargets = new HashSet<string>();
-		CollectRefTargets(structType, initializer, scope, refTargets, []);
-
-		if (refTargets.Count > 0)
-			_structRefTargets[varName] = refTargets;
-	}
-
-	/// <summary>
-	/// Collects tracked reference targets from a struct initializer or a resolved call result.
-	/// </summary>
-	private void CollectRefTargets(StructTypeSymbol structType, ExpressionSyntax expr, SymbolTable scope,
-		HashSet<string> targets, HashSet<string> visited)
-	{
-		if (!visited.Add(structType.Name)) return; // cycle-cut
-
-		if (expr is StructInitializationExpressionSyntax init)
-		{
-			foreach (var memberInit in init.Initializers)
-			{
-				var field = structType.FindField(memberInit.MemberName);
-				if (field == null || field.Type is not PointerTypeSymbol ptrType) continue;
-
-				var fieldExpr = memberInit.Expression;
-				var borrowedName = _getBaseIdentifierName(fieldExpr);
-				if (borrowedName != null)
-					targets.Add(borrowedName);
-
-				// Recurse into nested struct fields
-				if (ptrType.ReferencedType is StructTypeSymbol innerStruct && fieldExpr is StructInitializationExpressionSyntax innerInit)
-					CollectRefTargets(innerStruct, innerInit, scope, targets, visited);
-			}
-		}
-		else if (expr is CallExpressionSyntax call && context.ResolvedCalls.TryGetValue(call, out var callee))
-		{
-			// Function call returning a struct: we can't track per-field origins without interprocedural analysis.
-			// Record the function parameters as potential ref targets (conservative).
-			for (var i = 0; i < call.Arguments.Count && i < callee.Parameters.Count; i++)
-			{
-				if (callee.Parameters[i].Type is PointerTypeSymbol)
-				{
-					var argName = _getBaseIdentifierName(call.Arguments[i]);
-					if (argName != null)
-						targets.Add(argName);
-				}
-			}
-		}
 	}
 
 }
