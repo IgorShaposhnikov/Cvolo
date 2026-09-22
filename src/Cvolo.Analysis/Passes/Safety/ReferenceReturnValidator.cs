@@ -5,7 +5,6 @@ using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
 using Cvolo.Core.AST.Expressions;
 using Cvolo.Core.AST.Statements;
-using Cvolo.Core.Diagnostics;
 
 namespace Cvolo.Analysis.Passes.Safety;
 
@@ -31,6 +30,7 @@ internal sealed class ReferenceReturnValidator(
 	private readonly Func<string, bool> _hasParentLock = hasParentLock;
 	private readonly Func<SafetyTier> _getCurrentTier = getCurrentTier;
 	private AggregateReturnLifetimeValidator? _aggregateReturns;
+	private StructReturnLifetimeValidator? _structReturns;
 
 	/// <summary>
 	/// Lazily creates the validator for inline pointer-bearing aggregate return values.
@@ -40,6 +40,14 @@ internal sealed class ReferenceReturnValidator(
 		_getBaseIdentifierName,
 		IsDanglingTarget,
 		ResolveUltimateTarget);
+
+	/// <summary>
+	/// Lazily creates the validator for tracked struct values returned by value.
+	/// </summary>
+	private StructReturnLifetimeValidator StructReturns => _structReturns ??= new StructReturnLifetimeValidator(
+		context,
+		_structRefTargets,
+		IsDanglingTarget);
 
 	/// <summary>
 	/// Validates reference lifetimes for a return statement, including direct references,
@@ -83,7 +91,7 @@ internal sealed class ReferenceReturnValidator(
 			// Case 4: return by value of a struct whose ref fields point to locals (§3C)
 			if (scope.Lookup(id.Name) is VariableSymbol retSym && retSym.Type is StructTypeSymbol retStruct)
 			{
-				VerifyStructByValueReturn(retStruct, id.Name, ret.Expression.Span, scope);
+				StructReturns.VerifyStructByValueReturn(retStruct, id.Name, ret.Expression.Span, scope);
 			}
 
 			return;
@@ -95,65 +103,6 @@ internal sealed class ReferenceReturnValidator(
 		// would dangle once the caller takes ownership of the returned graph (heap-relative provenance).
 		if (_resolveExpressionType(ret.Expression, scope) is { } returnType && AggregateReturnLifetimeValidator.TypeTransitivelyHasRefs(returnType))
 			AggregateReturns.VerifyHeapRelativeReturn(ret.Expression, returnType, ret.Expression.Span, scope);
-	}
-
-	/// <summary>
-	/// Verify that a struct being returned by value doesn't have ref fields pointing to local-origin variables (§3C).
-	/// Uses cycle detection to handle self-referential structs.
-	/// </summary>
-	private void VerifyStructByValueReturn(StructTypeSymbol structType, string varName, TextSpan span, SymbolTable scope)
-	{
-		VerifyStructByValueReturnCore(structType, varName, span, [], scope);
-	}
-
-	/// <summary>
-	/// Recursively checks reference-bearing fields of a returned struct while cutting type cycles.
-	/// </summary>
-	private void VerifyStructByValueReturnCore(StructTypeSymbol structType, string varName, TextSpan span, HashSet<string> visited, SymbolTable scope)
-	{
-		if (!visited.Add(structType.Name))
-			return; // cycle-cut: already visited this type, stop recursion
-
-		foreach (var field in structType.Fields)
-		{
-			if (field.IsCycleCut)
-				continue;
-
-			if (field.Type is PointerTypeSymbol ptr && ptr.ReferencedType is StructTypeSymbol innerStruct)
-			{
-				// Ref field pointing to a struct: recurse into that struct's fields
-				if (_structRefTargets.TryGetValue(varName, out var targets))
-				{
-					foreach (var target in targets)
-					{
-						if (IsDanglingTarget(target, scope))
-						{
-							context.Diagnostics.Report(context.CurrentUnit!.Context, span,
-								$"Cannot return '{varName}' by value: reference field '{field.Name}' targets local variable '{target}' (dangling reference)");
-							return;
-						}
-					}
-				}
-
-				VerifyStructByValueReturnCore(innerStruct, varName, span, visited, scope);
-			}
-			else if (field.Type is PointerTypeSymbol ptrScalar && ptrScalar.ReferencedType is not StructTypeSymbol)
-			{
-				// Ref field pointing to a scalar: check tracked targets
-				if (_structRefTargets.TryGetValue(varName, out var targets))
-				{
-					foreach (var target in targets)
-					{
-						if (IsDanglingTarget(target, scope))
-						{
-							context.Diagnostics.Report(context.CurrentUnit!.Context, span,
-								$"Cannot return '{varName}' by value: reference field '{field.Name}' targets local variable '{target}' (dangling reference)");
-							return;
-						}
-					}
-				}
-			}
-		}
 	}
 
 	/// <summary>
