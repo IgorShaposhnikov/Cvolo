@@ -5,7 +5,6 @@ using Cvolo.Analysis.Symbols.Structs;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
 using Cvolo.Core.AST.Expressions;
-using Cvolo.Core.AST.Statements;
 
 namespace Cvolo.Analysis.Passes;
 
@@ -18,6 +17,7 @@ public sealed class SafetyPass(BindingContext context)
 	private UnboundValidator? _unbound;
 	private ForEachSafetyValidator? _forEachSafety;
 	private SafeDelegateAnalyzer? _safeDelegates;
+	private SafetyTraversal? _traversal;
 
 	/// <summary>
 	/// Lazily creates the unsafe-context validator that owns tier-stack transitions and
@@ -74,8 +74,24 @@ public sealed class SafetyPass(BindingContext context)
 		GetBaseIdentifierName);
 
 	/// <summary>
+	/// Lazily creates the single safety traversal that coordinates the extracted analyzers while
+	/// preserving the original recursive walk and diagnostic ordering.
+	/// </summary>
+	private SafetyTraversal Traversal => _traversal ??= new SafetyTraversal(
+		context,
+		Borrows,
+		UnsafeContext,
+		ReferenceLifetimes,
+		Moves,
+		Unbound,
+		ForEachSafety,
+		SafeDelegates,
+		ResolveExpressionType,
+		GetBaseIdentifierName);
+
+	/// <summary>
 	/// Lazily creates the safe-delegate analyzer that owns lambda capture policy, delegate
-	/// provenance, and escape checks while reusing this pass's existing recursive traversal.
+	/// provenance, and escape checks while reusing the existing recursive safety traversal.
 	/// </summary>
 	private SafeDelegateAnalyzer SafeDelegates => _safeDelegates ??= new SafeDelegateAnalyzer(
 		context,
@@ -84,8 +100,8 @@ public sealed class SafetyPass(BindingContext context)
 		UnsafeContext,
 		ResolveExpressionType,
 		GetBaseIdentifierName,
-		CheckExpressionSafety,
-		CheckBlockSafety);
+		(expr, scope) => Traversal.CheckExpressionSafety(expr, scope),
+		(block, scope, func) => Traversal.CheckBlockSafety(block, scope, func));
 
 	public void Process(IEnumerable<CompilationUnitSyntax> units)
 	{
@@ -193,213 +209,7 @@ public sealed class SafetyPass(BindingContext context)
 		}
 
 		// Unbound tier: relaxed checks (skip borrow exclusivity, but still do basic flow)
-		CheckBlockSafety(func.Body, scope, func);
-	}
-
-	private void CheckBlockSafety(BlockStatementSyntax block, SymbolTable scope, FunctionDeclarationSyntax func)
-	{
-		if (block is null)
-			return;
-
-		var borrowState = Borrows.CaptureBlockState();
-		var stmts = block.Statements;
-		for (var i = 0; i < stmts.Count; i++)
-		{
-			var stmt = stmts[i];
-			Borrows.ReleaseExpiredBorrows(stmt.Span.Start, block, i);
-			CheckStatementSafety(stmt, scope, func);
-		}
-
-		// Release all borrows and refs taken in this block at block exit.
-		foreach (var name in Borrows.ExitBlock(borrowState))
-			ReferenceLifetimes.RemoveVariable(name);
-	}
-
-	private void CheckStatementSafety(SyntaxNode stmt, SymbolTable scope, FunctionDeclarationSyntax func)
-	{
-		if (stmt is null)
-			return;
-
-		switch (stmt)
-		{
-			case VariableDeclarationSyntax v:
-				if (context.VariableSymbols.TryGetValue(v, out var sym))
-				{
-					scope.Declare(sym);
-					if (v.Initializer != null)
-					{
-						CheckExpressionSafety(v.Initializer, scope);
-						Moves.EmitLargeCopyWarningIfNeeded(v.Initializer, scope);
-
-						ReferenceLifetimes.TrackDeclaration(v, sym, scope);
-
-						Unbound.TrackLocalReferenceDeclaration(v);
-
-						SafeDelegates.TrackDeclaration(v, sym, scope);
-					}
-
-					// CVL1005: Raw pointer variables cannot be declared outside unsafe
-					UnsafeContext.ValidateRawPointerDeclaration(sym, v.Span);
-
-					Borrows.VerifyDeclarationBorrow(v);
-				}
-
-				break;
-
-			case SwitchStatementSyntax sw:
-				CheckSwitchStatementSafety(sw, scope, func);
-				break;
-
-			case ReturnStatementSyntax r:
-				if (r.Expression != null) CheckExpressionSafety(r.Expression, scope);
-				if (r.Expression != null)
-					SafeDelegates.ValidateReturn(r.Expression, scope);
-				ReferenceLifetimes.VerifyReturnLifetime(r, func, scope);
-				break;
-
-			case ExpressionStatementSyntax e:
-				CheckExpressionSafety(e.Expression, scope);
-				break;
-
-			case IfStatementSyntax i:
-				CheckExpressionSafety(i.Condition, scope);
-				CheckStatementSafety(i.ThenStatement, scope, func);
-				if (i.ElseClause != null) CheckStatementSafety(i.ElseClause.Body, scope, func);
-				break;
-
-			case BlockStatementSyntax b:
-				CheckBlockSafety(b, new SymbolTable(scope), func);
-				break;
-
-			case LabeledBlockStatementSyntax lb:
-				CheckBlockSafety(lb.Body, new SymbolTable(scope), func);
-				break;
-
-			case WhileStatementSyntax w:
-				CheckExpressionSafety(w.Condition, scope);
-				if (w.Body is BlockStatementSyntax wBlock)
-					CheckBlockSafety(wBlock, new SymbolTable(scope), func);
-				else
-					CheckStatementSafety(w.Body, scope, func);
-				break;
-
-			case ForStatementSyntax f:
-				if (f.Initializer != null) CheckStatementSafety(f.Initializer, scope, func);
-				CheckExpressionSafety(f.Condition, scope);
-				CheckExpressionSafety(f.Increment, scope);
-				if (f.Body is BlockStatementSyntax fBlock)
-					CheckBlockSafety(fBlock, new SymbolTable(scope), func);
-				else
-					CheckStatementSafety(f.Body, scope, func);
-				break;
-
-			case ForEachStatementSyntax fe:
-				CheckExpressionSafety(fe.Collection, scope);
-				if (fe.Body is BlockStatementSyntax feBlock)
-				{
-					ForEachSafety.Validate(fe, feBlock);
-					CheckBlockSafety(feBlock, new SymbolTable(scope), func);
-				}
-				else
-					CheckStatementSafety(fe.Body, scope, func);
-				break;
-
-			case UnsafeBlockStatementSyntax unsafeBlock:
-				UnsafeContext.Push(SafetyTier.Unsafe);
-				CheckBlockSafety(unsafeBlock.Body, new SymbolTable(scope), func);
-				UnsafeContext.Pop();
-				break;
-
-			case BreakStatementSyntax:
-			case ContinueStatementSyntax:
-				break;
-		}
-	}
-
-	private void CheckExpressionSafety(ExpressionSyntax expr, SymbolTable scope)
-	{
-		switch (expr)
-		{
-			case IdentifierExpressionSyntax id:
-				Moves.VerifyReadable(id, scope);
-				break;
-
-			case NullLiteralExpressionSyntax:
-				UnsafeContext.ValidateNullLiteral(expr.Span);
-				break;
-
-			case MemberAccessExpressionSyntax m:
-				CheckExpressionSafety(m.Expression, scope);
-				Unbound.ValidateMemberAccess(m, scope);
-				break;
-
-			case IndexExpressionSyntax idx:
-				CheckExpressionSafety(idx.Left, scope);
-				CheckExpressionSafety(idx.Index, scope);
-				break;
-
-			case BorrowExpressionSyntax b:
-				CheckExpressionSafety(b.Expression, scope);
-				break;
-
-			case UnaryExpressionSyntax u:
-				CheckExpressionSafety(u.Operand, scope);
-				UnsafeContext.ValidateUnaryOperation(u);
-				break;
-
-			case StructInitializationExpressionSyntax init:
-				foreach (var member in init.Initializers)
-					CheckExpressionSafety(member.Expression, scope);
-				break;
-
-			case AsmExpressionSyntax asm:
-				foreach (var operand in asm.Operands)
-					CheckExpressionSafety(operand.Expression, scope);
-				break;
-
-			case CallExpressionSyntax call:
-				foreach (var arg in call.Arguments)
-				{
-					CheckExpressionSafety(arg, scope);
-					Moves.HandleByValueArgument(arg, scope);
-				}
-
-				break;
-
-			case LambdaExpressionSyntax lam:
-				SafeDelegates.ValidateLambda(lam, scope);
-				break;
-
-			case BinaryExpressionSyntax bin:
-				CheckExpressionSafety(bin.Right, scope);
-				if (bin.Operator == "=")
-				{
-					SafeDelegates.ValidateAssignment(bin, scope);
-				}
-				if (bin.Operator == "=" && bin.Left is IdentifierExpressionSyntax leftId)
-				{
-					var leftSymbol = scope.Lookup(leftId.Name) as VariableSymbol
-						?? context.ResolveGlobalReference(leftId.Name, out _);
-					if (leftSymbol is not null)
-					{
-						Borrows.VerifyUnlocked(bin.Left, "reassign");
-						Moves.ResetMoved(leftSymbol);
-						Moves.HandleCopyAssignment(bin.Right, scope);
-
-						Unbound.ValidateGlobalAssignmentEscape(bin, leftSymbol, scope);
-						ReferenceLifetimes.TrackAssignment(leftId, leftSymbol, bin.Right, bin.Span, scope);
-
-					}
-				}
-				else
-				{
-					CheckExpressionSafety(bin.Left, scope);
-
-					Unbound.ValidateReferenceFieldAssignment(bin, scope);
-				}
-
-				break;
-		}
+		Traversal.CheckBlockSafety(func.Body, scope, func);
 	}
 
 	private TypeSymbol? ResolveExpressionType(ExpressionSyntax expr, SymbolTable scope)
@@ -424,29 +234,4 @@ public sealed class SafetyPass(BindingContext context)
 		return null;
 	}
 
-
-	private void CheckSwitchStatementSafety(SwitchStatementSyntax sw, SymbolTable scope, FunctionDeclarationSyntax func)
-	{
-		CheckExpressionSafety(sw.Expression, scope);
-		var parentName = GetBaseIdentifierName(sw.Expression);
-
-		foreach (var c in sw.Cases)
-		{
-			var targetType = ResolveExpressionType(sw.Expression, scope);
-			var hasRefPromotion = c.VariableName is not null && targetType is PointerTypeSymbol;
-
-			if (hasRefPromotion && parentName is not null)
-			{
-				var isMutable = targetType is PointerTypeSymbol targetPtr && targetPtr.IsMutable;
-				Borrows.RegisterBorrow(c.VariableName!, parentName, isMutable, c.Span);
-			}
-
-			CheckBlockSafety(new BlockStatementSyntax(c.Span, c.Body), new SymbolTable(scope), func);
-
-			if (hasRefPromotion && parentName is not null)
-			{
-				Borrows.RemoveBorrower(c.VariableName!);
-			}
-		}
-	}
 }

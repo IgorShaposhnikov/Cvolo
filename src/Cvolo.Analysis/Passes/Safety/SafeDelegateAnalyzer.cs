@@ -11,7 +11,7 @@ namespace Cvolo.Analysis.Passes.Safety;
 
 /// <summary>
 /// Owns safe-delegate lambda capture policy, delegate provenance propagation, and escape
-/// diagnostics while delegating recursive syntax traversal back to the enclosing safety pass.
+/// diagnostics while delegating recursive syntax traversal back to the shared safety traversal.
 /// </summary>
 internal sealed class SafeDelegateAnalyzer(
 	BindingContext context,
