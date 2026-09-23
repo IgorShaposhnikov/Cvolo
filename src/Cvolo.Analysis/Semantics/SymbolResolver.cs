@@ -563,7 +563,7 @@ internal static class SymbolResolver
 	{
 		VariableDeclarationSyntax variable => $"{variable.Type ?? "var"} {variable.Name}",
 		ParameterSyntax parameter => $"{parameter.Type} {parameter.Name}",
-		GlobalVariableDeclarationSyntax global => $"{global.Type} {global.Name}",
+		GlobalVariableDeclarationSyntax global => DisplayGlobal(global),
 		FunctionDeclarationSyntax function => $"{function.ReturnType} {function.Name}{Generic(function.GenericParameters)}({ParameterList(function.Parameters)})",
 		ConstructorDeclarationSyntax constructor => $"{constructor.StructName}({ParameterList(constructor.Parameters)})",
 		DestructorDeclarationSyntax destructor => $"~{destructor.StructName}()",
@@ -571,15 +571,24 @@ internal static class SymbolResolver
 		UnionFieldSyntax unionField => $"{unionField.Type} {unionField.Name}",
 		EnumVariantDeclarationSyntax enumVariant => enumVariant.Name,
 		StructDeclarationSyntax structDeclaration => $"struct {structDeclaration.Name}{Generic(structDeclaration.GenericParameters)}",
-		UnionDeclarationSyntax unionDeclaration => $"union {unionDeclaration.Name}{Generic(unionDeclaration.GenericParameters)}",
+		UnionDeclarationSyntax unionDeclaration => $"{(unionDeclaration.IsUnsafe ? "unsafe " : string.Empty)}union {unionDeclaration.Name}{Generic(unionDeclaration.GenericParameters)}",
 		EnumDeclarationSyntax enumDeclaration => $"enum {enumDeclaration.Name}",
 		InterfaceDeclarationSyntax interfaceDeclaration => $"interface {interfaceDeclaration.Name}{Generic(interfaceDeclaration.GenericParameters)}",
 		ProtocolDeclarationSyntax protocolDeclaration => $"protocol {protocolDeclaration.Name}{Generic(protocolDeclaration.GenericParameters)}",
 		TypeAliasDeclarationSyntax typeAlias => $"alias {typeAlias.Name}{Generic(typeAlias.GenericParameters)} = {typeAlias.Type}",
 		ExtensionDeclarationSyntax extension => $"extension {extension.ExtendedTypeName}",
-		DelegateDeclarationSyntax delegateDeclaration => $"delegate {delegateDeclaration.ReturnType} {delegateDeclaration.Name}{Generic(delegateDeclaration.GenericParameters)}({ParameterList(delegateDeclaration.Parameters)})",
+		DelegateDeclarationSyntax delegateDeclaration => $"{(delegateDeclaration.IsNative ? $"unsafe \"{delegateDeclaration.CallingConvention ?? "C"}\" " : string.Empty)}delegate {delegateDeclaration.ReturnType} {delegateDeclaration.Name}{Generic(delegateDeclaration.GenericParameters)}({ParameterList(delegateDeclaration.Parameters)})",
 		_ => fallback,
 	};
+
+	private static string DisplayGlobal(GlobalVariableDeclarationSyntax global)
+	{
+		if (!global.IsForeign)
+			return $"{global.Type} {global.Name}";
+
+		var mutability = global.IsMutable ? "var " : string.Empty;
+		return $"extern \"{global.CallingConvention ?? "C"}\" global {mutability}{global.Type} {global.Name}";
+	}
 
 	private static string ParameterList(IReadOnlyList<ParameterSyntax> parameters)
 		=> string.Join(", ", parameters.Select(p => $"{p.Type} {p.Name}"));

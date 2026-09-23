@@ -10,4 +10,5 @@ public sealed record SymbolLookupResult(
 	ToolingSymbolKind Kind,
 	string Name,
 	string DisplayText,
-	string? Documentation = null);
+	string? Documentation = null,
+	NativeInteropMetadata? NativeInterop = null);

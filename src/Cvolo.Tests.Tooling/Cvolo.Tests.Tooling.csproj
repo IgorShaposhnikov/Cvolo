@@ -21,6 +21,8 @@
 
 	<ItemGroup>
 		<ProjectReference Include="..\Cvolo.Compiler.Tooling\Cvolo.Compiler.Tooling.csproj" />
+		<ProjectReference Include="..\Cvolo.Packaging\Cvolo.Packaging.csproj" />
+		<ProjectReference Include="..\Cvolo.Projects\Cvolo.Projects.csproj" />
 	</ItemGroup>
 
 	<ItemGroup>

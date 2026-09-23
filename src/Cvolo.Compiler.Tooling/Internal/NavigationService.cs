@@ -5,6 +5,7 @@ using Cvolo.Analysis.Symbols.Structs;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
 using Cvolo.Core.AST.Statements;
+using Cvolo.Core.AST.Expressions;
 using CoreTextSpan = Cvolo.Core.Diagnostics.TextSpan;
 
 namespace Cvolo.Compiler.Tooling.Internal;
@@ -48,6 +49,7 @@ internal sealed class NavigationIndex
 		_analysis = snapshot.GetAnalysis();
 		_binderContext = _analysis.BinderContext;
 		BuildDeclarations();
+		BuildExternalDeclarations();
 		BuildConformanceRedirects();
 		BuildOutlines();
 	}
@@ -87,7 +89,8 @@ internal sealed class NavigationIndex
 			MapKind(resolved.Kind),
 			resolved.Name,
 			resolved.DisplayText,
-			resolved.Documentation);
+			resolved.Documentation,
+			NativeInteropFor(resolved.Declaration));
 	}
 
 	internal IReadOnlyList<SymbolDefinition> Definitions(SymbolId symbol)
@@ -116,6 +119,61 @@ internal sealed class NavigationIndex
 			var source = _snapshot.GetDocument(documentId).Text.ToString();
 			foreach (var member in Members(unit))
 				IndexMember(documentId, source, member);
+		}
+	}
+
+	/// <summary>
+	/// Adds package API declarations to the snapshot navigation identity map. External declarations
+	/// intentionally have no local <see cref="SymbolDefinition"/> because they originate in package
+	/// metadata rather than an editable workspace document.
+	/// </summary>
+	private void BuildExternalDeclarations()
+	{
+		foreach (var external in _snapshot.ExternalUnits)
+		{
+			foreach (var member in Members(external.Unit))
+				IndexExternalMember(member);
+		}
+	}
+
+	/// <summary>
+	/// Package API declarations participate in semantic lookup but do not have a local document
+	/// definition. Indexing their syntax nodes still gives hover/navigation a stable snapshot-local
+	/// symbol identity; GetDefinitions correctly returns an empty list for such external symbols.
+	/// </summary>
+	private void IndexExternalMember(SyntaxNode node)
+	{
+		switch (node)
+		{
+			case FunctionDeclarationSyntax function:
+				RegisterExternal(function, function.Name, ToolingSymbolKind.Function);
+				foreach (var parameter in function.Parameters)
+					RegisterExternal(parameter, parameter.Name, ToolingSymbolKind.Parameter);
+				break;
+			case StructDeclarationSyntax structDeclaration:
+				RegisterExternal(structDeclaration, structDeclaration.Name, ToolingSymbolKind.Struct);
+				foreach (var field in structDeclaration.Fields)
+					RegisterExternal(field, field.Name, ToolingSymbolKind.Field, structDeclaration.Name);
+				break;
+			case UnionDeclarationSyntax unionDeclaration:
+				RegisterExternal(unionDeclaration, unionDeclaration.Name, ToolingSymbolKind.Union);
+				foreach (var field in unionDeclaration.Fields)
+					RegisterExternal(field, field.Name, ToolingSymbolKind.Field, unionDeclaration.Name);
+				break;
+			case EnumDeclarationSyntax enumDeclaration:
+				RegisterExternal(enumDeclaration, enumDeclaration.Name, ToolingSymbolKind.Enum);
+				foreach (var variant in enumDeclaration.Variants)
+					RegisterExternal(variant, variant.Name, ToolingSymbolKind.EnumMember, enumDeclaration.Name);
+				break;
+			case DelegateDeclarationSyntax delegateDeclaration:
+				RegisterExternal(delegateDeclaration, delegateDeclaration.Name, ToolingSymbolKind.Delegate);
+				break;
+			case GlobalVariableDeclarationSyntax global:
+				RegisterExternal(global, global.Name, ToolingSymbolKind.Global);
+				break;
+			case TypeAliasDeclarationSyntax typeAlias:
+				RegisterExternal(typeAlias, typeAlias.Name, ToolingSymbolKind.TypeAlias);
+				break;
 		}
 	}
 
@@ -214,27 +272,27 @@ internal sealed class NavigationIndex
 				break;
 
 			case ExtensionDeclarationSyntax extension:
-			{
-				var owner = Leaf(extension.ExtendedTypeName);
-				Register(documentId, source, extension, $"extension {owner}", ToolingSymbolKind.OtherType, null);
-				foreach (var method in extension.Methods)
 				{
-					Register(documentId, source, method, method.Name, method.Name.StartsWith('~') ? ToolingSymbolKind.Destructor : ToolingSymbolKind.ExtensionMethod, method.NameSpan, owner);
-					IndexParameters(documentId, source, method.Parameters, owner);
-					IndexLocals(documentId, source, method.Body);
-				}
+					var owner = Leaf(extension.ExtendedTypeName);
+					Register(documentId, source, extension, $"extension {owner}", ToolingSymbolKind.OtherType, null);
+					foreach (var method in extension.Methods)
+					{
+						Register(documentId, source, method, method.Name, method.Name.StartsWith('~') ? ToolingSymbolKind.Destructor : ToolingSymbolKind.ExtensionMethod, method.NameSpan, owner);
+						IndexParameters(documentId, source, method.Parameters, owner);
+						IndexLocals(documentId, source, method.Body);
+					}
 
-				foreach (var constructor in extension.Constructors)
-				{
-					Register(documentId, source, constructor, constructor.StructName, ToolingSymbolKind.Constructor, constructor.NameSpan, owner);
-					IndexParameters(documentId, source, constructor.Parameters, owner);
-					IndexLocals(documentId, source, constructor.Body);
-				}
+					foreach (var constructor in extension.Constructors)
+					{
+						Register(documentId, source, constructor, constructor.StructName, ToolingSymbolKind.Constructor, constructor.NameSpan, owner);
+						IndexParameters(documentId, source, constructor.Parameters, owner);
+						IndexLocals(documentId, source, constructor.Body);
+					}
 
-				foreach (var destructor in extension.Destructors)
-					Register(documentId, source, destructor, destructor.StructName, ToolingSymbolKind.Destructor, null, owner);
-				break;
-			}
+					foreach (var destructor in extension.Destructors)
+						Register(documentId, source, destructor, destructor.StructName, ToolingSymbolKind.Destructor, null, owner);
+					break;
+				}
 
 			case StructDeclarationSyntax structDeclaration:
 				Register(documentId, source, structDeclaration, structDeclaration.Name, ToolingSymbolKind.Struct, null);
@@ -285,6 +343,8 @@ internal sealed class NavigationIndex
 			case ExternBlockSyntax externBlock:
 				foreach (var function in externBlock.Functions)
 					Register(documentId, source, function, function.Name, ToolingSymbolKind.Function, null);
+				foreach (var global in externBlock.Globals)
+					Register(documentId, source, global, global.Name, ToolingSymbolKind.Global, null);
 				break;
 		}
 	}
@@ -337,6 +397,76 @@ internal sealed class NavigationIndex
 		return entry;
 	}
 
+	private Entry RegisterExternal(SyntaxNode declaration, string name, ToolingSymbolKind kind, string? owner = null)
+	{
+		if (_byDeclaration.TryGetValue(declaration, out var existing))
+			return existing;
+
+		var entry = new Entry(new SymbolId(_token, _nextId++), name, kind, owner);
+		_byDeclaration[declaration] = entry;
+		_byId[entry.Id.Value] = entry;
+		return entry;
+	}
+
+	private NativeInteropMetadata? NativeInteropFor(SyntaxNode declaration)
+	{
+		if (declaration is DelegateDeclarationSyntax { IsNative: true } nativeDelegate)
+		{
+			return new NativeInteropMetadata(
+				NativeInteropKind.NativeDelegate,
+				nativeDelegate.CallingConvention ?? "C");
+		}
+
+		if (declaration is UnionDeclarationSyntax { IsUnsafe: true })
+			return new NativeInteropMetadata(NativeInteropKind.RawUnion);
+
+		if (declaration is not GlobalVariableDeclarationSyntax { IsForeign: true } global)
+			return null;
+
+		var boundGlobal = _binderContext?.GlobalVariables
+			.FirstOrDefault(pair => ReferenceEquals(pair.Node, global)).Symbol;
+		string? libraryName = boundGlobal?.LibraryName;
+		string? importName = boundGlobal?.ImportName;
+		string? winPath = boundGlobal?.WinPath;
+		string? linuxPath = boundGlobal?.LinuxPath;
+		string? macPath = boundGlobal?.MacPath;
+		foreach (var attribute in global.Attributes)
+		{
+			if (attribute.Name is "ImportName" or "ImportNameAttribute")
+			{
+				if (attribute.Arguments.FirstOrDefault() is StringLiteralExpressionSyntax imported)
+					importName = imported.Value;
+				continue;
+			}
+
+			if (attribute.Name is not ("LibraryImport" or "LibraryImportAttribute"))
+				continue;
+
+			for (var i = 0; i < attribute.Arguments.Count; i++)
+			{
+				if (attribute.Arguments[i] is not StringLiteralExpressionSyntax literal)
+					continue;
+				var argumentName = i < attribute.ArgumentNames.Count ? attribute.ArgumentNames[i] : null;
+				switch (argumentName)
+				{
+					case null when i == 0: libraryName = literal.Value; break;
+					case "win": winPath = literal.Value; break;
+					case "linux": linuxPath = literal.Value; break;
+					case "mac": macPath = literal.Value; break;
+				}
+			}
+		}
+
+		return new NativeInteropMetadata(
+			NativeInteropKind.ForeignGlobal,
+			boundGlobal?.CallingConvention ?? global.CallingConvention ?? "C",
+			importName,
+			libraryName,
+			winPath,
+			linuxPath,
+			macPath);
+	}
+
 	private void BuildOutlines()
 	{
 		foreach (var (documentId, unit) in _analysis.UnitsByDocument)
@@ -351,6 +481,16 @@ internal sealed class NavigationIndex
 			var roots = new List<DocumentSymbolInfo>();
 			foreach (var member in Members(unit))
 			{
+				if (member is ExternBlockSyntax externBlock)
+				{
+					foreach (var child in externBlock.Functions.Cast<SyntaxNode>().Concat(externBlock.Globals))
+					{
+						if (MakeOutline(source, child) is { } externItem)
+							roots.Add(externItem);
+					}
+					continue;
+				}
+
 				if (MakeOutline(source, member) is { } item)
 					roots.Add(item);
 			}

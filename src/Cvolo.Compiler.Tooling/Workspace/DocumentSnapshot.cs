@@ -1,5 +1,6 @@
 using Cvolo.Compiler.Tooling.Completion;
 using Cvolo.Compiler.Tooling.Internal;
+using Cvolo.Compiler.Tooling.SignatureHelp;
 
 namespace Cvolo.Compiler.Tooling;
 
@@ -75,6 +76,24 @@ public sealed class DocumentSnapshot
 			return new CompletionResult(new TextSpan(position, 0), []);
 
 		return CompletionService.Compute(OwningSnapshot, this, position);
+	}
+
+	/// <summary>
+	/// Returns compiler-backed signature help for the call whose argument list contains the given
+	/// UTF-16 <paramref name="position"/>. Ordinary function overload resolution and nominal delegate
+	/// invocations use the binder's already-resolved target. Returns null when no callable is bound.
+	/// </summary>
+	public SignatureHelpResult? GetSignatureHelp(int position)
+	{
+		ArgumentOutOfRangeException.ThrowIfNegative(position);
+
+		if (position > Text.Length)
+			throw new ArgumentOutOfRangeException(nameof(position));
+
+		if (OwningSnapshot is null)
+			return null;
+
+		return SignatureHelpService.Compute(OwningSnapshot, this, position);
 	}
 
 	/// <summary>
