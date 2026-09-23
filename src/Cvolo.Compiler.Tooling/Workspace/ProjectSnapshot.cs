@@ -75,6 +75,23 @@ public sealed class ProjectSnapshot
 	}
 
 	/// <summary>
+	/// Returns project-source occurrences semantically bound to <paramref name="symbol"/> in this snapshot.
+	/// </summary>
+	public IReadOnlyList<SymbolReference> GetReferences(SymbolId symbol, bool includeDeclaration = false)
+	{
+		return ReferenceRenameService.GetReferences(this, symbol, includeDeclaration);
+	}
+
+	/// <summary>
+	/// Computes a complete semantic rename plan without mutating this snapshot.
+	/// </summary>
+	public RenameResult RenameSymbol(SymbolId symbol, string newName)
+	{
+		ArgumentNullException.ThrowIfNull(newName);
+		return ReferenceRenameService.Rename(this, symbol, newName);
+	}
+
+	/// <summary>
 	/// Returns the document with the given <paramref name="documentId"/>.
 	/// Throws <see cref="KeyNotFoundException"/> when the id is not in this snapshot.
 	/// </summary>

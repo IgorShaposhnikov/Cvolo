@@ -4,8 +4,8 @@ using Cvolo.Analysis.Semantics;
 using Cvolo.Analysis.Symbols.Structs;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
-using Cvolo.Core.AST.Statements;
 using Cvolo.Core.AST.Expressions;
+using Cvolo.Core.AST.Statements;
 using CoreTextSpan = Cvolo.Core.Diagnostics.TextSpan;
 
 namespace Cvolo.Compiler.Tooling.Internal;
@@ -101,6 +101,32 @@ internal sealed class NavigationIndex
 		return _byId.TryGetValue(symbol.Value, out var entry) ? entry.Definitions : [];
 	}
 
+	internal bool Owns(SymbolId symbol)
+		=> symbol.SnapshotToken == _token && _byId.ContainsKey(symbol.Value);
+
+	internal bool IsSourceOwned(SymbolId symbol)
+		=> Owns(symbol) && _byId[symbol.Value].Definitions.Count > 0;
+
+	/// <summary>
+	/// Returns the compiler syntax declaration that owns a snapshot-local symbol identity.
+	/// This stays internal to Tooling and is used by rename preflight validation; compiler
+	/// syntax never crosses the public Tooling boundary.
+	/// </summary>
+	internal SyntaxNode? Declaration(SymbolId symbol)
+	{
+		if (!Owns(symbol))
+			return null;
+
+		var entry = _byId[symbol.Value];
+		foreach (var pair in _byDeclaration)
+		{
+			if (ReferenceEquals(pair.Value, entry))
+				return pair.Key;
+		}
+
+		return null;
+	}
+
 	internal IReadOnlyList<DocumentSymbolInfo> DocumentSymbols(DocumentId document)
 	{
 		if (!_snapshot.TryGetDocument(document, out _))
@@ -119,32 +145,6 @@ internal sealed class NavigationIndex
 			var source = _snapshot.GetDocument(documentId).Text.ToString();
 			foreach (var member in Members(unit))
 				IndexMember(documentId, source, member);
-		}
-
-		AliasExternBlockGlobalDeclarations();
-	}
-
-	private void AliasExternBlockGlobalDeclarations()
-	{
-		if (_binderContext is null)
-			return;
-
-		foreach (var (synthetic, _) in _binderContext.GlobalVariables)
-		{
-			if (_byDeclaration.ContainsKey(synthetic))
-				continue;
-
-			foreach (var (declaration, entry) in _byDeclaration.ToArray())
-			{
-				if (declaration is GlobalVariableDeclarationSyntax parsed
-					&& parsed.Name == synthetic.Name
-					&& parsed.Span.Start == synthetic.Span.Start
-					&& parsed.Span.Length == synthetic.Span.Length)
-				{
-					_byDeclaration[synthetic] = entry;
-					break;
-				}
-			}
 		}
 	}
 
@@ -446,13 +446,11 @@ internal sealed class NavigationIndex
 		if (declaration is UnionDeclarationSyntax { IsUnsafe: true })
 			return new NativeInteropMetadata(NativeInteropKind.RawUnion);
 
-		if (declaration is not GlobalVariableDeclarationSyntax global)
+		if (declaration is not GlobalVariableDeclarationSyntax { IsForeign: true } global)
 			return null;
 
 		var boundGlobal = _binderContext?.GlobalVariables
 			.FirstOrDefault(pair => ReferenceEquals(pair.Node, global)).Symbol;
-		if (!global.IsForeign && boundGlobal?.IsForeign != true)
-			return null;
 		string? libraryName = boundGlobal?.LibraryName;
 		string? importName = boundGlobal?.ImportName;
 		string? winPath = boundGlobal?.WinPath;

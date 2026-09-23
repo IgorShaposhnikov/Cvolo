@@ -447,8 +447,7 @@ internal sealed class FunctionDeclarationRegistrar(BindingContext context)
 		foreach (var globalDecl in block.Globals)
 		{
 			_globals ??= new GlobalVariableRegistrar(context);
-			_globals.DeclareExternBlockGlobal(globalDecl.Name, globalDecl.Type, globalDecl.IsMutable, globalDecl.Visibility,
-				globalDecl.Attributes, convention, libraryName, winPath, linuxPath, macPath, globalDecl.Span);
+			_globals.DeclareExternBlockGlobal(globalDecl, convention, libraryName, winPath, linuxPath, macPath);
 		}
 	}
 

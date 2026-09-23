@@ -267,40 +267,40 @@ internal sealed class GlobalVariableRegistrar(BindingContext context)
 	/// Registers a foreign global declared inside an extern block. The block already carried the
 	/// [LibraryImport] and calling-convention metadata; only [ImportName] is validated per member.
 	/// </summary>
-	public void DeclareExternBlockGlobal(string name, string typeName, bool isMutable, Visibility? visibility, IReadOnlyList<AttributeSyntax> attributes, string convention, string? libraryName, string? winPath, string? linuxPath, string? macPath, TextSpan span)
+	public void DeclareExternBlockGlobal(GlobalVariableDeclarationSyntax globalDecl, string convention, string? libraryName, string? winPath, string? linuxPath, string? macPath)
 	{
-		var type = context.ResolveType(typeName);
+		var type = context.ResolveType(globalDecl.Type);
 		if (type is null)
 		{
-			ReportDiagnostic(span, $"Unknown type '{typeName}' in foreign global '{name}'.");
+			ReportDiagnostic(globalDecl.Span, $"Unknown type '{globalDecl.Type}' in foreign global '{globalDecl.Name}'.");
 			return;
 		}
 
-		var qualifiedName = context.GetMangledName(name, context.CurrentNamespace);
+		var qualifiedName = context.GetMangledName(globalDecl.Name, context.CurrentNamespace);
 		if (context.GlobalsByQualifiedName.ContainsKey(qualifiedName))
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.Report(currentFileContext, span, $"Duplicate definition of global variable '{name}'.");
+			context.Diagnostics.Report(currentFileContext, globalDecl.Span, $"Duplicate definition of global variable '{globalDecl.Name}'.");
 			return;
 		}
 
 		if (NativeAbiSemanticSafety.ContainsResourceBearingValue(context, type))
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.Report(currentFileContext, span, $"Type '{type.Name}' is resource-bearing and cannot be foreign storage.", DiagnosticIds.NativeAbiResourceBearing);
+			context.Diagnostics.Report(currentFileContext, globalDecl.Span, $"Type '{type.Name}' is resource-bearing and cannot be foreign storage.", DiagnosticIds.NativeAbiResourceBearing);
 			return;
 		}
 		if (NativeAbiRepresentability.ContainsEnumWithoutExplicitStorage(type))
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.Report(currentFileContext, span, $"Type '{type.Name}' contains an enum without explicit ABI storage.", DiagnosticIds.NativeEnumRequiresExplicitStorage);
+			context.Diagnostics.Report(currentFileContext, globalDecl.Span, $"Type '{type.Name}' contains an enum without explicit ABI storage.", DiagnosticIds.NativeEnumRequiresExplicitStorage);
 			return;
 		}
 		if (!NativeAbiRepresentability.IsNativeAbiRepresentable(type, NativeAbiPosition.ForeignGlobalStorage)
 			|| ReferenceEquals(type, TypeSymbol.String))
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.Report(currentFileContext, span,
+			context.Diagnostics.Report(currentFileContext, globalDecl.Span,
 				$"Type '{type.Name}' is not representable at the C ABI boundary as foreign global storage.",
 				DiagnosticIds.ForeignGlobalNotAbiSafe);
 			return;
@@ -308,7 +308,7 @@ internal sealed class GlobalVariableRegistrar(BindingContext context)
 
 		string? importName = null;
 		var sawImportName = false;
-		foreach (var attr in attributes)
+		foreach (var attr in globalDecl.Attributes)
 		{
 			var key = _attributes.NormalizeName(attr.Name);
 			switch (key)
@@ -336,12 +336,12 @@ internal sealed class GlobalVariableRegistrar(BindingContext context)
 			}
 		}
 
-		var symbol = new VariableSymbol(name, type, isMutable)
+		var symbol = new VariableSymbol(globalDecl.Name, type, globalDecl.IsMutable)
 		{
 			IsInitialized = false,
 			IsGlobal = true,
 			Origin = OriginKind.Global,
-			Visibility = visibility ?? Visibility.Internal,
+			Visibility = globalDecl.Visibility,
 			DeclaringUnit = context.CurrentUnit,
 			DeclaringNamespace = context.CurrentNamespace,
 			IsForeign = true,
@@ -353,13 +353,13 @@ internal sealed class GlobalVariableRegistrar(BindingContext context)
 			CallingConvention = convention
 		};
 		context.GlobalsByQualifiedName[qualifiedName] = symbol;
-		if (!context.GlobalsByShortName.TryGetValue(name, out var shortNameList))
+		if (!context.GlobalsByShortName.TryGetValue(globalDecl.Name, out var shortNameList))
 		{
 			shortNameList = [];
-			context.GlobalsByShortName[name] = shortNameList;
+			context.GlobalsByShortName[globalDecl.Name] = shortNameList;
 		}
 		shortNameList.Add(symbol);
-		context.GlobalVariables.Add((new GlobalVariableDeclarationSyntax(span, typeName, name, null, isMutable, visibility), symbol));
+		context.GlobalVariables.Add((globalDecl, symbol));
 	}
 
 	/// <summary>Reads [LibraryImport] arguments from a foreign-global attribute and registers the library.</summary>

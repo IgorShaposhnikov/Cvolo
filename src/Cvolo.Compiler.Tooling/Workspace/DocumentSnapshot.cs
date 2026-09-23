@@ -69,8 +69,7 @@ public sealed class DocumentSnapshot
 	{
 		ArgumentOutOfRangeException.ThrowIfNegative(position);
 
-		if (position > Text.Length)
-			throw new ArgumentOutOfRangeException(nameof(position));
+		ArgumentOutOfRangeException.ThrowIfGreaterThan(position, Text.Length);
 
 		if (OwningSnapshot is null)
 			return new CompletionResult(new TextSpan(position, 0), []);
@@ -87,8 +86,7 @@ public sealed class DocumentSnapshot
 	{
 		ArgumentOutOfRangeException.ThrowIfNegative(position);
 
-		if (position > Text.Length)
-			throw new ArgumentOutOfRangeException(nameof(position));
+		ArgumentOutOfRangeException.ThrowIfGreaterThan(position, Text.Length);
 
 		if (OwningSnapshot is null)
 			return null;
@@ -107,13 +105,22 @@ public sealed class DocumentSnapshot
 	{
 		ArgumentOutOfRangeException.ThrowIfNegative(position);
 
-		if (position > Text.Length)
-			throw new ArgumentOutOfRangeException(nameof(position));
+		ArgumentOutOfRangeException.ThrowIfGreaterThan(position, Text.Length);
 
 		if (OwningSnapshot is null)
 			return null;
 
 		return NavigationService.GetSymbol(OwningSnapshot, this, position);
+	}
+
+	/// <summary>
+	/// Resolves and validates the renameable semantic occurrence at <paramref name="position"/>.
+	/// </summary>
+	public RenamePreparation? PrepareRename(int position)
+	{
+		ArgumentOutOfRangeException.ThrowIfNegative(position);
+		ArgumentOutOfRangeException.ThrowIfGreaterThan(position, Text.Length);
+		return OwningSnapshot is null ? null : ReferenceRenameService.PrepareRename(OwningSnapshot, this, position);
 	}
 
 	/// <summary>
