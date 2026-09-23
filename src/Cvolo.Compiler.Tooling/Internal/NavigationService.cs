@@ -120,6 +120,32 @@ internal sealed class NavigationIndex
 			foreach (var member in Members(unit))
 				IndexMember(documentId, source, member);
 		}
+
+		AliasExternBlockGlobalDeclarations();
+	}
+
+	private void AliasExternBlockGlobalDeclarations()
+	{
+		if (_binderContext is null)
+			return;
+
+		foreach (var (synthetic, _) in _binderContext.GlobalVariables)
+		{
+			if (_byDeclaration.ContainsKey(synthetic))
+				continue;
+
+			foreach (var (declaration, entry) in _byDeclaration.ToArray())
+			{
+				if (declaration is GlobalVariableDeclarationSyntax parsed
+					&& parsed.Name == synthetic.Name
+					&& parsed.Span.Start == synthetic.Span.Start
+					&& parsed.Span.Length == synthetic.Span.Length)
+				{
+					_byDeclaration[synthetic] = entry;
+					break;
+				}
+			}
+		}
 	}
 
 	/// <summary>
@@ -420,11 +446,13 @@ internal sealed class NavigationIndex
 		if (declaration is UnionDeclarationSyntax { IsUnsafe: true })
 			return new NativeInteropMetadata(NativeInteropKind.RawUnion);
 
-		if (declaration is not GlobalVariableDeclarationSyntax { IsForeign: true } global)
+		if (declaration is not GlobalVariableDeclarationSyntax global)
 			return null;
 
 		var boundGlobal = _binderContext?.GlobalVariables
 			.FirstOrDefault(pair => ReferenceEquals(pair.Node, global)).Symbol;
+		if (!global.IsForeign && boundGlobal?.IsForeign != true)
+			return null;
 		string? libraryName = boundGlobal?.LibraryName;
 		string? importName = boundGlobal?.ImportName;
 		string? winPath = boundGlobal?.WinPath;

@@ -30,27 +30,30 @@ internal static class SemanticTokenService
 		{
 			foreach (var node in Descendants(unit))
 			{
-				if (!TryCandidatePosition(node, source, out var position) || position < 0)
-					continue;
+				foreach (var position in CandidatePositions(node, source))
+				{
+					if (position < 0)
+						continue;
 
-				var resolved = CompletionQuery.ResolveSymbol(analysis.BinderContext, unit, position);
-				if (resolved is null)
-					continue;
+					var resolved = CompletionQuery.ResolveSymbol(analysis.BinderContext, unit, position);
+					if (resolved is null)
+						continue;
 
-				var span = new TextSpan(resolved.SubjectSpan.Start, resolved.SubjectSpan.Length);
-				if (span.Length <= 0 || !seen.Add((span.Start, span.Length)))
-					continue;
+					var span = new TextSpan(resolved.SubjectSpan.Start, resolved.SubjectSpan.Length);
+					if (span.Length <= 0 || !seen.Add((span.Start, span.Length)))
+						continue;
 
-				tokens.Add(new SemanticTokenInfo(span, NavigationIndex.MapKind(resolved.Kind), ModifiersFor(node)));
+					tokens.Add(new SemanticTokenInfo(span, NavigationIndex.MapKind(resolved.Kind), ModifiersFor(node, source, span)));
+				}
 			}
 		}
 
 		return [.. tokens.OrderBy(token => token.Span.Start).ThenBy(token => token.Span.Length)];
 	}
 
-	private static SemanticTokenModifiers ModifiersFor(SyntaxNode node)
+	private static SemanticTokenModifiers ModifiersFor(SyntaxNode node, string source, TextSpan span)
 	{
-		var modifiers = IsDeclarationNode(node) ? SemanticTokenModifiers.Declaration : SemanticTokenModifiers.None;
+		var modifiers = IsDeclarationName(node, source, span) ? SemanticTokenModifiers.Declaration : SemanticTokenModifiers.None;
 
 		switch (node)
 		{
@@ -67,72 +70,116 @@ internal static class SemanticTokenService
 		return modifiers;
 	}
 
-	private static bool IsDeclarationNode(SyntaxNode node) => node is
-		FunctionDeclarationSyntax or
-		ConstructorDeclarationSyntax or
-		DestructorDeclarationSyntax or
-		StructDeclarationSyntax or
-		UnionDeclarationSyntax or
-		EnumDeclarationSyntax or
-		InterfaceDeclarationSyntax or
-		ProtocolDeclarationSyntax or
-		DelegateDeclarationSyntax or
-		TypeAliasDeclarationSyntax or
-		VariableDeclarationSyntax or
-		ParameterSyntax or
-		GlobalVariableDeclarationSyntax or
-		StructFieldSyntax or
-		UnionFieldSyntax or
-		EnumVariantDeclarationSyntax;
+	private static bool IsDeclarationName(SyntaxNode node, string source, TextSpan span)
+	{
+		var name = node switch
+		{
+			FunctionDeclarationSyntax function => function.Name,
+			ConstructorDeclarationSyntax constructor => constructor.StructName,
+			DestructorDeclarationSyntax destructor => destructor.StructName,
+			StructDeclarationSyntax structDeclaration => structDeclaration.Name,
+			UnionDeclarationSyntax unionDeclaration => unionDeclaration.Name,
+			EnumDeclarationSyntax enumDeclaration => enumDeclaration.Name,
+			InterfaceDeclarationSyntax interfaceDeclaration => interfaceDeclaration.Name,
+			ProtocolDeclarationSyntax protocolDeclaration => protocolDeclaration.Name,
+			DelegateDeclarationSyntax delegateDeclaration => delegateDeclaration.Name,
+			TypeAliasDeclarationSyntax typeAlias => typeAlias.Name,
+			VariableDeclarationSyntax variable => variable.Name,
+			ParameterSyntax parameter => parameter.Name,
+			GlobalVariableDeclarationSyntax global => global.Name,
+			StructFieldSyntax structField => structField.Name,
+			UnionFieldSyntax unionField => unionField.Name,
+			EnumVariantDeclarationSyntax enumVariant => enumVariant.Name,
+			_ => null,
+		};
 
-	private static bool TryCandidatePosition(SyntaxNode node, string source, out int position)
+		return name is not null
+			&& TryIndexOf(source, node.Span, name, out var position)
+			&& span.Start == position
+			&& span.Length == name.Length;
+	}
+
+	private static IEnumerable<int> CandidatePositions(SyntaxNode node, string source)
 	{
 		switch (node)
 		{
 			case IdentifierExpressionSyntax identifier:
-				position = identifier.Span.Start;
-				return true;
+				yield return identifier.Span.Start;
+				break;
 			case MemberAccessExpressionSyntax memberAccess:
-				position = memberAccess.Span.End - memberAccess.MemberName.Length;
-				return true;
+				yield return memberAccess.Span.End - memberAccess.MemberName.Length;
+				break;
 			case CallExpressionSyntax call:
-				position = call.Span.Start + call.FunctionName.Length - Leaf(call.FunctionName).Length;
-				return true;
+				yield return call.Span.Start + call.FunctionName.Length - Leaf(call.FunctionName).Length;
+				break;
 			case FunctionDeclarationSyntax function:
-				position = function.NameSpan.Start;
-				return true;
+				yield return function.NameSpan.Start;
+				break;
 			case ConstructorDeclarationSyntax constructor:
-				position = constructor.NameSpan.Start;
-				return true;
+				yield return constructor.NameSpan.Start;
+				break;
 			case VariableDeclarationSyntax variable:
-				return TryIndexOf(source, variable.Span, variable.Name, out position);
+				if (variable.Type is not null && TryIndexOf(source, variable.Span, variable.Type, out var variableType))
+					yield return variableType;
+				if (TryIndexOf(source, variable.Span, variable.Name, out var variableName))
+					yield return variableName;
+				break;
 			case ParameterSyntax parameter:
-				return TryIndexOf(source, parameter.Span, parameter.Name, out position);
+				if (TryIndexOf(source, parameter.Span, parameter.Type, out var parameterType))
+					yield return parameterType;
+				if (TryIndexOf(source, parameter.Span, parameter.Name, out var parameterName))
+					yield return parameterName;
+				break;
 			case GlobalVariableDeclarationSyntax global:
-				return TryIndexOf(source, global.Span, global.Name, out position);
+				if (TryIndexOf(source, global.Span, global.Type, out var globalType))
+					yield return globalType;
+				if (TryIndexOf(source, global.Span, global.Name, out var globalName))
+					yield return globalName;
+				break;
 			case StructDeclarationSyntax structDeclaration:
-				return TryIndexOf(source, structDeclaration.Span, structDeclaration.Name, out position);
+				if (TryIndexOf(source, structDeclaration.Span, structDeclaration.Name, out var structName))
+					yield return structName;
+				break;
 			case UnionDeclarationSyntax unionDeclaration:
-				return TryIndexOf(source, unionDeclaration.Span, unionDeclaration.Name, out position);
+				if (TryIndexOf(source, unionDeclaration.Span, unionDeclaration.Name, out var unionName))
+					yield return unionName;
+				break;
 			case EnumDeclarationSyntax enumDeclaration:
-				return TryIndexOf(source, enumDeclaration.Span, enumDeclaration.Name, out position);
+				if (TryIndexOf(source, enumDeclaration.Span, enumDeclaration.Name, out var enumName))
+					yield return enumName;
+				break;
 			case InterfaceDeclarationSyntax interfaceDeclaration:
-				return TryIndexOf(source, interfaceDeclaration.Span, interfaceDeclaration.Name, out position);
+				if (TryIndexOf(source, interfaceDeclaration.Span, interfaceDeclaration.Name, out var interfaceName))
+					yield return interfaceName;
+				break;
 			case ProtocolDeclarationSyntax protocolDeclaration:
-				return TryIndexOf(source, protocolDeclaration.Span, protocolDeclaration.Name, out position);
+				if (TryIndexOf(source, protocolDeclaration.Span, protocolDeclaration.Name, out var protocolName))
+					yield return protocolName;
+				break;
 			case DelegateDeclarationSyntax delegateDeclaration:
-				return TryIndexOf(source, delegateDeclaration.Span, delegateDeclaration.Name, out position);
+				if (TryIndexOf(source, delegateDeclaration.Span, delegateDeclaration.Name, out var delegateName))
+					yield return delegateName;
+				break;
 			case TypeAliasDeclarationSyntax typeAlias:
-				return TryIndexOf(source, typeAlias.Span, typeAlias.Name, out position);
+				if (TryIndexOf(source, typeAlias.Span, typeAlias.Name, out var aliasName))
+					yield return aliasName;
+				break;
 			case StructFieldSyntax structField:
-				return TryIndexOf(source, structField.Span, structField.Name, out position);
+				if (TryIndexOf(source, structField.Span, structField.Type, out var structFieldType))
+					yield return structFieldType;
+				if (TryIndexOf(source, structField.Span, structField.Name, out var structFieldName))
+					yield return structFieldName;
+				break;
 			case UnionFieldSyntax unionField:
-				return TryIndexOf(source, unionField.Span, unionField.Name, out position);
+				if (TryIndexOf(source, unionField.Span, unionField.Type, out var unionFieldType))
+					yield return unionFieldType;
+				if (TryIndexOf(source, unionField.Span, unionField.Name, out var unionFieldName))
+					yield return unionFieldName;
+				break;
 			case EnumVariantDeclarationSyntax enumVariant:
-				return TryIndexOf(source, enumVariant.Span, enumVariant.Name, out position);
-			default:
-				position = 0;
-				return false;
+				if (TryIndexOf(source, enumVariant.Span, enumVariant.Name, out var enumVariantName))
+					yield return enumVariantName;
+				break;
 		}
 	}
 

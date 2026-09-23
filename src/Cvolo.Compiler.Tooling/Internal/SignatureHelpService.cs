@@ -45,7 +45,7 @@ internal static class SignatureHelpService
 			.Where(parameter => parameter.Name != "this")
 			.Select(parameter => new SignatureHelpParameter($"{parameter.Type.Name} {parameter.Name}"))
 			.ToArray();
-		var label = $"{function.ReturnType.Name} {Leaf(function.Name)}({string.Join(", ", parameters.Select(p => p.Label))})";
+		var label = $"{function.ReturnType.Name} {SourceName(function)}({string.Join(", ", parameters.Select(p => p.Label))})";
 		return new SignatureHelpResult([new SignatureHelpItem(label, parameters)], 0, ActiveParameter(call, source, position, parameters.Length));
 	}
 
@@ -151,5 +151,17 @@ internal static class SignatureHelpService
 	{
 		var dot = name.LastIndexOf('.');
 		return dot < 0 ? name : name[(dot + 1)..];
+	}
+
+	private static string SourceName(FunctionSymbol function)
+	{
+		var name = Leaf(function.Name);
+		var suffix = string.Concat(function.Parameters
+			.Where(parameter => parameter.Name != "this")
+			.Select(parameter => "_" + parameter.Type.Name.Replace('.', '_')));
+
+		return suffix.Length > 0 && name.EndsWith(suffix, StringComparison.Ordinal)
+			? name[..^suffix.Length]
+			: name;
 	}
 }
