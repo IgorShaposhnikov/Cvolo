@@ -278,7 +278,7 @@ internal sealed class StatementEmitter(
 			var isMutable = varDecl.Type == "refvar";
 			var pointerType = new PointerTypeSymbol(innerType, isMutable);
 
-			var alloca = Builder.BuildAlloca(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), varDecl.Name);
+			var alloca = memory.BuildEntryAlloca(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), varDecl.Name);
 			Function.Locals[varDecl.Name] = alloca;
 			Function.VariableTypes[varDecl.Name] = pointerType;
 
@@ -292,7 +292,7 @@ internal sealed class StatementEmitter(
 			var val = emitExpression(heapInit);
 			var valTy = expressionTypes.Resolve(heapInit);
 
-			var alloca = Builder.BuildAlloca(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), varDecl.Name);
+			var alloca = memory.BuildEntryAlloca(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), varDecl.Name);
 			Function.Locals[varDecl.Name] = alloca;
 			Function.VariableTypes[varDecl.Name] = valTy;
 			Function.HeapAllocatedVars.Add(varDecl.Name);
@@ -305,7 +305,7 @@ internal sealed class StatementEmitter(
 			var val = emitExpression(heapArrInit);
 			var valTy = expressionTypes.Resolve(heapArrInit);
 
-			var alloca = Builder.BuildAlloca(codegen.Types.Lower(valTy), varDecl.Name);
+			var alloca = memory.BuildEntryAlloca(codegen.Types.Lower(valTy), varDecl.Name);
 			Function.Locals[varDecl.Name] = alloca;
 			Function.VariableTypes[varDecl.Name] = valTy;
 			Function.HeapAllocatedVars.Add(varDecl.Name); // Register for RAII cleanup!
@@ -317,7 +317,7 @@ internal sealed class StatementEmitter(
 		if (typeSymbol is not null)
 		{
 			var llvmType = codegen.Types.Lower(typeSymbol);
-			var alloca = Builder.BuildAlloca(llvmType, varDecl.Name);
+			var alloca = memory.BuildEntryAlloca(llvmType, varDecl.Name);
 			Function.Locals[varDecl.Name] = alloca;
 			Function.VariableTypes[varDecl.Name] = typeSymbol;
 

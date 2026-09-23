@@ -30,6 +30,7 @@ namespace Cvolo.Emitter.LLVM.Codegen.Emitters;
 internal sealed class FunctionEmitter(
 	CodegenContext codegen,
 	CleanupEmitter cleanup,
+	MemoryEmitter memory,
 	Func<FunctionCodegenContext> getFunction,
 	Action<FunctionCodegenContext> setFunction,
 	Func<TypeSymbol, LLVMTypeRef> lowerFfiType,
@@ -232,7 +233,7 @@ internal sealed class FunctionEmitter(
 			// Locals always use the internal Cvolo representation. Native-boundary scalar
 			// parameters are converted once at entry before being stored.
 			var llvmType = codegen.Types.Lower(typeSymbol);
-			var alloca = Builder.BuildAlloca(llvmType, parameterName);
+			var alloca = memory.BuildEntryAlloca(llvmType, parameterName);
 
 			if (isNativeBoundary && typeSymbol.Name == "bool"
 				&& parameter.TypeOf.Kind == LLVMTypeKind.LLVMIntegerTypeKind
@@ -262,7 +263,7 @@ internal sealed class FunctionEmitter(
 			var typeSymbol = BindingContext.ResolveType(function.Parameters[i].Type)!;
 			var llvmType = codegen.Types.Lower(typeSymbol);
 			var ffiType = function.CallingConvention is not null ? lowerFfiType(typeSymbol) : llvmType;
-			var alloca = Builder.BuildAlloca(llvmType, parameterName);
+			var alloca = memory.BuildEntryAlloca(llvmType, parameterName);
 
 			if (function.CallingConvention is not null
 				&& typeSymbol.Equals(TypeSymbol.Bool)

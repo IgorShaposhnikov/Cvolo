@@ -1361,7 +1361,7 @@ internal sealed class ExpressionEmitter(
 		var elseBlock = currentFunc.AppendBasicBlock("ternary_else");
 		var mergeBlock = currentFunc.AppendBasicBlock("ternary_end");
 
-		var resultAlloc = Builder.BuildAlloca(llvmTy, "ternary_result");
+		var resultAlloc = memory.BuildEntryAlloca(llvmTy, "ternary_result");
 		Builder.BuildCondBr(condition, thenBlock, elseBlock);
 
 		Builder.PositionAtEnd(thenBlock);
@@ -1439,7 +1439,7 @@ internal sealed class ExpressionEmitter(
 		// Assemble the Slice Fat Pointer { ptr, i32 }.
 		var sliceType = new SliceTypeSymbol(elementType!);
 		var sliceLayout = LowerType(sliceType);
-		var sliceAlloc = Builder.BuildAlloca(sliceLayout, "slice_tmp");
+		var sliceAlloc = memory.BuildEntryAlloca(sliceLayout, "slice_tmp");
 
 		// Store ptr
 		var ptrField = Builder.BuildGEP2(sliceLayout, sliceAlloc, new LLVMValueRef[] { LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0), LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0) }, "ptr_field");

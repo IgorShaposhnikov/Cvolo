@@ -59,7 +59,7 @@ internal sealed class AggregateEmitter(
 	{
 		var typeSymbol = BindingContext.ResolveType(expr.StructTypeName);
 		var structLayout = codegen.Types.Lower(typeSymbol!);
-		var tempAlloc = Builder.BuildAlloca(structLayout, "struct_tmp");
+		var tempAlloc = memory.BuildEntryAlloca(structLayout, "struct_tmp");
 		EmitStructInitializationInPlace(expr, tempAlloc);
 
 		// NPO-eligible unions lower to a single scalar (the flat pointer), so the expression's
@@ -226,7 +226,7 @@ internal sealed class AggregateEmitter(
 		var arrayTypeSymbol = new ArrayTypeSymbol(elementType, expr.Elements.Count);
 		var arrayLayout = codegen.Types.Lower(arrayTypeSymbol);
 
-		var tempAlloc = Builder.BuildAlloca(arrayLayout, "arr_tmp");
+		var tempAlloc = memory.BuildEntryAlloca(arrayLayout, "arr_tmp");
 		EmitArrayInitializationInPlace(expr, tempAlloc, arrayTypeSymbol);
 		return tempAlloc;
 	}
@@ -279,7 +279,7 @@ internal sealed class AggregateEmitter(
 		var arrayTypeSymbol = new ArrayTypeSymbol(valueType, countVal);
 		var arrayLayout = codegen.Types.Lower(arrayTypeSymbol);
 
-		var tempAlloc = Builder.BuildAlloca(arrayLayout, "arr_repl_tmp");
+		var tempAlloc = memory.BuildEntryAlloca(arrayLayout, "arr_repl_tmp");
 		EmitArrayReplicationInPlace(expr, tempAlloc, arrayTypeSymbol);
 		return tempAlloc;
 	}
@@ -296,7 +296,7 @@ internal sealed class AggregateEmitter(
 		var bodyBlock = currentFunc.AppendBasicBlock("repl_body");
 		var endBlock = currentFunc.AppendBasicBlock("repl_end");
 
-		var counterAlloc = Builder.BuildAlloca(LLVMTypeRef.Int32, "repl_i");
+		var counterAlloc = memory.BuildEntryAlloca(LLVMTypeRef.Int32, "repl_i");
 		Builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0), counterAlloc);
 		Builder.BuildBr(condBlock);
 
@@ -340,7 +340,7 @@ internal sealed class AggregateEmitter(
 	{
 		var typeSymbol = BindingContext.ResolveType(expr.ResolvedStructTypeName!);
 		var structLayout = codegen.Types.Lower(typeSymbol!);
-		var tempAlloc = Builder.BuildAlloca(structLayout, "struct_tmp");
+		var tempAlloc = memory.BuildEntryAlloca(structLayout, "struct_tmp");
 		EmitParenthesizedStructInitializationInPlace(expr, tempAlloc);
 		return tempAlloc;
 	}

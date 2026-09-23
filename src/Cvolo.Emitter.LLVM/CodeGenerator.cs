@@ -94,6 +94,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		_functions = new FunctionEmitter(
 			_codegen,
 			_cleanup,
+			_memory,
 			() => _function,
 			function => _function = function,
 			GetFFIType,
