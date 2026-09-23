@@ -13,7 +13,7 @@
       then 0.0.5.2) while the compiler itself can remain on its own prerelease/version line.
       All values are overridable via -p:Name=...
     -->
-    <ToolingVersion Condition="'$(ToolingVersion)' == ''">0.0.5.4</ToolingVersion>
+    <ToolingVersion Condition="'$(ToolingVersion)' == ''">0.0.5.5</ToolingVersion>
     <CompilerCompatibilityLine Condition="'$(CompilerCompatibilityLine)' == ''">0.0</CompilerCompatibilityLine>
     <CvoloCompilerVersion Condition="'$(CvoloCompilerVersion)' == ''">$(Version)</CvoloCompilerVersion>
   </PropertyGroup>
