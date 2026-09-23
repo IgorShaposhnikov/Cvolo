@@ -81,8 +81,7 @@ internal static class SymbolResolver
 
 	/// <summary>
 	/// Collects the contiguous documentation-comment block immediately preceding a declaration.
-	/// Only <c>///</c> lines are documentation; ordinary <c>//</c> comments are intentionally
-	/// ignored. The documentation marker and inline XML summary tags are stripped.
+	/// Only <c>///</c> lines are documentation; an ordinary <c>//</c> comment breaks attachment.
 	/// </summary>
 	private static string? ExtractDocumentation(string source, int declarationStart)
 	{
@@ -97,9 +96,7 @@ internal static class SymbolResolver
 			if (line.Length == 0 || !line.StartsWith("///", StringComparison.Ordinal))
 				break;
 
-			var text = line[3..];
-
-			text = text.Trim();
+			var text = line[3..].Trim();
 			text = text.Replace("<summary>", string.Empty, StringComparison.Ordinal)
 				.Replace("</summary>", string.Empty, StringComparison.Ordinal)
 				.Trim();
@@ -151,6 +148,12 @@ internal static class SymbolResolver
 	{
 		if (visible.TryGetValue(identifier.Name, out var scoped) && scoped.Declaration is not null)
 		{
+			// Completion adds implicit extension fields to the visible value scope so chained
+			// member completion can infer their receiver type. They are still fields, not
+			// locals, so leave them to the dedicated extension-field resolver below.
+			if (scoped.Declaration is ExtensionDeclarationSyntax && identifier.Name != "this")
+				return null;
+
 			var kind = scoped.Origin == OriginKind.Parameter ? ResolvedSymbolKind.Parameter : ResolvedSymbolKind.Local;
 			return new ResolvedSymbol(kind, identifier.Name, null, identifier.Span, scoped.Declaration, Display(scoped.Declaration, scoped.Type?.Name ?? identifier.Name));
 		}
@@ -561,7 +564,9 @@ internal static class SymbolResolver
 	{
 		VariableDeclarationSyntax variable => $"{variable.Type ?? "var"} {variable.Name}",
 		ParameterSyntax parameter => $"{parameter.Type} {parameter.Name}",
-		GlobalVariableDeclarationSyntax global => DisplayGlobal(global),
+		GlobalVariableDeclarationSyntax global => global.IsForeign
+			? $"extern \"{global.CallingConvention ?? "C"}\" global {(global.IsMutable ? "var " : string.Empty)}{global.Type} {global.Name}"
+			: $"{global.Type} {global.Name}",
 		FunctionDeclarationSyntax function => $"{function.ReturnType} {function.Name}{Generic(function.GenericParameters)}({ParameterList(function.Parameters)})",
 		ConstructorDeclarationSyntax constructor => $"{constructor.StructName}({ParameterList(constructor.Parameters)})",
 		DestructorDeclarationSyntax destructor => $"~{destructor.StructName}()",
@@ -578,15 +583,6 @@ internal static class SymbolResolver
 		DelegateDeclarationSyntax delegateDeclaration => $"{(delegateDeclaration.IsNative ? $"unsafe \"{delegateDeclaration.CallingConvention ?? "C"}\" " : string.Empty)}delegate {delegateDeclaration.ReturnType} {delegateDeclaration.Name}{Generic(delegateDeclaration.GenericParameters)}({ParameterList(delegateDeclaration.Parameters)})",
 		_ => fallback,
 	};
-
-	private static string DisplayGlobal(GlobalVariableDeclarationSyntax global)
-	{
-		if (!global.IsForeign)
-			return $"{global.Type} {global.Name}";
-
-		var mutability = global.IsMutable ? "var " : string.Empty;
-		return $"extern \"{global.CallingConvention ?? "C"}\" global {mutability}{global.Type} {global.Name}";
-	}
 
 	private static string ParameterList(IReadOnlyList<ParameterSyntax> parameters)
 		=> string.Join(", ", parameters.Select(p => $"{p.Type} {p.Name}"));

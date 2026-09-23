@@ -147,6 +147,30 @@ public sealed class CompletionTests
 	}
 
 	[Fact]
+	public void ExtensionThisFieldReceiver_OffersMembersOfFieldType()
+	{
+		var result = Complete(
+			"struct Converter { }\n" +
+			"extension Converter { string ToEn() { return \"\"; } }\n" +
+			"struct Name { Converter converter; }\n" +
+			"extension Name { string ToEnglish() { return this.converter.To|; } }\n");
+
+		Assert.True(Contains(result, "ToEn", CompletionKind.Method));
+	}
+
+	[Fact]
+	public void ExtensionImplicitFieldReceiver_OffersMembersOfFieldType()
+	{
+		var result = Complete(
+			"struct EnConverter { }\n" +
+			"extension EnConverter { string ToEn() { return \"\"; } }\n" +
+			"struct Name { EnConverter converter; }\n" +
+			"extension Name { string ToEnglish() { return converter.To|; } }\n");
+
+		Assert.True(Contains(result, "ToEn", CompletionKind.Method));
+	}
+
+	[Fact]
 	public void ExtensionMethods_AreOfferedOnEnumValueReceiver()
 	{
 		var result = Complete(

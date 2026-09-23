@@ -186,6 +186,37 @@ public static class CompletionQuery
 		var fn = FindEnclosingFunction(state.Unit, state.Position);
 		if (fn is not null)
 		{
+			// Extension bodies resolve fields of the extended aggregate as implicit receiver
+			// members (`field`, not only `this.field`). Mirror that compiler rule in the
+			// completion-only scope so an unqualified field can itself become the receiver
+			// of a chained member query such as `converter.`. Locals and parameters are
+			// added afterwards and therefore retain the language's normal shadowing rules.
+			if (FindEnclosingExtension(state.Unit, state.Position) is { } extension
+				&& ResolveTypeOrNull(state, extension.ExtendedTypeName) is { } receiverType)
+			{
+				switch (receiverType)
+				{
+					case StructTypeSymbol structType:
+						foreach (var field in structType.Fields)
+						{
+							if (IsFieldVisible(state, structType, field.Visibility))
+								root.Add(new ScopedVariable(field.Name, field.Origin, field.Type, extension));
+						}
+						break;
+
+					case UnionTypeSymbol unionType:
+						foreach (var field in unionType.Fields)
+						{
+							if (IsFieldVisible(state, unionType, field.Visibility))
+								root.Add(new ScopedVariable(field.Name, OriginKind.Local, field.Type, extension));
+						}
+						break;
+				}
+
+				root.Add(new ScopedVariable("this", OriginKind.Parameter,
+					new PointerTypeSymbol(receiverType, isMutable: true), extension));
+			}
+
 			foreach (var param in fn.Parameters)
 			{
 				if (param.Type is not null)
@@ -204,6 +235,22 @@ public static class CompletionQuery
 		}
 
 		return visible;
+	}
+
+	private static ExtensionDeclarationSyntax? FindEnclosingExtension(SyntaxNode node, int position)
+	{
+		if (node is ExtensionDeclarationSyntax extension && Touching(extension.Span, position))
+			return extension;
+
+		foreach (var child in node.GetChildren())
+		{
+			if (!Touching(child.Span, position))
+				continue;
+			if (FindEnclosingExtension(child, position) is { } nested)
+				return nested;
+		}
+
+		return null;
 	}
 
 	private static FunctionDeclarationSyntax? FindEnclosingFunction(SyntaxNode node, int position)
