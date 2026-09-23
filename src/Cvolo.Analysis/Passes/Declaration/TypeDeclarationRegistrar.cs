@@ -466,7 +466,10 @@ internal sealed class TypeDeclarationRegistrar(BindingContext context)
 
 			fields.Add(new UnionFieldSymbol(field.Name, fieldType, isVoidVariant)
 			{
-				Visibility = unionDecl.Visibility
+				// An omitted field modifier inherits the union visibility for compatibility with
+				// existing tagged-union semantics. An explicit modifier remains authoritative so
+				// package metadata can preserve a narrower field across serialization boundaries.
+				Visibility = field.SyntacticVisibility ?? unionDecl.Visibility
 			});
 		}
 

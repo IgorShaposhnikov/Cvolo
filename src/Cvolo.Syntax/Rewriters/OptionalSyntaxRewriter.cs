@@ -129,7 +129,7 @@ public sealed class OptionalSyntaxRewriter(bool strictOption, DiagnosticBag diag
 
 		if (node is UnionFieldSyntax unionField)
 		{
-			return new UnionFieldSyntax(unionField.Span, RewriteType(unionField.Type, unionField.Span), unionField.Name, unionField.Visibility);
+			return new UnionFieldSyntax(unionField.Span, RewriteType(unionField.Type, unionField.Span), unionField.Name, unionField.SyntacticVisibility);
 		}
 
 		if (node is ExtensionDeclarationSyntax extDecl)

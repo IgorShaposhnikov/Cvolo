@@ -60,6 +60,18 @@ public sealed class PackageApiMetadata
 				})
 				.ToArray();
 
+			var unions = members
+				.OfType<UnionDeclarationSyntax>()
+				.Where(type => type.Visibility == Visibility.Public && type.GenericParameters.Count == 0)
+				.Select(type => new PackageApiUnion
+				{
+					Name = type.Name,
+					IsUnsafe = type.IsUnsafe,
+					Fields = type.Fields.Select(field => new PackageApiUnionField(field.Type, field.Name, field.Visibility)).ToArray(),
+					Attributes = SerializableAttributeNames(type.Attributes)
+				})
+				.ToArray();
+
 			var enums = members
 				.OfType<EnumDeclarationSyntax>()
 				.Where(type => type.Visibility == Visibility.Public)
@@ -75,30 +87,24 @@ public sealed class PackageApiMetadata
 			var globals = members
 				.OfType<GlobalVariableDeclarationSyntax>()
 				.Where(global => global.Visibility == Visibility.Public)
-				.Select(global => new PackageApiGlobal
-				{
-					Name = global.Name,
-					Type = global.Type,
-					IsMutable = global.IsMutable
-				})
+				.Select(SerializeGlobal)
+				.Concat(members
+					.OfType<ExternBlockSyntax>()
+					.SelectMany(SerializeExternBlockGlobals))
 				.ToArray();
 
 			var delegates = members
 				.OfType<DelegateDeclarationSyntax>()
 				.Where(type => type.Visibility == Visibility.Public && type.GenericParameters.Count == 0)
-				.Select(type => new PackageApiDelegate
-				{
-					Name = type.Name,
-					ReturnType = type.ReturnType,
-					Parameters = type.Parameters
-						.Select(parameter => new PackageApiParameter(parameter.Type, parameter.Name))
-						.ToArray(),
-					IsNative = type.IsNative,
-					CallingConvention = type.CallingConvention
-				})
+				.Select(type => SerializeDelegate(type, inheritedConvention: null))
+				.Concat(members
+					.OfType<DelegateBlockDeclarationSyntax>()
+					.SelectMany(block => block.Delegates
+						.Where(type => type.Visibility == Visibility.Public && type.GenericParameters.Count == 0)
+						.Select(type => SerializeDelegate(type, block.CallingConvention))))
 				.ToArray();
 
-			if (functions.Length == 0 && structs.Length == 0 && enums.Length == 0 && globals.Length == 0 && delegates.Length == 0)
+			if (functions.Length == 0 && structs.Length == 0 && unions.Length == 0 && enums.Length == 0 && globals.Length == 0 && delegates.Length == 0)
 				continue;
 
 			apiUnits.Add(new PackageApiUnit
@@ -108,6 +114,7 @@ public sealed class PackageApiMetadata
 				NamespaceUsings = ns?.Usings.Where(u => !u.IsExposed).Select(u => u.NamespaceName).ToArray() ?? [],
 				Functions = functions,
 				Structs = structs,
+				Unions = unions,
 				Enums = enums,
 				Globals = globals,
 				Delegates = delegates
@@ -130,22 +137,111 @@ public sealed class PackageApiMetadata
 			var members = ns is null ? unit.Members : ns.Members;
 			foreach (var block in members.OfType<ExternBlockSyntax>())
 			{
-				foreach (var attr in block.Attributes.Where(attribute => string.Equals(attribute.Name, "LibraryImport", StringComparison.Ordinal)))
-				{
-					var libraryName = ExtractStringArgument(attr, null);
-					if (string.IsNullOrWhiteSpace(libraryName))
-						continue;
+				foreach (var attr in block.Attributes.Where(IsLibraryImportAttribute))
+					AddNativeLibrary(libraries, attr);
+			}
 
-					libraries[libraryName] = new NativeLibraryInfo(
-						libraryName,
-						ExtractStringArgument(attr, "win"),
-						ExtractStringArgument(attr, "linux"),
-						ExtractStringArgument(attr, "mac"));
-				}
+			// Standalone foreign globals own their [LibraryImport] directly rather than inheriting it
+			// from an extern block. Their libraries must travel with the package as well, including
+			// when the global itself is internal but is used by a public wrapper in Sector 3.
+			foreach (var global in members.OfType<GlobalVariableDeclarationSyntax>().Where(global => global.IsForeign))
+			{
+				foreach (var attr in global.Attributes.Where(IsLibraryImportAttribute))
+					AddNativeLibrary(libraries, attr);
 			}
 		}
 
 		return libraries.Values.ToArray();
+	}
+
+	private static bool IsLibraryImportAttribute(AttributeSyntax attribute) =>
+		string.Equals(attribute.Name, "LibraryImport", StringComparison.Ordinal)
+		|| string.Equals(attribute.Name, "LibraryImportAttribute", StringComparison.Ordinal);
+
+	private static void AddNativeLibrary(IDictionary<string, NativeLibraryInfo> libraries, AttributeSyntax attr)
+	{
+		var libraryName = ExtractStringArgument(attr, null);
+		if (string.IsNullOrWhiteSpace(libraryName))
+			return;
+
+		var winPath = ExtractStringArgument(attr, "win");
+		var linuxPath = ExtractStringArgument(attr, "linux");
+		var macPath = ExtractStringArgument(attr, "mac");
+		if (libraries.TryGetValue(libraryName, out var existing))
+		{
+			// A library can be referenced by multiple declarations that contribute different
+			// target-specific paths. Preserve every known path instead of letting declaration
+			// order silently discard metadata required by a different consumer platform.
+			winPath ??= existing.WinPath;
+			linuxPath ??= existing.LinuxPath;
+			macPath ??= existing.MacPath;
+		}
+
+		libraries[libraryName] = new NativeLibraryInfo(libraryName, winPath, linuxPath, macPath);
+	}
+
+	private static PackageApiDelegate SerializeDelegate(DelegateDeclarationSyntax type, string? inheritedConvention) => new()
+	{
+		Name = type.Name,
+		ReturnType = type.ReturnType,
+		Parameters = type.Parameters
+			.Select(parameter => new PackageApiParameter(parameter.Type, parameter.Name))
+			.ToArray(),
+		IsNative = type.IsNative || inheritedConvention is not null,
+		CallingConvention = type.CallingConvention ?? inheritedConvention
+	};
+
+	private static PackageApiGlobal SerializeGlobal(GlobalVariableDeclarationSyntax global)
+	{
+		var libraryImport = global.Attributes.FirstOrDefault(IsLibraryImportAttribute);
+		var importName = global.Attributes
+			.FirstOrDefault(attribute => string.Equals(attribute.Name, "ImportName", StringComparison.Ordinal)
+				|| string.Equals(attribute.Name, "ImportNameAttribute", StringComparison.Ordinal));
+
+		return new PackageApiGlobal
+		{
+			Name = global.Name,
+			Type = global.Type,
+			IsMutable = global.IsMutable,
+			IsForeign = global.IsForeign,
+			CallingConvention = global.CallingConvention,
+			ImportName = importName is null ? null : ExtractStringArgument(importName, null),
+			LibraryName = libraryImport is null ? null : ExtractStringArgument(libraryImport, null),
+			WinPath = libraryImport is null ? null : ExtractStringArgument(libraryImport, "win"),
+			LinuxPath = libraryImport is null ? null : ExtractStringArgument(libraryImport, "linux"),
+			MacPath = libraryImport is null ? null : ExtractStringArgument(libraryImport, "mac")
+		};
+	}
+
+	private static IEnumerable<PackageApiGlobal> SerializeExternBlockGlobals(ExternBlockSyntax block)
+	{
+		var libraryImport = block.Attributes.FirstOrDefault(IsLibraryImportAttribute);
+		var libraryName = libraryImport is null ? null : ExtractStringArgument(libraryImport, null);
+		var winPath = libraryImport is null ? null : ExtractStringArgument(libraryImport, "win");
+		var linuxPath = libraryImport is null ? null : ExtractStringArgument(libraryImport, "linux");
+		var macPath = libraryImport is null ? null : ExtractStringArgument(libraryImport, "mac");
+		var convention = block.CallingConvention ?? "C";
+
+		foreach (var global in block.Globals.Where(global => global.Visibility == Visibility.Public))
+		{
+			var importNameAttribute = global.Attributes.FirstOrDefault(attribute =>
+				string.Equals(attribute.Name, "ImportName", StringComparison.Ordinal)
+				|| string.Equals(attribute.Name, "ImportNameAttribute", StringComparison.Ordinal));
+
+			yield return new PackageApiGlobal
+			{
+				Name = global.Name,
+				Type = global.Type,
+				IsMutable = global.IsMutable,
+				IsForeign = true,
+				CallingConvention = convention,
+				ImportName = importNameAttribute is null ? null : ExtractStringArgument(importNameAttribute, null),
+				LibraryName = libraryName,
+				WinPath = winPath,
+				LinuxPath = linuxPath,
+				MacPath = macPath
+			};
+		}
 	}
 
 	private static string? ExtractStringArgument(AttributeSyntax attr, string? name)
@@ -179,6 +275,9 @@ public sealed class PackageApiMetadata
 					function.Modifier))
 				.ToArray(),
 			Structs = group.SelectMany(unit => unit.Structs)
+				.DistinctBy(type => type.Name)
+				.ToArray(),
+			Unions = group.SelectMany(unit => unit.Unions)
 				.DistinctBy(type => type.Name)
 				.ToArray(),
 			Enums = group.SelectMany(unit => unit.Enums)
@@ -238,6 +337,15 @@ public sealed class PackageApiMetadata
 				CreateAttributes(type.Attributes, span),
 				Visibility.Public)));
 
+			members.AddRange(unit.Unions.Select(type => (SyntaxNode)new UnionDeclarationSyntax(
+				span,
+				type.Name,
+				[],
+				type.Fields.Select(field => new UnionFieldSyntax(span, field.Type, field.Name, field.Visibility)).ToArray(),
+				CreateAttributes(type.Attributes, span),
+				Visibility.Public,
+				isUnsafe: type.IsUnsafe)));
+
 			members.AddRange(unit.Enums.Select(type => (SyntaxNode)new EnumDeclarationSyntax(
 				span,
 				type.Name,
@@ -246,13 +354,7 @@ public sealed class PackageApiMetadata
 				CreateAttributes(type.Attributes, span),
 				Visibility.Public)));
 
-			members.AddRange(unit.Globals.Select(global => (SyntaxNode)new GlobalVariableDeclarationSyntax(
-				span,
-				global.Type,
-				global.Name,
-				null,
-				global.IsMutable,
-				Visibility.Public)));
+			members.AddRange(unit.Globals.Select(global => (SyntaxNode)CreateGlobalDeclaration(global, span)));
 
 			members.AddRange(unit.Functions.Select(function =>
 				(SyntaxNode)new FunctionDeclarationSyntax(
@@ -290,6 +392,53 @@ public sealed class PackageApiMetadata
 		}
 
 		return result;
+	}
+
+	private static GlobalVariableDeclarationSyntax CreateGlobalDeclaration(PackageApiGlobal global, TextSpan span)
+	{
+		var attributes = new List<AttributeSyntax>();
+		if (global.IsForeign && !string.IsNullOrWhiteSpace(global.LibraryName))
+		{
+			var arguments = new List<ExpressionSyntax> { new StringLiteralExpressionSyntax(span, global.LibraryName!) };
+			var argumentNames = new List<string?> { null };
+			AddNamedStringArgument(arguments, argumentNames, span, "win", global.WinPath);
+			AddNamedStringArgument(arguments, argumentNames, span, "linux", global.LinuxPath);
+			AddNamedStringArgument(arguments, argumentNames, span, "mac", global.MacPath);
+			attributes.Add(new AttributeSyntax(span, "LibraryImport", arguments, argumentNames));
+		}
+
+		if (global.IsForeign && !string.IsNullOrWhiteSpace(global.ImportName))
+		{
+			attributes.Add(new AttributeSyntax(
+				span,
+				"ImportName",
+				[new StringLiteralExpressionSyntax(span, global.ImportName!)]));
+		}
+
+		return new GlobalVariableDeclarationSyntax(
+			span,
+			global.Type,
+			global.Name,
+			null,
+			global.IsMutable,
+			Visibility.Public,
+			attributes,
+			isForeign: global.IsForeign,
+			callingConvention: global.CallingConvention);
+	}
+
+	private static void AddNamedStringArgument(
+		ICollection<ExpressionSyntax> arguments,
+		ICollection<string?> argumentNames,
+		TextSpan span,
+		string name,
+		string? value)
+	{
+		if (value is null)
+			return;
+
+		arguments.Add(new StringLiteralExpressionSyntax(span, value));
+		argumentNames.Add(name);
 	}
 
 	private static IReadOnlyList<string> SerializableAttributeNames(IReadOnlyList<AttributeSyntax> attributes) =>
@@ -362,6 +511,7 @@ public sealed class PackageApiUnit
 	public IReadOnlyList<string> NamespaceUsings { get; init; } = [];
 	public IReadOnlyList<PackageApiFunction> Functions { get; init; } = [];
 	public IReadOnlyList<PackageApiStruct> Structs { get; init; } = [];
+	public IReadOnlyList<PackageApiUnion> Unions { get; init; } = [];
 	public IReadOnlyList<PackageApiEnum> Enums { get; init; } = [];
 	public IReadOnlyList<PackageApiGlobal> Globals { get; init; } = [];
 	public IReadOnlyList<PackageApiDelegate> Delegates { get; init; } = [];
@@ -384,6 +534,14 @@ public sealed class PackageApiStruct
 	public IReadOnlyList<PackageApiStructField> Fields { get; init; } = [];
 }
 
+public sealed class PackageApiUnion
+{
+	public string Name { get; init; } = string.Empty;
+	public bool IsUnsafe { get; init; }
+	public IReadOnlyList<string> Attributes { get; init; } = [];
+	public IReadOnlyList<PackageApiUnionField> Fields { get; init; } = [];
+}
+
 public sealed class PackageApiEnum
 {
 	public string Name { get; init; } = string.Empty;
@@ -397,6 +555,13 @@ public sealed class PackageApiGlobal
 	public string Name { get; init; } = string.Empty;
 	public string Type { get; init; } = string.Empty;
 	public bool IsMutable { get; init; }
+	public bool IsForeign { get; init; }
+	public string? CallingConvention { get; init; }
+	public string? ImportName { get; init; }
+	public string? LibraryName { get; init; }
+	public string? WinPath { get; init; }
+	public string? LinuxPath { get; init; }
+	public string? MacPath { get; init; }
 }
 
 public sealed class PackageApiDelegate
@@ -426,4 +591,5 @@ public sealed class PackageApiEnumExpression
 }
 
 public sealed record PackageApiStructField(string Type, string Name, Visibility Visibility);
+public sealed record PackageApiUnionField(string Type, string Name, Visibility Visibility);
 public sealed record PackageApiParameter(string Type, string Name);

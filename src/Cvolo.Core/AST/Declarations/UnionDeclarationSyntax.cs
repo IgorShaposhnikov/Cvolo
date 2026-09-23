@@ -41,6 +41,10 @@ public sealed class UnionFieldSyntax(TextSpan span, string type, string name, Vi
 
 	public bool IsVoidVariant => Type == "void";
 
+	/// <summary>Visibility explicitly written on the field, or null when it inherits the union visibility.</summary>
+	public Visibility? SyntacticVisibility { get; } = visibility;
+
+	/// <summary>Standalone fallback used before the enclosing union applies inherited visibility.</summary>
 	public Visibility Visibility { get; } = visibility ?? Visibility.Internal;
 
 	public override IEnumerable<SyntaxNode> GetChildren() => [];
