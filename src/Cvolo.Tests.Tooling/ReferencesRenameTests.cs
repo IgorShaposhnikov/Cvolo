@@ -117,7 +117,7 @@ public sealed class ReferencesRenameTests
 			Assert.NotNull(symbol);
 
 			var collision = Assert.IsType<RenameFailure>(x.Snapshot.RenameSymbol(symbol!.SymbolId, "Existing"));
-			Assert.Contains("not valid", collision.Message, StringComparison.OrdinalIgnoreCase);
+			Assert.Contains("same signature", collision.Message, StringComparison.OrdinalIgnoreCase);
 
 			const string overloadSource =
 				"int Existing() { return 0; }\n" +
