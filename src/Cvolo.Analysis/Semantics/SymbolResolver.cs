@@ -80,9 +80,9 @@ internal static class SymbolResolver
 	}
 
 	/// <summary>
-	/// Collects the contiguous line-comment block immediately preceding a declaration
-	/// (<c>//</c> or <c>///</c>), stripping the comment markers and XML summary tags. Returns
-	/// null when there is no directly adjacent comment.
+	/// Collects the contiguous documentation-comment block immediately preceding a declaration.
+	/// Only <c>///</c> lines are documentation; ordinary <c>//</c> comments are intentionally
+	/// ignored. The documentation marker and inline XML summary tags are stripped.
 	/// </summary>
 	private static string? ExtractDocumentation(string source, int declarationStart)
 	{
@@ -94,12 +94,10 @@ internal static class SymbolResolver
 		for (var i = lines.Length - 2; i >= 0; i--)
 		{
 			var line = lines[i].Trim();
-			if (line.Length == 0 || !line.StartsWith("//", StringComparison.Ordinal))
+			if (line.Length == 0 || !line.StartsWith("///", StringComparison.Ordinal))
 				break;
 
-			var text = line[2..];
-			if (text.StartsWith("/", StringComparison.Ordinal))
-				text = text[1..];
+			var text = line[3..];
 
 			text = text.Trim();
 			text = text.Replace("<summary>", string.Empty, StringComparison.Ordinal)
