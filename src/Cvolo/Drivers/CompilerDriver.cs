@@ -25,7 +25,7 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 {
 	private static readonly string[] _linkerCandidates = ["clang", "gcc", "g++"];
 
-	public int Compile(string path, bool llvmOnly, bool isShared, bool emitIr, string optLevel, bool checkOnly = false, bool runAfterCompile = false, bool verbose = false, bool emitLowered = false, string? noWarn = null, bool suppressWarnings = false, bool legacyVisibility = false, bool strictOption = false, bool noTbaa = false, string? targetOs = null, bool checkedFfiBounds = false, string format = "text", string configuration = BuildOutputLayout.DefaultConfiguration, bool useProjectReferencePackages = false)
+	public int Compile(string path, bool llvmOnly, bool isShared, bool emitIr, string optLevel, bool checkOnly = false, bool runAfterCompile = false, bool verbose = false, bool emitLowered = false, string? noWarn = null, bool suppressWarnings = false, bool legacyVisibility = false, bool strictOption = false, bool noTbaa = false, string? targetOs = null, bool checkedFfiBounds = false, string format = "text", string configuration = BuildOutputLayout.DefaultConfiguration, bool useProjectReferencePackages = false, bool noStdlib = false)
 	{
 		configuration = BuildOutputLayout.NormalizeConfiguration(configuration);
 
@@ -53,6 +53,7 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 				MergeProjectReferences: !useProjectReferencePackages,
 				UseProjectReferencePackages: useProjectReferencePackages,
 				LoadPackages: !emitLowered,
+				IncludeStandardLibrary: !noStdlib,
 				Configuration: configuration,
 				PackageCache: packageCache));
 		}
@@ -85,6 +86,7 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 					: artifact.BitcodePath;
 				Console.WriteLine($"  -> {artifact.PackageId}@{artifact.Version}: {input}");
 			}
+
 			Console.WriteLine();
 		}
 
@@ -103,6 +105,7 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 
 		// 3. Syntactic parsing pass
 		var binder = new Binder();
+		binder.Context.NativePointerBytes = IntPtr.Size;
 		var asts = new List<CompilationUnitSyntax>();
 		ISyntaxParser parser = new AntlrSyntaxParser();
 		CompilationContext? firstContext = null;
@@ -183,8 +186,11 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 					binder.Context.FileContexts[currentAst] = fileContext;
 					binder.Context.FileContexts.Remove(ast); // Clean up the old reference
 				}
+
 				if (binder.Context.PackageTemplateUnits.Remove(ast))
+				{
 					binder.Context.PackageTemplateUnits.Add(currentAst);
+				}
 
 				loweredAsts.Add(currentAst);
 			}
@@ -243,6 +249,7 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 					binder.Context.FileContexts[expanded] = expandedContext;
 					binder.Context.FileContexts.Remove(ast);
 				}
+
 				expandedAsts.Add(expanded);
 			}
 

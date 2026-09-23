@@ -1,0 +1,18 @@
+unsafe "C" delegate bool BoolProc(bool value);
+
+unsafe "C" bool Invert(bool value)
+{
+    return !value;
+}
+
+int main()
+{
+    var bool result = true;
+    unsafe
+    {
+        BoolProc proc = &Invert;
+        result = proc(true);
+    }
+
+    return result ? 1 : 0;
+}

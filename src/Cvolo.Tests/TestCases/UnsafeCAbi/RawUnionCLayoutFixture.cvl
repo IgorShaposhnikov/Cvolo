@@ -1,0 +1,22 @@
+using System;
+
+unsafe union Value
+{
+    byte B;
+    int I;
+    double D;
+}
+
+struct Container
+{
+    byte Prefix;
+    Value Payload;
+}
+
+int main()
+{
+    Console.WriteLine(sizeof<Value>());
+    Console.WriteLine(sizeof<Value[2]>());
+    Console.WriteLine(sizeof<Container>());
+    return 0;
+}

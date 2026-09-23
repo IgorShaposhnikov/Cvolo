@@ -1,5 +1,4 @@
 using Cvolo.Analysis;
-using Cvolo.Analysis.Symbols;
 using Cvolo.Analysis.Symbols.Base;
 using Cvolo.Analysis.Symbols.Collections;
 using Cvolo.Analysis.Symbols.Structs;
@@ -8,6 +7,7 @@ using Cvolo.Core.AST.Declarations;
 using Cvolo.Core.AST.Expressions;
 using Cvolo.Core.AST.Statements;
 using Cvolo.Emitter.LLVM.Codegen.ControlFlow;
+using Cvolo.Emitter.LLVM.Codegen.TypeLowering;
 using Cvolo.Emitter.LLVM.Codegen.Values;
 using LLVMSharp.Interop;
 
@@ -46,6 +46,7 @@ internal sealed class StatementEmitter(
 	private LLVMBuilderRef Builder => codegen.Builder;
 	private FunctionCodegenContext Function => getFunction();
 	private BindingContext BindingContext => codegen.BindingContext ?? throw new InvalidOperationException("Statement emission requires an active binding context.");
+	private readonly NativeAbiAggregateLowering _nativeAggregates = new(codegen, type => type.Equals(TypeSymbol.Bool) ? LLVMTypeRef.Int1 : codegen.Types.Lower(type));
 
 	/// <summary>
 	/// Emits a lexical block, tracks locals declared in that block, and runs scope cleanup when
@@ -201,6 +202,27 @@ internal sealed class StatementEmitter(
 				type = retPtr.ReferencedType;
 			}
 
+			if (Function.NativeAbiPlan is { } nativePlan
+				&& nativePlan.Return.Kind is NativeAbiValuePassKind.DirectIntegerAggregate or NativeAbiValuePassKind.IndirectAggregate)
+			{
+				if (nativePlan.Return.Kind == NativeAbiValuePassKind.DirectIntegerAggregate)
+				{
+					var packed = _nativeAggregates.PackDirectAggregate(Builder, nativePlan.Return, value, "native_ret");
+					cleanup.EmitScopeCleanup(Function, [.. Function.Locals.Keys], skipHeapFree: Function.OwnershipTransferFunction);
+					Builder.BuildRet(packed);
+					return;
+				}
+
+				var returnStorage = _nativeAggregates.GetAggregateAddress(Builder, nativePlan.Return, value, "native_sret");
+				var loadedAggregate = Builder.BuildLoad2(codegen.Types.Lower(expectedType), returnStorage, "native_sret_value");
+				cleanup.EmitScopeCleanup(Function, [.. Function.Locals.Keys], skipHeapFree: Function.OwnershipTransferFunction);
+				if (Function.NativeSRetPointer is null)
+					throw new InvalidOperationException("Native ABI sret return is missing its hidden result pointer.");
+				Builder.BuildStore(loadedAggregate, Function.NativeSRetPointer.Value);
+				Builder.BuildRetVoid();
+				return;
+			}
+
 			// Materialize memory-resident return values (structs/unions living in allocas/heap
 			// slots) BEFORE scope cleanup frees them - the loaded register is what survives.
 			// NPO-eligible unions lower to a single scalar (the flat ptr), so their emitted value
@@ -221,16 +243,10 @@ internal sealed class StatementEmitter(
 			}
 			else
 			{
-				// FFI bool lowering: truncate i1 back to i8 for exported functions returning bool.
-				var retValue = value;
-				if (codegen.BindingContext?.Globals.Lookup(Builder.InsertBlock.Parent.Name) is FunctionSymbol { IsExported: true } retFuncSym
-					&& retFuncSym.ReturnType is not null && retFuncSym.ReturnType.Name == "bool"
-					&& retValue.TypeOf.Kind == LLVMTypeKind.LLVMIntegerTypeKind && retValue.TypeOf.IntWidth == 1)
-				{
-					retValue = Builder.BuildTrunc(retValue, LLVMTypeRef.Int8, "bool.ret.trunc");
-				}
-
-				Builder.BuildRet(retValue);
+				// Native scalar bool remains i1 in the LLVM function signature; target ABI
+				// extension requirements are expressed through zeroext attributes. Object
+				// storage such as foreign globals is handled separately as one byte.
+				Builder.BuildRet(value);
 			}
 		}
 		else
@@ -411,7 +427,7 @@ internal sealed class StatementEmitter(
 				calls.Emit(ctorCall, alloca);
 			}
 			// Register Forwarding: If the aggregate is already allocated on the stack, forward its address
-			else if (valTy is StructTypeSymbol || valTy is ArrayTypeSymbol)
+			else if (valTy is StructTypeSymbol || valTy is ArrayTypeSymbol || valTy is UnionTypeSymbol { IsUnsafe: true })
 			{
 				var val = emitExpression(varDecl.Initializer!);
 				if (val.TypeOf.Kind == LLVMTypeKind.LLVMPointerTypeKind)

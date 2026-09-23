@@ -1,0 +1,10 @@
+unsafe "C" delegate int ProcA(int value);
+unsafe "C" delegate int ProcB(int value);
+
+global var ProcA First;
+
+int main()
+{
+    ProcB second = (ProcB)First;
+    return 0;
+}

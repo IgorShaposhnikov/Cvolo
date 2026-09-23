@@ -25,6 +25,7 @@ internal sealed class BuildCommand : Command
 		var legacyVisibilityOption = new Option<bool>("--legacy-visibility") { Description = "Disable the visibility system and treat all declarations as public (v0.2.0-alpha behavior)" };
 		var strictOption = new Option<bool>("--strict-option") { Description = "Disable the '?' optional type syntax; require explicit Option<T> types" };
 		var noTbaaOption = new Option<bool>("--no-tbaa") { Description = "Disable generation of !tbaa alias-analysis metadata nodes" };
+		var noStdlibOption = new Option<bool>("--no-stdlib") { Description = "Compile without automatically including the Cvolo standard library." };
 		var targetOption = new Option<string>("--target") { Description = "Target OS for native library resolution (host, windows, linux, macos). Controls which win:/linux:/mac: [LibraryImport] path is forwarded to the linker." };
 		var checkedFfiBoundsOption = new Option<bool>("--checked-ffi-bounds") { Description = "Generate explicit null-check prologues in expose extern functions for debug builds" };
 		var configurationOption = new Option<string>("--configuration", "-c", BuildOutputLayout.DefaultConfiguration) { Description = "Build configuration (Debug or Release)." };
@@ -41,6 +42,7 @@ internal sealed class BuildCommand : Command
 		Add(legacyVisibilityOption);
 		Add(strictOption);
 		Add(noTbaaOption);
+		Add(noStdlibOption);
 		Add(targetOption);
 		Add(checkedFfiBoundsOption);
 		Add(configurationOption);
@@ -58,6 +60,7 @@ internal sealed class BuildCommand : Command
 			var legacyVisibilityVal = parseResult.GetValue(legacyVisibilityOption);
 			var strictOptionVal = parseResult.GetValue(strictOption);
 			var noTbaaVal = parseResult.GetValue(noTbaaOption);
+			var noStdlibVal = parseResult.GetValue(noStdlibOption);
 			var targetOsVal = parseResult.GetValue(targetOption);
 			var checkedFfiBoundsVal = parseResult.GetValue(checkedFfiBoundsOption);
 			var configurationVal = BuildOutputLayout.NormalizeConfiguration(parseResult.GetValue(configurationOption) ?? BuildOutputLayout.DefaultConfiguration);
@@ -70,7 +73,7 @@ internal sealed class BuildCommand : Command
 
 				var incremental = TryPrepareIncrementalBuild(
 					path, isShared, llvmOnly, emitIrVal, emitLoweredVal, optLevel, noWarnVal,
-					legacyVisibilityVal, strictOptionVal, noTbaaVal, targetOsVal, checkedFfiBoundsVal, configurationVal);
+					legacyVisibilityVal, strictOptionVal, noTbaaVal, noStdlibVal, targetOsVal, checkedFfiBoundsVal, configurationVal);
 				var buildPlan = incremental is { } prepared
 					? ProjectBuildPlan.Create(prepared.Graph, prepared.BuildKey, prepared.Configuration)
 					: null;
@@ -111,7 +114,7 @@ internal sealed class BuildCommand : Command
 					return;
 				}
 
-				var exitCode = _compilerDriver.Compile(path, llvmOnly, isShared, emitIrVal, optLevel, emitLowered: emitLoweredVal, noWarn: noWarnVal, verbose: parseResult.GetValue(verboseOption), legacyVisibility: legacyVisibilityVal, strictOption: strictOptionVal, noTbaa: noTbaaVal, targetOs: targetOsVal, checkedFfiBounds: checkedFfiBoundsVal, configuration: configurationVal, useProjectReferencePackages: useProjectReferenceArtifacts);
+				var exitCode = _compilerDriver.Compile(path, llvmOnly, isShared, emitIrVal, optLevel, emitLowered: emitLoweredVal, noWarn: noWarnVal, verbose: parseResult.GetValue(verboseOption), legacyVisibility: legacyVisibilityVal, strictOption: strictOptionVal, noTbaa: noTbaaVal, targetOs: targetOsVal, checkedFfiBounds: checkedFfiBoundsVal, configuration: configurationVal, useProjectReferencePackages: useProjectReferenceArtifacts, noStdlib: noStdlibVal);
 				if (exitCode == 0 && incremental is { } compiledBuild)
 				{
 					IncrementalBuildState.Record(compiledBuild.Graph, compiledBuild.BuildKey, compiledBuild.OutputPath, compiledBuild.Configuration);
@@ -186,6 +189,7 @@ internal sealed class BuildCommand : Command
 		bool legacyVisibility,
 		bool strictOption,
 		bool noTbaa,
+		bool noStdlib,
 		string? targetOs,
 		bool checkedFfiBounds,
 		string configuration)
@@ -211,6 +215,7 @@ internal sealed class BuildCommand : Command
 			$"legacyVisibility={legacyVisibility}",
 			$"strictOption={strictOption}",
 			$"noTbaa={noTbaa}",
+			$"noStdlib={noStdlib}",
 			$"target={targetOs ?? "host"}",
 			$"checkedFfiBounds={checkedFfiBounds}");
 		return new IncrementalBuild(graph, buildKey, outputPath, configuration);

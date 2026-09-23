@@ -48,6 +48,10 @@ internal sealed class FunctionCodegenContext
 	/// the corresponding cleanup behavior on exits.
 	/// </summary>
 	public bool OwnershipTransferFunction { get; set; }
+	/// <summary>Hidden native ABI sret destination for the current function, when present.</summary>
+	public LLVMValueRef? NativeSRetPointer { get; set; }
+	/// <summary>Resolved native ABI signature plan for the current function, when it crosses a native boundary.</summary>
+	public TypeLowering.NativeAbiFunctionPlan? NativeAbiPlan { get; set; }
 	/// <summary>
 	/// Active loop targets, ordered from the innermost loop outward.
 	/// </summary>

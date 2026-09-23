@@ -12,14 +12,23 @@ public sealed class ExternBlockSyntax(
 	IReadOnlyList<AttributeSyntax> attributes,
 	string? callingConvention,
 	IReadOnlyList<ExternBlockFunctionSyntax> functions,
-	Visibility? visibility = null) : SyntaxNode(span)
+	Visibility? visibility = null,
+	IReadOnlyList<GlobalVariableDeclarationSyntax>? globals = null) : SyntaxNode(span)
 {
 	public override SyntaxKind Kind => SyntaxKind.ExternBlock;
 
 	public IReadOnlyList<AttributeSyntax> Attributes { get; } = attributes;
 	public string? CallingConvention { get; } = callingConvention;
 	public IReadOnlyList<ExternBlockFunctionSyntax> Functions { get; } = functions;
+
+	/// <summary>
+	/// Imported foreign globals declared inside the block ('global var T N;' / 'global T N;').
+	/// They reference external mutable data and are read-only at the source level.
+	/// </summary>
+	public IReadOnlyList<GlobalVariableDeclarationSyntax> Globals { get; } = globals ?? [];
+
 	public Visibility Visibility { get; } = visibility ?? Visibility.Internal;
 
-	public override IEnumerable<SyntaxNode> GetChildren() => Functions.Cast<SyntaxNode>().Concat(Attributes.Cast<SyntaxNode>());
+	public override IEnumerable<SyntaxNode> GetChildren() =>
+		Functions.Cast<SyntaxNode>().Concat(Globals.Cast<SyntaxNode>()).Concat(Attributes.Cast<SyntaxNode>());
 }

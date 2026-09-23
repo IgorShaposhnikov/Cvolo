@@ -16,6 +16,12 @@ namespace Cvolo.Analysis;
 
 public sealed class BindingContext
 {
+	/// <summary>Native pointer width in bytes for target-sensitive semantic ABI validation.</summary>
+	public int NativePointerBytes { get; set; } = IntPtr.Size;
+	/// <summary>Whether the active target family has a verified aggregate C-ABI lowering.</summary>
+	public bool NativeAggregateAbiSupported { get; set; } =
+		(System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture is System.Runtime.InteropServices.Architecture.X64 or System.Runtime.InteropServices.Architecture.Arm64)
+		&& (OperatingSystem.IsWindows() || OperatingSystem.IsLinux() || OperatingSystem.IsMacOS());
 	public DiagnosticBag Diagnostics { get; } = new();
 	private ClassificationAnalyzer? _classification;
 	public ClassificationAnalyzer Classification => _classification ??= new ClassificationAnalyzer(this);
@@ -55,6 +61,13 @@ public sealed class BindingContext
 	/// expression → resolved FunctionSymbol that was selected for the conversion.
 	/// </summary>
 	public Dictionary<ExpressionSyntax, FunctionSymbol> ResolvedFunctionConversions { get; } = [];
+
+	/// <summary>
+	/// Target-typed native function-address expressions (<c>&amp;Function</c>). The selected
+	/// function and the expected nominal native delegate are retained so code generation
+	/// never repeats overload/name lookup and can emit the exact native function pointer.
+	/// </summary>
+	public Dictionary<UnaryExpressionSyntax, (FunctionSymbol Function, DelegateTypeSymbol Delegate)> ResolvedNativeFunctionAddresses { get; } = [];
 	// Native libraries requested via [LibraryImport] on extern blocks, keyed by the bare
 	// library identifier; consumed by the linker strategy to emit -l/--library flags.
 	public Dictionary<string, NativeLibraryInfo> NativeLibraries { get; } = [];
@@ -482,6 +495,7 @@ public sealed class BindingContext
 					DelegateTypes[name] = instantiatedType;
 					_typeCache[name] = instantiatedType;
 				}
+
 				return instantiatedType;
 			}
 		}
@@ -687,6 +701,7 @@ public sealed class BindingContext
 					var currentFileContext = FileContexts[CurrentUnit!];
 					Diagnostics.Report(currentFileContext, new TextSpan(0, 0), $"Unknown type argument '{rawArg.Trim()}'");
 				}
+
 				return false;
 			}
 
@@ -706,6 +721,7 @@ public sealed class BindingContext
 			if (arg is PointerTypeSymbol)
 				return true;
 		}
+
 		return false;
 	}
 
@@ -724,6 +740,7 @@ public sealed class BindingContext
 			else
 				payloadCount++;
 		}
+
 		return voidCount == 1 && payloadCount == 1;
 	}
 
@@ -757,6 +774,13 @@ public sealed class BindingContext
 	public VariableSymbol? ResolveGlobalReference(string shortName, out List<string>? ambiguousCandidates)
 	{
 		ambiguousCandidates = null;
+
+		// Qualified value paths are already canonical declaration keys. Accept them directly
+		// before applying short-name namespace/using resolution so calls such as
+		// Native.Callback(...) can bind a delegate-valued module global.
+		if (GlobalsByQualifiedName.TryGetValue(shortName, out var qualifiedGlobal))
+			return qualifiedGlobal;
+
 		if (!GlobalsByShortName.TryGetValue(shortName, out var candidates))
 			return null;
 
@@ -790,13 +814,13 @@ public sealed class BindingContext
 		{
 			foreach (var ns in GetActiveUsings(CurrentUnit))
 			{
-				var qualified = GetMangledName(shortName, ns);
+				var qualifiedUsingGlobal = GetMangledName(shortName, ns);
 				foreach (var candidate in candidates)
 				{
-					if (candidate.QualifiedGlobalName == qualified && !distinct.Contains(qualified))
+					if (candidate.QualifiedGlobalName == qualifiedUsingGlobal && !distinct.Contains(qualifiedUsingGlobal))
 					{
 						single = candidate;
-						distinct.Add(qualified);
+						distinct.Add(qualifiedUsingGlobal);
 						break;
 					}
 				}
@@ -998,6 +1022,7 @@ public sealed class BindingContext
 					$"Type alias '{decl.Name}' expects {decl.GenericParameters.Count} type argument(s), but {typeArgs.Count} was given.",
 					diagnosticId: null);
 			}
+
 			return null;
 		}
 
@@ -1221,6 +1246,7 @@ public sealed class BindingContext
 				CurrentNamespace = prevNamespace;
 				return null;
 			}
+
 			parameters.Add(new ParameterSymbol(p.Name, paramType));
 		}
 
@@ -1251,6 +1277,7 @@ public sealed class BindingContext
 		{
 			result = Regex.Replace(result, $@"\b{Regex.Escape(kv.Key)}\b", kv.Value.Name);
 		}
+
 		return result;
 	}
 

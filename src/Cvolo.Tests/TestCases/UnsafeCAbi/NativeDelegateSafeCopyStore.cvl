@@ -1,0 +1,23 @@
+unsafe "C" delegate int Callback(int value);
+struct Holder { Callback Proc; }
+global var Callback GlobalCallback;
+Callback CopyAndStore(Callback first)
+{
+    Callback second = first;
+    var Holder holder = Holder { Proc: first };
+    holder.Proc = first;
+    GlobalCallback = holder.Proc;
+    return second;
+}
+unsafe "C" int Increment(int value) { return value + 1; }
+int main()
+{
+    unsafe
+    {
+        Callback first = &Increment;
+        Callback second = CopyAndStore(first);
+        if (second(41) != 42) return 1;
+        if (GlobalCallback(9) != 10) return 2;
+    }
+    return 0;
+}

@@ -1,0 +1,10 @@
+// Legacy filename retained only so cumulative replacement archives overwrite old copies.
+// Explicit native-delegate null operations are NOT safe; this file is intentionally unreferenced.
+unsafe "C" delegate void Callback(int value);
+
+[UnsafeBody]
+int main()
+{
+    Callback callback = null;
+    return callback == null ? 0 : 1;
+}

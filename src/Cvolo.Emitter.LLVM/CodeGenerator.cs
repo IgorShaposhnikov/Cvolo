@@ -75,6 +75,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			() => _function,
 			EmitExpression,
 			_expressionTypes,
+			GetFFIType,
 			_coercion,
 			_values,
 			_declarations.ExternDeclarations,
@@ -347,14 +348,15 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 
 	/// <summary>
-	/// Returns the C-ABI-correct LLVM type for a Cvolo type crossing a foreign boundary.
-	/// Every Cvolo bool is lowered to an unsigned 8-bit integer (i8) at FFI boundaries,
-	/// matching the C ABI 1-byte boolean representation.
+	/// Returns the LLVM value type used for scalar native function parameters/returns.
+	/// C <c>_Bool</c> has one-byte object storage, but Clang/LLVM C ABIs model the scalar
+	/// value as <c>i1</c> (with target extension attributes where required). Object-storage
+	/// positions are handled separately by the storage emitters.
 	/// </summary>
 	private LLVMTypeRef GetFFIType(TypeSymbol t)
 	{
-		if (t is not null && t.Name == "bool")
-			return LLVMTypeRef.Int8;
+		if (t is not null && t.Equals(TypeSymbol.Bool))
+			return LLVMTypeRef.Int1;
 		return _codegen.Types.Lower(t);
 	}
 

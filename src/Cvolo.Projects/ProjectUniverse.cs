@@ -1,5 +1,4 @@
 using Cvolo.Core.AST.Base;
-using Cvolo.Core.Packages;
 using Cvolo.Packaging;
 
 namespace Cvolo.Projects;
@@ -30,6 +29,7 @@ public sealed record ProjectUniverseRequest(
 	bool MergeProjectReferences = true,
 	bool UseProjectReferencePackages = false,
 	bool LoadPackages = true,
+	bool IncludeStandardLibrary = true,
 	string Configuration = BuildOutputLayout.DefaultConfiguration,
 	PackageCache? PackageCache = null);
 
@@ -75,7 +75,8 @@ public static class ProjectUniverseLoader
 			request.InputPath,
 			request.CompilerBaseDir,
 			request.ForceShared,
-			mergeProjectReferences: !request.UseProjectReferencePackages);
+			mergeProjectReferences: !request.UseProjectReferencePackages,
+			includeStandardLibrary: request.IncludeStandardLibrary);
 
 		var artifacts = new List<ResolvedPackageArtifacts>();
 

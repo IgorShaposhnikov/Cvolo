@@ -135,6 +135,8 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			return BuildFunctionDeclaration(func);
 		if (context.externDeclaration() is { } ext)
 			return BuildExternDeclaration(ext);
+		if (context.externGlobalDeclaration() is { } extGlobal)
+			return BuildExternGlobalDeclaration(extGlobal);
 		if (context.externBlockDeclaration() is { } extBlock)
 			return BuildExternBlockDeclaration(extBlock);
 		if (context.exposeExternBlockDeclaration() is { } exposeBlock)
@@ -159,6 +161,8 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			return BuildAliasDeclaration(aliasDecl);
 		if (context.delegateDeclaration() is { } delegateDecl)
 			return BuildDelegateDeclaration(delegateDecl);
+		if (context.delegateBlockDeclaration() is { } delegateBlock)
+			return BuildDelegateBlockDeclaration(delegateBlock);
 		return null;
 	}
 
@@ -197,7 +201,24 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		if (context.delegateParameterList() is { } paramList)
 		{
 			foreach (var p in paramList.delegateParameter())
+			{
+				// Parse receiver-shaped delegate parameters instead of rejecting them in the
+				// grammar. Declaration validation owns the semantic CVL1301 diagnostic, which
+				// keeps native/safe delegate behavior deterministic and testable.
+				if (p.receiverVarParameter() is { } rv)
+				{
+					parameters.Add(new ParameterSyntax(SpanOf(p), "refvar", rv.Identifier().GetText()));
+					continue;
+				}
+
+				if (p.receiverRefParameter() is { } rr)
+				{
+					parameters.Add(new ParameterSyntax(SpanOf(p), "ref", rr.Identifier().GetText()));
+					continue;
+				}
+
 				parameters.Add(new ParameterSyntax(SpanOf(p), GetTypeName(p.type()), p.Identifier().GetText()));
+			}
 		}
 
 		var nameToken = context.Identifier().Symbol;
@@ -214,6 +235,19 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			callingConvention,
 			nameSpan: SpanOf(nameToken),
 			returnTypeSpan: SpanOf(returnTypeCtx));
+	}
+
+	private DelegateBlockDeclarationSyntax BuildDelegateBlockDeclaration(CvoloParser.DelegateBlockDeclarationContext context)
+	{
+		var callingConvention = context.callingConvention()?.StringLiteral()?.GetText();
+		if (callingConvention is not null && callingConvention.Length >= 2)
+			callingConvention = callingConvention[1..^1];
+
+		var delegates = new List<DelegateDeclarationSyntax>();
+		foreach (var delegateCtx in context.delegateDeclaration())
+			delegates.Add(BuildDelegateDeclaration(delegateCtx));
+
+		return new DelegateBlockDeclarationSyntax(SpanOf(context), callingConvention, delegates);
 	}
 
 	private GlobalVariableDeclarationSyntax BuildGlobalVariableDeclaration(CvoloParser.GlobalVariableDeclarationContext context)
@@ -267,10 +301,55 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		}
 
 		var functions = new List<ExternBlockFunctionSyntax>();
-		foreach (var funcCtx in context.externBlockFunction())
-			functions.Add(BuildExternBlockFunction(funcCtx));
+		var globals = new List<GlobalVariableDeclarationSyntax>();
+		foreach (var member in context.externBlockMember())
+		{
+			if (member.externBlockFunction() is { } funcCtx)
+				functions.Add(BuildExternBlockFunction(funcCtx));
+			else if (member.externBlockGlobal() is { } globalCtx)
+				globals.Add(BuildExternBlockGlobal(globalCtx, callingConvention));
+		}
 
-		return new ExternBlockSyntax(SpanOf(context), attributes, callingConvention, functions, GetVisibilityModifier(context.visibilityModifier()));
+		return new ExternBlockSyntax(SpanOf(context), attributes, callingConvention, functions, GetVisibilityModifier(context.visibilityModifier()), globals);
+	}
+
+	private GlobalVariableDeclarationSyntax BuildExternBlockGlobal(CvoloParser.ExternBlockGlobalContext context, string? blockConvention)
+	{
+		var isMutable = context.VAR() is not null;
+		var type = GetTypeName(context.type());
+		var name = context.Identifier().GetText();
+		return new GlobalVariableDeclarationSyntax(
+			SpanOf(context),
+			type,
+			name,
+			initializer: null,
+			isMutable,
+			GetVisibilityModifier(context.visibilityModifier()),
+			attributes: BuildAttributeList(context.attributeList()),
+			isForeign: true,
+			callingConvention: blockConvention);
+	}
+
+	private GlobalVariableDeclarationSyntax BuildExternGlobalDeclaration(CvoloParser.ExternGlobalDeclarationContext context)
+	{
+		var isMutable = context.VAR() is not null;
+		var type = GetTypeName(context.type());
+		var name = context.Identifier().GetText();
+
+		var callingConvention = context.callingConvention()?.StringLiteral()?.GetText();
+		if (callingConvention is not null && callingConvention.Length >= 2)
+			callingConvention = callingConvention[1..^1];
+
+		return new GlobalVariableDeclarationSyntax(
+			SpanOf(context),
+			type,
+			name,
+			initializer: null,
+			isMutable,
+			GetVisibilityModifier(context.visibilityModifier()),
+			attributes: BuildAttributeList(context.attributeList()),
+			isForeign: true,
+			callingConvention: callingConvention);
 	}
 
 	private ExternBlockFunctionSyntax BuildExternBlockFunction(CvoloParser.ExternBlockFunctionContext context)
@@ -368,6 +447,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			// Strip the surrounding double quotes to recover the raw "C" / "system" value.
 			callingConvention = callingConvention.Length >= 2 ? callingConvention[1..^1] : callingConvention;
 		}
+
 		return callingConvention;
 	}
 
@@ -420,11 +500,23 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		if (context.functionModifier() is { } modCtx)
 			modifier = modCtx.GetText() == "unsafe" ? SafetyTier.Unsafe : SafetyTier.Unbound;
 
+		// Optional native-ABI calling convention slot: 'unsafe "C"' / 'unsafe "system"' before the
+		// return type. Requires the function modifier to be absent (the convention keyword is
+		// parsed from the leading UNSAFE token).
+		string? callingConvention = null;
+		if (context.callingConvention() is { } ccCtx)
+		{
+			callingConvention = ccCtx.StringLiteral().GetText();
+			if (callingConvention.Length >= 2)
+				callingConvention = callingConvention[1..^1];
+		}
+
 		return new FunctionDeclarationSyntax(
 			SpanOf(context), returnType, name, generics, parameters, body, attributes, modifier, receiver,
 			GetVisibilityModifier(context.visibilityModifier()),
 			nameSpan: SpanOf(context.Identifier().Symbol),
-			returnTypeSpan: SpanOf(context.returnType()));
+			returnTypeSpan: SpanOf(context.returnType()),
+			callingConvention: callingConvention);
 	}
 
 	private bool TryGetReceiverContract(CvoloParser.ParameterContext context, out ReceiverContract contract, out string receiverName)
@@ -500,7 +592,9 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 
 		foreach (var whereCtx in whereClauses)
 		{
-			if (whereCtx is null) continue;
+			if (whereCtx is null)
+				continue;
+
 			foreach (var constraint in whereCtx.whereConstraint())
 			{
 				if (constraint is CvoloParser.DefaultWhereConstraintContext defCtx)
@@ -518,6 +612,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 						list = [];
 						constraints[paramName] = list;
 					}
+
 					list.Add(typeName);
 				}
 			}
@@ -636,11 +731,13 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			var body = BuildBlockStatement(block);
 			return new DeferStatementSyntax(SpanOf(context), body, label);
 		}
+
 		if (context.expressionStatement() is { } exprStmt)
 		{
 			var body = BuildExpressionStatement(exprStmt);
 			return new DeferStatementSyntax(SpanOf(context), body);
 		}
+
 		throw new InvalidOperationException("Defer statement has no valid body (expression or block).");
 	}
 
@@ -674,6 +771,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 					break;
 			}
 		}
+
 		return new TryStatementSyntax(SpanOf(context), body, clauses,
 			context.finallyClause() is { } finallyCtx ? BuildBlockStatement(finallyCtx.blockStatement()) : null);
 	}
@@ -1384,6 +1482,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			return new ForEachStatementSyntax(SpanOf(context), ForEachVariableKind.RefVar, null, itemName,
 				BuildExpression(context.expression()), BuildBlockStatement(context.blockStatement()), label);
 		}
+
 		if (typeCtx is CvoloParser.ReadOnlyRefTypeContext readOnlyRefCtx)
 		{
 			var refTarget = GetTypeName(readOnlyRefCtx.type());
@@ -1484,6 +1583,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				_diagnostics.Report(_compilationContext!, SpanOf(context), "Multiple '?' in a row are not allowed. Use Option<Option<T>> for nested optional types.",
 					DiagnosticIds.OptionalTypeChainForbidden);
 			}
+
 			return $"{GetTypeName(optCtx.type())}?";
 		}
 
@@ -1492,7 +1592,8 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 
 	private string GetReturnTypeName(CvoloParser.ReturnTypeContext context)
 	{
-		if (context.VOID() is not null) return "void";
+		if (context.VOID() is not null)
+			return "void";
 		return GetTypeName(context.type());
 	}
 
@@ -1757,7 +1858,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			fields.Add(new UnionFieldSyntax(SpanOf(field), GetTypeName(field.type()), field.Identifier().GetText(), GetVisibilityModifier(field.visibilityModifier())));
 
 		var unionAttributes = BuildAttributeList(context.attributeList());
-		return new UnionDeclarationSyntax(SpanOf(context), name, generics, fields, unionAttributes, GetVisibilityModifier(context.visibilityModifier()), defaults);
+		return new UnionDeclarationSyntax(SpanOf(context), name, generics, fields, unionAttributes, GetVisibilityModifier(context.visibilityModifier()), defaults, context.UNSAFE() is not null);
 	}
 
 	private EnumDeclarationSyntax BuildEnumDeclaration(CvoloParser.EnumDeclarationContext context)
@@ -1792,7 +1893,8 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				foreach (var stmt in caseCtx.statement())
 				{
 					var stmtNode = BuildStatement(stmt);
-					if (stmtNode is not null) body.Add(stmtNode);
+					if (stmtNode is not null)
+						body.Add(stmtNode);
 				}
 
 				cases.Add(new SwitchCaseSyntax(SpanOf(caseCtx), "", null, isDefault: true, body));
@@ -1817,7 +1919,8 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				foreach (var stmt in caseCtx.statement())
 				{
 					var stmtNode = BuildStatement(stmt);
-					if (stmtNode is not null) body.Add(stmtNode);
+					if (stmtNode is not null)
+						body.Add(stmtNode);
 				}
 
 				cases.Add(new SwitchCaseSyntax(SpanOf(caseCtx), variantName, variableName, isDefault: false, body));

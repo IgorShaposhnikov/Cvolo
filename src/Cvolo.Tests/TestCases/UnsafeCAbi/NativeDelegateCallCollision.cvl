@@ -1,0 +1,25 @@
+unsafe "C" delegate int Callback(int value);
+
+unsafe "C" int Target(int value)
+{
+    return value + 1;
+}
+
+int callback(int value)
+{
+    return 99;
+}
+
+int main()
+{
+    unsafe
+    {
+        Callback callback = &Target;
+        if (callback(41) != 42)
+        {
+            return 1;
+        }
+    }
+
+    return 0;
+}

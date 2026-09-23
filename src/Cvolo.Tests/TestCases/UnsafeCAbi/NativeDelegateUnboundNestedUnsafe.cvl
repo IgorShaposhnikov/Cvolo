@@ -1,0 +1,24 @@
+unsafe "C" delegate int Callback(int value);
+unsafe "C" int Inc(int value){return value+1;}
+
+unbound int Probe(refvar int marker)
+{
+    unsafe
+    {
+        Callback cb = &Inc;
+        void* p = (void*)cb;
+        Callback roundtrip = (Callback)p;
+        if (roundtrip(41) != 42)
+        {
+            marker = 1;
+        }
+    }
+
+    return marker;
+}
+
+int main()
+{
+    var marker = 0;
+    return Probe(refvar marker);
+}

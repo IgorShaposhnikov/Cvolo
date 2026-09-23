@@ -1,0 +1,30 @@
+struct SmallPair { int A; int B; }
+struct LargeTriple { long A; long B; long C; }
+unsafe union NativeNumber { long I; double D; }
+unsafe "C" delegate int NativeCallback(int value);
+unsafe "C" delegate bool NativeBoolCallback(bool value);
+[LibraryImport("cabi_fixture", win: "./callback_globals.obj", linux: "./callback_globals.o", mac: "./callback_globals.o")]
+extern "C"
+{
+ int call_callback(NativeCallback callback,int value); void native_bump_version(); void native_bump_counter(); int call_stored_callback(int value); NativeCallback get_native_callback();
+ bool native_bool_identity(bool value); bool call_bool_callback(NativeBoolCallback callback,bool value);
+ SmallPair native_small_pair(SmallPair value); LargeTriple native_large_triple(LargeTriple value); NativeNumber native_union_add(NativeNumber value);
+ [ImportName("native_version")] global int Version;
+ [ImportName("native_counter")] global var int Counter;
+ [ImportName("native_callback")] global var NativeCallback CallbackSlot;
+}
+unsafe "C" int AddTwo(int value){return value+2;}
+unsafe "C" bool Invert(bool value){return !value;}
+[SuppressWarning("CVL1003")]
+[UnsafeBody]
+int main()
+{
+ NativeCallback callback=&AddTwo; if(call_callback(callback,40)!=42)return 1;
+ if(Version!=7)return 2; native_bump_version(); if(Version!=8)return 3;
+ if(Counter!=10)return 4; native_bump_counter(); if(Counter!=15)return 5; Counter=21; if(Counter!=21)return 6;
+ CallbackSlot=callback; if(call_stored_callback(38)!=40)return 7; NativeCallback fromC=get_native_callback(); if(fromC(39)!=42)return 8;
+ if(!native_bool_identity(true)||native_bool_identity(false))return 9; NativeBoolCallback b=&Invert; if(call_bool_callback(b,true))return 10; if(!call_bool_callback(b,false))return 11;
+ SmallPair s=SmallPair { A:10, B:20 }; var so=native_small_pair(s); if(so.A!=11||so.B!=22)return 12;
+ LargeTriple l=LargeTriple { A:(long)10, B:(long)20, C:(long)30 }; var lo=native_large_triple(l); if(lo.A!=11||lo.B!=22||lo.C!=33)return 13;
+ NativeNumber n=NativeNumber { I:(long)37 }; var no=native_union_add(n); if(no.I!=42)return 14; return 0;
+}

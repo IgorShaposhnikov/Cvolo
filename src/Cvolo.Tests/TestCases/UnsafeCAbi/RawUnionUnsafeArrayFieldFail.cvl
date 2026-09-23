@@ -1,0 +1,11 @@
+delegate void SafeHandler(int value);
+
+unsafe union Bad
+{
+    SafeHandler[2] Handlers;
+}
+
+int main()
+{
+    return 0;
+}

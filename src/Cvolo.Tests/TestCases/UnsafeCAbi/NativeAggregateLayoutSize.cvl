@@ -1,0 +1,15 @@
+struct Padded
+{
+    byte Prefix;
+    int Value;
+}
+
+int main()
+{
+    if (sizeof<Padded>() != 8)
+    {
+        return 1;
+    }
+
+    return 0;
+}

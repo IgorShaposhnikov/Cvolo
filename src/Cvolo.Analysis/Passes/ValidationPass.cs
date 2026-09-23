@@ -73,6 +73,7 @@ public sealed class ValidationPass(BindingContext context)
 		GetExpressionType,
 		CheckTargetTypedLambda,
 		CheckFunctionGroupConversion,
+		CheckDelegateValue,
 		IsMethodGroupReference,
 		CheckMustUseDiscard,
 		() => Switches);
@@ -266,6 +267,10 @@ public sealed class ValidationPass(BindingContext context)
 	private void CheckFunctionGroupConversion(ExpressionSyntax expression, DelegateTypeSymbol delegateType, SymbolTable scope)
 		=> Expressions.CheckFunctionGroupConversion(expression, delegateType, scope);
 
+	/// <summary>Validates an expression against an expected delegate value type.</summary>
+	private void CheckDelegateValue(ExpressionSyntax expression, DelegateTypeSymbol delegateType, SymbolTable scope)
+		=> Expressions.CheckDelegateValue(expression, delegateType, scope);
+
 	/// <summary>Returns whether a member access denotes a bound method group rather than data access.</summary>
 	private bool IsMethodGroupReference(MemberAccessExpressionSyntax memberAccess, SymbolTable scope)
 		=> Expressions.IsMethodGroupReference(memberAccess, scope);
@@ -276,6 +281,4 @@ public sealed class ValidationPass(BindingContext context)
 
 	/// <summary>Checks that discarding an expression result does not violate must-use semantics.</summary>
 	private void CheckMustUseDiscard(ExpressionSyntax expr, SymbolTable scope) => Expressions.CheckMustUseDiscard(expr, scope);
-
-
 }

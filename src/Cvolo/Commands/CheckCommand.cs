@@ -15,11 +15,13 @@ internal sealed class CheckCommand : Command
 		var legacyVisibilityOption = new Option<bool>("--legacy-visibility") { Description = "Disable the visibility system and treat all declarations as public (v0.2.0-alpha behavior)" };
 		var strictOption = new Option<bool>("--strict-option") { Description = "Disable the '?' optional type syntax; require explicit Option<T> types" };
 		var formatOption = new Option<string>("--format") { Description = "The format of the diagnostic output (text, json)." };
+		var noStdlibOption = new Option<bool>("--no-stdlib") { Description = "Check without automatically including the Cvolo standard library." };
 
 		Add(pathArg);
 		Add(legacyVisibilityOption);
 		Add(strictOption);
 		Add(formatOption);
+		Add(noStdlibOption);
 
 		SetAction(parseResult =>
 		{
@@ -28,7 +30,8 @@ internal sealed class CheckCommand : Command
 			var path = parseResult.GetValue(pathArg)!;
 			var legacyVisibilityVal = parseResult.GetValue(legacyVisibilityOption);
 			var strictOptionVal = parseResult.GetValue(strictOption);
-			var exitCode = _compilerDriver.Compile(path, llvmOnly: false, isShared: false, emitIr: false, optLevel: "O0", checkOnly: true, legacyVisibility: legacyVisibilityVal, strictOption: strictOptionVal, format: formatVal);
+			var noStdlibVal = parseResult.GetValue(noStdlibOption);
+			var exitCode = _compilerDriver.Compile(path, llvmOnly: false, isShared: false, emitIr: false, optLevel: "O0", checkOnly: true, legacyVisibility: legacyVisibilityVal, strictOption: strictOptionVal, format: formatVal, noStdlib: noStdlibVal);
 			Environment.Exit(exitCode);
 		});
 	}

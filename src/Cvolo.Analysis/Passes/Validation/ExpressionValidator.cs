@@ -143,6 +143,7 @@ internal sealed class ExpressionValidator(
 							IdentifierExpressionSyntax idArg =>
 								!Calls.IsKnownVariable(idArg, scope) && Overloads.HasCandidates(idArg.Name),
 							MemberAccessExpressionSyntax maArg => IsMethodGroupReference(maArg, scope),
+							UnaryExpressionSyntax { Operator: "&" } addressArg => IsFunctionAddressOperand(addressArg.Operand, scope),
 							_ => false,
 						};
 						if (isDeferredGroup)
@@ -175,6 +176,12 @@ internal sealed class ExpressionValidator(
 
 						break;
 					}
+
+					// Callable value paths take precedence over direct function/function-group lookup.
+					// This is required for both safe and native delegate variables that collide with
+					// a function of the same source name.
+					if (TryBindDelegateInvocation(call, scope, argTypes, deferredGroupArgs))
+						break;
 
 					if (call.TypeArguments.Count > 0)
 					{
@@ -231,35 +238,6 @@ internal sealed class ExpressionValidator(
 
 					if (func is null)
 					{
-						// Not an ordinary function: could this be a delegate value invocation
-						// ('h(42)') or a delegate-typed field invocation ('obj.Handler(42)')?
-						if (Calls.TryResolveDelegateInvocation(call, scope, out var delegateType))
-						{
-							context.ResolvedDelegateCalls[call] = delegateType;
-
-							if (deferredGroupArgs.Count > 0)
-							{
-								for (var i = 0; i < call.Arguments.Count; i++)
-								{
-									if (i >= delegateType.Parameters.Count)
-										break;
-									foreach (var (arg, argIndex) in deferredGroupArgs)
-									{
-										if (argIndex != i)
-											continue;
-										if (delegateType.Parameters[i].Type is not DelegateTypeSymbol paramDelegateTy)
-											continue;
-										if (arg is LambdaExpressionSyntax lam)
-											CheckTargetTypedLambda(lam, paramDelegateTy, scope);
-										else
-											CheckFunctionGroupConversion(arg, paramDelegateTy, scope);
-									}
-								}
-							}
-
-							break;
-						}
-
 						var currentFileContext = context.FileContexts[context.CurrentUnit!];
 						var sigString = string.Join(", ", argTypes.Select(t => t.Name));
 						context.Diagnostics.Report(currentFileContext, call.ArgumentListSpan, $"No overload of function '{call.FunctionName}' matches argument types ({sigString})");
@@ -283,10 +261,7 @@ internal sealed class ExpressionValidator(
 
 							if (paramType is DelegateTypeSymbol delegateParamType)
 							{
-								if (arg is LambdaExpressionSyntax lam)
-									CheckTargetTypedLambda(lam, delegateParamType, scope);
-								else
-									CheckFunctionGroupConversion(arg, delegateParamType, scope);
+								CheckDelegateValue(arg, delegateParamType, scope);
 							}
 							else
 							{
@@ -306,11 +281,14 @@ internal sealed class ExpressionValidator(
 					if (func.SafetyTier == SafetyTier.Unsafe && !func.IsUnsafeBody && _validation.UnsafeDepth == 0)
 					{
 						var currentFileContext = context.FileContexts[context.CurrentUnit!];
+						var isNativeAbiCall = func.IsNativeAbi;
 						context.Diagnostics.Report(
 							currentFileContext,
 							call.Span,
-							$"Calling a raw 'unsafe function' '{call.FunctionName}' from code that is not in an unsafe context.",
-							DiagnosticIds.CallUnsafeFromSafe);
+							isNativeAbiCall
+								? $"Calling native-ABI function '{call.FunctionName}' requires an unsafe context."
+								: $"Calling a raw 'unsafe function' '{call.FunctionName}' from code that is not in an unsafe context.",
+							isNativeAbiCall ? DiagnosticIds.NativeAbiFunctionCallRequiresUnsafe : DiagnosticIds.CallUnsafeFromSafe);
 					}
 
 					var argCount = call.Arguments.Count;
@@ -360,28 +338,47 @@ internal sealed class ExpressionValidator(
 
 						// Delegate-typed assignment targets: a lambda / function-group RHS is
 						// target-typed against the assigned variable's delegate type (§4.2 / §22).
-						if (bin.Left is IdentifierExpressionSyntax targetId &&
-							((scope.Lookup(targetId.Name) as VariableSymbol) ?? context.ResolveGlobalReference(targetId.Name, out _)) is { Type: DelegateTypeSymbol assigneeDelegate })
+						// Any delegate-valued l-value (local/global/member path) supplies the expected
+						// type for lambdas, function groups, native &Function, and contextual null.
+						// This is intentionally not restricted to simple identifiers: native callback
+						// slots are commonly stored in globals and dispatch-table struct fields.
+						if (GetType(bin.Left, scope) is DelegateTypeSymbol assigneeDelegate)
 						{
-							if (bin.Right is LambdaExpressionSyntax assignLambda)
+							var isTargetTypedDelegateValue = bin.Right is LambdaExpressionSyntax
+								|| (bin.Right is IdentifierExpressionSyntax assignGroupId && !Calls.IsKnownVariable(assignGroupId, scope) && Overloads.HasCandidates(assignGroupId.Name))
+								|| (bin.Right is MemberAccessExpressionSyntax assignGroupMa && IsMethodGroupReference(assignGroupMa, scope))
+								|| (bin.Right is UnaryExpressionSyntax { Operator: "&" } assignAddress && IsFunctionAddressOperand(assignAddress.Operand, scope))
+								|| bin.Right is NullLiteralExpressionSyntax;
+							if (isTargetTypedDelegateValue)
 							{
-								CheckTargetTypedLambda(assignLambda, assigneeDelegate, scope);
-								break;
-							}
-							if (bin.Right is IdentifierExpressionSyntax assignGroupId && !Calls.IsKnownVariable(assignGroupId, scope) && Overloads.HasCandidates(assignGroupId.Name))
-							{
-								CheckFunctionGroupConversion(assignGroupId, assigneeDelegate, scope);
-								break;
-							}
-							if (bin.Right is MemberAccessExpressionSyntax assignGroupMa && IsMethodGroupReference(assignGroupMa, scope))
-							{
-								CheckFunctionGroupConversion(assignGroupMa, assigneeDelegate, scope);
+								CheckDelegateValue(bin.Right, assigneeDelegate, scope);
 								break;
 							}
 						}
 
 						// 1. Evaluate the right-hand side first (reads and moves happen here)
 						Check(bin.Right, scope);
+
+						// Plain delegate-value assignment still has nominal/category compatibility rules
+						// even when no contextual conversion is involved. Native delegates are nominal,
+						// and safe/native representations never convert implicitly.
+						if (GetType(bin.Left, scope) is DelegateTypeSymbol assignmentDelegate
+							&& GetType(bin.Right, scope) is DelegateTypeSymbol assignedDelegate)
+						{
+							var currentFileContext = context.FileContexts[context.CurrentUnit!];
+							if (assignmentDelegate.IsNative != assignedDelegate.IsNative)
+							{
+								context.Diagnostics.Report(currentFileContext, bin.Right.Span,
+									"Conversion between safe delegates and native delegates is not defined.",
+									DiagnosticIds.SafeNativeDelegateConversion);
+							}
+							else if (assignmentDelegate.IsNative && !assignmentDelegate.Equals(assignedDelegate))
+							{
+								context.Diagnostics.Report(currentFileContext, bin.Right.Span,
+									$"Implicit conversion between distinct native delegate types '{assignedDelegate.Name}' and '{assignmentDelegate.Name}' is not allowed.",
+									DiagnosticIds.InvalidFunctionConversion);
+							}
+						}
 
 						// 2. Evaluate the left-hand side second (re-initialization happens here)
 						if (bin.Left is IdentifierExpressionSyntax id)
@@ -450,6 +447,15 @@ internal sealed class ExpressionValidator(
 				Intrinsics.ValidateTypeof(typeofExpr);
 				break;
 			case UnaryExpressionSyntax unary:
+				if (unary.Operator == "&" && IsFunctionAddressOperand(unary.Operand, scope))
+				{
+					var currentFileContext = context.FileContexts[context.CurrentUnit!];
+					context.Diagnostics.Report(currentFileContext, unary.Span,
+						"Function address requires an expected native delegate type.",
+						DiagnosticIds.FunctionAddressRequiresContext);
+					break;
+				}
+
 				Check(unary.Operand, scope);
 				CheckUnaryCast(unary, scope);
 				CheckUnaryEnumTilde(unary, scope);
@@ -502,7 +508,15 @@ internal sealed class ExpressionValidator(
 							context.Diagnostics.Report(currentFileContext, defaultExpr.Span, $"Type '{defaultExpr.TypeName}' cannot be used with default because it is not a Trivial Copy Type");
 						}
 					}
-					else if (defaultTy is DelegateTypeSymbol)
+					else if (defaultTy is DelegateTypeSymbol { IsNative: true })
+					{
+						if (_validation.UnsafeDepth == 0)
+						{
+							var currentFileContext = context.FileContexts[context.CurrentUnit!];
+							context.Diagnostics.Report(currentFileContext, defaultExpr.Span, $"default({defaultExpr.TypeName}) creates a null native function pointer and requires unsafe.", DiagnosticIds.NullForNativeDelegate);
+						}
+					}
+					else if (defaultTy is DelegateTypeSymbol { IsNative: false })
 					{
 						// Safe delegates are non-null / non-default-initializable (§16).
 						var currentFileContext = context.FileContexts[context.CurrentUnit!];
@@ -515,6 +529,60 @@ internal sealed class ExpressionValidator(
 				break;
 		}
 	}
+
+	/// <summary>
+	/// Binds a call through a delegate-typed value path before direct function lookup.
+	/// </summary>
+	private bool TryBindDelegateInvocation(
+		CallExpressionSyntax call,
+		SymbolTable scope,
+		IReadOnlyList<TypeSymbol> argumentTypes,
+		IReadOnlyList<(ExpressionSyntax Arg, int Index)> deferredGroupArgs)
+	{
+		if (!Calls.TryResolveDelegateInvocation(call, scope, out var delegateType) || delegateType is null)
+			return false;
+
+		context.ResolvedDelegateCalls[call] = delegateType;
+
+		// Delegate calls do not pass through ordinary function overload resolution, so validate
+		// their argument shape explicitly. Reuse the ordinary signature compatibility rules to
+		// preserve integer-width/reference conversions and contextual native-delegate null.
+		var parameterTypes = delegateType.Parameters.Select(parameter => parameter.Type).ToArray();
+		if (Overloads.CompareSignature(parameterTypes, argumentTypes, isVariadic: false) < 0)
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			var actual = string.Join(", ", argumentTypes.Select(type => type.Name));
+			context.Diagnostics.Report(currentFileContext, call.ArgumentListSpan,
+				$"Delegate '{delegateType.Name}' cannot be invoked with argument types ({actual}).");
+		}
+		if (delegateType.IsNative && _validation.UnsafeDepth == 0)
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, call.Span,
+				$"Invoking native delegate '{delegateType.Name}' requires an unsafe context.",
+				DiagnosticIds.NativeDelegateInvokeRequiresUnsafe);
+		}
+
+		foreach (var (arg, argIndex) in deferredGroupArgs)
+		{
+			if (argIndex >= delegateType.Parameters.Count)
+				continue;
+			if (delegateType.Parameters[argIndex].Type is DelegateTypeSymbol parameterDelegate)
+			{
+				CheckDelegateValue(arg, parameterDelegate, scope);
+			}
+			else
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, arg.Span,
+					"Callable expression requires a delegate-typed parameter at this argument position.",
+					DiagnosticIds.LambdaRequiresExpectedDelegateType);
+			}
+		}
+
+		return true;
+	}
+
 
 	/// <summary>
 	/// Validates member access and returns the resolved semantic member type when available.
@@ -577,6 +645,21 @@ internal sealed class ExpressionValidator(
 
 		if (leftType is UnionTypeSymbol unionType)
 		{
+			// Raw-union projection is a reinterpretation operation.  Validate it here, after
+			// ordinary member/namespace resolution has already produced the receiver type.
+			// Do not re-run GetType(expr.Expression): namespace-qualified expressions are not
+			// value receivers and a second generic lookup would spuriously diagnose their root
+			// namespace (for example `System`) as an undefined variable.
+			if (unionType.IsUnsafe && _validation.UnsafeDepth == 0)
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(
+					currentFileContext,
+					expr.Span,
+					$"Accessing field '{expr.MemberName}' of raw unsafe union '{unionType.Name}' requires an unsafe context.",
+					DiagnosticIds.UnsafeUnionAccessRequiresUnsafe);
+			}
+
 			var variantField = unionType.FindField(expr.MemberName);
 			if (variantField is null)
 			{
@@ -766,12 +849,16 @@ internal sealed class ExpressionValidator(
 				nested.ResolvedStructTypeName = field.Type.Name;
 				CheckParenthesizedStructInitialization(nested, scope);
 			}
+			else if (field.Type is DelegateTypeSymbol delegateFieldType)
+			{
+				CheckDelegateValue(init.Expression, delegateFieldType, scope);
+			}
 			else
 			{
 				Check(init.Expression, scope);
 			}
 
-			var initType = GetType(init.Expression, scope);
+			var initType = field.Type is DelegateTypeSymbol ? null : GetType(init.Expression, scope);
 			if (initType is not null && !TypesAssignable(field.Type, initType))
 			{
 				var isValidNull = initType.Equals(TypeSymbol.Null) &&
@@ -1213,34 +1300,268 @@ internal sealed class ExpressionValidator(
 	}
 
 	/// <summary>
+	/// Returns true when the operand of unary '&amp;' denotes a visible function group rather than
+	/// ordinary value storage. This keeps raw data-address semantics separate from target-typed
+	/// native function addresses without introducing a second syntax node.
+	/// </summary>
+	private bool IsFunctionAddressOperand(ExpressionSyntax operand, SymbolTable scope)
+	{
+		if (operand is IdentifierExpressionSyntax id)
+		{
+			if (Calls.IsKnownVariable(id, scope))
+				return false;
+			if (Overloads.HasCandidates(id.Name))
+				return true;
+			return context.GenericFunctionTemplates.ContainsKey(context.GetMangledName(id.Name, context.CurrentNamespace))
+				|| context.GenericFunctionTemplates.ContainsKey(id.Name);
+		}
+
+		if (operand is MemberAccessExpressionSyntax member)
+		{
+			var name = GetQualifiedMemberPath(member);
+			if (name is not null)
+			{
+				var candidates = new List<FunctionSymbol>();
+				Overloads.GatherCandidates(name, candidates);
+				if (candidates.Count > 0)
+					return true;
+			}
+
+			// A bound extension method is a callable group, but it cannot become a raw native
+			// function pointer because doing so would lose its receiver/context. Recognize it here
+			// so the dedicated function-address diagnostic is emitted instead of a data-address path.
+			return IsMethodGroupReference(member, scope);
+		}
+
+		return false;
+	}
+
+	/// <summary>
+	/// Contextually resolves one <c>&amp;Function</c> expression against an expected nominal native
+	/// delegate and records the exact function selected for code generation.
+	/// </summary>
+	private void BindNativeFunctionAddress(
+		UnaryExpressionSyntax address,
+		DelegateTypeSymbol delegateType,
+		SymbolTable scope)
+	{
+		var currentFileContext = context.FileContexts[context.CurrentUnit!];
+		if (_validation.UnsafeDepth == 0)
+		{
+			context.Diagnostics.Report(currentFileContext, address.Span,
+				"Taking a native function address requires an unsafe context.",
+				DiagnosticIds.FunctionAddressRequiresUnsafe);
+		}
+
+		var candidates = new List<FunctionSymbol>();
+		var isBoundMethod = false;
+		switch (address.Operand)
+		{
+			case IdentifierExpressionSyntax id:
+				{
+					var mangledTemplate = context.GetMangledName(id.Name, context.CurrentNamespace);
+					if (context.GenericFunctionTemplates.ContainsKey(mangledTemplate)
+						|| context.GenericFunctionTemplates.ContainsKey(id.Name))
+					{
+						context.Diagnostics.Report(currentFileContext, address.Span,
+							$"Taking the address of generic function '{id.Name}' is not supported in this increment.",
+							DiagnosticIds.FunctionAddressGeneric);
+						return;
+					}
+
+					Overloads.GatherCandidates(id.Name, candidates);
+					break;
+				}
+			case MemberAccessExpressionSyntax member:
+				{
+					var qualifiedName = GetQualifiedMemberPath(member);
+					if (qualifiedName is not null)
+						Overloads.GatherCandidates(qualifiedName, candidates);
+
+					if (candidates.Count == 0 && IsMethodGroupReference(member, scope))
+					{
+						isBoundMethod = true;
+						var receiverType = GetType(member.Expression, scope);
+						if (receiverType is PointerTypeSymbol ptr)
+							receiverType = ptr.ReferencedType;
+						if (receiverType is not null)
+							candidates.AddRange(context.GetExtensionMethodCandidates(receiverType, context.CurrentUnit, member.MemberName)
+								.Select(candidate => candidate.Function));
+					}
+					break;
+				}
+		}
+
+		if (isBoundMethod)
+		{
+			context.Diagnostics.Report(currentFileContext, address.Span,
+				"A bound method cannot be converted to a native function pointer because it requires receiver state.",
+				DiagnosticIds.FunctionAddressNotAddressable);
+			return;
+		}
+
+		var addressable = candidates.Where(IsNativeAddressableFunction).ToList();
+		if (addressable.Count == 0)
+		{
+			context.Diagnostics.Report(currentFileContext, address.Span,
+				"Function is not addressable as a native callback. Use an imported extern, expose extern, or unsafe native-ABI Cvolo function.",
+				DiagnosticIds.FunctionAddressNotAddressable);
+			return;
+		}
+
+		var signatureMatches = addressable.Where(function => NativeFunctionSignatureMatches(function, delegateType)).ToList();
+		if (signatureMatches.Count == 0)
+		{
+			context.Diagnostics.Report(currentFileContext, address.Span,
+				$"No addressable function matches native delegate '{delegateType.Name}' parameter and return types.",
+				DiagnosticIds.FunctionAddressSignatureMismatch);
+			return;
+		}
+
+		var conventionMatches = signatureMatches
+			.Where(function => string.Equals(GetSourceCallingConvention(function), delegateType.CallingConvention, StringComparison.Ordinal))
+			.ToList();
+		if (conventionMatches.Count == 0)
+		{
+			context.Diagnostics.Report(currentFileContext, address.Span,
+				$"Function calling convention does not match native delegate '{delegateType.Name}' ({delegateType.CallingConvention}).",
+				DiagnosticIds.FunctionAddressCallingConventionMismatch);
+			return;
+		}
+
+		if (conventionMatches.Count > 1)
+		{
+			context.Diagnostics.Report(currentFileContext, address.Span,
+				"Function address is ambiguous for the expected native delegate signature.",
+				DiagnosticIds.FunctionAddressOverloadAmbiguous);
+			return;
+		}
+
+		context.ResolvedNativeFunctionAddresses[address] = (conventionMatches[0], delegateType);
+	}
+
+	private static bool NativeFunctionSignatureMatches(FunctionSymbol function, DelegateTypeSymbol delegateType)
+	{
+		if (function.IsVariadic || function.Parameters.Count != delegateType.Parameters.Count)
+			return false;
+		if (!function.ReturnType.Equals(delegateType.ReturnType))
+			return false;
+		for (var i = 0; i < function.Parameters.Count; i++)
+		{
+			if (!function.Parameters[i].Type.Equals(delegateType.Parameters[i].Type))
+				return false;
+		}
+		return true;
+	}
+
+	private static bool IsNativeAddressableFunction(FunctionSymbol function) =>
+		function.IsExtern || function.IsExported || function.IsNativeAbi;
+
+	private static string GetSourceCallingConvention(FunctionSymbol function) =>
+		function.CallingConvention ?? "C";
+
+	private static string? GetQualifiedMemberPath(ExpressionSyntax expression) => expression switch
+	{
+		IdentifierExpressionSyntax id => id.Name,
+		MemberAccessExpressionSyntax member when GetQualifiedMemberPath(member.Expression) is { } prefix => $"{prefix}.{member.MemberName}",
+		_ => null,
+	};
+
+	/// <summary>
 	/// Checks an expression that supplies a delegate-typed value: target-typed lambdas,
 	/// function/method group conversions, rejected null literals, or a plain value expression.
 	/// Shared by variable declarations, struct/union member initializers, and parameter passes.
 	/// </summary>
 	public void CheckDelegateValue(ExpressionSyntax expr, DelegateTypeSymbol delegateType, SymbolTable scope)
 	{
+		if (expr is UnaryExpressionSyntax { Operator: "&" } functionAddress
+			&& IsFunctionAddressOperand(functionAddress.Operand, scope))
+		{
+			if (!delegateType.IsNative)
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, expr.Span,
+					$"Function addresses can only be converted to native delegates; '{delegateType.Name}' is a safe delegate.",
+					DiagnosticIds.SafeNativeDelegateConversion);
+				return;
+			}
+
+			BindNativeFunctionAddress(functionAddress, delegateType, scope);
+			return;
+		}
+
 		if (expr is LambdaExpressionSyntax targetLambda)
 		{
-			CheckTargetTypedLambda(targetLambda, delegateType, scope);
+			if (delegateType.IsNative)
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, expr.Span,
+					$"Native delegate '{delegateType.Name}' cannot be created from a safe lambda; use the address of a compatible native-ABI function.",
+					DiagnosticIds.InvalidFunctionConversion);
+			}
+			else
+			{
+				CheckTargetTypedLambda(targetLambda, delegateType, scope);
+			}
 		}
 		else if (expr is NullLiteralExpressionSyntax)
 		{
-			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.Report(currentFileContext, expr.Span,
-				$"Cannot initialize delegate '{delegateType.Name}' with 'null'; delegates are non-null values.",
-				DiagnosticIds.NullLiteralForDelegate);
+			if (!delegateType.IsNative)
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, expr.Span,
+					$"Cannot initialize delegate '{delegateType.Name}' with 'null'; delegates are non-null values.",
+					DiagnosticIds.NullLiteralForDelegate);
+			}
 		}
 		else if (expr is IdentifierExpressionSyntax groupId && !Calls.IsKnownVariable(groupId, scope) && Overloads.HasCandidates(groupId.Name))
 		{
-			CheckFunctionGroupConversion(groupId, delegateType, scope);
+			if (delegateType.IsNative)
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, groupId.Span,
+					$"Native delegate '{delegateType.Name}' requires an explicit function address; use '&{groupId.Name}'.",
+					DiagnosticIds.InvalidFunctionConversion);
+			}
+			else
+			{
+				CheckFunctionGroupConversion(groupId, delegateType, scope);
+			}
 		}
 		else if (expr is MemberAccessExpressionSyntax groupMa && IsMethodGroupReference(groupMa, scope))
 		{
-			CheckFunctionGroupConversion(groupMa, delegateType, scope);
+			if (delegateType.IsNative)
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, groupMa.Span,
+					$"Native delegate '{delegateType.Name}' requires an explicit function address ('&Function'); implicit function-group conversion is not defined.",
+					DiagnosticIds.InvalidFunctionConversion);
+			}
+			else
+			{
+				CheckFunctionGroupConversion(groupMa, delegateType, scope);
+			}
 		}
 		else
 		{
 			Check(expr, scope);
+			var actualType = GetType(expr, scope);
+			if (actualType is DelegateTypeSymbol actualDelegate)
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				if (actualDelegate.IsNative != delegateType.IsNative)
+				{
+					context.Diagnostics.Report(currentFileContext, expr.Span,
+						"Conversion between safe delegates and native delegates is not defined.",
+						DiagnosticIds.SafeNativeDelegateConversion);
+				}
+				else if (delegateType.IsNative && !actualDelegate.Equals(delegateType))
+				{
+					context.Diagnostics.Report(currentFileContext, expr.Span,
+						$"Implicit conversion between distinct native delegate types '{actualDelegate.Name}' and '{delegateType.Name}' is not allowed.",
+						DiagnosticIds.InvalidFunctionConversion);
+				}
+			}
 		}
 	}
 
@@ -1336,6 +1657,10 @@ internal sealed class ExpressionValidator(
 				nestedSub.ResolvedStructTypeName = field.Type.Name;
 				CheckParenthesizedStructInitialization(nestedSub, scope);
 			}
+			else if (field.Type is DelegateTypeSymbol delegateFieldType)
+			{
+				CheckDelegateValue(init.Expression, delegateFieldType, scope);
+			}
 			else
 			{
 				Check(init.Expression, scope);
@@ -1406,11 +1731,51 @@ internal sealed class ExpressionValidator(
 	/// </summary>
 	private void CheckUnaryCast(UnaryExpressionSyntax unary, SymbolTable scope)
 	{
-		if (!unary.Operator.StartsWith('(') || !unary.Operator.EndsWith("*)") || unary.Operator.Length < 4)
+		if (!unary.Operator.StartsWith('(') || !unary.Operator.EndsWith(')') || unary.Operator.Length < 3)
 			return;
 
+		var targetTypeName = unary.Operator[1..^1];
+		var targetType = context.ResolveType(targetTypeName);
 		var operandType = GetType(unary.Operand, scope);
-		if (operandType is null)
+		if (targetType is null || operandType is null)
+			return;
+
+		var targetDelegate = targetType as DelegateTypeSymbol;
+		var operandDelegate = operandType as DelegateTypeSymbol;
+		var targetRawPointer = targetType as RawPointerTypeSymbol;
+		var operandRawPointer = operandType as RawPointerTypeSymbol;
+
+		// Safe/native delegates have deliberately incompatible representations. No explicit
+		// reinterpret bridge is provided between {invoke,context} and one-word native addresses.
+		if ((targetDelegate is { IsNative: true } && operandDelegate is { IsNative: false })
+			|| (targetDelegate is { IsNative: false } && operandDelegate is { IsNative: true }))
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, unary.Span,
+				"Explicit conversion between safe delegates and native delegates is not defined.",
+				DiagnosticIds.SafeNativeDelegateReinterpret);
+			return;
+		}
+
+		// Native-delegate reinterpretation is intentionally narrow: raw pointer <-> native
+		// delegate and native delegate <-> native delegate, all only in an unsafe context.
+		var isNativeReinterpret =
+			(targetDelegate is { IsNative: true } && (operandRawPointer is not null || operandDelegate is { IsNative: true }))
+			|| (operandDelegate is { IsNative: true } && targetRawPointer is not null);
+		if (isNativeReinterpret)
+		{
+			if (_validation.UnsafeDepth == 0)
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, unary.Span,
+					"Casting a native delegate to/from a raw pointer or another native delegate requires an unsafe context.",
+					DiagnosticIds.NativeDelegateCastRequiresUnsafe);
+			}
+			return;
+		}
+
+		// From here down preserve the existing destructive raw-pointer cast rules.
+		if (targetRawPointer is null)
 			return;
 
 		if (operandType is UnionTypeSymbol optionUnion && optionUnion.IsNpoEligible)
@@ -1422,27 +1787,21 @@ internal sealed class ExpressionValidator(
 		}
 
 		// Destructive cast '(T*)x' extracts the owning heap pointer from a heap-allocated
-		// handle. A plain stack value has no hidden pointer to extract, so reject it here
-		// (function parameters are allowed: they may already carry a handle by value).
-		var targetTypeName = unary.Operator.Substring(1, unary.Operator.Length - 3);
-		var targetType = context.ResolveType(targetTypeName);
-
-		if (targetType is not null && targetType.Equals(operandType))
+		// handle. A plain stack value has no hidden pointer to extract, so reject it here.
+		if (targetRawPointer.ElementType.Equals(operandType) && unary.Operand is IdentifierExpressionSyntax id)
 		{
-			if (unary.Operand is IdentifierExpressionSyntax id)
+			var sym = scope.Lookup(id.Name) as VariableSymbol;
+			if (sym is not null && !sym.IsHeapAllocated && sym.Origin != OriginKind.Parameter)
 			{
-				var sym = scope.Lookup(id.Name) as VariableSymbol;
-				if (sym is not null && !sym.IsHeapAllocated && sym.Origin != OriginKind.Parameter)
-				{
-					var currentFileContext = context.FileContexts[context.CurrentUnit!];
-					context.Diagnostics.Report(currentFileContext, unary.Span,
-						$"Destructive cast '({targetTypeName}*)' requires an owning heap handle; '{id.Name}' is a stack value. Allocate it with 'heap {targetTypeName} {{ ... }}' or 'heap {targetTypeName}(...)', or cast its address with '&{id.Name}'.");
-				}
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, unary.Span,
+					$"Destructive cast '({targetTypeName})' requires an owning heap handle; '{id.Name}' is a stack value. Allocate it with 'heap {operandType.Name} {{ ... }}' or 'heap {operandType.Name}(...)', or cast its address with '&{id.Name}'.");
 			}
 		}
 
-		if (targetType is not null && targetType.Equals(TypeSymbol.Char) &&
-			operandType.Equals(TypeSymbol.String) && _validation.UnsafeDepth == 0)
+		if (targetRawPointer.ElementType.Equals(TypeSymbol.Char)
+			&& operandType.Equals(TypeSymbol.String)
+			&& _validation.UnsafeDepth == 0)
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
 			context.Diagnostics.Report(currentFileContext, unary.Span,
@@ -1468,6 +1827,17 @@ internal sealed class ExpressionValidator(
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
 			context.Diagnostics.Report(currentFileContext, isPat.Span, $"The 'is' pattern can only be applied to a union type, got '{operandType.Name}'.");
+			return;
+		}
+
+		if (unionType.IsUnsafe)
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(
+				currentFileContext,
+				isPat.Span,
+				$"Cannot apply the 'is' pattern to raw 'unsafe union' '{unionType.Name}'; it has no tag and cannot be pattern-matched over variants.",
+				DiagnosticIds.UnsafeUnionTaggedOperation);
 			return;
 		}
 

@@ -101,9 +101,12 @@ internal sealed class FunctionBodyValidator(
 	/// <summary>
 	/// Returns whether a function body executes under the existing unsafe validation tier.
 	/// </summary>
-	private static bool IsUnsafeFunction(FunctionDeclarationSyntax func) =>
-		func.Modifier == SafetyTier.Unsafe ||
+	private static bool IsUnsafeFunction(FunctionDeclarationSyntax func)
+	{
+		return func.Modifier == SafetyTier.Unsafe ||
+		func.CallingConvention is not null ||
 		func.Attributes.Any(static a => string.Equals(a.Name, "UnsafeBody", StringComparison.OrdinalIgnoreCase));
+	}
 
 	/// <summary>
 	/// Returns whether the supplied statement shape is known to terminate with a return.
@@ -307,5 +310,4 @@ internal sealed class FunctionBodyValidator(
 
 		return false;
 	}
-
 }

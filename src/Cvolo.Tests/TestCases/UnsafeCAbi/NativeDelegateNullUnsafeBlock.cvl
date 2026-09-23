@@ -1,0 +1,23 @@
+unsafe "C" delegate int Callback(int value);
+
+int main()
+{
+    var result = 2;
+
+    unsafe
+    {
+        Callback first = null;
+        Callback second = default(Callback);
+
+        if (first != null)
+        {
+            result = 1;
+        }
+        else if (second == null)
+        {
+            result = 0;
+        }
+    }
+
+    return result;
+}

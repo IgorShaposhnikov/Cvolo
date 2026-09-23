@@ -1,0 +1,16 @@
+unsafe "C" delegate void Callback(int value);
+
+unsafe "C" int Wrong(float value)
+{
+    return 0;
+}
+
+int main()
+{
+    unsafe
+    {
+        Callback callback = &Wrong;
+    }
+
+    return 0;
+}

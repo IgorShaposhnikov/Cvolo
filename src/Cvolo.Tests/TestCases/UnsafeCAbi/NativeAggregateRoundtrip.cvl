@@ -1,0 +1,66 @@
+struct SmallPair
+{
+    int A;
+    int B;
+}
+
+struct LargeTriple
+{
+    long A;
+    long B;
+    long C;
+}
+
+unsafe union NativeNumber
+{
+    long I;
+    double D;
+}
+
+unsafe "C" SmallPair BumpSmall(SmallPair value)
+{
+    return SmallPair { A: value.A + 1, B: value.B + 2 };
+}
+
+unsafe "C" LargeTriple BumpLarge(LargeTriple value)
+{
+    return LargeTriple { A: value.A + 1, B: value.B + 2, C: value.C + 3 };
+}
+
+unsafe "C" NativeNumber BumpUnion(NativeNumber value)
+{
+    value.I = value.I + 5;
+    return value;
+}
+
+[SuppressWarning("CVL1003")]
+int main()
+{
+    var result = 0;
+
+    unsafe
+    {
+        SmallPair small = SmallPair { A: 10, B: 20 };
+        var smallOut = BumpSmall(small);
+        if (smallOut.A != 11 || smallOut.B != 22)
+        {
+            result = 1;
+        }
+
+        LargeTriple large = LargeTriple { A: (long)10, B: (long)20, C: (long)30 };
+        var largeOut = BumpLarge(large);
+        if (result == 0 && (largeOut.A != 11 || largeOut.B != 22 || largeOut.C != 33))
+        {
+            result = 2;
+        }
+
+        NativeNumber number = NativeNumber { I: (long)37 };
+        var numberOut = BumpUnion(number);
+        if (result == 0 && numberOut.I != 42)
+        {
+            result = 3;
+        }
+    }
+
+    return result;
+}

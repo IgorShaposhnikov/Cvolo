@@ -1,0 +1,6 @@
+extern void Use(int[4] values);
+
+int main()
+{
+    return 0;
+}

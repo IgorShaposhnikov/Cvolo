@@ -1,6 +1,7 @@
 using Cvolo.Analysis.Symbols;
 using Cvolo.Analysis.Symbols.Base;
 using Cvolo.Analysis.Symbols.Collections;
+using Cvolo.Analysis.Symbols.FFI;
 using Cvolo.Analysis.Symbols.Structs;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
@@ -56,6 +57,23 @@ internal sealed class TypeDeclarationRegistrar(BindingContext context)
 		var isNative = delegateDecl.IsNative;
 		var callingConvention = delegateDecl.CallingConvention;
 
+		if (isNative && callingConvention is not ("C" or "system"))
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, delegateDecl.Span,
+				$"Unknown calling convention '{callingConvention}'. Supported calling conventions are \"C\" and \"system\".",
+				DiagnosticIds.UnknownCallingConvention);
+			return;
+		}
+
+		if (isNative && delegateDecl.GenericParameters.Count > 0)
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, delegateDecl.Span,
+				$"Native delegate '{delegateDecl.Name}' cannot be generic.", DiagnosticIds.NativeDelegateGenericUnsupported);
+			return;
+		}
+
 		// Generic delegate template: register the template; parameters/return are resolved
 		// per-instantiation (mirroring generic structs).
 		if (delegateDecl.GenericParameters.Count > 0)
@@ -99,7 +117,38 @@ internal sealed class TypeDeclarationRegistrar(BindingContext context)
 			return;
 		}
 
-		if (!DelegateTypeHelpers.IsProvenanceIndependentReturn(returnType))
+		if (isNative)
+		{
+			if (NativeAbiSemanticSafety.ContainsResourceBearingValue(context, returnType))
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, delegateDecl.ReturnTypeSpan, $"Return type '{returnType.Name}' is resource-bearing.", DiagnosticIds.NativeAbiResourceBearing);
+				return;
+			}
+			if (NativeAbiRepresentability.ContainsEnumWithoutExplicitStorage(returnType))
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, delegateDecl.ReturnTypeSpan, $"Return type '{returnType.Name}' contains an enum without explicit ABI storage.", DiagnosticIds.NativeEnumRequiresExplicitStorage);
+				return;
+			}
+			if (!NativeAbiRepresentability.IsNativeAbiRepresentable(returnType, NativeAbiPosition.Return))
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, delegateDecl.ReturnTypeSpan,
+					$"Return type '{returnType.Name}' of native delegate '{delegateDecl.Name}' is not representable across the C ABI boundary.",
+					DiagnosticIds.NativeAbiTypeNotRepresentable);
+				return;
+			}
+			if (!NativeAbiAggregateClassification.IsVerifiedForDirectBoundary(returnType, context.NativePointerBytes, context.NativeAggregateAbiSupported))
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, delegateDecl.ReturnTypeSpan,
+					$"Return aggregate '{returnType.Name}' of native delegate '{delegateDecl.Name}' has no verified target ABI classification.",
+					DiagnosticIds.NativeAbiAggregateUnclassified);
+				return;
+			}
+		}
+		else if (!DelegateTypeHelpers.IsProvenanceIndependentReturn(returnType))
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
 			var provenanceId = returnType switch
@@ -134,6 +183,37 @@ internal sealed class TypeDeclarationRegistrar(BindingContext context)
 					$"Unknown parameter type '{p.Type}' in delegate declaration '{delegateDecl.Name}'");
 				continue;
 			}
+
+			if (isNative && NativeAbiSemanticSafety.ContainsResourceBearingValue(context, paramType))
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, p.Span, $"Parameter '{p.Name}' is resource-bearing.", DiagnosticIds.NativeAbiResourceBearing);
+				continue;
+			}
+			if (isNative && NativeAbiRepresentability.ContainsEnumWithoutExplicitStorage(paramType))
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, p.Span, $"Parameter '{p.Name}' contains an enum without explicit ABI storage.", DiagnosticIds.NativeEnumRequiresExplicitStorage);
+				continue;
+			}
+			if (isNative && !NativeAbiRepresentability.IsNativeAbiRepresentable(paramType, NativeAbiPosition.Parameter))
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, p.Span,
+					$"Parameter '{p.Name}' of type '{paramType.Name}' in native delegate '{delegateDecl.Name}' is not representable across the C ABI boundary.",
+					DiagnosticIds.NativeAbiTypeNotRepresentable);
+				continue;
+			}
+
+			if (isNative && !NativeAbiAggregateClassification.IsVerifiedForDirectBoundary(paramType, context.NativePointerBytes, context.NativeAggregateAbiSupported))
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, p.Span,
+					$"Parameter aggregate '{paramType.Name}' in native delegate '{delegateDecl.Name}' has no verified target ABI classification.",
+					DiagnosticIds.NativeAbiAggregateUnclassified);
+				continue;
+			}
+
 			parameters.Add(new ParameterSymbol(p.Name, paramType));
 		}
 
@@ -311,6 +391,13 @@ internal sealed class TypeDeclarationRegistrar(BindingContext context)
 
 		var (isMustUse, mustUseMsg) = _attributes.ExtractMustUse(unionDecl.Attributes);
 
+		if (unionDecl.IsUnsafe && unionDecl.GenericParameters.Count > 0)
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, unionDecl.Span, $"Raw unsafe union '{unionDecl.Name}' cannot be generic.", DiagnosticIds.UnsafeUnionGenericUnsupported);
+			return;
+		}
+
 		if (unionDecl.GenericParameters.Count > 0)
 		{
 			context.SymbolUnits[mangledName] = context.CurrentUnit!;
@@ -346,6 +433,15 @@ internal sealed class TypeDeclarationRegistrar(BindingContext context)
 			var isVoidVariant = field.Type == "void";
 			if (isVoidVariant)
 			{
+				if (unionDecl.IsUnsafe)
+				{
+					var currentFileContext = context.FileContexts[context.CurrentUnit!];
+					context.Diagnostics.Report(currentFileContext, field.Span,
+						$"Raw 'unsafe union' '{unionDecl.Name}' cannot contain a 'void' variant; raw unions have no tag and every field must be a concrete ABI-safe value type.",
+						DiagnosticIds.UnsafeUnionFieldNotAbiSafe);
+					continue;
+				}
+
 				fieldType = TypeSymbol.Void;
 			}
 			else
@@ -357,6 +453,15 @@ internal sealed class TypeDeclarationRegistrar(BindingContext context)
 					context.Diagnostics.Report(currentFileContext, field.Span, $"Unknown type '{field.Type}' of field '{field.Name}' in union '{unionDecl.Name}'");
 					continue;
 				}
+
+				if (unionDecl.IsUnsafe && !NativeAbiRepresentability.IsNativeAbiRepresentable(fieldType, NativeAbiPosition.RawUnionField))
+				{
+					var currentFileContext = context.FileContexts[context.CurrentUnit!];
+					context.Diagnostics.Report(currentFileContext, field.Span,
+						$"Field '{field.Name}' of type '{fieldType.Name}' is not representable in an 'unsafe union' across the C ABI boundary.",
+						DiagnosticIds.UnsafeUnionFieldNotAbiSafe);
+					continue;
+				}
 			}
 
 			fields.Add(new UnionFieldSymbol(field.Name, fieldType, isVoidVariant)
@@ -365,11 +470,21 @@ internal sealed class TypeDeclarationRegistrar(BindingContext context)
 			});
 		}
 
+		if (unionDecl.IsUnsafe && fields.Count == 0)
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, unionDecl.Span,
+				$"Raw 'unsafe union' '{unionDecl.Name}' requires at least one field.",
+				DiagnosticIds.UnsafeUnionEmpty);
+			return;
+		}
+
 		var unionSymbol = new UnionTypeSymbol(mangledName, fields)
 		{
 			Visibility = unionDecl.Visibility,
 			IsMustUse = isMustUse,
-			MustUseMessage = mustUseMsg
+			MustUseMessage = mustUseMsg,
+			IsUnsafe = unionDecl.IsUnsafe
 		};
 		context.UnionTypes[mangledName] = unionSymbol;
 	}
@@ -517,6 +632,7 @@ internal sealed class TypeDeclarationRegistrar(BindingContext context)
 
 		var enumSymbol = new EnumTypeSymbol(mangledName, variants, storageType)
 		{
+			HasExplicitStorageType = enumDecl.StorageType is not null,
 			IsFlags = isFlags,
 			IsNonExhaustive = isNonExhaustive,
 			Visibility = enumDecl.Visibility,

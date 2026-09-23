@@ -1,0 +1,7 @@
+[LibraryImport("native")]
+extern "C" global string Name;
+
+int main()
+{
+    return 0;
+}

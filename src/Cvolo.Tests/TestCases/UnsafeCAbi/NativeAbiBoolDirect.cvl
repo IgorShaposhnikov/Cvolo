@@ -1,0 +1,27 @@
+unsafe "C" bool Flip(bool value)
+{
+    if (value)
+    {
+        return false;
+    }
+
+    return true;
+}
+
+int main()
+{
+    unsafe
+    {
+        if (!Flip(false))
+        {
+            return 1;
+        }
+
+        if (Flip(true))
+        {
+            return 2;
+        }
+    }
+
+    return 0;
+}

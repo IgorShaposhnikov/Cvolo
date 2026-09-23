@@ -1,0 +1,25 @@
+unsafe union Value
+{
+    int First;
+    int Second;
+}
+
+int main()
+{
+    unsafe
+    {
+        Value value = Value { First: 42 };
+        if (value.Second != 42)
+        {
+            return 1;
+        }
+
+        value.Second = 7;
+        if (value.First != 7)
+        {
+            return 2;
+        }
+    }
+
+    return 0;
+}

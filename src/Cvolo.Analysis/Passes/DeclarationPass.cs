@@ -1,6 +1,7 @@
 using Cvolo.Analysis.Passes.Declaration;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
+using Cvolo.Core.Diagnostics;
 
 namespace Cvolo.Analysis.Passes;
 
@@ -17,6 +18,7 @@ public sealed class DeclarationPass(BindingContext context)
 	private readonly FunctionDeclarationRegistrar _functions = new(context);
 	private readonly GlobalVariableRegistrar _globals = new(context);
 	private readonly ExposeUsingValidator _exposeUsings = new(context);
+	private readonly NativeAbiPostDeclarationValidator _nativeAbiPost = new(context);
 	private ExtensionRegistrar? _extensions;
 	private ExtensionRegistrar Extensions => _extensions ??= new(context, _functions, _destructors, _genericDefaultCopies);
 	/// <summary>
@@ -69,6 +71,34 @@ public sealed class DeclarationPass(BindingContext context)
 					_types.DeclareEnum(enumDecl);
 				else if (member is DelegateDeclarationSyntax delegateDecl)
 					_types.DeclareDelegate(delegateDecl);
+				else if (member is DelegateBlockDeclarationSyntax delegateBlock)
+				{
+					// Delegate ABI blocks ('unsafe "C" { delegate ... }') are pure declaration
+					// scopes: they give the contained delegates one calling convention but are
+					// NOT executable unsafe blocks. Register each delegate with the block's
+					// convention spliced in when the declaration omits its own.
+					var blockConvention = delegateBlock.CallingConvention;
+					if (blockConvention is not ("C" or "system"))
+					{
+						var currentFileContext = context.FileContexts[context.CurrentUnit!];
+						context.Diagnostics.Report(currentFileContext, delegateBlock.Span,
+							$"Unknown calling convention '{delegateBlock.CallingConvention}'. Supported calling conventions are \"C\" and \"system\".",
+							DiagnosticIds.UnknownCallingConvention);
+						continue;
+					}
+
+					foreach (var d in delegateBlock.Delegates)
+					{
+						// If the inner delegate already declares a convention it wins; otherwise
+						// it inherits the block's. Emit as a fresh node so DeclareDelegate sees
+						// the effective convention without mutating syntax.
+						var effective = d.IsNative || d.CallingConvention is not null
+							? d
+							: new DelegateDeclarationSyntax(d.Span, d.ReturnType, d.Name, d.GenericParameters, d.Parameters,
+								d.Visibility, isNative: blockConvention is not null, callingConvention: blockConvention, d.NameSpan, d.ReturnTypeSpan);
+						_types.DeclareDelegate(effective);
+					}
+				}
 			}
 		}
 
@@ -109,6 +139,9 @@ public sealed class DeclarationPass(BindingContext context)
 			}
 		}
 
+		// Pass 1.25: extension destructors are now known; revalidate native ABI resource ownership.
+		_nativeAbiPost.Validate();
+
 		// Pass 1.5: Promote embedded-type extension methods onto every struct that
 		// embeds them — `w.TakeDamage(20)` on a struct that `embed`s BaseEntity
 		// resolves BaseEntity's extension with the outer struct as `this`.
@@ -125,6 +158,4 @@ public sealed class DeclarationPass(BindingContext context)
 		// on the concrete type — so it cannot live inside Pass 0a's DeclareStruct.
 		_genericDefaults.Validate(units);
 	}
-
-
 }

@@ -1,0 +1,14 @@
+unsafe "C" int Increment(int value)
+{
+    return value + 1;
+}
+
+int main()
+{
+    unsafe
+    {
+        var proc = &Increment;
+    }
+
+    return 0;
+}

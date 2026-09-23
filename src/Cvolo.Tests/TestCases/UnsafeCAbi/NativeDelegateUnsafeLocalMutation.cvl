@@ -1,0 +1,19 @@
+unsafe "C" delegate int Proc(int value);
+
+unsafe "C" int AddOne(int value)
+{
+    return value + 1;
+}
+
+int main()
+{
+    var result = 0;
+
+    unsafe
+    {
+        Proc proc = &AddOne;
+        result = proc(41);
+    }
+
+    return result == 42 ? 0 : 1;
+}

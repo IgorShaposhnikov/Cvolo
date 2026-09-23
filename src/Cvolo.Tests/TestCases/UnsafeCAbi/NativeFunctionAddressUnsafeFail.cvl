@@ -1,0 +1,12 @@
+unsafe "C" delegate int UnaryProc(int value);
+
+unsafe "C" int Increment(int value)
+{
+    return value + 1;
+}
+
+int main()
+{
+    UnaryProc proc = &Increment;
+    return 0;
+}

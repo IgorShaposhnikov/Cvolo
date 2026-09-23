@@ -61,7 +61,13 @@ public abstract class AstRewriterBase
 		if (node is FunctionDeclarationSyntax func)
 		{
 			var rewrittenBody = func.Body != null ? (BlockStatementSyntax)Rewrite(func.Body) : null;
-			return new FunctionDeclarationSyntax(func.Span, func.ReturnType, func.Name, func.GenericParameters, func.Parameters, rewrittenBody, func.Attributes, func.Modifier, func.Receiver, func.Visibility);
+			return new FunctionDeclarationSyntax(func.Span, func.ReturnType, func.Name, func.GenericParameters, func.Parameters, rewrittenBody, func.Attributes, func.Modifier, func.Receiver, func.Visibility, callingConvention: func.CallingConvention);
+		}
+
+		if (node is DelegateBlockDeclarationSyntax delegateBlock)
+		{
+			var rewrittenDelegates = delegateBlock.Delegates.Select(Rewrite).Cast<DelegateDeclarationSyntax>().ToList();
+			return new DelegateBlockDeclarationSyntax(delegateBlock.Span, delegateBlock.CallingConvention, rewrittenDelegates);
 		}
 
 		if (node is DelegateDeclarationSyntax delegateDecl)
@@ -87,7 +93,7 @@ public abstract class AstRewriterBase
 		if (node is GlobalVariableDeclarationSyntax globalDecl)
 		{
 			var rewrittenInit = globalDecl.Initializer != null ? (ExpressionSyntax)Rewrite(globalDecl.Initializer) : null;
-			return new GlobalVariableDeclarationSyntax(globalDecl.Span, globalDecl.Type, globalDecl.Name, rewrittenInit, globalDecl.IsMutable, globalDecl.Visibility);
+			return new GlobalVariableDeclarationSyntax(globalDecl.Span, globalDecl.Type, globalDecl.Name, rewrittenInit, globalDecl.IsMutable, globalDecl.Visibility, globalDecl.Attributes, globalDecl.IsForeign, globalDecl.CallingConvention);
 		}
 
 		if (node is ConstructorDeclarationSyntax ctor)
@@ -239,7 +245,7 @@ public abstract class AstRewriterBase
 		if (node is UnionDeclarationSyntax unionDecl)
 		{
 			var rewrittenFields = unionDecl.Fields.Select(Rewrite).Cast<UnionFieldSyntax>().ToList();
-			return new UnionDeclarationSyntax(unionDecl.Span, unionDecl.Name, unionDecl.GenericParameters, rewrittenFields, unionDecl.Attributes, unionDecl.Visibility);
+			return new UnionDeclarationSyntax(unionDecl.Span, unionDecl.Name, unionDecl.GenericParameters, rewrittenFields, unionDecl.Attributes, unionDecl.Visibility, isUnsafe: unionDecl.IsUnsafe);
 		}
 
 		if (node is UnionFieldSyntax unionField)

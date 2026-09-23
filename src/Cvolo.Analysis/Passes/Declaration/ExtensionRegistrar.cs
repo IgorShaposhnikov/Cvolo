@@ -195,7 +195,9 @@ internal sealed class ExtensionRegistrar(
 			context.SymbolUnits[overloadedName] = context.CurrentUnit!;
 
 			if (isDestructor)
-				destructors.Register(extDecl.ExtendedTypeName, newSymbol);
+			{
+				destructors.Register(extDecl.ExtendedTypeName, newSymbol, extendedType);
+			}
 		}
 
 		foreach (var ctorDecl in extDecl.Constructors)
@@ -463,11 +465,11 @@ internal sealed class ExtensionRegistrar(
 	{
 		if (context.ProtocolTemplates.TryGetValue(protoMangledName, out var decl)
 			&& context.ProtocolEffectiveMembers.TryGetValue(protoMangledName, out var effective))
-			return effective.Select(e => e.Member).ToList();
+			return [.. effective.Select(e => e.Member)];
 
 		// Fall back to the declared members if effective membership is unavailable.
 		return context.ProtocolTemplates.TryGetValue(protoMangledName, out var protoDecl)
-			? protoDecl.Members.ToList()
+			? [.. protoDecl.Members]
 			: [];
 	}
 

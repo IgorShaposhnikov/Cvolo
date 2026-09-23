@@ -20,6 +20,7 @@ public sealed class StructTypeSymbol(string name, IReadOnlyList<StructFieldSymbo
 
 	public bool IsMustUse { get; set; } = false;
 	public string? MustUseMessage { get; set; }
+	public bool HasDestructor { get; set; }
 
 	/// <summary>
 	/// Populates fields into a placeholder symbol during two-phase struct declaration.

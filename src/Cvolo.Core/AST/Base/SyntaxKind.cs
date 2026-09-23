@@ -76,6 +76,7 @@ public enum SyntaxKind
 	NameOfExpression,
 	TypeOfExpression,
 	DelegateDeclaration,
+	DelegateBlockDeclaration,
 	LambdaExpression,
 	LambdaParameter,
 }

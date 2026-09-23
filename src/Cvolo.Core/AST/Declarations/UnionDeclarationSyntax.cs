@@ -10,7 +10,8 @@ public sealed class UnionDeclarationSyntax(
 	IReadOnlyList<UnionFieldSyntax> fields,
 	IReadOnlyList<AttributeSyntax>? attributes = null,
 	Visibility? visibility = null,
-	IReadOnlyDictionary<string, string>? genericParameterDefaults = null) : SyntaxNode(span)
+	IReadOnlyDictionary<string, string>? genericParameterDefaults = null,
+	bool isUnsafe = false) : SyntaxNode(span)
 {
 	public override SyntaxKind Kind => SyntaxKind.UnionDeclaration;
 
@@ -19,6 +20,12 @@ public sealed class UnionDeclarationSyntax(
 	public IReadOnlyList<UnionFieldSyntax> Fields { get; } = fields;
 	public IReadOnlyList<AttributeSyntax> Attributes { get; } = attributes ?? [];
 	public Visibility Visibility { get; } = visibility ?? Visibility.Internal;
+
+	/// <summary>
+	/// True when the union is declared with the 'unsafe' modifier: a raw C-compatible union with
+	/// overlapping storage and no tag, as opposed to the default tagged union.
+	/// </summary>
+	public bool IsUnsafe { get; } = isUnsafe;
 
 	public IReadOnlyDictionary<string, string> GenericParameterDefaults { get; } = genericParameterDefaults ?? new Dictionary<string, string>();
 

@@ -1,0 +1,4 @@
+delegate int SafeProc(int value);
+unsafe "C" delegate int NativeProc(int value);
+unsafe "C" int Inc(int value){return value+1;}
+int main(){ unsafe { NativeProc native=&Inc; SafeProc safe=(SafeProc)native; } return 0;}

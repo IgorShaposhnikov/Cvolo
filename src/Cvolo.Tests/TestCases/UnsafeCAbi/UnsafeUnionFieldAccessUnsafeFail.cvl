@@ -1,0 +1,2 @@
+unsafe union Value { int Integer; float Floating; }
+int main(){Value v=Value { Integer: 123 }; float bits=v.Floating; return 0;}

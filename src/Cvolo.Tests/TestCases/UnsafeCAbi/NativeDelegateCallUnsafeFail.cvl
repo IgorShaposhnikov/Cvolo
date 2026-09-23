@@ -1,0 +1,8 @@
+unsafe "C" delegate int UnaryProc(int value);
+
+global var UnaryProc Proc;
+
+int main()
+{
+    return Proc(1);
+}

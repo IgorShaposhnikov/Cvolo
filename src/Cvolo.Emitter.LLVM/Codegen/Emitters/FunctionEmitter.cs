@@ -6,6 +6,7 @@ using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
 using Cvolo.Core.AST.Expressions;
 using Cvolo.Core.AST.Statements;
+using Cvolo.Emitter.LLVM.Codegen.TypeLowering;
 using Cvolo.Emitter.LLVM.Codegen.Values;
 using LLVMSharp.Interop;
 
@@ -43,6 +44,7 @@ internal sealed class FunctionEmitter(
 	private FunctionCodegenContext Function => getFunction();
 	private BindingContext BindingContext => codegen.BindingContext
 		?? throw new InvalidOperationException("Function emission requires an active binding context.");
+	private readonly NativeAbiAggregateLowering _nativeAggregates = new(codegen, lowerFfiType);
 
 	/// <summary>
 	/// Emits one function definition using the LLVM declaration previously registered under
@@ -65,6 +67,13 @@ internal sealed class FunctionEmitter(
 		var functionSymbol = BindingContext.Globals.Lookup(mangledName) as FunctionSymbol;
 		if (functionSymbol is not null)
 		{
+			if (codegen.NativeAbiFunctionPlans.TryGetValue(mangledName, out var nativePlan))
+			{
+				Function.NativeAbiPlan = nativePlan;
+				if (nativePlan.HasSRet)
+					Function.NativeSRetPointer = llvmFunction.GetParam(0);
+			}
+
 			if (functionSymbol.IsExported && checkedFfiBounds && functionSymbol.Parameters.Count > 0)
 				EmitCheckedFfiBoundsGuard(llvmFunction, functionSymbol);
 
@@ -161,7 +170,8 @@ internal sealed class FunctionEmitter(
 			if (functionSymbol.Parameters[i].Type is not (PointerTypeSymbol or RawPointerTypeSymbol))
 				continue;
 
-			var parameter = llvmFunction.GetParam((uint)i);
+			var parameterOffset = Function.NativeAbiPlan?.HasSRet == true ? 1u : 0u;
+			var parameter = llvmFunction.GetParam((uint)i + parameterOffset);
 			var isNull = Builder.BuildICmp(
 				LLVMIntPredicate.LLVMIntEQ,
 				parameter,
@@ -191,19 +201,45 @@ internal sealed class FunctionEmitter(
 	/// </summary>
 	private void BindResolvedParameters(LLVMValueRef llvmFunction, FunctionSymbol functionSymbol)
 	{
-		var isExported = functionSymbol.IsExported;
-		for (var i = 0; i < functionSymbol.Parameters.Count; i++)
+		var isNativeBoundary = functionSymbol.IsExported || functionSymbol.IsNativeAbi;
+		var nativePlan = Function.NativeAbiPlan;
+		var llvmParameterIndex = nativePlan?.HasSRet == true ? 1 : 0;
+
+		for (var i = 0; i < functionSymbol.Parameters.Count; i++, llvmParameterIndex++)
 		{
-			var parameter = llvmFunction.GetParam((uint)i);
+			var parameter = llvmFunction.GetParam((uint)llvmParameterIndex);
 			var parameterName = functionSymbol.Parameters[i].Name;
 			parameter.Name = parameterName;
-
 			var typeSymbol = functionSymbol.Parameters[i].Type;
-			var llvmType = isExported ? lowerFfiType(typeSymbol) : codegen.Types.Lower(typeSymbol);
+			var valuePlan = nativePlan is not null ? nativePlan.Parameters[i] : null;
+
+			if (valuePlan is { Kind: NativeAbiValuePassKind.IndirectAggregate })
+			{
+				Function.Locals[parameterName] = parameter;
+				Function.VariableTypes[parameterName] = typeSymbol;
+				continue;
+			}
+
+			if (valuePlan is { Kind: NativeAbiValuePassKind.DirectIntegerAggregate })
+			{
+				var aggregateStorage = _nativeAggregates.MaterializeDirectAggregate(
+					Builder, valuePlan, parameter, parameterName + ".from_abi");
+				Function.Locals[parameterName] = aggregateStorage;
+				Function.VariableTypes[parameterName] = typeSymbol;
+				continue;
+			}
+
+			// Locals always use the internal Cvolo representation. Native-boundary scalar
+			// parameters are converted once at entry before being stored.
+			var llvmType = codegen.Types.Lower(typeSymbol);
 			var alloca = Builder.BuildAlloca(llvmType, parameterName);
 
-			if (isExported && typeSymbol.Name == "bool")
-				parameter = Builder.BuildTrunc(parameter, LLVMTypeRef.Int1, "bool.trunc");
+			if (isNativeBoundary && typeSymbol.Name == "bool"
+				&& parameter.TypeOf.Kind == LLVMTypeKind.LLVMIntegerTypeKind
+				&& parameter.TypeOf.IntWidth > 1)
+			{
+				parameter = Builder.BuildTrunc(parameter, LLVMTypeRef.Int1, "bool.from_abi");
+			}
 
 			Builder.BuildStore(parameter, alloca);
 			Function.Locals[parameterName] = alloca;
@@ -225,7 +261,19 @@ internal sealed class FunctionEmitter(
 
 			var typeSymbol = BindingContext.ResolveType(function.Parameters[i].Type)!;
 			var llvmType = codegen.Types.Lower(typeSymbol);
+			var ffiType = function.CallingConvention is not null ? lowerFfiType(typeSymbol) : llvmType;
 			var alloca = Builder.BuildAlloca(llvmType, parameterName);
+
+			if (function.CallingConvention is not null
+				&& typeSymbol.Equals(TypeSymbol.Bool)
+				&& parameter.TypeOf.Kind == LLVMTypeKind.LLVMIntegerTypeKind
+				&& ffiType.Kind == LLVMTypeKind.LLVMIntegerTypeKind
+				&& parameter.TypeOf.IntWidth > llvmType.IntWidth)
+			{
+				// Fallback declarations still keep locals in Cvolo's internal i1 representation.
+				parameter = Builder.BuildTrunc(parameter, LLVMTypeRef.Int1, "bool.from_abi");
+			}
+
 			Builder.BuildStore(parameter, alloca);
 
 			Function.Locals[parameterName] = alloca;

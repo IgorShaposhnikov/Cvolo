@@ -1,0 +1,3 @@
+unsafe "C" delegate int Callback(int value);
+unbound int Probe(Callback cb){return cb(41);}
+int main(){return 0;}

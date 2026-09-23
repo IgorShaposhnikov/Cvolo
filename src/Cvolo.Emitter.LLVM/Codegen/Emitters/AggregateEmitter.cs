@@ -87,6 +87,34 @@ internal sealed class AggregateEmitter(
 			var fieldIndex = codegen.AggregateLayout.GetFieldIndex(unionType, init.MemberName);
 			var field = unionType.Fields[fieldIndex];
 
+			if (unionType.IsUnsafe)
+			{
+				// Raw unions have no active-tag metadata.  Clear the whole backing object before
+				// writing the selected projection so smaller fields do not leave poison/garbage
+				// in the tail bytes that are copied when the union is later moved by value.
+				memory.ZeroMemory(destPtr, memory.GetStoreSize(unionLayout));
+
+				if (!field.IsVoidVariant)
+				{
+					var castPtr = coercion.SafeBitCast(destPtr, LLVMTypeRef.CreatePointer(codegen.Types.Lower(field.Type), 0), "raw_union_field");
+					if (init.Expression is StructInitializationExpressionSyntax structVariant)
+					{
+						EmitStructInitializationInPlace(structVariant, castPtr);
+					}
+					else if (init.Expression is ParenthesizedStructInitializerExpressionSyntax parenVariant)
+					{
+						EmitParenthesizedStructInitializationInPlace(parenVariant, castPtr);
+					}
+					else
+					{
+						var value = emitExpression(init.Expression);
+						Builder.BuildStore(value, castPtr);
+					}
+				}
+
+				return;
+			}
+
 			// Null-pointer optimization: the flat slot is the pointer. Some(x) stores the reference
 			// directly and None stores nullptr; no tag or payload aggregate exists.
 			if (unionType.IsNpoEligible)
@@ -378,6 +406,12 @@ internal sealed class AggregateEmitter(
 			if (elementType is UnionTypeSymbol unionEl)
 			{
 				var unionLayout = codegen.Types.Lower(unionEl);
+				if (unionEl.IsUnsafe)
+				{
+					Builder.BuildStore(LLVMValueRef.CreateConstNull(unionLayout), elementPtr);
+					continue;
+				}
+
 				var tagPtr = Builder.BuildGEP2(unionLayout, elementPtr, new LLVMValueRef[]
 				{
 					LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
@@ -405,7 +439,9 @@ internal sealed class AggregateEmitter(
 
 		if (type is UnionTypeSymbol unionType)
 		{
-			if (unionType.IsNpoEligible)
+			// A raw union is just unmanaged overlapping storage; all-zero bytes are a valid
+			// empty storage representation and there is no tag that needs semantic seeding.
+			if (unionType.IsUnsafe || unionType.IsNpoEligible)
 				return true;
 			return false;
 		}
@@ -418,6 +454,41 @@ internal sealed class AggregateEmitter(
 		}
 
 		return true;
+	}
+
+
+	/// <summary>
+	/// Projects one union field from the address of the union storage. Raw-union fields are all
+	/// projected at byte offset zero; tagged unions continue to use their payload slot.
+	/// </summary>
+	public (LLVMValueRef ptr, TypeSymbol type) GetUnionFieldPointer(LLVMValueRef unionPtr, UnionTypeSymbol unionType, string fieldName)
+	{
+		var fieldIndex = codegen.AggregateLayout.GetFieldIndex(unionType, fieldName);
+		var field = unionType.Fields[fieldIndex];
+
+		if (unionType.IsNpoEligible && !field.IsVoidVariant)
+			return (unionPtr, field.Type);
+
+		if (unionType.IsUnsafe)
+		{
+			var projected = coercion.SafeBitCast(
+				unionPtr,
+				LLVMTypeRef.CreatePointer(codegen.Types.Lower(field.Type), 0),
+				"raw_union_field");
+			return (projected, field.Type);
+		}
+
+		var unionLayout = codegen.Types.Lower(unionType);
+		var payloadPtr = Builder.BuildGEP2(unionLayout, unionPtr, new LLVMValueRef[]
+		{
+			LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
+			LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1)
+		}, "union_payload_ptr");
+		var castPtr = coercion.SafeBitCast(
+			payloadPtr,
+			LLVMTypeRef.CreatePointer(codegen.Types.Lower(field.Type), 0),
+			"payload_cast_ptr");
+		return (castPtr, field.Type);
 	}
 
 
@@ -457,17 +528,8 @@ internal sealed class AggregateEmitter(
 						if (field is not null)
 						{
 							var actualThisPtr = Builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), thisPtr, "loaded_this_ptr");
-							if (unionType.IsNpoEligible && !field.IsVoidVariant)
-								return (actualThisPtr, field.Type, false, null);
-
-							var structLayoutTy = codegen.Types.Lower(unionType);
-							var payloadPtr = Builder.BuildGEP2(structLayoutTy, actualThisPtr, new LLVMValueRef[]
-							{
-								LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
-								LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1)
-							}, "union_payload_ptr");
-							var castPtr = Builder.BuildBitCast(payloadPtr, LLVMTypeRef.CreatePointer(codegen.Types.Lower(field.Type), 0), "payload_cast_ptr");
-							return (castPtr, field.Type, false, null);
+							var (fieldPtr, fieldType) = GetUnionFieldPointer(actualThisPtr, unionType, id.Name);
+							return (fieldPtr, fieldType, false, null);
 						}
 					}
 				}
@@ -530,18 +592,41 @@ internal sealed class AggregateEmitter(
 					return (refFieldPtr, refFieldType, false, GetTbaaTag(refStruct, refFieldIndex));
 				}
 
+				var refUnion = referred as UnionTypeSymbol ?? BindingContext.ResolveType(referred.Name) as UnionTypeSymbol;
+				if (refUnion is not null && refUnion.FindField(member.MemberName) is not null)
+				{
+					var rawPtr = Builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), parentPtr, "refunion_load");
+					var (fieldPtr, fieldType) = GetUnionFieldPointer(rawPtr, refUnion, member.MemberName);
+					return (fieldPtr, fieldType, false, null);
+				}
+
 				parentType = referred;
 			}
 
 			if (member.Operator == "->")
 			{
 				var rawPtr = Builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), parentPtr, "arrow_load");
-				var structType = (parentType as StructTypeSymbol)
-					?? (parentType is RawPointerTypeSymbol rawPointer ? rawPointer.ElementType as StructTypeSymbol : null)
-					?? (parentType is PointerTypeSymbol pointer ? pointer.ReferencedType as StructTypeSymbol : null)
-					?? BindingContext.ResolveType(parentType.Name) as StructTypeSymbol;
-				if (structType is null)
-					throw new InvalidOperationException($"Cannot resolve struct type for arrow operator on '{parentType.Name}'");
+				var pointeeType = parentType switch
+				{
+					RawPointerTypeSymbol rawPointer => rawPointer.ElementType,
+					PointerTypeSymbol pointer => pointer.ReferencedType,
+					_ => parentType,
+				};
+
+				if (pointeeType is not (StructTypeSymbol or UnionTypeSymbol)
+					&& BindingContext.ResolveType(pointeeType.Name) is TypeSymbol resolvedPointee)
+				{
+					pointeeType = resolvedPointee;
+				}
+
+				if (pointeeType is UnionTypeSymbol arrowUnion)
+				{
+					var (fieldPtr1, fieldType1) = GetUnionFieldPointer(rawPtr, arrowUnion, member.MemberName);
+					return (fieldPtr1, fieldType1, false, null);
+				}
+
+				if (pointeeType is not StructTypeSymbol structType)
+					throw new InvalidOperationException($"Cannot resolve aggregate type for arrow operator on '{parentType.Name}'");
 
 				var fieldIndex = codegen.AggregateLayout.GetFieldIndex(structType, member.MemberName);
 				var fieldType = structType.Fields[fieldIndex].Type;
@@ -560,19 +645,8 @@ internal sealed class AggregateEmitter(
 
 			if (parentType is UnionTypeSymbol unionType)
 			{
-				var fieldIndex = codegen.AggregateLayout.GetFieldIndex(unionType, member.MemberName);
-				var fieldType = unionType.Fields[fieldIndex].Type;
-				if (unionType.IsNpoEligible && !unionType.Fields[fieldIndex].IsVoidVariant)
-					return (parentPtr, fieldType, false, null);
-
-				var structLayoutTy = codegen.Types.Lower(parentType);
-				var payloadPtr = Builder.BuildGEP2(structLayoutTy, parentPtr, new LLVMValueRef[]
-				{
-					LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
-					LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1)
-				}, "union_payload_ptr");
-				var castPtr = coercion.SafeBitCast(payloadPtr, LLVMTypeRef.CreatePointer(codegen.Types.Lower(fieldType), 0), "payload_cast_ptr");
-				return (castPtr, fieldType, false, null);
+				var (fieldPtr, fieldType) = GetUnionFieldPointer(parentPtr, unionType, member.MemberName);
+				return (fieldPtr, fieldType, false, null);
 			}
 
 			var dotStructType = (parentType as StructTypeSymbol) ?? BindingContext.ResolveType(parentType.Name) as StructTypeSymbol;
@@ -672,6 +746,8 @@ internal sealed class AggregateEmitter(
 			var structType = retType as StructTypeSymbol ?? BindingContext.ResolveType(retType.Name) as StructTypeSymbol;
 			if (structType is not null)
 			{
+				if (callVal.TypeOf.Kind == LLVMTypeKind.LLVMPointerTypeKind)
+					return (callVal, structType, false, null);
 				var structLayout = codegen.Types.Lower(structType);
 				var tempAlloc = Builder.BuildAlloca(structLayout, "call_struct_tmp");
 				Builder.BuildStore(callVal, tempAlloc);
@@ -681,6 +757,8 @@ internal sealed class AggregateEmitter(
 			var unionType = retType as UnionTypeSymbol ?? BindingContext.ResolveType(retType.Name) as UnionTypeSymbol;
 			if (unionType is not null)
 			{
+				if (callVal.TypeOf.Kind == LLVMTypeKind.LLVMPointerTypeKind)
+					return (callVal, unionType, false, null);
 				var unionLayout = codegen.Types.Lower(unionType);
 				var tempAlloc = Builder.BuildAlloca(unionLayout, "call_union_tmp");
 				Builder.BuildStore(callVal, tempAlloc);
@@ -859,6 +937,7 @@ internal sealed class AggregateEmitter(
 			var strConstant = emitStringLiteral(line);
 			Builder.BuildCall2(putsType, putsFunc, new LLVMValueRef[] { strConstant }, "puts_call");
 		}
+
 		Builder.BuildCall2(exitType, exitFunc, new LLVMValueRef[]
 		{
 			LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1)

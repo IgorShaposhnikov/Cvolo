@@ -6,6 +6,7 @@ struct Cell
 }
 
 // [UnsafeBody] opts the function out of TBAA tagging entirely.
+[SuppressWarning("CVL1001")]
 [UnsafeBody]
 int Poke()
 {

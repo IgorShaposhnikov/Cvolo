@@ -4,6 +4,7 @@ using Cvolo.Analysis.Symbols.Base;
 using Cvolo.Analysis.Symbols.Structs;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
+using Cvolo.Emitter.LLVM.Codegen.TypeLowering;
 using LLVMSharp.Interop;
 
 namespace Cvolo.Emitter.LLVM.Codegen.Emitters;
@@ -31,6 +32,7 @@ internal sealed class DeclarationEmitter(
 	private readonly Dictionary<string, ExternBlockFunctionSyntax> _externBlockFunctions = [];
 	private readonly Dictionary<string, ConstructorDeclarationSyntax> _constructorInitializers = [];
 	private readonly HashSet<string> _exportedSymbols = [];
+	private readonly NativeAbiAggregateLowering _nativeAggregates = new(codegen, lowerFfiType);
 
 	/// <summary>
 	/// Source extern declarations keyed by the Cvolo call-site name used by <see cref="CallEmitter"/>.
@@ -126,6 +128,25 @@ internal sealed class DeclarationEmitter(
 			}
 
 			var llvmUnion = codegen.LlvmStructTypes[unionType.Name];
+
+			if (unionType.IsUnsafe)
+			{
+				// Raw 'unsafe union' backing preserves the C natural size and alignment via an array
+				// of largest-alignment integers. All fields live at byte offset 0.
+				var (byteSize, alignment) = codegen.AggregateLayout.GetRawUnionLayout(unionType);
+				var elementType = alignment switch
+				{
+					1 => LLVMTypeRef.Int8,
+					2 => LLVMTypeRef.Int16,
+					4 => LLVMTypeRef.Int32,
+					_ => LLVMTypeRef.Int64,
+				};
+				llvmUnion.StructSetBody(
+					[LLVMTypeRef.CreateArray(elementType, (uint)(byteSize / alignment))],
+					false);
+				continue;
+			}
+
 			var maxPayloadSize = unionType.Fields
 				.Where(f => !f.IsVoidVariant)
 				.Select(f => codegen.AggregateLayout.GetByteSize(f.Type))
@@ -293,19 +314,27 @@ internal sealed class DeclarationEmitter(
 		}
 
 		var returnTypeSymbol = BindingContext.ResolveType(declaration.ReturnType)!;
-		var returnType = codegen.Types.Lower(returnTypeSymbol);
 		codegen.FunctionReturnTypes[declaration.Name] = returnTypeSymbol;
 
 		var parameterSymbols = declaration.Parameters
 			.Select(parameter => BindingContext.ResolveType(parameter.Type)!)
 			.ToList();
-		var parameterTypes = parameterSymbols.Select(codegen.Types.Lower).ToArray();
 		codegen.FunctionParameterTypes[declaration.Name] = parameterSymbols;
+		var nativePlan = _nativeAggregates.Build(returnTypeSymbol, parameterSymbols);
+		codegen.NativeAbiFunctionPlans[declaration.Name] = nativePlan;
 
 		var functionType = declaration.IsVariadic
-			? LLVMTypeRef.CreateFunction(returnType, parameterTypes, IsVarArg: true)
-			: LLVMTypeRef.CreateFunction(returnType, parameterTypes);
+			? LLVMTypeRef.CreateFunction(nativePlan.FunctionReturnType, nativePlan.FunctionParameterTypes.ToArray(), IsVarArg: true)
+			: LLVMTypeRef.CreateFunction(nativePlan.FunctionReturnType, nativePlan.FunctionParameterTypes.ToArray());
 		var function = codegen.Module.AddFunction(declaration.Name, functionType);
+		_nativeAggregates.ApplyFunctionAggregateAttributes(function, nativePlan);
+		NativeAbiAttributeEmitter.ApplyBoolFunctionAttributes(
+			codegen.LLVMContext,
+			function,
+			codegen.Module.Target,
+			returnTypeSymbol,
+			parameterSymbols,
+			nativePlan.HasSRet ? 1 : 0);
 		codegen.Globals[declaration.Name] = function;
 		codegen.FunctionTypes[declaration.Name] = functionType;
 	}
@@ -320,23 +349,29 @@ internal sealed class DeclarationEmitter(
 			return;
 
 		var returnTypeSymbol = BindingContext.ResolveType(declaration.ReturnType)!;
-		var returnType = codegen.Types.Lower(returnTypeSymbol);
 		codegen.FunctionReturnTypes[symbol.Name] = returnTypeSymbol;
 
 		var parameterSymbols = declaration.Parameters
 			.Select(parameter => BindingContext.ResolveType(parameter.Type)!)
 			.ToList();
-		var parameterTypes = parameterSymbols.Select(codegen.Types.Lower).ToArray();
 		codegen.FunctionParameterTypes[symbol.Name] = parameterSymbols;
+		var nativePlan = _nativeAggregates.Build(returnTypeSymbol, parameterSymbols);
+		codegen.NativeAbiFunctionPlans[symbol.Name] = nativePlan;
 
 		var functionType = declaration.IsVariadic
-			? LLVMTypeRef.CreateFunction(returnType, parameterTypes, IsVarArg: true)
-			: LLVMTypeRef.CreateFunction(returnType, parameterTypes);
+			? LLVMTypeRef.CreateFunction(nativePlan.FunctionReturnType, nativePlan.FunctionParameterTypes.ToArray(), IsVarArg: true)
+			: LLVMTypeRef.CreateFunction(nativePlan.FunctionReturnType, nativePlan.FunctionParameterTypes.ToArray());
 		var nativeName = symbol.ImportName ?? declaration.Name;
 		var function = codegen.Module.AddFunction(nativeName, functionType);
-		function.FunctionCallConv = symbol.CallingConvention == "system"
-			? (uint)LLVMCallConv.LLVMX86StdcallCallConv
-			: (uint)LLVMCallConv.LLVMCCallConv;
+		function.FunctionCallConv = CallingConventionResolver.Resolve(symbol.CallingConvention, codegen.Module.Target);
+		_nativeAggregates.ApplyFunctionAggregateAttributes(function, nativePlan);
+		NativeAbiAttributeEmitter.ApplyBoolFunctionAttributes(
+			codegen.LLVMContext,
+			function,
+			codegen.Module.Target,
+			returnTypeSymbol,
+			parameterSymbols,
+			nativePlan.HasSRet ? 1 : 0);
 		codegen.Globals[symbol.Name] = function;
 		codegen.FunctionTypes[symbol.Name] = functionType;
 	}
@@ -353,25 +388,33 @@ internal sealed class DeclarationEmitter(
 		var returnTypeSymbol = BindingContext.ResolveType(declaration.ReturnType)!;
 		var declaredSymbol = emitName == "main" ? null : BindingContext.Globals.Lookup(emitName);
 		var isExported = declaredSymbol is FunctionSymbol { IsExported: true };
-		var returnType = isExported ? lowerFfiType(returnTypeSymbol) : codegen.Types.Lower(returnTypeSymbol);
+		var isNativeAbi = declaredSymbol is FunctionSymbol { IsNativeAbi: true };
+		var isNativeBoundary = isExported || isNativeAbi;
 		codegen.FunctionReturnTypes[emitName] = returnTypeSymbol;
 
 		List<TypeSymbol> parameterSymbols;
 		List<LLVMTypeRef> parameterTypes = [];
-		if (isExported && declaredSymbol is FunctionSymbol exportSymbol)
+		NativeAbiFunctionPlan? nativePlan = null;
+		LLVMTypeRef returnType;
+		if (isNativeBoundary && declaredSymbol is FunctionSymbol nativeBoundarySymbol)
 		{
-			parameterSymbols = exportSymbol.Parameters.Select(parameter => parameter.Type).ToList();
-			parameterTypes.AddRange(parameterSymbols.Select(lowerFfiType));
+			parameterSymbols = nativeBoundarySymbol.Parameters.Select(parameter => parameter.Type).ToList();
+			nativePlan = _nativeAggregates.Build(returnTypeSymbol, parameterSymbols);
+			codegen.NativeAbiFunctionPlans[emitName] = nativePlan;
+			returnType = nativePlan.FunctionReturnType;
+			parameterTypes.AddRange(nativePlan.FunctionParameterTypes);
 		}
 		else if (BindingContext.Globals.Lookup(emitName) is FunctionSymbol functionSymbol)
 		{
 			parameterSymbols = functionSymbol.Parameters.Select(parameter => parameter.Type).ToList();
 			parameterTypes.AddRange(parameterSymbols.Select(codegen.Types.Lower));
+			returnType = codegen.Types.Lower(returnTypeSymbol);
 		}
 		else
 		{
 			parameterSymbols = [.. declaration.Parameters.Select(parameter => BindingContext.ResolveType(parameter.Type)!)];
 			parameterTypes.AddRange(parameterSymbols.Select(codegen.Types.Lower));
+			returnType = codegen.Types.Lower(returnTypeSymbol);
 		}
 
 		codegen.FunctionParameterTypes[emitName] = parameterSymbols;
@@ -397,12 +440,32 @@ internal sealed class DeclarationEmitter(
 
 		if (declaredSymbol is FunctionSymbol symbol)
 		{
+			// Native-ABI functions are defined C-side functions: their signature and calls follow
+			// the declared Cvolo calling convention on the concrete target.
+			if (symbol.IsNativeAbi)
+			{
+				llvmFunction.FunctionCallConv = CallingConventionResolver.Resolve(symbol.CallingConvention, codegen.Module.Target);
+			}
+
+			if (isNativeBoundary)
+			{
+				if (nativePlan is not null)
+					_nativeAggregates.ApplyFunctionAggregateAttributes(llvmFunction, nativePlan);
+				NativeAbiAttributeEmitter.ApplyBoolFunctionAttributes(
+					codegen.LLVMContext,
+					llvmFunction,
+					codegen.Module.Target,
+					returnTypeSymbol,
+					parameterSymbols,
+					nativePlan?.HasSRet == true ? 1 : 0);
+			}
+
 			for (var i = 0; i < symbol.Parameters.Count; i++)
 			{
 				if ((symbol.IsNoAlias || symbol.Parameters[i].IsNoAlias)
 					&& symbol.Parameters[i].Type is PointerTypeSymbol or RawPointerTypeSymbol)
 				{
-					AddStringAttribute(llvmFunction, (LLVMAttributeIndex)(i + 1), "noalias");
+					AddStringAttribute(llvmFunction, (LLVMAttributeIndex)(i + 1 + (nativePlan?.HasSRet == true ? 1 : 0)), "noalias");
 				}
 			}
 

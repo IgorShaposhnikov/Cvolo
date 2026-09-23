@@ -1,0 +1,7 @@
+unsafe "C" delegate void Callback(int value);
+
+int main()
+{
+    Callback callback = null;
+    return 0;
+}

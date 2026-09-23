@@ -1,0 +1,16 @@
+unsafe "system" delegate int SystemProc(int value);
+
+unsafe "C" int CFunction(int value)
+{
+    return value;
+}
+
+int main()
+{
+    unsafe
+    {
+        SystemProc proc = &CFunction;
+    }
+
+    return 0;
+}

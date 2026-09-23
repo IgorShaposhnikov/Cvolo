@@ -42,7 +42,10 @@ public sealed class CvoloSourcePrinter
 				var fGenerics = f.GenericParameters.Count > 0 ? $"<{string.Join(", ", f.GenericParameters)}>" : "";
 				var fParms = string.Join(", ", f.Parameters.Select(Print));
 				var fBody = f.Body != null ? $" {Print(f.Body, indent)}" : ";\n";
-				return $"{fAttrs}\n{ind}{f.ReturnType} {f.Name}{fGenerics}({fParms}){fBody}";
+				var fPrefix = f.CallingConvention is not null
+					? $"unsafe \"{f.CallingConvention}\" "
+					: f.Modifier is not null ? $"{f.Modifier.ToString()!.ToLowerInvariant()} " : "";
+				return $"{fAttrs}\n{ind}{fPrefix}{f.ReturnType} {f.Name}{fGenerics}({fParms}){fBody}";
 
 			case ExternDeclarationSyntax ed:
 				var edParms = string.Join(", ", ed.Parameters.Select(Print)) + (ed.IsVariadic ? ", ..." : "");
@@ -228,7 +231,7 @@ public sealed class CvoloSourcePrinter
 
 			case UnionDeclarationSyntax ud:
 				var udFields = string.Join("", ud.Fields.Select(uf => $"{ind}    {Print(uf)}"));
-				return $"{PrintAttributes(ud.Attributes, indent)}\n{ind}union {ud.Name}{Generics(ud.GenericParameters)} {{\n{udFields}{ind}}}\n";
+				return $"{PrintAttributes(ud.Attributes, indent)}\n{ind}{(ud.IsUnsafe ? "unsafe " : "")}union {ud.Name}{Generics(ud.GenericParameters)} {{\n{udFields}{ind}}}\n";
 
 			case UnionFieldSyntax uf:
 				return $"{uf.Type} {uf.Name};\n";
@@ -245,9 +248,19 @@ public sealed class CvoloSourcePrinter
 				return $"{ind}alias {ta.Name}{Generics(ta.GenericParameters)} = {ta.Type};\n";
 
 			case DelegateDeclarationSyntax dd:
-				var ddNative = dd.IsNative ? $"unsafe {dd.CallingConvention} " : "";
+				var ddNative = dd.IsNative ? $"unsafe \"{dd.CallingConvention}\" " : "";
+				var ddVisibility = dd.SyntacticVisibility is null ? "" : $"{dd.Visibility.ToString().ToLowerInvariant()} ";
 				var ddParms = string.Join(", ", dd.Parameters.Select(Print));
-				return $"{ind}{ddNative}delegate {dd.ReturnType} {dd.Name}{Generics(dd.GenericParameters)}({ddParms});\n";
+				return $"{ind}{ddVisibility}{ddNative}delegate {dd.ReturnType} {dd.Name}{Generics(dd.GenericParameters)}({ddParms});\n";
+
+			case DelegateBlockDeclarationSyntax db:
+				var dbMembers = string.Join("", db.Delegates.Select(d =>
+				{
+					var visibility = d.SyntacticVisibility is null ? "" : $"{d.Visibility.ToString().ToLowerInvariant()} ";
+					var parms = string.Join(", ", d.Parameters.Select(Print));
+					return $"{ind}    {visibility}delegate {d.ReturnType} {d.Name}{Generics(d.GenericParameters)}({parms});\n";
+				}));
+				return $"{ind}unsafe \"{db.CallingConvention}\" {{\n{dbMembers}{ind}}}\n";
 
 			case SwitchStatementSyntax sw:
 				var swCases = string.Join("", sw.Cases.Select(sc => $"{ind}    case {(sc.IsDefault ? "default" : sc.VariableName != null ? $"{sc.VariantName} {sc.VariableName}" : sc.VariantName)}:\n{string.Join("", sc.Body.Select(s => Print(s, indent + 2)))}"));

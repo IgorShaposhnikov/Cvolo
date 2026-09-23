@@ -1,0 +1,13 @@
+struct Pair
+{
+    int A;
+    int B;
+    int C;
+}
+
+extern void Use(Pair value);
+
+int main()
+{
+    return 0;
+}

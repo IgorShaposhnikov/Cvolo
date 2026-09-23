@@ -1,0 +1,14 @@
+[LibraryImport("native", win: "native.lib", linux: "./libnative.so", mac: "./libnative.dylib")]
+extern "C"
+{
+    [ImportName("native_version")]
+    global int Version;
+
+    [ImportName("native_error")]
+    global var int Error;
+}
+
+int main()
+{
+    return 0;
+}

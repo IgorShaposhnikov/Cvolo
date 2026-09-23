@@ -1,0 +1,2 @@
+unsafe union Value<T> { T Item; }
+int main(){return 0;}

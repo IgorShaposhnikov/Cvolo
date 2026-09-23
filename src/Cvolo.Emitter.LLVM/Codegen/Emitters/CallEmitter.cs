@@ -6,6 +6,7 @@ using Cvolo.Analysis.Symbols.Structs;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
 using Cvolo.Core.AST.Expressions;
+using Cvolo.Emitter.LLVM.Codegen.TypeLowering;
 using Cvolo.Emitter.LLVM.Codegen.Values;
 using LLVMSharp.Interop;
 
@@ -32,6 +33,7 @@ internal sealed class CallEmitter(
 	Func<FunctionCodegenContext> getFunction,
 	Func<ExpressionSyntax, LLVMValueRef> emitExpression,
 	ExpressionTypeResolver expressionTypes,
+	Func<TypeSymbol, LLVMTypeRef> lowerFfiType,
 	ValueCoercion coercion,
 	ValueLoader values,
 	IReadOnlyDictionary<string, ExternDeclarationSyntax> astExterns,
@@ -40,6 +42,7 @@ internal sealed class CallEmitter(
 	private LLVMBuilderRef Builder => codegen.Builder;
 	private FunctionCodegenContext Function => getFunction();
 	private BindingContext BindingContext => codegen.BindingContext ?? throw new InvalidOperationException("Call emission requires an active binding context.");
+	private readonly NativeAbiAggregateLowering _nativeAggregates = new(codegen, lowerFfiType);
 
 	/// <summary>
 	/// Emits a call expression using the currently active function frame.
@@ -132,6 +135,13 @@ internal sealed class CallEmitter(
 		var callee = codegen.Globals[emitName];
 		var funcType = codegen.FunctionTypes[emitName];
 		var args = new List<LLVMValueRef>();
+		codegen.NativeAbiFunctionPlans.TryGetValue(emitName, out var nativePlan);
+		LLVMValueRef? nativeSRetStorage = null;
+		if (nativePlan?.HasSRet == true)
+		{
+			nativeSRetStorage = Builder.BuildAlloca(codegen.Types.Lower(nativePlan.Return.SemanticType), "native_call_sret");
+			args.Add(nativeSRetStorage.Value);
+		}
 
 		var isExtensionCall = BindingContext.ResolvedCalls.TryGetValue(call, out var resolvedExt)
 			&& resolvedExt.Parameters.Count > 0
@@ -229,6 +239,30 @@ internal sealed class CallEmitter(
 				val = emitExpression(argExpr);
 			}
 
+			// Contextual null for a native delegate is the zero function-pointer value, not
+			// a generic data-pointer null. Materialize it directly in the expected LLVM type.
+			if (argExpr is NullLiteralExpressionSyntax && paramTy is DelegateTypeSymbol { IsNative: true })
+			{
+				val = LLVMValueRef.CreateConstPointerNull(codegen.Types.Lower(paramTy));
+				valTy = paramTy;
+			}
+
+			var semanticParamIndex = i + actualParamOffset;
+			var nativeValuePlan = nativePlan is not null && semanticParamIndex < nativePlan.Parameters.Count
+				? nativePlan.Parameters[semanticParamIndex]
+				: null;
+			if (nativeValuePlan is { Kind: NativeAbiValuePassKind.DirectIntegerAggregate })
+			{
+				args.Add(_nativeAggregates.PackDirectAggregate(Builder, nativeValuePlan, val, "native_arg" + semanticParamIndex));
+				continue;
+			}
+
+			if (nativeValuePlan is { Kind: NativeAbiValuePassKind.IndirectAggregate })
+			{
+				args.Add(_nativeAggregates.PrepareIndirectArgument(Builder, nativeValuePlan, val, "native_arg" + semanticParamIndex));
+				continue;
+			}
+
 			if (paramTy is not null
 				&& valTy is PointerTypeSymbol ptrTy
 				&& val.TypeOf.Kind == LLVMTypeKind.LLVMPointerTypeKind
@@ -278,7 +312,7 @@ internal sealed class CallEmitter(
 					valTy = paramTy;
 				}
 
-				var actualParamIndex = (uint)(i + actualParamOffset);
+				var actualParamIndex = (uint)(i + actualParamOffset + (nativePlan?.HasSRet == true ? 1 : 0));
 				if (actualParamIndex < callee.ParamsCount)
 				{
 					var expectedLlvmTy = callee.GetParam(actualParamIndex).TypeOf;
@@ -335,9 +369,45 @@ internal sealed class CallEmitter(
 		var retTypeSymbol = codegen.FunctionReturnTypes.TryGetValue(emitName, out var ret)
 			? ret
 			: (resolvedFunc is { ReturnType: not null } resolvedFn ? resolvedFn.ReturnType : TypeSymbol.Int);
-		var instName = retTypeSymbol.Equals(TypeSymbol.Void) ? "" : "call_val";
+		var instName = (nativePlan?.HasSRet == true || retTypeSymbol.Equals(TypeSymbol.Void)) ? "" : "call_val";
 
-		return Builder.BuildCall2(funcType, callee, args.ToArray(), instName);
+		var directCall = Builder.BuildCall2(funcType, callee, args.ToArray(), instName);
+		if (resolvedFunc?.CallingConvention is not null)
+			directCall.FunctionCallConv = CallingConventionResolver.Resolve(resolvedFunc.CallingConvention, codegen.Module.Target);
+
+		if (nativePlan is not null)
+			_nativeAggregates.ApplyCallSiteAggregateAttributes(directCall, nativePlan);
+
+		if (resolvedFunc is not null
+			&& (resolvedFunc.IsExtern || resolvedFunc.IsExported || resolvedFunc.IsNativeAbi))
+		{
+			NativeAbiAttributeEmitter.ApplyBoolCallSiteAttributes(
+				codegen.LLVMContext,
+				directCall,
+				codegen.Module.Target,
+				retTypeSymbol,
+				resolvedFunc.Parameters.Select(parameter => parameter.Type).ToArray(),
+				nativePlan?.HasSRet == true ? 1 : 0);
+		}
+
+		if (nativePlan is not null)
+		{
+			if (nativePlan.Return.Kind == NativeAbiValuePassKind.IndirectAggregate)
+				return nativeSRetStorage ?? throw new InvalidOperationException("Native ABI sret call did not allocate result storage.");
+			if (nativePlan.Return.Kind == NativeAbiValuePassKind.DirectIntegerAggregate)
+				return _nativeAggregates.MaterializeDirectAggregate(Builder, nativePlan.Return, directCall, "native_call_ret");
+		}
+
+		if (resolvedFunc is not null
+			&& (resolvedFunc.IsExtern || resolvedFunc.IsExported || resolvedFunc.IsNativeAbi)
+			&& retTypeSymbol.Equals(TypeSymbol.Bool)
+			&& directCall.TypeOf.Kind == LLVMTypeKind.LLVMIntegerTypeKind
+			&& directCall.TypeOf.IntWidth > 1)
+		{
+			return Builder.BuildTrunc(directCall, LLVMTypeRef.Int1, "bool.from_abi");
+		}
+
+		return directCall;
 	}
 
 	/// <summary>
@@ -351,7 +421,15 @@ internal sealed class CallEmitter(
 		var one = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1);
 
 		LLVMValueRef delegatePtr;
-		if (call.FunctionName.Contains('.'))
+		var qualifiedGlobalKey = values.ResolveGlobalKey(call.FunctionName);
+		if (qualifiedGlobalKey is { } exactGlobalKey
+			&& codegen.GlobalVariables.TryGetValue(exactGlobalKey, out var exactGlobalSlot)
+			&& codegen.GlobalVariableTypes.TryGetValue(exactGlobalKey, out var exactGlobalType)
+			&& exactGlobalType is DelegateTypeSymbol)
+		{
+			delegatePtr = exactGlobalSlot;
+		}
+		else if (call.FunctionName.Contains('.'))
 		{
 			var lastDot = call.FunctionName.LastIndexOf('.');
 			var receiverName = call.FunctionName[..lastDot];
@@ -400,6 +478,86 @@ internal sealed class CallEmitter(
 			}
 		}
 
+		// Native delegates hold a single function pointer: a direct call bypasses the safe
+		// two-word thunk/context machinery and uses the declared calling convention.
+		if (delegateType.IsNative)
+		{
+			var semanticParamTypes = delegateType.Parameters.Select(p => p.Type).ToArray();
+			var nativePlan = _nativeAggregates.Build(delegateType.ReturnType, semanticParamTypes);
+			var nativeFnTy = LLVMTypeRef.CreateFunction(
+				nativePlan.FunctionReturnType,
+				nativePlan.FunctionParameterTypes.ToArray());
+			var nativeDelegateTy = LLVMTypeRef.CreatePointer(nativeFnTy, 0);
+			var nativeFnPtr = Builder.BuildLoad2(nativeDelegateTy, delegatePtr, "native_del_fn");
+
+			var nativeArgs = new List<LLVMValueRef>();
+			LLVMValueRef? nativeSRetStorage = null;
+			if (nativePlan.HasSRet)
+			{
+				nativeSRetStorage = Builder.BuildAlloca(codegen.Types.Lower(delegateType.ReturnType), "native_del_sret");
+				nativeArgs.Add(nativeSRetStorage.Value);
+			}
+
+			for (var i = 0; i < call.Arguments.Count; i++)
+			{
+				var argument = call.Arguments[i];
+				var argVal = emitExpression(argument);
+				if (i < delegateType.Parameters.Count)
+				{
+					var parameterType = delegateType.Parameters[i].Type;
+					var valuePlan = nativePlan.Parameters[i];
+					if (valuePlan.Kind == NativeAbiValuePassKind.DirectIntegerAggregate)
+					{
+						argVal = _nativeAggregates.PackDirectAggregate(Builder, valuePlan, argVal, "native_del_arg" + i);
+					}
+					else if (valuePlan.Kind == NativeAbiValuePassKind.IndirectAggregate)
+					{
+						argVal = _nativeAggregates.PrepareIndirectArgument(Builder, valuePlan, argVal, "native_del_arg" + i);
+					}
+					else if (argument is NullLiteralExpressionSyntax && parameterType is DelegateTypeSymbol { IsNative: true })
+					{
+						argVal = LLVMValueRef.CreateConstPointerNull(codegen.Types.Lower(parameterType));
+					}
+					else
+					{
+						var argumentType = expressionTypes.Resolve(argument);
+						argVal = coercion.CoerceIntegerWidth(argVal, argumentType, parameterType);
+					}
+				}
+
+				nativeArgs.Add(argVal);
+			}
+
+			var nativeCall = Builder.BuildCall2(
+				nativeFnTy,
+				nativeFnPtr,
+				nativeArgs.ToArray(),
+				nativePlan.HasSRet || nativePlan.FunctionReturnType.Kind == LLVMTypeKind.LLVMVoidTypeKind ? "" : "$native_del_call");
+			nativeCall.FunctionCallConv = CallingConventionResolver.Resolve(delegateType.CallingConvention, codegen.Module.Target);
+			_nativeAggregates.ApplyCallSiteAggregateAttributes(nativeCall, nativePlan);
+			NativeAbiAttributeEmitter.ApplyBoolCallSiteAttributes(
+				codegen.LLVMContext,
+				nativeCall,
+				codegen.Module.Target,
+				delegateType.ReturnType,
+				semanticParamTypes,
+				nativePlan.HasSRet ? 1 : 0);
+
+			if (nativePlan.Return.Kind == NativeAbiValuePassKind.IndirectAggregate)
+				return nativeSRetStorage ?? throw new InvalidOperationException("Native delegate sret call did not allocate result storage.");
+			if (nativePlan.Return.Kind == NativeAbiValuePassKind.DirectIntegerAggregate)
+				return _nativeAggregates.MaterializeDirectAggregate(Builder, nativePlan.Return, nativeCall, "native_del_ret");
+
+			if (delegateType.ReturnType.Equals(TypeSymbol.Bool)
+				&& nativeCall.TypeOf.Kind == LLVMTypeKind.LLVMIntegerTypeKind
+				&& nativeCall.TypeOf.IntWidth > 1)
+			{
+				return Builder.BuildTrunc(nativeCall, LLVMTypeRef.Int1, "bool.from_native_delegate_abi");
+			}
+
+			return nativeCall;
+		}
+
 		var wordTy = codegen.Types.Lower(delegateType);
 		var tmp = Builder.BuildAlloca(wordTy, "$del_tmp");
 		Builder.BuildStore(Builder.BuildLoad2(wordTy, delegatePtr, "del_val"), tmp);
@@ -421,7 +579,14 @@ internal sealed class CallEmitter(
 			var argExpr = call.Arguments[i];
 			var argVal = emitExpression(argExpr);
 			if (i < delegateType.Parameters.Count)
-				argVal = coercion.CoerceIntegerWidth(argVal, expressionTypes.Resolve(argExpr), delegateType.Parameters[i].Type);
+			{
+				var parameterType = delegateType.Parameters[i].Type;
+				if (argExpr is NullLiteralExpressionSyntax && parameterType is DelegateTypeSymbol { IsNative: true })
+					argVal = LLVMValueRef.CreateConstPointerNull(codegen.Types.Lower(parameterType));
+				else
+					argVal = coercion.CoerceIntegerWidth(argVal, expressionTypes.Resolve(argExpr), parameterType);
+			}
+
 			args.Add(argVal);
 		}
 

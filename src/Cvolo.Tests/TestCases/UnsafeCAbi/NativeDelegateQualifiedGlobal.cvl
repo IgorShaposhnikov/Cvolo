@@ -1,0 +1,24 @@
+namespace NativeCallbackTest;
+
+unsafe "C" delegate int Callback(int value);
+
+global var Callback Slot;
+
+unsafe "C" int Increment(int value)
+{
+    return value + 1;
+}
+
+int main()
+{
+    unsafe
+    {
+        NativeCallbackTest.Slot = &Increment;
+        if (NativeCallbackTest.Slot(41) != 42)
+        {
+            return 1;
+        }
+    }
+
+    return 0;
+}

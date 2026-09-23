@@ -1,0 +1,16 @@
+unsafe "C" delegate int Callback(int value);
+
+global var Callback Current;
+
+int main()
+{
+    unsafe
+    {
+        if (Current == null)
+        {
+            return 0;
+        }
+    }
+
+    return 1;
+}

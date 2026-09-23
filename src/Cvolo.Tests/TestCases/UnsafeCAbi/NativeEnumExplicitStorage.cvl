@@ -1,0 +1,3 @@
+enum Mode : int { Off, On }
+unsafe "C" delegate Mode Transform(Mode value);
+int main(){return 0;}

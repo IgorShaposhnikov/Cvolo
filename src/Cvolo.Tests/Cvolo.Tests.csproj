@@ -20,7 +20,7 @@
 
 	<ItemGroup>
 		<!-- Force MSBuild to include and copy all loose test assets recursively -->
-		<None Include="TestCases\**\*" CopyToOutputDirectory="PreserveNewest" />
+		<None Include="TestCases\**\*" CopyToOutputDirectory="Always" />
 	</ItemGroup>
 
 	<ItemGroup>

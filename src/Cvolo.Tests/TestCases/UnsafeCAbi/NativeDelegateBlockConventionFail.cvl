@@ -1,0 +1,9 @@
+unsafe "fastcall"
+{
+    delegate void Callback(int value);
+}
+
+int main()
+{
+    return 0;
+}

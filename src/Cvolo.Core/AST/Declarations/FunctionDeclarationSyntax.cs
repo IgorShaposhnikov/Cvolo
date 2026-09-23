@@ -16,7 +16,8 @@ public sealed class FunctionDeclarationSyntax(
 	ReceiverContract receiver = ReceiverContract.None,
 	Visibility? visibility = null,
 	TextSpan? nameSpan = null,
-	TextSpan? returnTypeSpan = null) : SyntaxNode(span)
+	TextSpan? returnTypeSpan = null,
+	string? callingConvention = null) : SyntaxNode(span)
 {
 	public override SyntaxKind Kind => SyntaxKind.FunctionDeclaration;
 
@@ -43,6 +44,12 @@ public sealed class FunctionDeclarationSyntax(
 	public ReceiverContract Receiver { get; } = receiver;
 	public Visibility Visibility { get; } = visibility ?? Visibility.Internal;
 	public Visibility? SyntacticVisibility { get; } = visibility;
+
+	/// <summary>
+	/// The declared calling convention ("C" or "system") for a native-ABI function written as
+	/// 'unsafe "C" R F(...) { ... }'. Null for ordinary Cvolo functions.
+	/// </summary>
+	public string? CallingConvention { get; } = callingConvention;
 
 	public override IEnumerable<SyntaxNode> GetChildren()
 	{

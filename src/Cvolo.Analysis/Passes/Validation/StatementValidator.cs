@@ -30,6 +30,7 @@ internal sealed class StatementValidator(
 	Func<ExpressionSyntax, SymbolTable, TypeSymbol?> getExpressionType,
 	Action<LambdaExpressionSyntax, DelegateTypeSymbol, SymbolTable> validateTargetTypedLambda,
 	Action<ExpressionSyntax, DelegateTypeSymbol, SymbolTable> validateFunctionGroupConversion,
+	Action<ExpressionSyntax, DelegateTypeSymbol, SymbolTable> validateDelegateValue,
 	Func<MemberAccessExpressionSyntax, SymbolTable, bool> isMethodGroupReference,
 	Action<ExpressionSyntax, SymbolTable> validateMustUseDiscard,
 	Func<SwitchValidator> getSwitchValidator)
@@ -62,6 +63,9 @@ internal sealed class StatementValidator(
 	private void CheckMustUseDiscard(ExpressionSyntax expression, SymbolTable scope)
 		=> validateMustUseDiscard(expression, scope);
 
+	/// <summary>Delegates contextual delegate-value validation to the shared expression validator.</summary>
+	private void CheckDelegateValue(ExpressionSyntax expression, DelegateTypeSymbol delegateType, SymbolTable scope)
+		=> validateDelegateValue(expression, delegateType, scope);
 
 	/// <summary>
 	/// Validates a lexical statement block while maintaining its label scope.
@@ -554,33 +558,19 @@ internal sealed class StatementValidator(
 		{
 			if (varDecl.Initializer is null)
 			{
-				var currentFileContext = context.FileContexts[context.CurrentUnit!];
-				context.Diagnostics.Report(currentFileContext, varDecl.Span,
-					$"Delegate '{declaredDelegateType.Name}' requires an initializer; delegates are non-null and cannot be default-initialized.",
-					DiagnosticIds.DelegateNotDefaultInitializable);
-			}
-			else if (varDecl.Initializer is LambdaExpressionSyntax targetLambda)
-			{
-				CheckTargetTypedLambda(targetLambda, declaredDelegateType, scope);
-			}
-			else if (varDecl.Initializer is NullLiteralExpressionSyntax)
-			{
-				var currentFileContext = context.FileContexts[context.CurrentUnit!];
-				context.Diagnostics.Report(currentFileContext, varDecl.Initializer.Span,
-					$"Cannot initialize delegate '{declaredDelegateType.Name}' with 'null'; delegates are non-null values.",
-					DiagnosticIds.NullLiteralForDelegate);
-			}
-			else if (varDecl.Initializer is IdentifierExpressionSyntax groupId && !Calls.IsKnownVariable(groupId, scope) && Overloads.HasCandidates(groupId.Name))
-			{
-				CheckFunctionGroupConversion(groupId, declaredDelegateType, scope);
-			}
-			else if (varDecl.Initializer is MemberAccessExpressionSyntax groupMa && IsMethodGroupReference(groupMa, scope))
-			{
-				CheckFunctionGroupConversion(groupMa, declaredDelegateType, scope);
+				// Safe delegates are non-null values. Native delegates are scalar-like nullable
+				// function pointers and follow the ordinary local definite-assignment rules.
+				if (!declaredDelegateType.IsNative)
+				{
+					var currentFileContext = context.FileContexts[context.CurrentUnit!];
+					context.Diagnostics.Report(currentFileContext, varDecl.Span,
+						$"Delegate '{declaredDelegateType.Name}' requires an initializer.",
+						DiagnosticIds.DelegateNotDefaultInitializable);
+				}
 			}
 			else
 			{
-				CheckExpression(varDecl.Initializer, scope);
+				CheckDelegateValue(varDecl.Initializer, declaredDelegateType, scope);
 			}
 
 			resolvedType = declaredDelegateType;
@@ -753,21 +743,14 @@ internal sealed class StatementValidator(
 		// target-typed against the expected delegate; skip the generic expression check.
 		if (expectedType is DelegateTypeSymbol expectedDelegate)
 		{
-			if (ret.Expression is LambdaExpressionSyntax retLambda)
+			var isTargetTypedDelegateValue = ret.Expression is LambdaExpressionSyntax
+				|| (ret.Expression is IdentifierExpressionSyntax retId && !Calls.IsKnownVariable(retId, scope) && Overloads.HasCandidates(retId.Name))
+				|| (ret.Expression is MemberAccessExpressionSyntax retMa && IsMethodGroupReference(retMa, scope))
+				|| ret.Expression is UnaryExpressionSyntax { Operator: "&" }
+				|| ret.Expression is NullLiteralExpressionSyntax;
+			if (isTargetTypedDelegateValue)
 			{
-				CheckTargetTypedLambda(retLambda, expectedDelegate, scope);
-				return;
-			}
-
-			if (ret.Expression is IdentifierExpressionSyntax retId && !Calls.IsKnownVariable(retId, scope) && Overloads.HasCandidates(retId.Name))
-			{
-				CheckFunctionGroupConversion(retId, expectedDelegate, scope);
-				return;
-			}
-
-			if (ret.Expression is MemberAccessExpressionSyntax retMa && IsMethodGroupReference(retMa, scope))
-			{
-				CheckFunctionGroupConversion(retMa, expectedDelegate, scope);
+				CheckDelegateValue(ret.Expression, expectedDelegate, scope);
 				return;
 			}
 		}

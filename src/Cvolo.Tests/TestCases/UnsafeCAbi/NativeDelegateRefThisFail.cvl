@@ -1,0 +1,2 @@
+unsafe "C" delegate int Bad(ref this);
+int main(){return 0;}

@@ -84,6 +84,13 @@ public sealed class FunctionSymbol(
 	public bool IsExported { get; set; }
 
 	/// <summary>
+	/// True for functions declared with a native-ABI calling convention slot: 'unsafe "C"' / 'unsafe "system"'
+	/// before the return type. The implementation is Cvolo, but the signature follows the native ABI and its
+	/// address can be taken as a callback (see NativeDelegateTypeSymbol / &Function).
+	/// </summary>
+	public bool IsNativeAbi { get; set; }
+
+	/// <summary>
 	/// Native symbol name used by the export alias. Set by [ExposeName]; defaults to the source function name.
 	/// </summary>
 	public string? ExposeName { get; set; }

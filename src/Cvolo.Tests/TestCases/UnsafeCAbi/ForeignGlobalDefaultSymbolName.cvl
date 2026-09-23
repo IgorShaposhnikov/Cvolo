@@ -1,0 +1,4 @@
+namespace NativeNs;
+[LibraryImport("native")]
+extern "C" { global int Version; }
+int main(){return 0;}

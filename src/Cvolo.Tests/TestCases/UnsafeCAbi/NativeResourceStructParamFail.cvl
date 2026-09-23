@@ -1,0 +1,4 @@
+struct Resource { int Handle; }
+extension Resource { ~Resource() { } }
+unsafe "C" int Consume(Resource value){return value.Handle;}
+int main(){return 0;}

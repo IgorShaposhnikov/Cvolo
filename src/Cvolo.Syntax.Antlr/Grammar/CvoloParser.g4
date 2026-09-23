@@ -20,8 +20,9 @@ qualifiedName
 
 declaration
 	: functionDeclaration
-	| externDeclaration
+	| externGlobalDeclaration
 	| externBlockDeclaration
+	| externDeclaration
 	| exposeExternExportDeclaration
 	| exposeExternBlockDeclaration
 	| structDeclaration
@@ -33,6 +34,7 @@ declaration
 	| globalVariableDeclaration
 	| aliasDeclaration
 	| delegateDeclaration
+	| delegateBlockDeclaration
 	;
 
 aliasDeclaration
@@ -48,7 +50,13 @@ delegateParameterList
 	;
 
 delegateParameter
-	: type Identifier
+	: receiverVarParameter
+	| receiverRefParameter
+	| type Identifier
+	;
+
+delegateBlockDeclaration
+	: UNSAFE callingConvention LBRACE delegateDeclaration* RBRACE SEMI?
 	;
 
 globalVariableDeclaration
@@ -84,15 +92,28 @@ functionModifier
 	;
 
 functionDeclaration
-	: attributeList* visibilityModifier? functionModifier? returnType Identifier (LT typeList GT)? LPAREN parameterList? RPAREN (blockStatement | SEMI)
+	: attributeList* visibilityModifier? ((UNSAFE callingConvention) | functionModifier)? returnType Identifier (LT typeList GT)? LPAREN parameterList? RPAREN (blockStatement | SEMI)
 	;
 
 externDeclaration
 	: visibilityModifier? EXTERN returnType Identifier LPAREN externParameterList? RPAREN SEMI
 	;
 
+externGlobalDeclaration
+	: attributeList* visibilityModifier? EXTERN callingConvention GLOBAL (VAL | VAR)? type Identifier SEMI
+	;
+
 externBlockDeclaration
-	: attributeList* visibilityModifier? EXTERN callingConvention? LBRACE externBlockFunction* RBRACE SEMI?
+	: attributeList* visibilityModifier? EXTERN callingConvention? LBRACE externBlockMember* RBRACE SEMI?
+	;
+
+externBlockMember
+	: externBlockFunction
+	| externBlockGlobal
+	;
+
+externBlockGlobal
+	: attributeList* visibilityModifier? GLOBAL (VAL | VAR)? type Identifier SEMI
 	;
 
 callingConvention
@@ -120,7 +141,7 @@ structDeclaration
 	;
 
 unionDeclaration
-	: attributeList* visibilityModifier? UNION Identifier (LT genericParameterList GT)? whereClause? LBRACE unionField* RBRACE SEMI?
+	: attributeList* visibilityModifier? UNSAFE? UNION Identifier (LT genericParameterList GT)? whereClause? LBRACE unionField* RBRACE SEMI?
 	;
 
 unionField

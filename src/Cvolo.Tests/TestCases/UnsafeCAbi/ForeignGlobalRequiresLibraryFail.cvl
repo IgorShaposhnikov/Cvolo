@@ -1,0 +1,7 @@
+[ImportName("native_version")]
+extern "C" global int Version;
+
+int main()
+{
+    return 0;
+}

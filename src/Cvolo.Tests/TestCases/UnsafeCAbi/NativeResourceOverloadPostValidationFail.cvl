@@ -1,0 +1,26 @@
+struct Resource
+{
+    int Handle;
+}
+
+unsafe "C" int Inspect(int value)
+{
+    return value;
+}
+
+unsafe "C" int Inspect(Resource value)
+{
+    return value.Handle;
+}
+
+extension Resource
+{
+    ~Resource()
+    {
+    }
+}
+
+int main()
+{
+    return 0;
+}

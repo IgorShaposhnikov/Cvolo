@@ -1,5 +1,6 @@
 using System.Text;
 using Cvolo.Analysis;
+using Cvolo.Analysis.Symbols;
 using Cvolo.Analysis.Symbols.Base;
 using Cvolo.Analysis.Symbols.Collections;
 using Cvolo.Analysis.Symbols.Structs;
@@ -49,11 +50,25 @@ internal sealed class ExpressionEmitter(
 	/// </summary>
 	private LLVMTypeRef LowerType(TypeSymbol type) => codegen.Types.Lower(type);
 
+	/// <summary>Returns whether a visible storage slot aliases an imported foreign global.</summary>
+	private bool IsForeignGlobalStorage(string sourceName, LLVMValueRef storage)
+	{
+		var key = codegen.GlobalVariables.ContainsKey(sourceName) ? sourceName : values.ResolveGlobalKey(sourceName);
+		return key is not null
+			&& codegen.ForeignGlobalNames.Contains(key)
+			&& codegen.GlobalVariables.TryGetValue(key, out var global)
+			&& global.Handle == storage.Handle;
+	}
+
 	/// <summary>
 	/// Emits an LLVM value for a bound Cvolo expression while delegating specialized call, aggregate, and delegate forms to their dedicated emitters.
 	/// </summary>
 	public LLVMValueRef Emit(ExpressionSyntax expr)
 	{
+		if (expr is UnaryExpressionSyntax nativeAddress
+			&& BindingContext.ResolvedNativeFunctionAddresses.TryGetValue(nativeAddress, out var nativeAddressBinding))
+			return EmitNativeFunctionAddress(nativeAddressBinding.Function, nativeAddressBinding.Delegate);
+
 		if (BindingContext.ResolvedFunctionConversions.TryGetValue(expr, out var groupFn))
 			return delegates.EmitFunctionGroupConversion(expr, groupFn);
 		if (expr is LambdaExpressionSyntax lamExpr)
@@ -749,7 +764,8 @@ internal sealed class ExpressionEmitter(
 		}
 
 		// 5. Dereference aggregate pointers before storing them into value targets
-		if (right.TypeOf.Kind == LLVMTypeKind.LLVMPointerTypeKind && (rTy is StructTypeSymbol || rTy is ArrayTypeSymbol))
+		if (right.TypeOf.Kind == LLVMTypeKind.LLVMPointerTypeKind
+			&& (rTy is StructTypeSymbol || rTy is ArrayTypeSymbol || rTy is UnionTypeSymbol { IsUnsafe: true }))
 		{
 			right = Builder.BuildLoad2(llvmTy, right, "loaded_assign_struct");
 		}
@@ -820,6 +836,8 @@ internal sealed class ExpressionEmitter(
 							: right;
 						coerced = coercion.CoerceIntegerWidth(coerced, rTy, type);
 						coerced = coercion.CoerceFloatWidth(coerced, rTy, type);
+						if (type.Equals(TypeSymbol.Bool) && IsForeignGlobalStorage(id.Name, ptr))
+							coerced = Builder.BuildZExt(coerced, LLVMTypeRef.Int8, "foreign_bool_from_internal");
 						Builder.BuildStore(coerced, ptr);
 					}
 				}
@@ -838,6 +856,8 @@ internal sealed class ExpressionEmitter(
 						: right;
 					coerced = coercion.CoerceIntegerWidth(coerced, rTy, globalType);
 					coerced = coercion.CoerceFloatWidth(coerced, rTy, globalType);
+					if (globalType.Equals(TypeSymbol.Bool) && codegen.ForeignGlobalNames.Contains(globalKey))
+						coerced = Builder.BuildZExt(coerced, LLVMTypeRef.Int8, "foreign_bool_from_internal");
 					Builder.BuildStore(coerced, globalPtr);
 				}
 
@@ -890,7 +910,7 @@ internal sealed class ExpressionEmitter(
 			var (fieldPtr, fieldType, _, tbaa) = aggregates.GetFieldPointer(m);
 
 			// Set active variant tag when assigning a union variant (e.g. 'this.Some = value')
-			if (expressionTypes.Resolve(m.Expression) is UnionTypeSymbol unionType && !unionType.IsNpoEligible)
+			if (expressionTypes.Resolve(m.Expression) is UnionTypeSymbol unionType && !unionType.IsNpoEligible && !unionType.IsUnsafe)
 			{
 				var (unionPtr, _, _, _) = aggregates.GetFieldPointer(m.Expression);
 				var variantIndex = codegen.AggregateLayout.GetFieldIndex(unionType, m.MemberName);
@@ -1010,6 +1030,21 @@ internal sealed class ExpressionEmitter(
 		}
 
 		throw new InvalidOperationException("Invalid target assignment");
+	}
+
+	/// <summary>
+	/// Emits a target-typed native function address. Binding already selected the exact function
+	/// overload and checked source calling-convention/signature compatibility.
+	/// </summary>
+	private LLVMValueRef EmitNativeFunctionAddress(FunctionSymbol function, DelegateTypeSymbol delegateType)
+	{
+		if (!codegen.Globals.TryGetValue(function.Name, out var functionValue))
+			throw new InvalidOperationException($"Native function address target '{function.Name}' was not declared in the LLVM module.");
+
+		var delegateLlvmType = codegen.Types.Lower(delegateType);
+		return functionValue.TypeOf.Handle == delegateLlvmType.Handle
+			? functionValue
+			: Builder.BuildPointerCast(functionValue, delegateLlvmType, "native_fn_addr");
 	}
 
 	/// <summary>

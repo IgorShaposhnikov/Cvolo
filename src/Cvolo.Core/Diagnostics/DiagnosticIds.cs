@@ -369,6 +369,88 @@ public static class DiagnosticIds
 	/// <summary>Native library could not be resolved by the linker.</summary>
 	public const string NativeLibraryUnresolved = "CVL1704";
 
+	// ── Unsafe C-ABI Interop (CVLF20xx) ──
+
+	/// <summary>An imported foreign global cannot declare an initializer; its storage is external.</summary>
+	public const string ForeignGlobalInitializer = "CVLF2000";
+
+	/// <summary>A standalone foreign global requires [LibraryImport] to bind its native library.</summary>
+	public const string ForeignGlobalRequiresLibrary = "CVLF2001";
+
+	/// <summary>[LibraryImport] on an extern-block global belongs on the enclosing block.</summary>
+	public const string LibraryImportOnBlockGlobal = "CVLF2002";
+
+	/// <summary>[ImportName] is only valid on imported foreign globals and extern functions.</summary>
+	public const string ImportNameOnNonForeignGlobal = "CVLF2003";
+
+	/// <summary>The type of a foreign global is not representable across the C ABI boundary.</summary>
+	public const string ForeignGlobalNotAbiSafe = "CVLF2004";
+
+	/// <summary>'&amp;Function' requires an expected native delegate type (assignment or call argument); never valid with 'var'.</summary>
+	public const string FunctionAddressRequiresContext = "CVLF2010";
+
+	/// <summary>The address of an overloaded function is ambiguous without an expected native delegate signature.</summary>
+	public const string FunctionAddressOverloadAmbiguous = "CVLF2011";
+
+	/// <summary>The function signature (return and parameter types) does not match the expected native delegate.</summary>
+	public const string FunctionAddressSignatureMismatch = "CVLF2012";
+
+	/// <summary>The function's calling convention does not match the expected native delegate.</summary>
+	public const string FunctionAddressCallingConventionMismatch = "CVLF2013";
+
+	/// <summary>The address of a generic function cannot be taken.</summary>
+	public const string FunctionAddressGeneric = "CVLF2014";
+
+	/// <summary>The function is not addressable as a native callback (not a native-ABI, exposed, or imported extern function with an ABI-safe signature).</summary>
+	public const string FunctionAddressNotAddressable = "CVLF2015";
+
+	/// <summary>Taking the address of a native-callable function requires an unsafe context.</summary>
+	public const string FunctionAddressRequiresUnsafe = "CVLF2016";
+
+	/// <summary>Indirect invocation through an arbitrary expression callee is not supported; only name and member-path callees can be called.</summary>
+	public const string IndirectCallExpressionNotSupported = "CVLF2020";
+
+	/// <summary>Invoking a native delegate pointer requires an unsafe context.</summary>
+	public const string NativeDelegateInvokeRequiresUnsafe = "CVLF2021";
+
+	/// <summary>Direct calls to a native-ABI function require an unsafe context.</summary>
+	public const string NativeAbiFunctionCallRequiresUnsafe = "CVLF2022";
+
+	/// <summary>Casting a native delegate to/from a data pointer requires an unsafe context.</summary>
+	public const string NativeDelegateCastRequiresUnsafe = "CVLF2030";
+
+	/// <summary>Explicit zero/null construction of a native delegate requires unsafe capability.</summary>
+	public const string NullForNativeDelegate = "CVLF2032";
+
+	/// <summary>A field of an 'unsafe union' is not representable across the C ABI boundary.</summary>
+	public const string UnsafeUnionFieldNotAbiSafe = "CVLF2040";
+
+	/// <summary>A raw 'unsafe union' cannot be pattern-matched or switched on (it has no tag).</summary>
+	public const string UnsafeUnionTaggedOperation = "CVLF2041";
+	public const string UnsafeUnionAccessRequiresUnsafe = "CVLF2043";
+	public const string UnsafeUnionGenericUnsupported = "CVLF2044";
+
+	/// <summary>The type is not representable in the requested position at the C ABI boundary.</summary>
+	public const string NativeAbiTypeNotRepresentable = "CVLF2050";
+
+	/// <summary>Aggregate type classification for the C ABI is unproven for this type; passing it across the boundary is not allowed.</summary>
+	public const string NativeAbiAggregateUnclassified = "CVLF2051";
+	public const string NativeAbiResourceBearing = "CVLF2053";
+	public const string NativeEnumRequiresExplicitStorage = "CVLF2054";
+
+	/// <summary>The calling convention is not supported for the current target triple.</summary>
+	public const string CallingConventionNotSupportedTarget = "CVLF2052";
+
+	/// <summary>A native delegate used at the C ABI boundary must declare a calling convention like 'unsafe "C"'.</summary>
+	public const string NativeDelegateMissingCallingConvention = "CVLF2060";
+
+	/// <summary>A native-ABI function's signature is not representable across the C ABI boundary.</summary>
+	public const string NativeAbiFunctionSignatureInvalid = "CVLF2061";
+	public const string NativeDelegateGenericUnsupported = "CVLF2062";
+
+	/// <summary>'unsafe union' requires at least one field.</summary>
+	public const string UnsafeUnionEmpty = "CVLF2042";
+
 	// ── Native Binary Export (CVL18xx) ──
 
 	/// <summary>An exported function contains a value interface parameter across a binary ABI boundary.</summary>

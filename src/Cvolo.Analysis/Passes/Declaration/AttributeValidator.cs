@@ -44,7 +44,8 @@ internal sealed class AttributeValidator(BindingContext context)
 		DiagnosticIds.UnboundNoRefParams,
 		DiagnosticIds.AutoInferMutationWarning,
 		DiagnosticIds.MustUseIgnoredWarning,
-		DiagnosticIds.InlineOnRecursiveFunction
+		DiagnosticIds.InlineOnRecursiveFunction,
+		DiagnosticIds.LargeCopyWarning
 	];
 
 	/// <summary>

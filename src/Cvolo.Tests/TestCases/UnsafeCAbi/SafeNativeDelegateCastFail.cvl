@@ -1,0 +1,17 @@
+delegate int SafeProc(int value);
+unsafe "C" delegate int NativeProc(int value);
+
+int Increment(int value)
+{
+    return value + 1;
+}
+
+int main()
+{
+    SafeProc safe = Increment;
+    unsafe
+    {
+        NativeProc native = (NativeProc)safe;
+    }
+    return 0;
+}

@@ -73,7 +73,7 @@ public sealed class ClassLibraryTests : CompilerTestBase
 	}
 
 	[Fact]
-	public void ExposeExtern_BoolParams_LoweredToI8()
+	public void ExposeExtern_BoolParams_UseNativeBoolAbi()
 	{
 		var fileName = $"{Category}/ExposeBoolParams.cvl";
 		var (exitCode, stdout, stderr) = RunCompiler(fileName);
@@ -85,14 +85,13 @@ public sealed class ClassLibraryTests : CompilerTestBase
 		Assert.True(File.Exists(llPath), $"Expected generated LLVM IR file at '{llPath}' but it was missing.");
 		var irContent = File.ReadAllText(llPath);
 
-		// Bool parameters crossing the FFI boundary should be lowered to i8 (1-byte C ABI bool)
-		// Check that the exposed alias type signatures use i8 for bool params
+		// Cvolo bool has an internal/scalar LLVM value representation of i1 at the
+		// native function boundary, with the target ABI's zero-extension contract.
+		// Object storage is handled separately (foreign bool globals use one byte).
 		Assert.Contains("@native_check_flag =", irContent);
 		Assert.Contains("@native_process =", irContent);
-
-		// The export alias should use i8 for bool parameters, not i1
-		// native_check_flag(bool, int) -> i8 (i8, i32)
-		Assert.Contains("alias i8 (i8, i32), ptr @", irContent);
+		Assert.Contains("alias i1 (i1, i32), ptr @", irContent);
+		Assert.Contains("zeroext", irContent);
 	}
 
 	[Fact]

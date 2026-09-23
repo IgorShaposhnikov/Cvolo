@@ -1,0 +1,4 @@
+unsafe "C" delegate int Callback(int value);
+struct Payload { int Count; void* Data; }
+unsafe union Mixed { void* Pointer; Callback Proc; Payload PayloadValue; }
+int main(){return 0;}

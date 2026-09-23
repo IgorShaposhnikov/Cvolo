@@ -1,0 +1,8 @@
+[LibraryImport("native", win: "native.lib", linux: "./libnative.so", mac: "./libnative.dylib")]
+[ImportName("native_flag")]
+extern "C" global var bool Flag;
+
+int main()
+{
+    return 0;
+}

@@ -96,7 +96,7 @@ public sealed class OptionalSyntaxRewriter(bool strictOption, DiagnosticBag diag
 				rewrittenInit = (ExpressionSyntax)Rewrite(rewrittenInit);
 
 			TrackLocal(globalDecl.Name, globalDecl.Type);
-			return new GlobalVariableDeclarationSyntax(globalDecl.Span, rewrittenType, globalDecl.Name, rewrittenInit, globalDecl.IsMutable, globalDecl.Visibility);
+			return new GlobalVariableDeclarationSyntax(globalDecl.Span, rewrittenType, globalDecl.Name, rewrittenInit, globalDecl.IsMutable, globalDecl.Visibility, globalDecl.Attributes, globalDecl.IsForeign, globalDecl.CallingConvention);
 		}
 
 		if (node is ParameterSyntax param)
@@ -109,7 +109,7 @@ public sealed class OptionalSyntaxRewriter(bool strictOption, DiagnosticBag diag
 			var rewrittenParams = func.Parameters.Select(p => (ParameterSyntax)Rewrite(p)).ToList();
 			var rewrittenBody = func.Body != null ? (BlockStatementSyntax)Rewrite(func.Body) : null;
 			return new FunctionDeclarationSyntax(func.Span, RewriteType(func.ReturnType, func.Span), func.Name, func.GenericParameters,
-				rewrittenParams, rewrittenBody!, func.Attributes, func.Modifier, func.Receiver, func.Visibility);
+				rewrittenParams, rewrittenBody!, func.Attributes, func.Modifier, func.Receiver, func.Visibility, callingConvention: func.CallingConvention);
 		}
 
 		if (node is ConstructorDeclarationSyntax ctor)

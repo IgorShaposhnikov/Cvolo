@@ -1,0 +1,12 @@
+unsafe "C" delegate void Callback(int value);
+
+global var Callback CallbackSlot;
+
+int main()
+{
+    if (CallbackSlot == null)
+    {
+        return 1;
+    }
+    return 0;
+}

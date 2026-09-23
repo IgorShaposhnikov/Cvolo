@@ -1,0 +1,11 @@
+unsafe "C" delegate int CCallback(int value);
+
+unsafe "system"
+{
+    internal delegate void SystemCallback(uint value);
+}
+
+int main()
+{
+    return 0;
+}

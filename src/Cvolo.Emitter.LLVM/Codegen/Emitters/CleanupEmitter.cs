@@ -155,6 +155,7 @@ internal sealed class CleanupEmitter(CodegenContext codegen)
 		{
 			PointerTypeSymbol or RawPointerTypeSymbol => true,
 			StructTypeSymbol structType => structType.Fields.Any(field => TypeEscapesHeap(field.Type)),
+			UnionTypeSymbol { IsUnsafe: true } => false,
 			UnionTypeSymbol unionType => unionType.Fields.Any(field => TypeEscapesHeap(field.Type)),
 			ArrayTypeSymbol arrayType => TypeEscapesHeap(arrayType.ElementType),
 			SliceTypeSymbol sliceType => TypeEscapesHeap(sliceType.ElementType),
@@ -167,7 +168,7 @@ internal sealed class CleanupEmitter(CodegenContext codegen)
 	/// </summary>
 	public bool UnionNeedsTagCheckedCleanup(UnionTypeSymbol unionType)
 	{
-		return unionType.Fields.Any(f => !f.IsVoidVariant && TypeNeedsDestruction(f.Type));
+		return !unionType.IsUnsafe && unionType.Fields.Any(f => !f.IsVoidVariant && TypeNeedsDestruction(f.Type));
 	}
 
 	/// <summary>
@@ -177,6 +178,9 @@ internal sealed class CleanupEmitter(CodegenContext codegen)
 	/// </summary>
 	public void EmitUnionTagCheckedCleanup(string name, LLVMValueRef ptrAlloc, UnionTypeSymbol unionType)
 	{
+		if (unionType.IsUnsafe)
+			return;
+
 		var dropped = unionType.Fields
 			.Where(f => !f.IsVoidVariant)
 			.Select(f => (Field: f, Index: codegen.AggregateLayout.GetFieldIndex(unionType, f!.Name)))
@@ -350,5 +354,4 @@ internal sealed class CleanupEmitter(CodegenContext codegen)
 		ArrayTypeSymbol arrayType => TypeNeedsDestruction(arrayType.ElementType),
 		_ => false
 	};
-
 }

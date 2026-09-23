@@ -1,0 +1,11 @@
+unsafe "C" delegate int First(int value);
+unsafe "C" delegate int Second(int value);
+
+global var First FirstSlot;
+global var Second SecondSlot;
+
+int main()
+{
+    SecondSlot = FirstSlot;
+    return 0;
+}

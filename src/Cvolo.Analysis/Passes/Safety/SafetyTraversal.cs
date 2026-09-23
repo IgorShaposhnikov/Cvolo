@@ -187,7 +187,10 @@ internal sealed class SafetyTraversal(
 
 			case UnaryExpressionSyntax u:
 				CheckExpressionSafety(u.Operand, scope);
-				unsafeContext.ValidateUnaryOperation(u);
+				// Target-typed native function addresses carry their own contextual unsafe
+				// diagnostic from ValidationPass; do not add the generic data-address error.
+				if (!context.ResolvedNativeFunctionAddresses.ContainsKey(u))
+					unsafeContext.ValidateUnaryOperation(u);
 				break;
 
 			case StructInitializationExpressionSyntax init:

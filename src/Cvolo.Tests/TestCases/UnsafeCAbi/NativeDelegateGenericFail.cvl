@@ -1,0 +1,2 @@
+unsafe "C" delegate T Callback<T>(T value);
+int main(){return 0;}

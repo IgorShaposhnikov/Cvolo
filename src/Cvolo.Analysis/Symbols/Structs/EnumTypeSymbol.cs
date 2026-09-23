@@ -11,6 +11,7 @@ public sealed class EnumTypeSymbol(
 {
 	public TypeSymbol StorageType { get; } = storageType;
 	public IReadOnlyList<EnumVariantSymbol> Variants { get; } = variants;
+	public bool HasExplicitStorageType { get; set; }
 
 	public bool IsFlags { get; set; }
 	public bool IsNonExhaustive { get; set; }
@@ -18,5 +19,7 @@ public sealed class EnumTypeSymbol(
 	public string? MustUseMessage { get; set; }
 
 	public EnumVariantSymbol? FindVariant(string variantName)
-		=> Variants.FirstOrDefault(v => v.Name == variantName);
+	{
+		return Variants.FirstOrDefault(v => v.Name == variantName);
+	}
 }

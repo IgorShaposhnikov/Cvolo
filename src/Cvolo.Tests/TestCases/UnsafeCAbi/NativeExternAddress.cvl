@@ -1,0 +1,16 @@
+unsafe "C" delegate int AbsProc(int value);
+extern int abs(int value);
+
+int main()
+{
+    unsafe
+    {
+        AbsProc proc = &abs;
+        if (proc(-7) != 7)
+        {
+            return 1;
+        }
+    }
+
+    return 0;
+}

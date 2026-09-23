@@ -1,0 +1,25 @@
+unsafe "C" delegate int ProcA(int value);
+unsafe "C" delegate int ProcB(int value);
+
+unsafe "C" int Increment(int value)
+{
+    return value + 1;
+}
+
+int main()
+{
+    unsafe
+    {
+        ProcA first = &Increment;
+        void* raw = (void*)first;
+        ProcB second = (ProcB)raw;
+        ProcA third = (ProcA)second;
+
+        if (third(41) != 42)
+        {
+            return 1;
+        }
+    }
+
+    return 0;
+}

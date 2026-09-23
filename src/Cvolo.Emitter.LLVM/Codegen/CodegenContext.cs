@@ -35,11 +35,27 @@ internal sealed class CodegenContext
 		Builder = builder;
 		TargetLayout = targetLayout;
 
-		// The lowering service observes the same named aggregate registry that declaration emission
-		// populates, so later lowering sees newly declared struct/union LLVM types immediately.
-		Types = new LlvmTypeLowering(LlvmStructTypes);
-		AggregateLayout = new AggregateLayout();
+		// The lowering/layout services share the active target pointer width.  Raw-union
+		// size/alignment and native-delegate storage must not retain the old 64-bit-only
+		// assumptions when a 32-bit target data layout is selected.
+		NativePointerBits = ResolveNativePointerBits(module);
+		Types = new LlvmTypeLowering(LlvmStructTypes, NativePointerBits);
+		AggregateLayout = new AggregateLayout(NativePointerBits);
 	}
+
+	private static int ResolveNativePointerBits(LLVMModuleRef module)
+	{
+		var dataLayout = module.DataLayout;
+		if (string.IsNullOrEmpty(dataLayout))
+			return 64;
+		return dataLayout.Contains("p:64", StringComparison.Ordinal)
+			? 64
+			: dataLayout.Contains("p:32", StringComparison.Ordinal) ? 32 : 64;
+	}
+
+	/// <summary>Native pointer width for the active LLVM data layout.</summary>
+	public int NativePointerBits { get; }
+	public int NativePointerBytes => NativePointerBits / 8;
 
 	/// <summary>
 	/// Native LLVM context that owns the module and builder handles used by this emission session.
@@ -91,6 +107,8 @@ internal sealed class CodegenContext
 	/// Semantic return type for each emitted function.
 	/// </summary>
 	public Dictionary<string, TypeSymbol> FunctionReturnTypes { get; } = [];
+	/// <summary>Target-specific native ABI plans keyed by emitted function name.</summary>
+	public Dictionary<string, NativeAbiFunctionPlan> NativeAbiFunctionPlans { get; } = [];
 	/// <summary>
 	/// LLVM storage for module-level Cvolo global variables.
 	/// </summary>
@@ -99,6 +117,8 @@ internal sealed class CodegenContext
 	/// Semantic type for each module-level Cvolo global variable.
 	/// </summary>
 	public Dictionary<string, TypeSymbol> GlobalVariableTypes { get; } = [];
+	/// <summary>Qualified names of globals whose storage is owned by a foreign native library.</summary>
+	public HashSet<string> ForeignGlobalNames { get; } = [];
 	/// <summary>
 	/// Maps short global names to the qualified candidates visible under that short name.
 	/// </summary>

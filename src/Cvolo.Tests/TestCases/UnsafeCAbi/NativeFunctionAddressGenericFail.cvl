@@ -1,0 +1,16 @@
+unsafe "C" delegate int IntProc(int value);
+
+T Identity<T>(T value)
+{
+    return value;
+}
+
+int main()
+{
+    unsafe
+    {
+        IntProc proc = &Identity;
+    }
+
+    return 0;
+}

@@ -1,0 +1,13 @@
+unsafe "C" delegate int Callback(int value);
+
+[UnsafeBody]
+int main()
+{
+    Callback first = null;
+    Callback second = default(Callback);
+    Callback third = first;
+    bool a = first == null;
+    bool b = second == null;
+    bool c = third != null;
+    return a && b && !c ? 0 : 1;
+}

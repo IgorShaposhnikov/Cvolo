@@ -22,7 +22,7 @@ public sealed class CompilationProject
 		ProjectReferences = projectReferences ?? [];
 	}
 
-	public static CompilationProject Load(string inputPath, string? compilerBaseDir = null, bool forceShared = false, bool mergeProjectReferences = true)
+	public static CompilationProject Load(string inputPath, string? compilerBaseDir = null, bool forceShared = false, bool mergeProjectReferences = true, bool includeStandardLibrary = true)
 	{
 		List<string> sourceFiles = [];
 		var outputName = "main";
@@ -32,7 +32,9 @@ public sealed class CompilationProject
 
 		// 1. Automatically locate the "libraries" folder by traversing up the directory tree
 		var searchDir = compilerBaseDir ?? AppContext.BaseDirectory;
-		var stdLibFullPath = FindStandardLibraryPath(searchDir) ?? FindStandardLibraryPath(Directory.GetCurrentDirectory());
+		var stdLibFullPath = includeStandardLibrary
+			? FindStandardLibraryPath(searchDir) ?? FindStandardLibraryPath(Directory.GetCurrentDirectory())
+			: null;
 		var projectDir = Directory.Exists(inputPath) ? Path.GetFullPath(inputPath) : Path.GetDirectoryName(Path.GetFullPath(inputPath))!;
 
 		if (stdLibFullPath != null)

@@ -1,6 +1,7 @@
 using Cvolo.Analysis.Symbols;
 using Cvolo.Analysis.Symbols.Base;
 using Cvolo.Analysis.Symbols.Collections;
+using Cvolo.Analysis.Symbols.FFI;
 using Cvolo.Analysis.Symbols.Structs;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
@@ -15,6 +16,8 @@ namespace Cvolo.Analysis.Passes.Declaration;
 /// </summary>
 internal sealed class GlobalVariableRegistrar(BindingContext context)
 {
+	private readonly AttributeValidator _attributes = new(context);
+
 	/// <summary>
 	/// Validates and registers one global variable in the qualified and short-name symbol indexes.
 	/// </summary>
@@ -45,6 +48,15 @@ internal sealed class GlobalVariableRegistrar(BindingContext context)
 			return;
 		}
 
+		// Imported foreign globals: storage lives in an external native library. The declaration
+		// never allocates or initializes storage — it binds an external mutable data symbol that is
+		// read-only at the Cvolo source level but deliberately NOT an LLVM constant.
+		if (globalDecl.IsForeign)
+		{
+			DeclareForeignGlobal(globalDecl, type, qualifiedName);
+			return;
+		}
+
 		if (ContainsConstantIntegerDivisionByZero(globalDecl.Initializer))
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
@@ -54,7 +66,17 @@ internal sealed class GlobalVariableRegistrar(BindingContext context)
 
 		// §16: safe delegates are non-null / non-default-initializable; a delegate-typed
 		// global must carry an explicit initializer, and 'null' is never a legal value.
-		if (type is DelegateTypeSymbol)
+		// Native delegates are plain function pointers: implicit global zero-initialization is legal.
+		// An explicit source-level `null` expression is still an unsafe operation and is validated
+		// by SafetyPass; no native-delegate exception is granted here.
+		if (type is DelegateTypeSymbol { IsNative: true } && globalDecl.Initializer is NullLiteralExpressionSyntax or DefaultExpressionSyntax)
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, globalDecl.Initializer.Span, $"Explicit null/default initialization of native delegate global '{globalDecl.Name}' requires unsafe executable initialization.", DiagnosticIds.NullForNativeDelegate);
+			return;
+		}
+
+		if (type is DelegateTypeSymbol { IsNative: false })
 		{
 			if (globalDecl.Initializer is null)
 			{
@@ -117,6 +139,257 @@ internal sealed class GlobalVariableRegistrar(BindingContext context)
 		}
 		shortNameList.Add(symbol);
 		context.GlobalVariables.Add((globalDecl, symbol));
+	}
+
+	/// <summary>
+	/// Registers a standalone imported foreign global (standalone <c>extern "C" global ...</c>).
+	/// The declaration binds external storage; it never allocates or initializes anything.
+	/// </summary>
+	private void DeclareForeignGlobal(GlobalVariableDeclarationSyntax globalDecl, TypeSymbol type, string qualifiedName)
+	{
+		if (globalDecl.Initializer is not null)
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, globalDecl.Initializer.Span,
+				$"Imported foreign global '{globalDecl.Name}' cannot declare an initializer; its storage is external to the program.",
+				DiagnosticIds.ForeignGlobalInitializer);
+			return;
+		}
+
+		if (NativeAbiSemanticSafety.ContainsResourceBearingValue(context, type))
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, globalDecl.Span, $"Type '{type.Name}' is resource-bearing and cannot be foreign storage.", DiagnosticIds.NativeAbiResourceBearing);
+			return;
+		}
+		if (NativeAbiRepresentability.ContainsEnumWithoutExplicitStorage(type))
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, globalDecl.Span, $"Type '{type.Name}' contains an enum without explicit ABI storage.", DiagnosticIds.NativeEnumRequiresExplicitStorage);
+			return;
+		}
+		if (!NativeAbiRepresentability.IsNativeAbiRepresentable(type, NativeAbiPosition.ForeignGlobalStorage))
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, globalDecl.Span,
+				$"Type '{type.Name}' is not representable at the C ABI boundary as foreign global storage.",
+				DiagnosticIds.ForeignGlobalNotAbiSafe);
+			return;
+		}
+
+		if (type is TypeSymbol t && ReferenceEquals(t, TypeSymbol.String))
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, globalDecl.Span,
+				$"Type 'string' cannot be used as foreign global storage; use 'char*' or a fixed array of byte instead.",
+				DiagnosticIds.ForeignGlobalNotAbiSafe);
+			return;
+		}
+
+		string? importName = null;
+		string? libraryName = null;
+		string? winPath = null;
+		string? linuxPath = null;
+		string? macPath = null;
+		var sawImportName = false;
+		var sawLibraryImport = false;
+		foreach (var attr in globalDecl.Attributes)
+		{
+			var key = _attributes.NormalizeName(attr.Name);
+			switch (key)
+			{
+				case "LibraryImport":
+					if (sawLibraryImport)
+					{
+						ReportDiagnostic(attr, "Duplicate attribute '[LibraryImport]'.");
+						continue;
+					}
+					sawLibraryImport = true;
+					(libraryName, winPath, linuxPath, macPath) = _attributes.ExtractLibraryImport(attr, libraryName, winPath, linuxPath, macPath);
+					if (libraryName is not null)
+						context.NativeLibraries[libraryName] = new NativeLibraryInfo(libraryName, winPath, linuxPath, macPath);
+					break;
+				case "ImportName":
+					if (sawImportName)
+					{
+						ReportDiagnostic(attr, "Duplicate attribute '[ImportName]'.");
+						continue;
+					}
+					sawImportName = true;
+					importName = _attributes.ExtractImportName(attr);
+					break;
+				case null:
+					ReportWarning(attr, $"Unknown attribute '{attr.Name}'; it will be ignored.", DiagnosticIds.UnknownAttribute);
+					break;
+				default:
+					ReportDiagnostic(attr, $"Attribute '[{key}]' cannot be applied to foreign global declarations.");
+					break;
+			}
+		}
+
+		// A standalone foreign global must name its native library; without it the linker cannot
+		// resolve the external data symbol.
+		if (!sawLibraryImport)
+		{
+			ReportDiagnostic(globalDecl,
+				$"Imported foreign global '{globalDecl.Name}' requires [LibraryImport] to bind its native library.",
+				DiagnosticIds.ForeignGlobalRequiresLibrary);
+			return;
+		}
+
+		var symbol = new VariableSymbol(globalDecl.Name, type, isMutable: globalDecl.IsMutable || globalDecl.Type.StartsWith("ref"))
+		{
+			IsInitialized = false,
+			IsGlobal = true,
+			Origin = OriginKind.Global,
+			Visibility = globalDecl.Visibility,
+			DeclaringUnit = context.CurrentUnit,
+			DeclaringNamespace = context.CurrentNamespace,
+			IsForeign = true,
+			ImportName = importName,
+			LibraryName = libraryName,
+			WinPath = winPath,
+			LinuxPath = linuxPath,
+			MacPath = macPath,
+			CallingConvention = globalDecl.CallingConvention ?? "C"
+		};
+		context.GlobalsByQualifiedName[qualifiedName] = symbol;
+		if (!context.GlobalsByShortName.TryGetValue(globalDecl.Name, out var shortNameList))
+		{
+			shortNameList = [];
+			context.GlobalsByShortName[globalDecl.Name] = shortNameList;
+		}
+		shortNameList.Add(symbol);
+		context.GlobalVariables.Add((globalDecl, symbol));
+	}
+
+	/// <summary>
+	/// Registers a foreign global declared inside an extern block. The block already carried the
+	/// [LibraryImport] and calling-convention metadata; only [ImportName] is validated per member.
+	/// </summary>
+	public void DeclareExternBlockGlobal(string name, string typeName, bool isMutable, Visibility? visibility, IReadOnlyList<AttributeSyntax> attributes, string convention, string? libraryName, string? winPath, string? linuxPath, string? macPath, TextSpan span)
+	{
+		var type = context.ResolveType(typeName);
+		if (type is null)
+		{
+			ReportDiagnostic(span, $"Unknown type '{typeName}' in foreign global '{name}'.");
+			return;
+		}
+
+		var qualifiedName = context.GetMangledName(name, context.CurrentNamespace);
+		if (context.GlobalsByQualifiedName.ContainsKey(qualifiedName))
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, span, $"Duplicate definition of global variable '{name}'.");
+			return;
+		}
+
+		if (NativeAbiSemanticSafety.ContainsResourceBearingValue(context, type))
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, span, $"Type '{type.Name}' is resource-bearing and cannot be foreign storage.", DiagnosticIds.NativeAbiResourceBearing);
+			return;
+		}
+		if (NativeAbiRepresentability.ContainsEnumWithoutExplicitStorage(type))
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, span, $"Type '{type.Name}' contains an enum without explicit ABI storage.", DiagnosticIds.NativeEnumRequiresExplicitStorage);
+			return;
+		}
+		if (!NativeAbiRepresentability.IsNativeAbiRepresentable(type, NativeAbiPosition.ForeignGlobalStorage)
+			|| ReferenceEquals(type, TypeSymbol.String))
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, span,
+				$"Type '{type.Name}' is not representable at the C ABI boundary as foreign global storage.",
+				DiagnosticIds.ForeignGlobalNotAbiSafe);
+			return;
+		}
+
+		string? importName = null;
+		var sawImportName = false;
+		foreach (var attr in attributes)
+		{
+			var key = _attributes.NormalizeName(attr.Name);
+			switch (key)
+			{
+				case "ImportName":
+					if (sawImportName)
+					{
+						ReportDiagnostic(attr, "Duplicate attribute '[ImportName]'.");
+						continue;
+					}
+					sawImportName = true;
+					importName = _attributes.ExtractImportName(attr);
+					break;
+				case "LibraryImport":
+					ReportDiagnostic(attr,
+						"Attribute '[LibraryImport]' attaches a library to an extern block, not to a global inside it. Move it to the enclosing extern block.",
+						DiagnosticIds.LibraryImportOnBlockGlobal);
+					break;
+				case null:
+					ReportWarning(attr, $"Unknown attribute '{attr.Name}'; it will be ignored.", DiagnosticIds.UnknownAttribute);
+					break;
+				default:
+					ReportDiagnostic(attr, $"Attribute '[{key}]' cannot be applied to extern block global declarations.");
+					break;
+			}
+		}
+
+		var symbol = new VariableSymbol(name, type, isMutable)
+		{
+			IsInitialized = false,
+			IsGlobal = true,
+			Origin = OriginKind.Global,
+			Visibility = visibility ?? Visibility.Internal,
+			DeclaringUnit = context.CurrentUnit,
+			DeclaringNamespace = context.CurrentNamespace,
+			IsForeign = true,
+			ImportName = importName,
+			LibraryName = libraryName,
+			WinPath = winPath,
+			LinuxPath = linuxPath,
+			MacPath = macPath,
+			CallingConvention = convention
+		};
+		context.GlobalsByQualifiedName[qualifiedName] = symbol;
+		if (!context.GlobalsByShortName.TryGetValue(name, out var shortNameList))
+		{
+			shortNameList = [];
+			context.GlobalsByShortName[name] = shortNameList;
+		}
+		shortNameList.Add(symbol);
+		context.GlobalVariables.Add((new GlobalVariableDeclarationSyntax(span, typeName, name, null, isMutable, visibility), symbol));
+	}
+
+	/// <summary>Reads [LibraryImport] arguments from a foreign-global attribute and registers the library.</summary>
+	private void RegisterLibraryImport(AttributeSyntax attr)
+	{
+		string? libraryName = null;
+		string? winPath = null;
+		string? linuxPath = null;
+		string? macPath = null;
+		(libraryName, winPath, linuxPath, macPath) = _attributes.ExtractLibraryImport(attr, libraryName, winPath, linuxPath, macPath);
+		if (libraryName is not null)
+			context.NativeLibraries[libraryName] = new NativeLibraryInfo(libraryName, winPath, linuxPath, macPath);
+	}
+
+	private void ReportDiagnostic(SyntaxNode node, string message, string? diagnosticId = null)
+	{
+		var currentFileContext = context.FileContexts[context.CurrentUnit!];
+		context.Diagnostics.Report(currentFileContext, node.Span, message, diagnosticId);
+	}
+
+	private void ReportDiagnostic(TextSpan span, string message, string? diagnosticId = null)
+	{
+		var currentFileContext = context.FileContexts[context.CurrentUnit!];
+		context.Diagnostics.Report(currentFileContext, span, message, diagnosticId);
+	}
+
+	private void ReportWarning(SyntaxNode node, string message, string id)
+	{
+		var currentFileContext = context.FileContexts[context.CurrentUnit!];
+		context.Diagnostics.ReportWarning(currentFileContext, node.Span, message, id);
 	}
 
 	/// <summary>

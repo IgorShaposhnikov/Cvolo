@@ -1,0 +1,19 @@
+unsafe union Value
+{
+    int Integer;
+    float Floating;
+}
+
+int main()
+{
+    unsafe
+    {
+        Value value = Value { Integer: 1 };
+        if (value is Integer)
+        {
+            return 1;
+        }
+    }
+
+    return 0;
+}

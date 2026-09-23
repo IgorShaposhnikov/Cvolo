@@ -93,8 +93,21 @@ public abstract class CompilerTestBase
 		var isolatedDir = Path.GetFullPath(Path.Combine(sourceRoot, "_isolated", categoryDir, caseName));
 
 		Directory.CreateDirectory(isolatedDir);
-		File.Copy(fullSourcePath, Path.Combine(isolatedDir, caseName + ".cvl"), overwrite: true);
-		return Path.Combine(isolatedDir, caseName + ".cvl");
+
+		// A test asset may have been replaced from an archive whose original timestamp is older
+		// than the existing isolated obj/bin output.  Do not let either MSBuild's asset copy or
+		// Cvolo's own incremental build reuse an older program after the source text changed.
+		var isolatedObj = Path.Combine(isolatedDir, "obj");
+		var isolatedBin = Path.Combine(isolatedDir, "bin");
+		if (Directory.Exists(isolatedObj))
+			Directory.Delete(isolatedObj, recursive: true);
+		if (Directory.Exists(isolatedBin))
+			Directory.Delete(isolatedBin, recursive: true);
+
+		var stagedSource = Path.Combine(isolatedDir, caseName + ".cvl");
+		File.Copy(fullSourcePath, stagedSource, overwrite: true);
+		File.SetLastWriteTimeUtc(stagedSource, DateTime.UtcNow);
+		return stagedSource;
 	}
 
 	private string ResolveBinaryPath(string assemblyDir, string binaryName, string folderPath)

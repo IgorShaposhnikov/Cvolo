@@ -52,15 +52,20 @@ internal sealed class CallResolver(BindingContext context, OverloadResolver over
 	/// Arity diagnostics are preserved here because they are intrinsic to resolving the delegate
 	/// callable shape. Argument compatibility and target typing remain with validation.
 	/// </remarks>
-	public bool TryResolveDelegateInvocation(
-		CallExpressionSyntax call,
-		SymbolTable scope,
-		out DelegateTypeSymbol? delegateType)
+	public bool TryResolveDelegateInvocation(CallExpressionSyntax call, SymbolTable scope, out DelegateTypeSymbol? delegateType)
 	{
 		delegateType = null;
 		TypeSymbol? delegateMemberType = null;
 
-		if (call.FunctionName.Contains('.'))
+		// A fully-qualified global native/safe delegate (e.g. Native.Callback(...)) is
+		// itself the callable value. Resolve that exact value path before interpreting the
+		// final segment as a struct-field invocation.
+		if (context.ResolveGlobalReference(call.FunctionName, out _) is VariableSymbol qualifiedGlobal
+			&& qualifiedGlobal.Type is DelegateTypeSymbol qualifiedDelegate)
+		{
+			delegateMemberType = qualifiedDelegate;
+		}
+		else if (call.FunctionName.Contains('.'))
 		{
 			var lastDot = call.FunctionName.LastIndexOf('.');
 			var receiverName = call.FunctionName[..lastDot];

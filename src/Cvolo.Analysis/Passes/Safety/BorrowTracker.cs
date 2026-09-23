@@ -10,13 +10,10 @@ namespace Cvolo.Analysis.Passes.Safety;
 /// <summary>
 /// Owns per-function borrow exclusivity state and parent-variable locks. Non-lexical borrow-use
 /// scanning is delegated to <see cref="BorrowLivenessAnalyzer"/>. Value-move analysis is owned by
-/// <see cref="MoveAnalyzer"/>, while safe-delegate provenance remains owned by
-/// <see cref="Cvolo.Analysis.Passes.SafetyPass"/>.
+/// <see cref="MoveAnalyzer"/>, while safe-delegate provenance is owned by
+/// <see cref="SafeDelegateProvenanceTracker"/>.
 /// </summary>
-internal sealed class BorrowTracker(
-	BindingContext context,
-	Func<ExpressionSyntax, string?> getBaseIdentifierName,
-	Func<SafetyTier> getCurrentTier)
+internal sealed class BorrowTracker(BindingContext context, Func<ExpressionSyntax, string?> getBaseIdentifierName, Func<SafetyTier> getCurrentTier)
 {
 	private readonly List<BorrowSymbol> _activeBorrows = [];
 	private readonly Dictionary<string, (string BorrowedName, bool IsMutable, int LastUseEnd, TextSpan DeclSpan)> _activeRefs = [];
@@ -25,13 +22,18 @@ internal sealed class BorrowTracker(
 	private readonly Func<SafetyTier> _getCurrentTier = getCurrentTier;
 	private BorrowLivenessAnalyzer? _livenessAnalyzer;
 
-	/// <summary>Provides non-lexical borrow-use scanning over the shared active-reference state.</summary>
+	/// <summary>
+	/// Provides non-lexical borrow-use scanning over the shared active-reference state.
+	/// </summary>
 	private BorrowLivenessAnalyzer LivenessAnalyzer => _livenessAnalyzer ??= new BorrowLivenessAnalyzer(_activeRefs, RemoveBorrower);
 
-	/// <summary>Snapshot used to release borrows and reference names created inside one lexical block.</summary>
+	/// <summary>Snapshot used to release borrows and reference names created inside one lexical block.
+	/// </summary>
 	internal readonly record struct BlockState(int BorrowCount, HashSet<string> RefNames);
 
-	/// <summary>Clears all per-function borrow state.</summary>
+	/// <summary>
+	/// Clears all per-function borrow state.
+	/// </summary>
 	public void Reset()
 	{
 		_activeBorrows.Clear();
@@ -122,7 +124,9 @@ internal sealed class BorrowTracker(
 		RegisterParentLock(borrowedName, borrowerName);
 	}
 
-	/// <summary>Removes one borrower from the active borrow/ref sets and releases its parent lock.</summary>
+	/// <summary>
+	/// Removes one borrower from the active borrow/ref sets and releases its parent lock.
+	/// </summary>
 	public void RemoveBorrower(string borrowerName)
 	{
 		_activeRefs.Remove(borrowerName);
@@ -130,7 +134,9 @@ internal sealed class BorrowTracker(
 		ReleaseParentLock(borrowerName);
 	}
 
-	/// <summary>Reports a move or reassignment while the value still has an active child borrow.</summary>
+	///
+	/// <summary>Reports a move or reassignment while the value still has an active child borrow.
+	/// </summary>
 	public void VerifyUnlocked(ExpressionSyntax expression, string verb)
 	{
 		var name = _getBaseIdentifierName(expression);
@@ -142,7 +148,9 @@ internal sealed class BorrowTracker(
 	}
 
 
-	/// <summary>Adds a child-reference lock for the parent value.</summary>
+	///
+	/// <summary>Adds a child-reference lock for the parent value.
+	/// </summary>
 	private void RegisterParentLock(string parentName, string refName)
 	{
 		if (!_parentLocks.TryGetValue(parentName, out var refs))
@@ -154,7 +162,9 @@ internal sealed class BorrowTracker(
 		refs.Add(refName);
 	}
 
-	/// <summary>Removes a child-reference lock from every parent that currently owns it.</summary>
+	/// <summary>
+	/// Removes a child-reference lock from every parent that currently owns it.
+	/// </summary>
 	private void ReleaseParentLock(string refName)
 	{
 		var parentKeys = _parentLocks.Where(kv => kv.Value.Contains(refName)).Select(kv => kv.Key).ToList();

@@ -45,24 +45,42 @@ internal sealed class GlobalEmitter
 			if (_codegen.GlobalVariables.ContainsKey(qualifiedName))
 				continue;
 
-			var llvmType = _codegen.Types.Lower(globalSymbol.Type);
-			var global = _codegen.Module.AddGlobal(llvmType, qualifiedName);
-			var importedPackageGlobal = globalSymbol.DeclaringUnit is not null
-				&& BindingContext.ExternalPackageUnits.Contains(globalSymbol.DeclaringUnit);
-			var defineHere = !importedPackageGlobal
-				&& (_definedGlobalNames is null || _definedGlobalNames.Contains(qualifiedName));
+			// C _Bool has one-byte object storage even though the compiler keeps ordinary
+			// Cvolo bool values in the internal i1 representation. Imported foreign bool
+			// globals therefore use i8 storage and are bridged on loads/stores.
+			var llvmType = globalSymbol.IsForeign && globalSymbol.Type.Equals(TypeSymbol.Bool)
+				? LLVMTypeRef.Int8
+				: _codegen.Types.Lower(globalSymbol.Type);
+			var nativeName = globalSymbol.IsForeign ? globalSymbol.ImportName ?? globalSymbol.Name : qualifiedName;
+			var global = _codegen.Module.AddGlobal(llvmType, nativeName);
 
-			global.IsGlobalConstant = !globalSymbol.IsMutable;
-			if (defineHere)
+			// Imported foreign globals are externally defined mutable C data: never const, never
+			// defined or initialized here.
+			if (globalSymbol.IsForeign)
 			{
-				global.Linkage = _definedGlobalNames is not null && globalSymbol.Visibility == Visibility.Public
-					? LLVMLinkage.LLVMExternalLinkage
-					: LLVMLinkage.LLVMInternalLinkage;
-				global.Initializer = BuildInitializer(globalSymbol.Type, globalNode.Initializer, llvmType);
+				global.IsGlobalConstant = false;
+				global.Linkage = LLVMLinkage.LLVMExternalLinkage;
+				_codegen.ForeignGlobalNames.Add(qualifiedName);
 			}
 			else
 			{
-				global.Linkage = LLVMLinkage.LLVMExternalLinkage;
+				var importedPackageGlobal = globalSymbol.DeclaringUnit is not null
+					&& BindingContext.ExternalPackageUnits.Contains(globalSymbol.DeclaringUnit);
+				var defineHere = !importedPackageGlobal
+					&& (_definedGlobalNames is null || _definedGlobalNames.Contains(qualifiedName));
+
+				global.IsGlobalConstant = !globalSymbol.IsMutable;
+				if (defineHere)
+				{
+					global.Linkage = _definedGlobalNames is not null && globalSymbol.Visibility == Visibility.Public
+						? LLVMLinkage.LLVMExternalLinkage
+						: LLVMLinkage.LLVMInternalLinkage;
+					global.Initializer = BuildInitializer(globalSymbol.Type, globalNode.Initializer, llvmType);
+				}
+				else
+				{
+					global.Linkage = LLVMLinkage.LLVMExternalLinkage;
+				}
 			}
 
 			_codegen.GlobalVariables[qualifiedName] = global;
@@ -222,6 +240,7 @@ internal sealed class GlobalEmitter
 								integerValue = 0;
 								return false;
 							}
+
 							integerValue = leftInteger / rightInteger;
 							break;
 						case "%":
@@ -232,6 +251,7 @@ internal sealed class GlobalEmitter
 								integerValue = 0;
 								return false;
 							}
+
 							integerValue = leftInteger % rightInteger;
 							break;
 						default:
@@ -240,6 +260,7 @@ internal sealed class GlobalEmitter
 							integerValue = 0;
 							return false;
 					}
+
 					doubleValue = integerValue;
 				}
 

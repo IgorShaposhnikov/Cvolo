@@ -70,12 +70,20 @@ internal sealed class SwitchValidator(
 	/// <summary>
 	/// Validates union cases, promoted payload bindings, payload visibility, and exhaustive coverage.
 	/// </summary>
-	private void ValidateUnionSwitch(
-		SwitchStatementSyntax statement,
-		UnionTypeSymbol unionType,
-		SymbolTable scope,
-		FunctionDeclarationSyntax currentFunction)
+	private void ValidateUnionSwitch(SwitchStatementSyntax statement, UnionTypeSymbol unionType, SymbolTable scope, FunctionDeclarationSyntax currentFunction)
 	{
+		if (unionType.IsUnsafe)
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(
+				currentFileContext,
+				statement.Expression.Span,
+				$"Cannot switch on raw 'unsafe union' '{unionType.Name}'; it has no tag and cannot be pattern-matched over variants.",
+				DiagnosticIds.UnsafeUnionTaggedOperation);
+			validateExpression(statement.Expression, scope);
+			return;
+		}
+
 		var matchedVariants = new HashSet<string>();
 		var hasDefault = false;
 
@@ -179,11 +187,7 @@ internal sealed class SwitchValidator(
 	/// <summary>
 	/// Validates enum cases, flags/non-exhaustive coverage rules, and terminal default behavior.
 	/// </summary>
-	private void ValidateEnumSwitch(
-		SwitchStatementSyntax statement,
-		EnumTypeSymbol enumType,
-		SymbolTable scope,
-		FunctionDeclarationSyntax currentFunction)
+	private void ValidateEnumSwitch(SwitchStatementSyntax statement, EnumTypeSymbol enumType, SymbolTable scope, FunctionDeclarationSyntax currentFunction)
 	{
 		var matchedVariants = new HashSet<string>();
 		var hasDefault = false;

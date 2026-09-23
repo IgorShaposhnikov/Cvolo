@@ -13,11 +13,11 @@ namespace Cvolo.Emitter.LLVM.Codegen.TypeLowering;
 /// classification, parameter coercion, return classification, and platform calling-convention
 /// rules belong to a separate native-ABI layer.
 ///
-/// The implementation preserves the pre-refactoring behavior exactly. In particular, choices
-/// such as <c>bool -&gt; i1</c> and the current fixed-width treatment of <c>nint</c>/<c>nuint</c>
-/// are not corrected here; behavioral changes should be made in dedicated commits.
+/// The implementation preserves the pre-refactoring behavior exactly. In particular, the
+/// <c>bool -&gt; i1</c> choice is retained; native-sized integers (<c>nint</c>/<c>nuint</c>) are
+/// lowered to the target pointer width supplied at construction time.
 /// </remarks>
-internal sealed class LlvmTypeLowering(IReadOnlyDictionary<string, LLVMTypeRef> llvmStructTypes)
+internal sealed class LlvmTypeLowering(IReadOnlyDictionary<string, LLVMTypeRef> llvmStructTypes, int nativePointerBits)
 {
 	/// <summary>
 	/// Named LLVM aggregate types that were declared for semantic structs and unions.
@@ -25,6 +25,8 @@ internal sealed class LlvmTypeLowering(IReadOnlyDictionary<string, LLVMTypeRef> 
 	/// are materialized.
 	/// </summary>
 	private readonly IReadOnlyDictionary<string, LLVMTypeRef> _llvmStructTypes = llvmStructTypes;
+
+	private readonly int _nativePointerBits = nativePointerBits;
 
 	/// <summary>
 	/// Cached safe-delegate storage type. Safe delegates currently use two pointer-sized words:
@@ -70,8 +72,15 @@ internal sealed class LlvmTypeLowering(IReadOnlyDictionary<string, LLVMTypeRef> 
 			return Lower(enumType.StorageType);
 
 		// Preserve the existing safe-delegate representation exactly during extraction.
-		if (t is DelegateTypeSymbol)
+		if (t is DelegateTypeSymbol delegateType)
 		{
+			// Native delegates carry a single function pointer: null==0, one direct call target.
+			if (delegateType.IsNative)
+			{
+				var paramTypes = delegateType.Parameters.Select(p => Lower(p.Type)).ToArray();
+				return LLVMTypeRef.CreatePointer(LLVMTypeRef.CreateFunction(Lower(delegateType.ReturnType), paramTypes), 0);
+			}
+
 			if (_delegateWordType.Handle == 0)
 				_delegateWordType = LLVMTypeRef.CreateStruct(
 					[LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0)], false);
@@ -86,12 +95,13 @@ internal sealed class LlvmTypeLowering(IReadOnlyDictionary<string, LLVMTypeRef> 
 		}
 
 		// Keep the original primitive mapping and unknown-type fallback unchanged. Native-sized
-		// integer behavior is deliberately not made target-aware in this refactoring commit.
+		// integers follow the target pointer width resolved from the module data layout.
 		return t.Name switch
 		{
 			"void" => LLVMTypeRef.Void,
 			"int" or "uint" => LLVMTypeRef.Int32,
-			"long" or "ulong" or "nint" or "nuint" => LLVMTypeRef.Int64,
+			"long" or "ulong" => LLVMTypeRef.Int64,
+			"nint" or "nuint" => LLVMContextRef.Global.GetIntType((uint)_nativePointerBits),
 			"short" or "ushort" => LLVMTypeRef.Int16,
 			"byte" or "sbyte" or "char" => LLVMTypeRef.Int8,
 			"float" => LLVMTypeRef.Float,

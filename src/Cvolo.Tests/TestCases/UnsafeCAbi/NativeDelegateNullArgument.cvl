@@ -1,0 +1,18 @@
+unsafe "C" delegate int Callback(int value);
+
+[UnsafeBody]
+int Accept(Callback callback)
+{
+    return callback == null ? 0 : 1;
+}
+
+int main()
+{
+    var result = 1;
+    unsafe
+    {
+        result = Accept(null);
+    }
+
+    return result;
+}

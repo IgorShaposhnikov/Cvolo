@@ -89,7 +89,7 @@ internal sealed class FunctionDeclarationRegistrar(BindingContext context)
 				};
 				context.MonomorphizedFunctions[instName] = instSymbol;
 
-				var instDecl = new FunctionDeclarationSyntax(func.Span, func.ReturnType, instName, [], func.Parameters, func.Body, modifier: func.Modifier, visibility: func.Visibility);
+				var instDecl = new FunctionDeclarationSyntax(func.Span, func.ReturnType, instName, [], func.Parameters, func.Body, modifier: func.Modifier, visibility: func.Visibility, callingConvention: func.CallingConvention);
 				context.MonomorphizedFunctionDecls.Add(instDecl);
 				return;
 			}
@@ -157,12 +157,65 @@ internal sealed class FunctionDeclarationRegistrar(BindingContext context)
 		// Determine safety tier from function modifier
 		var safetyTier = func.Modifier ?? SafetyTier.Safe;
 
+		// Native-ABI Cvolo functions ('unsafe "C" R F(...) { body }'): the implementation is
+		// ordinary Cvolo but the signature is lowered across the C ABI and the function's address is
+		// usable as a callback. They are implicitly 'unsafe' (bodies may touch pointers directly).
+		string? nativeConvention = null;
+		if (func.CallingConvention is { } declaredConvention)
+		{
+			if (declaredConvention is not ("C" or "system"))
+			{
+				ReportDeclarationDiagnostic(func,
+					$"Unknown calling convention '{declaredConvention}'. Supported calling conventions are \"C\" and \"system\".",
+					DiagnosticIds.UnknownCallingConvention);
+				return;
+			}
+
+			if (!func.HasBody)
+			{
+				ReportDeclarationDiagnostic(func,
+					$"Native-ABI function '{func.Name}' requires a body; extern imports must use 'extern' declaration syntax instead.",
+					DiagnosticIds.NativeAbiFunctionSignatureInvalid);
+				return;
+			}
+
+			if (NativeAbiSemanticSafety.ContainsResourceBearingValue(context, type) || parameters.Any(p => NativeAbiSemanticSafety.ContainsResourceBearingValue(context, p.Type)))
+			{
+				ReportDeclarationDiagnostic(func, $"Signature of native-ABI function '{func.Name}' contains a resource-bearing type.", DiagnosticIds.NativeAbiResourceBearing);
+				return;
+			}
+			if (NativeAbiRepresentability.ContainsEnumWithoutExplicitStorage(type) || parameters.Any(p => NativeAbiRepresentability.ContainsEnumWithoutExplicitStorage(p.Type)))
+			{
+				ReportDeclarationDiagnostic(func, $"Signature of native-ABI function '{func.Name}' contains an enum without explicit ABI storage.", DiagnosticIds.NativeEnumRequiresExplicitStorage);
+				return;
+			}
+			if (!NativeAbiRepresentability.IsNativeAbiRepresentable(type, NativeAbiPosition.Return)
+				|| parameters.Any(p => !NativeAbiRepresentability.IsNativeAbiRepresentable(p.Type, NativeAbiPosition.Parameter)))
+			{
+				ReportDeclarationDiagnostic(func,
+					$"Signature of native-ABI function '{func.Name}' is not representable across the C ABI boundary.",
+					DiagnosticIds.NativeAbiFunctionSignatureInvalid);
+				return;
+			}
+
+			if (!ValidateAggregateBoundaryClassification(type, parameters, func, $"native-ABI function '{func.Name}'"))
+				return;
+
+			nativeConvention = declaredConvention;
+			safetyTier = SafetyTier.Unsafe;
+		}
+
 		var newSymbol = new FunctionSymbol(overloadedMangledName, type, parameters)
 		{
 			SafetyTier = safetyTier,
 			Visibility = func.Visibility,
 			DeclaringUnit = context.CurrentUnit
 		};
+		if (nativeConvention is not null)
+		{
+			newSymbol.IsNativeAbi = true;
+			newSymbol.CallingConvention = nativeConvention;
+		}
 		var suppressedWarnings = new List<string>();
 
 		_attributes.ApplyFunctionAttributes(
@@ -276,6 +329,9 @@ internal sealed class FunctionDeclarationRegistrar(BindingContext context)
 			parameters.Add(new ParameterSymbol(param.Name, paramType));
 		}
 
+		if (!ValidateExternBoundaryTypes(returnType, parameters, ext, $"extern function '{ext.Name}'"))
+			return;
+
 		var existing = context.Globals.Lookup(ext.Name);
 		if (existing is not null)
 		{
@@ -305,7 +361,9 @@ internal sealed class FunctionDeclarationRegistrar(BindingContext context)
 		var newSymbol = new FunctionSymbol(ext.Name, returnType, parameters, isExtern: true, isVariadic: ext.IsVariadic)
 		{
 			Visibility = ext.Visibility,
-			DeclaringUnit = context.CurrentUnit
+			DeclaringUnit = context.CurrentUnit,
+			// Legacy standalone extern declarations are ABI-equivalent to extern "C".
+			CallingConvention = "C"
 		};
 		context.Globals.Declare(newSymbol);
 
@@ -383,7 +441,18 @@ internal sealed class FunctionDeclarationRegistrar(BindingContext context)
 
 		foreach (var fn in block.Functions)
 			DeclareExternBlockFunction(block, fn, convention, libraryName, winPath, linuxPath, macPath);
+
+		// Foreign globals inside the block share the block's [LibraryImport] library and calling
+		// convention; they bind external mutable data symbols and never allocate or initialize storage.
+		foreach (var globalDecl in block.Globals)
+		{
+			_globals ??= new GlobalVariableRegistrar(context);
+			_globals.DeclareExternBlockGlobal(globalDecl.Name, globalDecl.Type, globalDecl.IsMutable, globalDecl.Visibility,
+				globalDecl.Attributes, convention, libraryName, winPath, linuxPath, macPath, globalDecl.Span);
+		}
 	}
+
+	private GlobalVariableRegistrar? _globals;
 
 	/// <summary>
 	/// Registers one function declared inside an extern block with its import-name and library metadata.
@@ -419,6 +488,9 @@ internal sealed class FunctionDeclarationRegistrar(BindingContext context)
 
 			parameters.Add(new ParameterSymbol(param.Name, paramType));
 		}
+
+		if (!ValidateExternBoundaryTypes(returnType, parameters, fn, $"extern function '{fn.Name}'"))
+			return;
 
 		var existing = context.Globals.Lookup(mangledName);
 		if (existing is not null)
@@ -588,7 +660,7 @@ internal sealed class FunctionDeclarationRegistrar(BindingContext context)
 
 		// Declare the function through the normal path (with [ExposeName] stripped) so it is
 		// registered, attribute-verified, and validatable exactly like any other function.
-		var clone = new FunctionDeclarationSyntax(func.Span, func.ReturnType, func.Name, func.GenericParameters, func.Parameters, func.Body!, filteredAttributes, func.Modifier, func.Receiver, func.Visibility);
+		var clone = new FunctionDeclarationSyntax(func.Span, func.ReturnType, func.Name, func.GenericParameters, func.Parameters, func.Body!, filteredAttributes, func.Modifier, func.Receiver, func.Visibility, callingConvention: func.CallingConvention);
 		DeclareFunction(clone);
 
 		// Locate the symbol the normal path just registered to tag it for export.
@@ -630,6 +702,56 @@ internal sealed class FunctionDeclarationRegistrar(BindingContext context)
 	/// <summary>
 	/// Reports a declaration diagnostic with a stable diagnostic identifier in the current compilation unit.
 	/// </summary>
+	private bool ValidateExternBoundaryTypes(TypeSymbol returnType, IReadOnlyList<ParameterSymbol> parameters, SyntaxNode node, string owner)
+	{
+		if (NativeAbiSemanticSafety.ContainsResourceBearingValue(context, returnType) || parameters.Any(p => NativeAbiSemanticSafety.ContainsResourceBearingValue(context, p.Type)))
+		{
+			ReportDeclarationDiagnostic(node, $"Signature of {owner} contains a resource-bearing type.", DiagnosticIds.NativeAbiResourceBearing);
+			return false;
+		}
+		if (NativeAbiRepresentability.ContainsEnumWithoutExplicitStorage(returnType) || parameters.Any(p => NativeAbiRepresentability.ContainsEnumWithoutExplicitStorage(p.Type)))
+		{
+			ReportDeclarationDiagnostic(node, $"Signature of {owner} contains an enum without explicit ABI storage.", DiagnosticIds.NativeEnumRequiresExplicitStorage);
+			return false;
+		}
+		if (!NativeAbiRepresentability.IsNativeAbiRepresentable(returnType, NativeAbiPosition.Return))
+		{
+			ReportDeclarationDiagnostic(node, $"Return type '{returnType.Name}' of {owner} is not representable across the C ABI boundary.", DiagnosticIds.NativeAbiTypeNotRepresentable);
+			return false;
+		}
+
+		foreach (var parameter in parameters)
+		{
+			if (!NativeAbiRepresentability.IsNativeAbiRepresentable(parameter.Type, NativeAbiPosition.ImportedExternParameter))
+			{
+				ReportDeclarationDiagnostic(node, $"Parameter '{parameter.Name}' of type '{parameter.Type.Name}' in {owner} is not representable across the imported C ABI boundary.", DiagnosticIds.NativeAbiTypeNotRepresentable);
+				return false;
+			}
+		}
+
+		return ValidateAggregateBoundaryClassification(returnType, parameters, node, owner);
+	}
+
+	private bool ValidateAggregateBoundaryClassification(TypeSymbol returnType, IReadOnlyList<ParameterSymbol> parameters, SyntaxNode node, string owner)
+	{
+		if (!NativeAbiAggregateClassification.IsVerifiedForDirectBoundary(returnType, context.NativePointerBytes, context.NativeAggregateAbiSupported))
+		{
+			ReportDeclarationDiagnostic(node, $"Return aggregate '{returnType.Name}' of {owner} has no verified target ABI classification.", DiagnosticIds.NativeAbiAggregateUnclassified);
+			return false;
+		}
+
+		foreach (var parameter in parameters)
+		{
+			if (!NativeAbiAggregateClassification.IsVerifiedForDirectBoundary(parameter.Type, context.NativePointerBytes, context.NativeAggregateAbiSupported))
+			{
+				ReportDeclarationDiagnostic(node, $"Parameter aggregate '{parameter.Type.Name}' in {owner} has no verified target ABI classification.", DiagnosticIds.NativeAbiAggregateUnclassified);
+				return false;
+			}
+		}
+
+		return true;
+	}
+
 	private void ReportDeclarationDiagnostic(SyntaxNode node, string message, string diagnosticId)
 	{
 		var currentFileContext = context.FileContexts[context.CurrentUnit!];

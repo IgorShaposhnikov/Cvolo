@@ -52,9 +52,13 @@ internal sealed class DestructorValidator(BindingContext context)
 	/// <summary>
 	/// Records the successfully registered destructor symbol for later cleanup and depth analysis.
 	/// </summary>
-	public void Register(string extendedTypeName, FunctionSymbol symbol)
+	public void Register(string extendedTypeName, FunctionSymbol symbol, TypeSymbol extendedType)
 	{
 		context.Destructors[extendedTypeName] = symbol;
+		if (extendedType is StructTypeSymbol structType)
+		{
+			structType.HasDestructor = true;
+		}
 	}
 
 	/// <summary>

@@ -1,0 +1,28 @@
+unsafe "C" delegate int UnaryProc(int value);
+
+unsafe union Value
+{
+    int Integer;
+    float Floating;
+}
+
+unsafe "C" int AddOne(int value)
+{
+    return value + 1;
+}
+
+int main()
+{
+    Value value = Value { Integer: 41 };
+
+    unsafe
+    {
+        UnaryProc proc = &AddOne;
+        if (proc(value.Integer) != 42)
+        {
+            return 1;
+        }
+    }
+
+    return 0;
+}

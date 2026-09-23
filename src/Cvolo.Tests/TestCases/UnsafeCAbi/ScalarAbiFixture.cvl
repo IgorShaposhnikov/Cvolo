@@ -1,0 +1,20 @@
+using System;
+
+int main()
+{
+    Console.WriteLine(sizeof<bool>());
+    Console.WriteLine(sizeof<sbyte>());
+    Console.WriteLine(sizeof<byte>());
+    Console.WriteLine(sizeof<short>());
+    Console.WriteLine(sizeof<ushort>());
+    Console.WriteLine(sizeof<int>());
+    Console.WriteLine(sizeof<uint>());
+    Console.WriteLine(sizeof<long>());
+    Console.WriteLine(sizeof<ulong>());
+    Console.WriteLine(sizeof<nint>());
+    Console.WriteLine(sizeof<nuint>());
+    Console.WriteLine(sizeof<char>());
+    Console.WriteLine(sizeof<float>());
+    Console.WriteLine(sizeof<double>());
+    return 0;
+}

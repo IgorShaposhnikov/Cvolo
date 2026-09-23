@@ -46,8 +46,16 @@ internal sealed class ExpressionTypeResolver(CodegenContext codegen, Func<Functi
 			return lambdaInfo.Delegate;
 		}
 
+		if (expression is UnaryExpressionSyntax nativeAddress
+			&& BindingContext.ResolvedNativeFunctionAddresses.TryGetValue(nativeAddress, out var addressBinding))
+		{
+			return addressBinding.Delegate;
+		}
+
 		if (BindingContext.ResolvedFunctionConversions.TryGetValue(expression, out var convertedFunction))
+		{
 			return BuildGroupDelegateType(convertedFunction, expression is MemberAccessExpressionSyntax);
+		}
 
 		return expression switch
 		{

@@ -34,6 +34,11 @@ internal sealed class ValueLoader(
 	/// <returns>The qualified global key, or <see langword="null"/> when no unique visible key exists.</returns>
 	public string? ResolveGlobalKey(string shortName)
 	{
+		// A qualified global name is already the module storage key. This also enables
+		// delegate invocation through paths such as Native.Callback(...).
+		if (codegen.GlobalVariables.ContainsKey(shortName))
+			return shortName;
+
 		if (!codegen.GlobalShortNames.TryGetValue(shortName, out var candidates))
 			return null;
 
@@ -107,12 +112,36 @@ internal sealed class ValueLoader(
 					aggregates.ApplyTbaa(aggregates.GetTbaaTag(structType!, fieldIndex), fieldValue);
 					return fieldValue;
 				}
+
+				if (thisType?.ReferencedType is UnionTypeSymbol unionType
+					&& unionType.FindField(name) is { } unionField)
+				{
+					var actualThisPointer = Builder.BuildLoad2(
+						LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0),
+						thisStorage,
+						"loaded_this_ptr");
+					var (fieldPointer, fieldType) = aggregates.GetUnionFieldPointer(actualThisPointer, unionType, unionField.Name);
+					return Builder.BuildLoad2(codegen.Types.Lower(fieldType), fieldPointer, "this_union_field_val");
+				}
 			}
 
 			throw new InvalidOperationException($"Undefined variable '{name}'");
 		}
 
 		var type = Function.VariableTypes[name];
+
+		// Imported C _Bool globals have byte-sized native object storage. Keep ordinary
+		// expression semantics in i1 by converting once when the foreign storage is read.
+		var resolvedGlobalKey = ResolveGlobalKey(name);
+		if (type.Equals(TypeSymbol.Bool)
+			&& resolvedGlobalKey is not null
+			&& codegen.ForeignGlobalNames.Contains(resolvedGlobalKey)
+			&& codegen.GlobalVariables.TryGetValue(resolvedGlobalKey, out var foreignGlobal)
+			&& foreignGlobal.Handle == storage.Handle)
+		{
+			var nativeBool = Builder.BuildLoad2(LLVMTypeRef.Int8, storage, "foreign_bool_load");
+			return Builder.BuildTrunc(nativeBool, LLVMTypeRef.Int1, "foreign_bool_to_internal");
+		}
 
 		if (Function.HeapAllocatedVars.Contains(name) && type is StructTypeSymbol heapStruct)
 		{

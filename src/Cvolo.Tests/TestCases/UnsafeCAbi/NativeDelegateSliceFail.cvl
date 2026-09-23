@@ -1,0 +1,6 @@
+unsafe "C" delegate void BadSlice(int[] values);
+
+int main()
+{
+    return 0;
+}

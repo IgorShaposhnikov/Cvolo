@@ -180,7 +180,9 @@ internal sealed class OverloadResolver(BindingContext context)
 			if (parameterTypes[i].Equals(argumentTypes[i]))
 				score += 4;
 			else if (argumentTypes[i].Equals(TypeSymbol.Null)
-					 && (parameterTypes[i] is RawPointerTypeSymbol || parameterTypes[i] is UnionTypeSymbol { IsOption: true }))
+					 && (parameterTypes[i] is RawPointerTypeSymbol
+						 || parameterTypes[i] is UnionTypeSymbol { IsOption: true }
+						 || parameterTypes[i] is DelegateTypeSymbol { IsNative: true }))
 				score += 3;
 			else if (TypeSymbol.IsIntegerType(parameterTypes[i]) && TypeSymbol.IsIntegerType(argumentTypes[i]))
 				score += 1;
@@ -224,7 +226,9 @@ internal sealed class OverloadResolver(BindingContext context)
 				score += 4;
 			}
 			else if (argument.Equals(TypeSymbol.Null)
-					 && (parameter is RawPointerTypeSymbol || parameter is UnionTypeSymbol { IsOption: true }))
+					 && (parameter is RawPointerTypeSymbol
+						 || parameter is UnionTypeSymbol { IsOption: true }
+						 || parameter is DelegateTypeSymbol { IsNative: true }))
 			{
 				score += 3;
 			}

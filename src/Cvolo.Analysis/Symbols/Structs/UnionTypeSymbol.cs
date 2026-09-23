@@ -6,6 +6,13 @@ public sealed class UnionTypeSymbol(string name, IReadOnlyList<UnionFieldSymbol>
 {
 	public IReadOnlyList<UnionFieldSymbol> Fields { get; } = fields;
 
+	/// <summary>
+	/// True for raw C-compatible unions declared as 'unsafe union Name { ... }': overlapping storage
+	/// with no tag field and natural (non-packed) C alignment. Fields must be ABI-safe. The default
+	/// tagged union carries a discriminator.
+	/// </summary>
+	public bool IsUnsafe { get; set; }
+
 	public bool IsMustUse { get; set; } = false;
 	public string? MustUseMessage { get; set; }
 

@@ -1,0 +1,3 @@
+[LibraryImport("native")]
+extern "C" { global int Version; }
+int main(){Version=1;return 0;}

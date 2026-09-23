@@ -1,0 +1,4 @@
+struct Resource { int Handle; }
+extension Resource { ~Resource() { } }
+unsafe union Value { Resource ResourceValue; int Integer; }
+int main(){return 0;}

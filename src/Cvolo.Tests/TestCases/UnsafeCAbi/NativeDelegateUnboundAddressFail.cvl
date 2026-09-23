@@ -1,0 +1,4 @@
+unsafe "C" delegate int Callback(int value);
+unsafe "C" int Inc(int value){return value+1;}
+unbound int Probe(){ Callback cb=&Inc; return 0;}
+int main(){return 0;}
