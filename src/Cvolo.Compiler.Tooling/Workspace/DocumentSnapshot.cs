@@ -80,9 +80,10 @@ public sealed class DocumentSnapshot
 	/// <summary>
 	/// Returns compiler-backed signature help for the call whose argument list contains the given
 	/// UTF-16 <paramref name="position"/>. Ordinary function overload resolution and nominal delegate
-	/// invocations use the binder's already-resolved target. Returns null when no callable is bound.
+	/// invocations use the binder's already-resolved target; when the callable is overloaded, every
+	/// overload is returned with the resolved one selected. Returns null when no callable is bound.
 	/// </summary>
-	public SignatureHelpResult? GetSignatureHelp(int position)
+	public SignatureHelpInfo? GetSignatureHelp(int position)
 	{
 		ArgumentOutOfRangeException.ThrowIfNegative(position);
 

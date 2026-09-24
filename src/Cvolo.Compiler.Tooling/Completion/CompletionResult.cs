@@ -60,14 +60,109 @@ public enum CompletionKind
 }
 
 /// <summary>
-/// A single completion item: the <see cref="Label"/> to display, the text to insert, and its
-/// <see cref="Kind"/>. When <see cref="IsSnippet"/> is true, <see cref="InsertText"/> is an LSP
-/// snippet body (with tab stops such as <c>$0</c>) rather than plain text.
+/// The fields of a completion candidate that can be resolved lazily on demand. The mask is a
+/// property of the candidate; the language-server layer intersects it with the client's advertised
+/// resolver support and strips fields already populated in the initial response.
 /// </summary>
-public sealed record CompletionCandidate(string Label, string InsertText, CompletionKind Kind, bool IsSnippet = false);
+[Flags]
+public enum CompletionResolvableFields
+{
+	/// <summary>No field can be resolved on demand.</summary>
+	None = 0,
+	/// <summary>The candidate's detail can be resolved on demand.</summary>
+	Detail = 1 << 0,
+	/// <summary>The candidate's plain-text documentation can be resolved on demand.</summary>
+	Documentation = 1 << 1,
+}
+
+/// <summary>
+/// A snapshot-scoped identity for a completion candidate. Values are only meaningful against the
+/// snapshot they were produced from: resolving a foreign or stale id deterministically yields no
+/// result rather than an error. The id is opaque to editors and must never cross a language-server
+/// wire boundary in this form.
+/// </summary>
+public readonly record struct CompletionItemId
+{
+	internal Guid SnapshotToken { get; }
+	internal int Value { get; }
+
+	internal CompletionItemId(Guid snapshotToken, int value)
+	{
+		SnapshotToken = snapshotToken;
+		Value = value;
+	}
+
+	public override string ToString() => $"completion-item:{Value}";
+}
+
+/// <summary>
+/// Base for the structured, compiler-owned pieces of a callable insertion template. The segments do
+/// not contain any snippet syntax: tab-stop numbering, escaping, and <c>$0</c> encoding are the
+/// language-server layer's responsibilities (and are only applied when the client supports snippets).
+/// </summary>
+public abstract record CompletionInsertSegment;
+
+/// <summary>
+/// A fixed run of source text within an insertion template (for example the callable name).
+/// </summary>
+public sealed record CompletionLiteral(string Text) : CompletionInsertSegment;
+
+/// <summary>
+/// A named argument slot in a callable insertion template.
+/// </summary>
+public sealed record CompletionPlaceholder(string DefaultText) : CompletionInsertSegment;
+
+/// <summary>
+/// The final caret position of a callable insertion template. At most one may appear, and when the
+/// client supports snippets it is encoded as <c>$0</c>.
+/// </summary>
+public sealed record CompletionFinalCursor : CompletionInsertSegment;
+
+/// <summary>
+/// A structured callable insertion template: the exact source the editor should produce when the
+/// candidate is inserted, described in compiler-owned semantic pieces with no snippet syntax.
+/// Segments are compared by value (in order) so identical templates from two analyses are equal.
+/// </summary>
+public sealed record CompletionInsertionPlan(IReadOnlyList<CompletionInsertSegment> SnippetSegments)
+{
+	public bool Equals(CompletionInsertionPlan? other)
+		=> other is not null && SnippetSegments.SequenceEqual(other.SnippetSegments);
+
+	public override int GetHashCode()
+	{
+		var hash = new HashCode();
+		foreach (var segment in SnippetSegments)
+			hash.Add(segment);
+		return hash.ToHashCode();
+	}
+}
+
+/// <summary>
+/// A single completion candidate. The <see cref="Label"/> is the display text; for callable
+/// overloads several candidates share a label and are distinguished by <see cref="Detail"/>. Text is
+/// always carried as the single normative plain <see cref="PlainInsertText"/>; when the client
+/// supports snippets and a <see cref="InsertionPlan"/> is present, the protocol layer encodes that
+/// plan as a snippet instead. <see cref="ItemId"/> is non-null only for callable candidates that can
+/// be resolved on demand, and is null for keywords and other synthetic candidates.
+/// </summary>
+public sealed record CompletionCandidate(
+	CompletionItemId? ItemId,
+	string Label,
+	string PlainInsertText,
+	CompletionKind Kind,
+	string? Detail,
+	CompletionInsertionPlan? InsertionPlan,
+	CompletionResolvableFields ResolvableFields);
 
 /// <summary>
 /// The result of a completion query: the range of source that a pending edit replaces (the typed
-/// prefix or a zero-length span), plus the ordered, deduplicated candidate list.
+/// prefix or a zero-length span), plus the ordered candidate list (overloads remain distinct).
 /// </summary>
 public sealed record CompletionResult(TextSpan ReplacementRange, IReadOnlyList<CompletionCandidate> Candidates);
+
+/// <summary>
+/// The lazily-resolvable fields of a callable completion candidate. Either or both may be null (for
+/// example a candidate without documentation resolves to a non-null <see cref="Detail"/> with a null
+/// <see cref="Documentation"/>). Resolution never recomputes the candidate's insertion text.
+/// </summary>
+public sealed record CompletionResolvedInfo(string? Detail, string? Documentation);

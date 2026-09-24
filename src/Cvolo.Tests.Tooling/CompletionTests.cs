@@ -51,7 +51,7 @@ public sealed class CompletionTests
 		var candidate = Assert.Single(result.Candidates, c => c.Label == label && c.Kind == kind);
 
 		return source.Remove(result.ReplacementRange.Start, result.ReplacementRange.Length)
-			.Insert(result.ReplacementRange.Start, candidate.InsertText);
+			.Insert(result.ReplacementRange.Start, candidate.PlainInsertText);
 	}
 
 	[Fact]
@@ -354,7 +354,7 @@ public sealed class CompletionTests
 		Assert.True(labels.IndexOf("main") < labels.IndexOf("Point"));
 		Assert.True(labels.IndexOf("Point") < labels.IndexOf("return"));
 		Assert.Contains("val", labels);
-		Assert.All(result.Candidates, c => Assert.Equal(c.Label, c.InsertText));
+		Assert.All(result.Candidates, c => Assert.Equal(c.Label, c.PlainInsertText));
 
 		// Deterministic across identical queries.
 		Assert.Equal(labels, Complete(source).Candidates.Select(c => c.Label));
@@ -514,7 +514,7 @@ public sealed class CompletionTests
 		Assert.True(labels.IndexOf("StructA") < labels.IndexOf("return"));
 		Assert.Contains("val", labels);
 		Assert.Contains("if", labels);
-		Assert.All(Complete(orderA).Candidates, c => Assert.Equal(c.Label, c.InsertText));
+		Assert.All(Complete(orderA).Candidates, c => Assert.Equal(c.Label, c.PlainInsertText));
 	}
 
 	[Fact]
@@ -938,8 +938,8 @@ public sealed class CompletionTests
 
 		var candidate = Assert.Single(result.Candidates);
 		Assert.Equal("~Name()", candidate.Label);
-		Assert.True(candidate.IsSnippet);
-		Assert.Contains("~Name()", candidate.InsertText, StringComparison.Ordinal);
+		Assert.NotNull(candidate.InsertionPlan);
+		Assert.Contains("~Name()", candidate.PlainInsertText, StringComparison.Ordinal);
 		// The bare `~` is part of the replaced range so the snippet supplies it.
 		Assert.Equal(new TextSpan("struct Name { int value; }\nextension Name {\n    ".Length, 1), result.ReplacementRange);
 	}
@@ -991,5 +991,179 @@ public sealed class CompletionTests
 		Assert.True(Contains(result, "Flags", CompletionKind.Type));
 		Assert.True(Contains(result, "MustUse", CompletionKind.Type));
 		Assert.DoesNotContain(result.Candidates, c => c.Label == "MyError");
+	}
+
+	[Fact]
+	public void Overloads_AreDistinctCandidatesWithItemIdsAndDetail()
+	{
+		const string source =
+			"int Render(string text) { return 0; }\n" +
+			"int Render(int value) { return 0; }\n" +
+			"int main() { return | }\n";
+
+		var result = Complete(source);
+
+		var candidates = result.Candidates.Where(c => c.Label == "Render" && c.Kind == CompletionKind.Function).ToList();
+		Assert.Equal(2, candidates.Count);
+		Assert.NotNull(candidates[0].ItemId);
+		Assert.NotNull(candidates[1].ItemId);
+		Assert.NotEqual(candidates[0].ItemId, candidates[1].ItemId);
+		Assert.Equal("int Render(string text)", candidates[0].Detail);
+		Assert.Equal("int Render(int value)", candidates[1].Detail);
+	}
+
+	[Fact]
+	public void SingleCallable_HasInitialDetailAndRemainsResolvable()
+	{
+		const string source =
+			"int Render(string text) { return 0; }\n" +
+			"int main() { return | }\n";
+
+		var result = Complete(source);
+
+		var candidate = result.Candidates.Single(c => c.Label == "Render" && c.Kind == CompletionKind.Function);
+		Assert.NotNull(candidate.ItemId);
+		Assert.Equal("int Render(string text)", candidate.Detail);
+		Assert.Equal(CompletionResolvableFields.Detail | CompletionResolvableFields.Documentation, candidate.ResolvableFields);
+	}
+
+	[Fact]
+	public void ResolveCompletion_ReturnsDetailAndDocumentation()
+	{
+		const string source =
+			"/// Computes the sum of two numbers.\n" +
+			"int Add(int left, int right) { return left + right; }\n" +
+			"int main() { return Add(1, 2); }\n";
+		using var fixture = TempProject.Create(("Main.cvl", source));
+		var project = CvoloWorkspace.Create().OpenProject(fixture.ProjectFilePath);
+		var snapshot = project.InitialSnapshot;
+		var document = snapshot.GetDocument(project.GetDocumentId("Main.cvl"));
+
+		var result = document.GetCompletions(source.IndexOf("Add(1,", StringComparison.Ordinal));
+		var candidate = result.Candidates.Single(c => c.Label == "Add" && c.Kind == CompletionKind.Function);
+		Assert.NotNull(candidate.ItemId);
+		Assert.Equal(CompletionResolvableFields.Detail | CompletionResolvableFields.Documentation, candidate.ResolvableFields);
+
+		var resolved = snapshot.ResolveCompletion(candidate.ItemId!.Value);
+
+		Assert.NotNull(resolved);
+		Assert.Equal("int Add(int left, int right)", resolved!.Detail);
+		Assert.Equal("Computes the sum of two numbers.", resolved.Documentation);
+	}
+
+	[Fact]
+	public void ResolveCompletion_ForeignSnapshotItemId_IsRejected()
+	{
+		const string source =
+			"int Add(int left, int right) { return left + right; }\n" +
+			"int main() { return Add(1, 2); }\n";
+		using var fixture = TempProject.Create(("Main.cvl", source));
+		var project = CvoloWorkspace.Create().OpenProject(fixture.ProjectFilePath);
+		var snapshot = project.InitialSnapshot;
+		var document = snapshot.GetDocument(project.GetDocumentId("Main.cvl"));
+		var result = document.GetCompletions(source.IndexOf("Add(1,", StringComparison.Ordinal));
+		var itemId = result.Candidates.Single(c => c.Label == "Add").ItemId;
+		Assert.NotNull(itemId);
+
+		var foreign = snapshot.WithDocument(document.Id, SourceText.From("int main() { return 0; }\n"));
+		Assert.Null(foreign.ResolveCompletion(itemId!.Value));
+	}
+
+	[Fact]
+	public void ResolveCompletion_DoesNotAlterInsertionSurface()
+	{
+		const string source =
+			"int Foo(int a) { return a; }\n" +
+			"int main() { return Foo|; }\n";
+		using var fixture = TempProject.Create(("Main.cvl", source));
+		var project = CvoloWorkspace.Create().OpenProject(fixture.ProjectFilePath);
+		var snapshot = project.InitialSnapshot;
+		var document = snapshot.GetDocument(project.GetDocumentId("Main.cvl"));
+		var position = source.IndexOf("Foo|;", StringComparison.Ordinal) + 3;
+
+		var initial = document.GetCompletions(position);
+		var candidate = initial.Candidates.Single(c => c.Label == "Foo");
+		Assert.NotNull(candidate.InsertionPlan);
+		Assert.NotNull(candidate.ItemId);
+		Assert.NotNull(snapshot.ResolveCompletion(candidate.ItemId!.Value));
+
+		var afterResolve = document.GetCompletions(position);
+		var candidateAfter = afterResolve.Candidates.Single(c => c.Label == "Foo");
+		Assert.Equal(candidate.PlainInsertText, candidateAfter.PlainInsertText);
+		Assert.Equal(candidate.InsertionPlan, candidateAfter.InsertionPlan);
+		Assert.Equal(initial.ReplacementRange, afterResolve.ReplacementRange);
+	}
+
+	[Fact]
+	public void InsertionPlan_FullCallTemplate_WhenCallNotOpened()
+	{
+		const string source =
+			"int Add(int left, int right) { return left + right; }\n" +
+			"int main() { return Add|; }\n";
+
+		var candidate = Complete(source).Candidates.Single(c => c.Label == "Add");
+		var plan = Assert.IsType<CompletionInsertionPlan>(candidate.InsertionPlan);
+
+		Assert.Collection(
+			plan.SnippetSegments,
+			segment => Assert.Equal("Add", Assert.IsType<CompletionLiteral>(segment).Text),
+			segment => Assert.Equal("(", Assert.IsType<CompletionLiteral>(segment).Text),
+			segment => Assert.Equal("left", Assert.IsType<CompletionPlaceholder>(segment).DefaultText),
+			segment => Assert.Equal(", ", Assert.IsType<CompletionLiteral>(segment).Text),
+			segment => Assert.Equal("right", Assert.IsType<CompletionPlaceholder>(segment).DefaultText),
+			segment => Assert.Equal(")", Assert.IsType<CompletionLiteral>(segment).Text),
+			segment => Assert.IsType<CompletionFinalCursor>(segment));
+
+		foreach (var segment in plan.SnippetSegments)
+		{
+			var text = segment switch
+			{
+				CompletionLiteral literal => literal.Text,
+				CompletionPlaceholder placeholder => placeholder.DefaultText,
+				_ => null,
+			};
+			Assert.DoesNotContain('$', text ?? string.Empty);
+		}
+	}
+
+	[Fact]
+	public void InsertionPlan_ArgumentsOnly_WhenCallJustOpened()
+	{
+		const string source =
+			"int Add(int left, int right) { return left + right; }\n" +
+			"int main() { return Add(|); }\n";
+
+		var candidate = Complete(source).Candidates.Single(c => c.Label == "Add");
+		var plan = Assert.IsType<CompletionInsertionPlan>(candidate.InsertionPlan);
+
+		Assert.Collection(
+			plan.SnippetSegments,
+			segment => Assert.Equal("left", Assert.IsType<CompletionPlaceholder>(segment).DefaultText),
+			segment => Assert.Equal(", ", Assert.IsType<CompletionLiteral>(segment).Text),
+			segment => Assert.Equal("right", Assert.IsType<CompletionPlaceholder>(segment).DefaultText),
+			segment => Assert.IsType<CompletionFinalCursor>(segment));
+	}
+
+	[Fact]
+	public void InsertionPlan_NoPlanWhenEditingExistingArguments()
+	{
+		const string source =
+			"int Add(int left, int right) { return left + right; }\n" +
+			"int main() { return Add(1|); }\n";
+
+		var candidate = Complete(source).Candidates.Single(c => c.Label == "Add");
+		Assert.Null(candidate.InsertionPlan);
+	}
+
+	[Fact]
+	public void SyntheticCandidates_HaveNoResolvableIdentity()
+	{
+		var result = Complete("int main() { | }\n");
+
+		var keyword = result.Candidates.Single(c => c.Label == "return");
+		Assert.Null(keyword.ItemId);
+		Assert.Null(keyword.Detail);
+		Assert.Null(keyword.InsertionPlan);
+		Assert.Equal(CompletionResolvableFields.None, keyword.ResolvableFields);
 	}
 }

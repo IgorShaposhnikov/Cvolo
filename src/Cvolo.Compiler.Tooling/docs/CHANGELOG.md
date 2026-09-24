@@ -3,6 +3,63 @@
 This file records changes to the public tooling surface and its observable semantics. It ships
 inside the Tooling artifact bundle under `docs/`.
 
+## 0.0.5.6
+
+Hardens LSP-6 rename planning.
+
+- rejects renames that introduce new compiler errors, including duplicate matching signatures;
+- preserves valid same-name overloads when their signatures remain distinct;
+- keeps rename planning snapshot-pure and all-or-nothing.
+
+## 0.0.5.5
+
+Adds project-semantic references and compiler-owned rename planning for LanguageServer LSP-6.
+
+### New public API
+
+| Type / member | Purpose |
+| --- | --- |
+| `SymbolReference` | One project-source occurrence of a snapshot-scoped symbol, including whether it is a declaration. |
+| `ProjectSnapshot.GetReferences(SymbolId, bool)` | Enumerates semantic occurrences across the immutable project snapshot. |
+| `RenamePreparation` / `DocumentSnapshot.PrepareRename(int)` | Validates an exact source occurrence and returns its compiler-owned placeholder. |
+| `RenameEdit`, `RenameSuccess`, `RenameFailure` | Snapshot-pure semantic rename planning result. |
+| `ProjectSnapshot.RenameSymbol(SymbolId, string)` | Produces one complete validated edit set or a semantic failure without mutating the snapshot. |
+
+### Semantics
+
+* Reference discovery scans project source occurrences but accepts them only after compiler-backed symbol resolution matches the requested snapshot-scoped `SymbolId`; comments and string contents are never textual references.
+* `includeDeclaration` is preserved by Tooling rather than reconstructed by the protocol layer.
+* External/package symbols may have project-local references but remain non-renameable when no editable project declaration exists.
+* Rename validates Cvolo identifier syntax and speculatively rebinds every edited occurrence in a derived immutable snapshot. A collision or rebinding rejects the complete plan rather than returning partial edits.
+* Rename is pure: no source file, workspace, or input `ProjectSnapshot` is mutated.
+
+## 0.0.5.4
+
+Completes the native-package tooling increment: imported native ABI declarations now participate in
+completion, semantic highlighting, hover/navigation identity, and compiler-backed signature help.
+
+### New public API
+
+| Type / member | Purpose |
+| --- | --- |
+| `NativeInteropKind` / `NativeInteropMetadata` | Structured native delegate, raw-union, and foreign-global metadata for editor hover/details without reparsing declaration attributes. |
+| `SymbolLookupResult.NativeInterop` | Optional native-interop metadata attached to resolved symbols. |
+| `SignatureHelpParameter`, `SignatureHelpItem`, `SignatureHelpResult` | Protocol-neutral signature-help DTOs. |
+| `DocumentSnapshot.GetSignatureHelp(int)` | Returns the binder-resolved ordinary-function or nominal-delegate signature at a UTF-16 cursor offset. |
+
+### Semantics
+
+* Package API declarations reconstructed from `.cvlib` metadata receive snapshot-local `SymbolId`s,
+  so hover and semantic navigation can resolve them even when the package ships no source.
+  `GetDefinitions` remains empty for those symbols rather than fabricating a local document location.
+* Public native delegates preserve `IsNative` and their calling convention in hover and signature
+  help. Raw unions retain their raw/unsafe identity.
+* Imported foreign globals expose calling convention, import symbol, library name, and target-specific
+  library paths reconstructed from package metadata or inherited extern-block binding metadata.
+* Extern-block globals participate in document navigation outlines and source go-to-definition.
+* Signature help uses the compiler's resolved function/delegate target and counts nested argument
+  delimiters when selecting the active parameter.
+
 ## 0.0.5.3
 
 Adds the first symbol-identity and source-navigation surface (language-server LSP-4:

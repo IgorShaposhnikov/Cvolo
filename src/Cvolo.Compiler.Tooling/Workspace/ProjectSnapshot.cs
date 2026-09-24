@@ -1,3 +1,4 @@
+using Cvolo.Compiler.Tooling.Completion;
 using Cvolo.Compiler.Tooling.Internal;
 using Cvolo.Projects;
 
@@ -72,6 +73,16 @@ public sealed class ProjectSnapshot
 	public IReadOnlyList<SymbolDefinition> GetDefinitions(SymbolId symbol)
 	{
 		return NavigationService.GetDefinitions(this, symbol);
+	}
+
+	/// <summary>
+	/// Resolves the lazily-resolvable fields of a callable completion candidate whose initial
+	/// items were computed against this snapshot. A completion item id obtained from a different
+	/// snapshot (or an unrecognized one) deterministically yields null rather than an error.
+	/// </summary>
+	public CompletionResolvedInfo? ResolveCompletion(CompletionItemId itemId)
+	{
+		return CompletionService.Resolve(this, itemId);
 	}
 
 	/// <summary>

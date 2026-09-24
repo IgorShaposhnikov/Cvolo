@@ -37,7 +37,11 @@ public enum CompletionKind
 	ArrayLength
 }
 
-public sealed record CompletionCandidate(string Label, string InsertText, CompletionKind Kind);
+public sealed record CompletionCandidate(
+	string Label,
+	string InsertText,
+	CompletionKind Kind,
+	string? CallableGroupKey = null);
 
 public sealed record CompletionQueryResult(CompletionQueryContext Context, IReadOnlyList<CompletionCandidate> Candidates);
 
@@ -213,8 +217,11 @@ public static class CompletionQuery
 						break;
 				}
 
-				root.Add(new ScopedVariable("this", OriginKind.Parameter,
-					new PointerTypeSymbol(receiverType, isMutable: true), extension));
+				root.Add(new ScopedVariable(
+					"this",
+					OriginKind.Parameter,
+					new PointerTypeSymbol(receiverType, isMutable: true),
+					extension));
 			}
 
 			foreach (var param in fn.Parameters)
@@ -246,6 +253,7 @@ public static class CompletionQuery
 		{
 			if (!Touching(child.Span, position))
 				continue;
+
 			if (FindEnclosingExtension(child, position) is { } nested)
 				return nested;
 		}
@@ -463,7 +471,7 @@ public static class CompletionQuery
 			if (!entry.Value.Any(fn => !IsReceiverBacked(fn) && IsVisible(state, fn.Visibility, fn.DeclaringUnit)))
 				continue;
 
-			AddCandidate(candidates, seen, Leaf(entry.Key), CompletionKind.Function);
+			AddCandidate(candidates, seen, Leaf(entry.Key), CompletionKind.Function, entry.Key);
 		}
 
 		// Generic function templates are callable declarations — DeclarationPass stores their
@@ -759,7 +767,7 @@ public static class CompletionQuery
 				continue;
 			if (!overloads.Any(fn => IsVisible(state, fn.Visibility, fn.DeclaringUnit)))
 				continue;
-			AddCandidate(candidates, seen, key[prefix.Length..], CompletionKind.Function);
+			AddCandidate(candidates, seen, key[prefix.Length..], CompletionKind.Function, key);
 		}
 
 		foreach (var (key, declaration) in state.Context.GenericFunctionTemplates)
@@ -799,7 +807,7 @@ public static class CompletionQuery
 		if (!IsVisible(state, declaration.Visibility, declaringUnit))
 			return;
 
-		AddCandidate(candidates, seen, key[prefix.Length..], CompletionKind.Function);
+		AddCandidate(candidates, seen, key[prefix.Length..], CompletionKind.Function, key);
 	}
 
 	private static void AddNamespaceTypeCandidates<T>(
@@ -829,17 +837,31 @@ public static class CompletionQuery
 
 	private static void AddExtensionMethods(List<CompletionCandidate> candidates, TypeSymbol type, QueryState state)
 	{
-		// BindingContext owns the extension lookup key families used by ordinary dotted calls
-		// and protocol matching. Completion only applies editor-facing visibility/dedup here.
-		var visibleMethods = new SortedSet<string>(StringComparer.Ordinal);
+		// Preserve the exact overload-group key selected by the compiler. Rich completion must
+		// never rebuild a member overload set from the short source name because unrelated
+		// receiver types can legitimately expose methods with the same spelling.
+		var visibleMethods = new SortedDictionary<string, string?>(StringComparer.Ordinal);
 		foreach (var (memberName, function) in state.Context.GetExtensionMethodCandidates(type, state.Unit))
 		{
-			if (IsVisible(state, function.Visibility, function.DeclaringUnit))
-				visibleMethods.Add(memberName);
+			if (!IsVisible(state, function.Visibility, function.DeclaringUnit))
+				continue;
+
+			visibleMethods.TryAdd(memberName, FindCallableGroupKey(state.Context, function));
 		}
 
-		foreach (var methodName in visibleMethods)
-			AddCandidate(candidates, methodName, methodName, CompletionKind.Method);
+		foreach (var (methodName, groupKey) in visibleMethods)
+			candidates.Add(new CompletionCandidate(methodName, methodName, CompletionKind.Method, groupKey));
+	}
+
+	private static string? FindCallableGroupKey(BindingContext context, FunctionSymbol function)
+	{
+		foreach (var (key, overloads) in context.OverloadedFunctions)
+		{
+			if (overloads.Any(candidate => ReferenceEquals(candidate, function)))
+				return key;
+		}
+
+		return null;
 	}
 
 	private static bool IsReceiverBacked(FunctionSymbol function) =>
@@ -849,11 +871,12 @@ public static class CompletionQuery
 		List<CompletionCandidate> candidates,
 		HashSet<(string Label, CompletionKind Kind)> seen,
 		string label,
-		CompletionKind kind)
+		CompletionKind kind,
+		string? callableGroupKey = null)
 	{
 		if (!seen.Add((label, kind)))
 			return;
-		candidates.Add(new CompletionCandidate(label, label, kind));
+		candidates.Add(new CompletionCandidate(label, label, kind, callableGroupKey));
 	}
 
 	private static void AddCandidate(
