@@ -281,13 +281,14 @@ internal static class CompletionService
 		{
 			var ordinal = all.IndexOf(function);
 			CompletionItemId? itemId = ordinal >= 0 ? new CompletionItemId(token, ordinal) : null;
+			var plan = BuildInsertionPlan(label, function, text, span);
 			result.Add(new Completion.CompletionCandidate(
 				itemId,
 				label,
-				label,
+				RenderPlainText(plan, label),
 				kind,
 				DetailOf(context, function),
-				BuildInsertionPlan(label, function, text, span),
+				plan,
 				CompletionResolvableFields.Detail | CompletionResolvableFields.Documentation));
 		}
 
@@ -386,6 +387,30 @@ internal static class CompletionService
 			first = false;
 			segments.Add(new CompletionPlaceholder(parameter.Name));
 		}
+	}
+
+	private static string RenderPlainText(CompletionInsertionPlan? plan, string fallback)
+	{
+		if (plan is null)
+			return fallback;
+
+		string? label = null;
+		var opensCall = false;
+
+		foreach (var segment in plan.SnippetSegments)
+		{
+			if (segment is not CompletionLiteral literal)
+				continue;
+
+			label ??= literal.Text;
+			if (literal.Text == "(")
+				opensCall = true;
+		}
+
+		if (label is null)
+			return string.Empty;
+
+		return opensCall ? label + "()" : label;
 	}
 
 	/// <summary>

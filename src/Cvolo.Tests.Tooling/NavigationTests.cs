@@ -379,6 +379,44 @@ public sealed class NavigationTests
 	}
 
 	[Fact]
+	public void StructInitializationTypeName_ResolvesToStructDeclaration()
+	{
+		const string s =
+			"struct WindowParameters { public int width; }\n" +
+			"int main() { val WindowParameters p = WindowParameters { width: 1 }; return 0; }\n";
+		var x = Open(("Main.cvl", s));
+		using (x.Fixture)
+		{
+			var symbol = x.Document.GetSymbolAtPosition(s.LastIndexOf("WindowParameters", StringComparison.Ordinal));
+			Assert.NotNull(symbol);
+			Assert.Equal(ToolingSymbolKind.Struct, symbol!.Kind);
+			var def = Assert.Single(x.Snapshot.GetDefinitions(symbol.SymbolId));
+			Assert.Equal("WindowParameters", x.Document.Text.GetText(def.SelectionSpan));
+			Assert.Equal(At(s, "WindowParameters {"), def.SelectionSpan.Start);
+		}
+	}
+
+	[Fact]
+	public void ExtensionConstructorCall_ResolvesToConstructorDeclaration()
+	{
+		const string s =
+			"struct WindowParameters { public int width; }\n" +
+			"struct Window { public int handle; }\n" +
+			"extension Window { public Window(WindowParameters args) { handle = 0; } }\n" +
+			"int main() { val WindowParameters p = WindowParameters { width: 1 }; val Window w = Window(p); return 0; }\n";
+		var x = Open(("Main.cvl", s));
+		using (x.Fixture)
+		{
+			var symbol = x.Document.GetSymbolAtPosition(s.IndexOf("Window(p)", StringComparison.Ordinal));
+			Assert.NotNull(symbol);
+			Assert.Equal(ToolingSymbolKind.Constructor, symbol!.Kind);
+			var def = Assert.Single(x.Snapshot.GetDefinitions(symbol.SymbolId));
+			Assert.Equal("Window", x.Document.Text.GetText(def.SelectionSpan));
+			Assert.Equal(s.IndexOf("public Window(WindowParameters", StringComparison.Ordinal) + "public ".Length, def.SelectionSpan.Start);
+		}
+	}
+
+	[Fact]
 	public void InterfaceMember_ResolvesToItsOwnDeclaration()
 	{
 		const string s = "interface S { int Sum(); }\nint main() { return 0; }\n";

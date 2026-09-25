@@ -90,7 +90,7 @@ public sealed class Inc7DocumentationAndOwnerTests
 		Assert.DoesNotContain("string text", candidate.Detail ?? string.Empty, StringComparison.Ordinal);
 	}
 	[Fact]
-	public void MemberCompletion_SingleCallable_KeepsPlainIdentifierAndCallableInsertionPlan()
+	public void MemberCompletion_SingleCallable_KeepsPlainCallAndCallableInsertionPlan()
 	{
 		const string sourceWithMarker =
 			"struct Cat {}\n" +
@@ -104,7 +104,7 @@ public sealed class Inc7DocumentationAndOwnerTests
 		var completion = document.GetCompletions(position);
 		var candidate = Assert.Single(completion.Candidates, item => item.Label == "Name");
 
-		Assert.Equal("Name", candidate.PlainInsertText);
+		Assert.Equal("Name()", candidate.PlainInsertText);
 		Assert.NotNull(candidate.InsertionPlan);
 		Assert.Contains(candidate.InsertionPlan!.SnippetSegments, segment => segment is CompletionLiteral { Text: "(" });
 		Assert.Contains(candidate.InsertionPlan.SnippetSegments, segment => segment is CompletionLiteral { Text: ")" });

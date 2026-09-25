@@ -354,7 +354,9 @@ public sealed class CompletionTests
 		Assert.True(labels.IndexOf("main") < labels.IndexOf("Point"));
 		Assert.True(labels.IndexOf("Point") < labels.IndexOf("return"));
 		Assert.Contains("val", labels);
-		Assert.All(result.Candidates, c => Assert.Equal(c.Label, c.PlainInsertText));
+		Assert.All(result.Candidates, c => Assert.Equal(
+			c.Kind == CompletionKind.Function || c.Kind == CompletionKind.Method ? c.Label + "()" : c.Label,
+			c.PlainInsertText));
 
 		// Deterministic across identical queries.
 		Assert.Equal(labels, Complete(source).Candidates.Select(c => c.Label));
@@ -514,7 +516,9 @@ public sealed class CompletionTests
 		Assert.True(labels.IndexOf("StructA") < labels.IndexOf("return"));
 		Assert.Contains("val", labels);
 		Assert.Contains("if", labels);
-		Assert.All(Complete(orderA).Candidates, c => Assert.Equal(c.Label, c.PlainInsertText));
+		Assert.All(Complete(orderA).Candidates, c => Assert.Equal(
+			c.Kind == CompletionKind.Function || c.Kind == CompletionKind.Method ? c.Label + "()" : c.Label,
+			c.PlainInsertText));
 	}
 
 	[Fact]

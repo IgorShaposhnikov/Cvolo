@@ -41,6 +41,8 @@ internal static class SymbolResolver
 		else if (node is IdentifierExpressionSyntax identifier)
 			result = ResolveIdentifier(context, visible, index, source, identifier)
 				?? ResolveImplicitExtensionField(context, unit, index, identifier);
+		else if (node is StructInitializationExpressionSyntax structInitialization)
+			result = ResolveTypeReference(context, index, source, structInitialization.Span, structInitialization.StructTypeName, position);
 		else
 			result = ResolveDeclarationName(context, unit, index, source, node, position);
 

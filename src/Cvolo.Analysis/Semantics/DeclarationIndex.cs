@@ -174,8 +174,20 @@ internal sealed class DeclarationIndex
 			var baseName = context.GetMangledName(extension.ExtendedTypeName, ns);
 			_functions[baseName] = constructor;
 
-			if (TryResolveParameters(context, constructor.Parameters, out var parameterTypes))
-				_functions[context.GetOverloadedMangledName(baseName, parameterTypes)] = constructor;
+			if (!TryResolveParameters(context, constructor.Parameters, out var parameterTypes))
+				continue;
+
+			_functions[context.GetOverloadedMangledName(baseName, parameterTypes)] = constructor;
+
+			if (extendedType is not null)
+			{
+				var withReceiver = new List<TypeSymbol>(parameterTypes.Count + 1)
+				{
+					new PointerTypeSymbol(extendedType, isMutable: true),
+				};
+				withReceiver.AddRange(parameterTypes);
+				_functions[context.GetOverloadedMangledName(baseName, withReceiver)] = constructor;
+			}
 		}
 
 		foreach (var destructor in extension.Destructors)
