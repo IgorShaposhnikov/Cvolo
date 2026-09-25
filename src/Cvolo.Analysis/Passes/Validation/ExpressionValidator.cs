@@ -240,7 +240,10 @@ internal sealed class ExpressionValidator(
 					{
 						var currentFileContext = context.FileContexts[context.CurrentUnit!];
 						var sigString = string.Join(", ", argTypes.Select(t => t.Name));
-						context.Diagnostics.Report(currentFileContext, call.ArgumentListSpan, $"No overload of function '{call.FunctionName}' matches argument types ({sigString})");
+						var diagnosticId = call.FunctionName.Contains('.', StringComparison.Ordinal)
+							? null
+							: DiagnosticIds.UnresolvedFunctionCall;
+						context.Diagnostics.Report(currentFileContext, call.ArgumentListSpan, $"No overload of function '{call.FunctionName}' matches argument types ({sigString})", diagnosticId);
 						return;
 					}
 

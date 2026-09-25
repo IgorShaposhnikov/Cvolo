@@ -16,6 +16,7 @@ public sealed class ProjectSnapshot
 	private readonly IReadOnlyList<PackageSourceDocument> _packageSources;
 	private readonly Lazy<AnalyzedProject> _lazyAnalysis;
 	private readonly Lazy<NavigationIndex> _lazyNavigation;
+	private readonly Lazy<CodeFixIndex> _lazyCodeFixes;
 
 	/// <summary>
 	/// The identifier of the project this snapshot belongs to.
@@ -43,6 +44,7 @@ public sealed class ProjectSnapshot
 		DocumentIds = [.. documents.Keys];
 		_lazyAnalysis = new Lazy<AnalyzedProject>(() => BinderAdapter.AnalyzeSnapshot(this));
 		_lazyNavigation = new Lazy<NavigationIndex>(() => NavigationIndex.Build(this));
+		_lazyCodeFixes = new Lazy<CodeFixIndex>(() => CodeFixIndex.Build(this));
 	}
 
 	internal static ProjectSnapshot CreateOwned(
@@ -69,6 +71,11 @@ public sealed class ProjectSnapshot
 		return _lazyNavigation.Value;
 	}
 
+	internal CodeFixIndex GetCodeFixIndex()
+	{
+		return _lazyCodeFixes.Value;
+	}
+
 	/// <summary>
 	/// The non-file semantic units (package/artifact API units) that participate in this
 	/// snapshot's binding. They have no <see cref="DocumentId"/> and never appear in
@@ -90,6 +97,19 @@ public sealed class ProjectSnapshot
 	public IReadOnlyList<PackageSourceDefinition> GetPackageSourceDefinitions(SymbolId symbol)
 	{
 		return NavigationService.GetPackageSourceDefinitions(this, symbol);
+	}
+
+	public IReadOnlyList<CodeFixInfo> GetCodeFixes(DocumentId document, TextSpan range)
+	{
+		if (!_documents.ContainsKey(document))
+			throw new KeyNotFoundException($"Document {document} not found in this snapshot.");
+
+		return CodeFixService.GetCodeFixes(this, document, range);
+	}
+
+	public CodeFixResolution ResolveCodeFix(CodeFixId fix)
+	{
+		return CodeFixService.ResolveCodeFix(this, fix);
 	}
 
 	public bool TryGetPackageSource(string filePath, out PackageSourceDocument source)

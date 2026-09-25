@@ -663,7 +663,7 @@ internal sealed class StatementValidator(
 				{
 					if (resolvedType.Equals(TypeSymbol.Float) && varDecl.Initializer is DoubleLiteralExpressionSyntax)
 					{
-						context.Diagnostics.Report(currentFileContext, varDecl.Span, "Cannot implicitly convert `double` literal to `float`. Use `f` suffix.", DiagnosticIds.DoubleLiteralToFloatAssignment);
+						context.Diagnostics.Report(currentFileContext, varDecl.Initializer.Span, "Cannot implicitly convert `double` literal to `float`. Use `f` suffix.", DiagnosticIds.DoubleLiteralToFloatAssignment);
 					}
 					else
 					{

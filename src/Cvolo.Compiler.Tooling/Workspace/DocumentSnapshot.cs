@@ -58,6 +58,35 @@ public sealed class DocumentSnapshot
 	}
 
 	/// <summary>
+	/// Returns the compiler-provided code fixes for diagnostics in this document whose primary span
+	/// intersects the given zero-based UTF-16 <paramref name="start"/>/<paramref name="length"/> range.
+	/// Throws <see cref="ArgumentOutOfRangeException"/> when the range falls outside the document text.
+	/// </summary>
+	public IReadOnlyList<CodeFixInfo> GetCodeFixes(int start, int length)
+	{
+		ArgumentOutOfRangeException.ThrowIfNegative(start);
+		ArgumentOutOfRangeException.ThrowIfNegative(length);
+		ArgumentOutOfRangeException.ThrowIfGreaterThan(start, Text.Length);
+		ArgumentOutOfRangeException.ThrowIfGreaterThan(length, Text.Length - start);
+
+		if (OwningSnapshot is null)
+			return [];
+
+		return OwningSnapshot.GetCodeFixes(Id, new TextSpan(start, length));
+	}
+
+	/// <summary>
+	/// Resolves the complete edit set of a compiler-provided code fix obtained from this document's
+	/// owning snapshot.
+	/// </summary>
+	public CodeFixResolution ResolveCodeFix(CodeFixId fix)
+	{
+		return OwningSnapshot is null
+			? new CodeFixFailure("The document is not attached to a project snapshot.")
+			: OwningSnapshot.ResolveCodeFix(fix);
+	}
+
+	/// <summary>
 	/// Computes the completion items at the given zero-based UTF-16 <paramref name="position"/> within
 	/// this document, using the owning snapshot's parsed and bound analysis. The result carries the
 	/// replacement range (covering the identifier or keyword being typed, or a zero-length span) and

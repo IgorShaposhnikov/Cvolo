@@ -168,6 +168,8 @@ public static class DiagnosticIds
 	/// <summary>An unqualified reference to a global variable name is ambiguous between two or more imported namespaces.</summary>
 	public const string AmbiguousGlobalReference = "CVL1077";
 
+	public const string UnresolvedFunctionCall = "CVL1078";
+
 	/// <summary>A type alias references an underlying type that does not exist.</summary>
 	public const string UnknownTypeAlias = "CVL1200";
 
