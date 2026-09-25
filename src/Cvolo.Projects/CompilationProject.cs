@@ -30,20 +30,23 @@ public sealed class CompilationProject
 		var strictOption = false;
 		var projectReferences = new List<string>();
 
-		// 1. Automatically locate the "libraries" folder by traversing up the directory tree
-		var searchDir = compilerBaseDir ?? AppContext.BaseDirectory;
-		var stdLibFullPath = includeStandardLibrary
-			? FindStandardLibraryPath(searchDir) ?? FindStandardLibraryPath(Directory.GetCurrentDirectory())
-			: null;
 		var projectDir = Directory.Exists(inputPath) ? Path.GetFullPath(inputPath) : Path.GetDirectoryName(Path.GetFullPath(inputPath))!;
 
-		if (stdLibFullPath != null)
+		// 1. Locate exactly one active "libraries" folder. A local library tree that
+		// contains the input is authoritative; otherwise the bundled/compiler root is used.
+		string? stdLibFullPath = null;
+		if (includeStandardLibrary)
 		{
-			if (Directory.Exists(stdLibFullPath))
-			{
-				sourceFiles.AddRange(Directory.GetFiles(stdLibFullPath, "*.cv", SearchOption.AllDirectories));
-				sourceFiles.AddRange(Directory.GetFiles(stdLibFullPath, "*.cvl", SearchOption.AllDirectories));
-			}
+			var localLibraryRoot = FindStandardLibraryPath(projectDir);
+			stdLibFullPath = localLibraryRoot is not null && IsPathUnder(projectDir, localLibraryRoot)
+				? localLibraryRoot
+				: FindStandardLibraryPath(compilerBaseDir ?? AppContext.BaseDirectory) ?? FindStandardLibraryPath(Directory.GetCurrentDirectory());
+		}
+
+		if (stdLibFullPath != null && Directory.Exists(stdLibFullPath))
+		{
+			sourceFiles.AddRange(Directory.GetFiles(stdLibFullPath, "*.cv", SearchOption.AllDirectories));
+			sourceFiles.AddRange(Directory.GetFiles(stdLibFullPath, "*.cvl", SearchOption.AllDirectories));
 		}
 
 		// 2. Add user project files. A directory containing one .cvlproj is treated the
@@ -153,6 +156,19 @@ public sealed class CompilationProject
 			throw new FileNotFoundException($"Input path '{inputPath}' not found");
 		}
 
+		var seenSourceFiles = new HashSet<string>(
+			OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+		var uniqueSourceFiles = new List<string>(sourceFiles.Count);
+		foreach (var sourceFile in sourceFiles)
+		{
+			if (seenSourceFiles.Add(Path.GetFullPath(sourceFile)))
+			{
+				uniqueSourceFiles.Add(sourceFile);
+			}
+		}
+
+		sourceFiles = uniqueSourceFiles;
+
 		if (sourceFiles.Count == 0)
 		{
 			throw new InvalidOperationException($"No Cvolo source files found in '{inputPath}'");
@@ -215,6 +231,20 @@ int main() {
 
 		Console.WriteLine($"Created Cvolo project '{projectName}' successfully.");
 		Console.WriteLine($"To compile: dotnet run --project src/Cvolo -- {projectName}/{projectName}.cvlproj");
+	}
+
+	private static bool IsPathUnder(string path, string root)
+	{
+		var fullPath = Path.GetFullPath(path);
+		var fullRoot = Path.GetFullPath(root);
+		var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+		if (fullPath.Equals(fullRoot, comparison))
+			return true;
+
+		var rootWithSeparator = fullRoot.EndsWith(Path.DirectorySeparatorChar)
+			? fullRoot
+			: fullRoot + Path.DirectorySeparatorChar;
+		return fullPath.StartsWith(rootWithSeparator, comparison);
 	}
 
 	private static string? FindStandardLibraryPath(string startDir)
