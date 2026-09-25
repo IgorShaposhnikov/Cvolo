@@ -18,7 +18,11 @@ public enum ExternalSemanticUnitKind
 /// <summary>
 /// A parsed semantic unit that has no project source document (a package/artifact unit).
 /// </summary>
-public sealed record ExternalSemanticUnit(CompilationUnitSyntax Unit, ExternalSemanticUnitKind Kind);
+public sealed record ExternalSemanticUnit(
+	CompilationUnitSyntax Unit,
+	ExternalSemanticUnitKind Kind,
+	string? PackageId = null,
+	string? PackageVersion = null);
 
 /// <summary>
 /// Inputs for building a project's semantic universe.
@@ -147,15 +151,15 @@ public static class ProjectUniverseLoader
 				// implementation units. Marking them as package-template units keeps their public
 				// symbols internal to this module and avoids manufacturing a cross-package ABI.
 				foreach (var sourceUnit in artifact.SourceFallbackUnits)
-					externalUnits.Add(new ExternalSemanticUnit(sourceUnit, ExternalSemanticUnitKind.PackageTemplate));
+					externalUnits.Add(new ExternalSemanticUnit(sourceUnit, ExternalSemanticUnitKind.PackageTemplate, artifact.PackageId, artifact.Version));
 				continue;
 			}
 
 			foreach (var packageUnit in artifact.ApiMetadata.CreateCompilationUnits(artifact.PackageId, artifact.Version))
-				externalUnits.Add(new ExternalSemanticUnit(packageUnit, ExternalSemanticUnitKind.ExternalPackageApi));
+				externalUnits.Add(new ExternalSemanticUnit(packageUnit, ExternalSemanticUnitKind.ExternalPackageApi, artifact.PackageId, artifact.Version));
 
 			foreach (var templateUnit in artifact.TemplateUnits)
-				externalUnits.Add(new ExternalSemanticUnit(templateUnit, ExternalSemanticUnitKind.PackageTemplate));
+				externalUnits.Add(new ExternalSemanticUnit(templateUnit, ExternalSemanticUnitKind.PackageTemplate, artifact.PackageId, artifact.Version));
 		}
 
 		return new ProjectUniverse(project, artifacts, externalUnits);

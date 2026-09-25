@@ -5,3 +5,16 @@ namespace Cvolo.Compiler.Tooling;
 /// the name selection span used for editor navigation.
 /// </summary>
 public sealed record SymbolDefinition(DocumentId DocumentId, TextSpan Range, TextSpan SelectionSpan);
+
+public sealed record PackageSourceDocument(
+	string PackageId,
+	string Version,
+	string RelativePath,
+	string FilePath,
+	string Source);
+
+public sealed record PackageSourceDefinition(
+	string FilePath,
+	string Source,
+	TextSpan Range,
+	TextSpan SelectionSpan);

@@ -1,3 +1,4 @@
+using System.Text;
 using Cvolo.Analysis.Symbols.FFI;
 using Cvolo.Core.Packages;
 
@@ -17,7 +18,15 @@ public sealed record ResolvedPackageArtifacts(
 	IReadOnlyList<NativeLibraryInfo> NativeLibraries,
 	IReadOnlyList<Cvolo.Core.AST.Base.CompilationUnitSyntax> TemplateUnits,
 	IReadOnlyList<Cvolo.Core.AST.Base.CompilationUnitSyntax> SourceFallbackUnits,
-	bool UsesSourceFallback);
+	bool UsesSourceFallback,
+	IReadOnlyList<PackageSourceFile>? SourceFiles = null);
+
+public sealed record PackageSourceFile(
+	string PackageId,
+	string Version,
+	string RelativePath,
+	string FilePath,
+	string Source);
 
 /// <summary>
 /// Resolves every package pinned by cvolo.lock.json from the local package cache,
@@ -113,6 +122,7 @@ public sealed class PackageDependencyLoader(PackageCache cache, PackageInstaller
 			var templateUnits = PackageTemplateSource.Read(archive, packageId, locked.Resolved);
 			var packageDirectory = Path.Combine(extractionRoot, packageId.ToLowerInvariant(), locked.Resolved);
 			Directory.CreateDirectory(packageDirectory);
+			var sourceFiles = ExtractSourceFiles(archive, packageId, locked.Resolved, packageDirectory);
 
 			var bitcodePath = Path.Combine(packageDirectory, packageId + ".bc");
 			ExtractSlice(archive, sectorIndex: 2, slice.Sector3, bitcodePath, packageId, locked.Resolved, "Sector 3 bitcode");
@@ -126,7 +136,7 @@ public sealed class PackageDependencyLoader(PackageCache cache, PackageInstaller
 			}
 
 			return new ResolvedPackageArtifacts(
-				packageId, locked.Resolved, objectPath, bitcodePath, apiMetadata, apiMetadata.NativeLibraries, templateUnits, [], UsesSourceFallback: false);
+				packageId, locked.Resolved, objectPath, bitcodePath, apiMetadata, apiMetadata.NativeLibraries, templateUnits, [], UsesSourceFallback: false, sourceFiles);
 		}
 		catch (CvlFormatException ex)
 		{
@@ -145,6 +155,80 @@ public sealed class PackageDependencyLoader(PackageCache cache, PackageInstaller
 				PackageDiagnosticIds.LockOutOfSync,
 				$"Cached package '{packageId}@{locked.Resolved}' is invalid; run 'cvolo pkg install'.",
 				ex.Message);
+		}
+	}
+
+	private static IReadOnlyList<PackageSourceFile> ExtractSourceFiles(
+		CvlArchive archive,
+		string packageId,
+		string version,
+		string packageDirectory)
+	{
+		var sourceRoot = Path.GetFullPath(Path.Combine(packageDirectory, "source"));
+		Directory.CreateDirectory(sourceRoot);
+		var rootPrefix = sourceRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+		var pathComparer = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+		var seenPaths = new HashSet<string>(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+		var sourceFiles = new List<PackageSourceFile>();
+
+		foreach (var sourceFile in PackageSourceBundle.Parse(archive.ReadSourceBuffer()))
+		{
+			var relativePath = sourceFile.RelativePath.Replace('\\', '/');
+			var segments = relativePath.Split('/');
+			if (relativePath.Length == 0 ||
+				Path.IsPathRooted(relativePath) ||
+				segments.Any(segment => segment.Length == 0 || segment is "." or ".." || segment.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0))
+			{
+				throw new PackageException(
+					PackageDiagnosticIds.InvalidSourceBundle,
+					$"Package '{packageId}@{version}' contains an invalid source path.");
+			}
+
+			if (!seenPaths.Add(relativePath))
+			{
+				throw new PackageException(
+					PackageDiagnosticIds.InvalidSourceBundle,
+					$"Package '{packageId}@{version}' contains duplicate source path '{relativePath}'.");
+			}
+
+			var filePath = Path.GetFullPath(Path.Combine(sourceRoot, relativePath.Replace('/', Path.DirectorySeparatorChar)));
+			if (!filePath.StartsWith(rootPrefix, pathComparer))
+			{
+				throw new PackageException(
+					PackageDiagnosticIds.InvalidSourceBundle,
+					$"Package '{packageId}@{version}' source path '{relativePath}' escapes its extraction directory.");
+			}
+
+			Directory.CreateDirectory(Path.GetDirectoryName(filePath)!);
+			WriteSourceFile(filePath, sourceFile.Source);
+			sourceFiles.Add(new PackageSourceFile(packageId, version, relativePath, filePath, sourceFile.Source));
+		}
+
+		return sourceFiles;
+	}
+
+	private static void WriteSourceFile(string outputPath, string source)
+	{
+		if (File.Exists(outputPath))
+			return;
+
+		var temporaryPath = outputPath + ".tmp_" + Guid.NewGuid().ToString("N");
+		try
+		{
+			File.WriteAllText(temporaryPath, source, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+			try
+			{
+				File.Move(temporaryPath, outputPath);
+			}
+			catch (IOException) when (File.Exists(outputPath))
+			{
+				return;
+			}
+		}
+		finally
+		{
+			if (File.Exists(temporaryPath))
+				File.Delete(temporaryPath);
 		}
 	}
 

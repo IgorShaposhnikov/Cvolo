@@ -6,6 +6,9 @@ using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
 using Cvolo.Core.AST.Expressions;
 using Cvolo.Core.AST.Statements;
+using Cvolo.Projects;
+using Cvolo.Syntax.Antlr;
+using CompilationContext = Cvolo.Core.Diagnostics.CompilationContext;
 using CoreTextSpan = Cvolo.Core.Diagnostics.TextSpan;
 
 namespace Cvolo.Compiler.Tooling.Internal;
@@ -21,6 +24,9 @@ internal static class NavigationService
 
 	internal static IReadOnlyList<SymbolDefinition> GetDefinitions(ProjectSnapshot snapshot, SymbolId symbol)
 		=> snapshot.GetNavigationIndex().Definitions(symbol);
+
+	internal static IReadOnlyList<PackageSourceDefinition> GetPackageSourceDefinitions(ProjectSnapshot snapshot, SymbolId symbol)
+		=> snapshot.GetNavigationIndex().PackageSourceDefinitions(symbol);
 
 	internal static IReadOnlyList<DocumentSymbolInfo> GetDocumentSymbols(ProjectSnapshot snapshot, DocumentId document)
 		=> snapshot.GetNavigationIndex().DocumentSymbols(document);
@@ -41,6 +47,7 @@ internal sealed class NavigationIndex
 	private readonly Dictionary<int, Entry> _byId = new();
 	private readonly Dictionary<DocumentId, IReadOnlyList<DocumentSymbolInfo>> _outlines = new();
 	private readonly Dictionary<Entry, Entry> _conformanceTargets = new();
+	private readonly Dictionary<int, List<PackageSourceDefinition>> _packageSourceDefinitions = new();
 	private int _nextId;
 
 	private NavigationIndex(ProjectSnapshot snapshot)
@@ -50,6 +57,7 @@ internal sealed class NavigationIndex
 		_binderContext = _analysis.BinderContext;
 		BuildDeclarations();
 		BuildExternalDeclarations();
+		BuildPackageSourceDefinitions();
 		BuildConformanceRedirects();
 		BuildOutlines();
 	}
@@ -99,6 +107,14 @@ internal sealed class NavigationIndex
 			return [];
 
 		return _byId.TryGetValue(symbol.Value, out var entry) ? entry.Definitions : [];
+	}
+
+	internal IReadOnlyList<PackageSourceDefinition> PackageSourceDefinitions(SymbolId symbol)
+	{
+		if (symbol.SnapshotToken != _token)
+			return [];
+
+		return _packageSourceDefinitions.TryGetValue(symbol.Value, out var definitions) ? definitions : [];
 	}
 
 	internal bool Owns(SymbolId symbol)
@@ -158,7 +174,7 @@ internal sealed class NavigationIndex
 		foreach (var external in _snapshot.ExternalUnits)
 		{
 			foreach (var member in Members(external.Unit))
-				IndexExternalMember(member);
+				IndexExternalMember(member, external);
 		}
 	}
 
@@ -167,41 +183,121 @@ internal sealed class NavigationIndex
 	/// definition. Indexing their syntax nodes still gives hover/navigation a stable snapshot-local
 	/// symbol identity; GetDefinitions correctly returns an empty list for such external symbols.
 	/// </summary>
-	private void IndexExternalMember(SyntaxNode node)
+	private void IndexExternalMember(SyntaxNode node, ExternalSemanticUnit external)
 	{
 		switch (node)
 		{
 			case FunctionDeclarationSyntax function:
-				RegisterExternal(function, function.Name, ToolingSymbolKind.Function);
+				RegisterExternal(function, function.Name, ToolingSymbolKind.Function, external: external);
 				foreach (var parameter in function.Parameters)
-					RegisterExternal(parameter, parameter.Name, ToolingSymbolKind.Parameter);
+					RegisterExternal(parameter, parameter.Name, ToolingSymbolKind.Parameter, external: external);
 				break;
 			case StructDeclarationSyntax structDeclaration:
-				RegisterExternal(structDeclaration, structDeclaration.Name, ToolingSymbolKind.Struct);
+				RegisterExternal(structDeclaration, structDeclaration.Name, ToolingSymbolKind.Struct, external: external);
 				foreach (var field in structDeclaration.Fields)
-					RegisterExternal(field, field.Name, ToolingSymbolKind.Field, structDeclaration.Name);
+					RegisterExternal(field, field.Name, ToolingSymbolKind.Field, structDeclaration.Name, external);
 				break;
 			case UnionDeclarationSyntax unionDeclaration:
-				RegisterExternal(unionDeclaration, unionDeclaration.Name, ToolingSymbolKind.Union);
+				RegisterExternal(unionDeclaration, unionDeclaration.Name, ToolingSymbolKind.Union, external: external);
 				foreach (var field in unionDeclaration.Fields)
-					RegisterExternal(field, field.Name, ToolingSymbolKind.Field, unionDeclaration.Name);
+					RegisterExternal(field, field.Name, ToolingSymbolKind.Field, unionDeclaration.Name, external);
 				break;
 			case EnumDeclarationSyntax enumDeclaration:
-				RegisterExternal(enumDeclaration, enumDeclaration.Name, ToolingSymbolKind.Enum);
+				RegisterExternal(enumDeclaration, enumDeclaration.Name, ToolingSymbolKind.Enum, external: external);
 				foreach (var variant in enumDeclaration.Variants)
-					RegisterExternal(variant, variant.Name, ToolingSymbolKind.EnumMember, enumDeclaration.Name);
+					RegisterExternal(variant, variant.Name, ToolingSymbolKind.EnumMember, enumDeclaration.Name, external);
 				break;
 			case DelegateDeclarationSyntax delegateDeclaration:
-				RegisterExternal(delegateDeclaration, delegateDeclaration.Name, ToolingSymbolKind.Delegate);
+				RegisterExternal(delegateDeclaration, delegateDeclaration.Name, ToolingSymbolKind.Delegate, external: external);
 				break;
 			case GlobalVariableDeclarationSyntax global:
-				RegisterExternal(global, global.Name, ToolingSymbolKind.Global);
+				RegisterExternal(global, global.Name, ToolingSymbolKind.Global, external: external);
 				break;
 			case TypeAliasDeclarationSyntax typeAlias:
-				RegisterExternal(typeAlias, typeAlias.Name, ToolingSymbolKind.TypeAlias);
+				RegisterExternal(typeAlias, typeAlias.Name, ToolingSymbolKind.TypeAlias, external: external);
 				break;
 		}
 	}
+
+	private void BuildPackageSourceDefinitions()
+	{
+		if (_snapshot.PackageSources.Count == 0)
+			return;
+
+		var sourceFunctions = new List<PackageSourceFunction>();
+		foreach (var document in _snapshot.PackageSources)
+		{
+			var context = new CompilationContext(document.Source, document.FilePath);
+			var parser = new AntlrSyntaxParser();
+			var unit = parser.Parse(context);
+			if (unit is null || parser.Diagnostics.HasErrors)
+				continue;
+
+			var namespaceName = unit.NamespaceDeclaration?.Name;
+			foreach (var member in Members(unit))
+			{
+				if (member is FunctionDeclarationSyntax { Visibility: Visibility.Public } function)
+					sourceFunctions.Add(new PackageSourceFunction(document, function, namespaceName));
+			}
+		}
+
+		foreach (var entry in _byId.Values)
+		{
+			if (entry.ExternalFunction is null || entry.PackageId is null || entry.PackageVersion is null)
+				continue;
+
+			var match = sourceFunctions
+				.Where(candidate =>
+					string.Equals(candidate.Document.PackageId, entry.PackageId, StringComparison.OrdinalIgnoreCase) &&
+					string.Equals(candidate.Document.Version, entry.PackageVersion, StringComparison.Ordinal) &&
+					string.Equals(candidate.NamespaceName, entry.NamespaceName, StringComparison.Ordinal) &&
+					MatchesFunction(entry.ExternalFunction, candidate.Function))
+				.OrderBy(candidate => IsApiSource(candidate.Document.RelativePath) ? 0 : 1)
+				.ThenBy(candidate => candidate.Document.RelativePath, StringComparer.Ordinal)
+				.FirstOrDefault();
+
+			if (match is null)
+				continue;
+
+			if (!_packageSourceDefinitions.TryGetValue(entry.Id.Value, out var definitions))
+			{
+				definitions = [];
+				_packageSourceDefinitions[entry.Id.Value] = definitions;
+			}
+
+			definitions.Add(new PackageSourceDefinition(
+				match.Document.FilePath,
+				match.Document.Source,
+				new TextSpan(Math.Max(match.Function.Span.Start, 0), Math.Max(match.Function.Span.Length, 0)),
+				new TextSpan(Math.Max(match.Function.NameSpan.Start, 0), Math.Max(match.Function.NameSpan.Length, 0))));
+		}
+	}
+
+	private static bool MatchesFunction(FunctionDeclarationSyntax external, FunctionDeclarationSyntax source)
+	{
+		if (!string.Equals(external.Name, source.Name, StringComparison.Ordinal))
+			return false;
+
+		if (!string.Equals(NormalizeType(external.ReturnType), NormalizeType(source.ReturnType), StringComparison.Ordinal))
+			return false;
+
+		if (external.GenericParameters.Count != source.GenericParameters.Count || external.Parameters.Count != source.Parameters.Count)
+			return false;
+
+		for (var i = 0; i < external.Parameters.Count; i++)
+		{
+			if (!string.Equals(NormalizeType(external.Parameters[i].Type), NormalizeType(source.Parameters[i].Type), StringComparison.Ordinal))
+				return false;
+		}
+
+		return true;
+	}
+
+	private static string NormalizeType(string value) =>
+		string.Concat(value.Where(character => !char.IsWhiteSpace(character)));
+
+	private static bool IsApiSource(string relativePath) =>
+		string.Equals(Path.GetFileName(relativePath), "API.cvl", StringComparison.OrdinalIgnoreCase);
 
 	/// <summary>
 	/// Links each extension method that satisfies an interface conformance to the interface
@@ -423,12 +519,25 @@ internal sealed class NavigationIndex
 		return entry;
 	}
 
-	private Entry RegisterExternal(SyntaxNode declaration, string name, ToolingSymbolKind kind, string? owner = null)
+	private Entry RegisterExternal(
+		SyntaxNode declaration,
+		string name,
+		ToolingSymbolKind kind,
+		string? owner = null,
+		ExternalSemanticUnit? external = null)
 	{
 		if (_byDeclaration.TryGetValue(declaration, out var existing))
 			return existing;
 
-		var entry = new Entry(new SymbolId(_token, _nextId++), name, kind, owner);
+		var entry = new Entry(
+			new SymbolId(_token, _nextId++),
+			name,
+			kind,
+			owner,
+			external?.PackageId,
+			external?.PackageVersion,
+			external?.Unit.NamespaceDeclaration?.Name,
+			declaration as FunctionDeclarationSyntax);
 		_byDeclaration[declaration] = entry;
 		_byId[entry.Id.Value] = entry;
 		return entry;
@@ -619,12 +728,29 @@ internal sealed class NavigationIndex
 		return dot < 0 ? name : name[(dot + 1)..];
 	}
 
-	private sealed class Entry(SymbolId id, string name, ToolingSymbolKind kind, string? ownerTypeName)
+	private sealed record PackageSourceFunction(
+		PackageSourceDocument Document,
+		FunctionDeclarationSyntax Function,
+		string? NamespaceName);
+
+	private sealed class Entry(
+		SymbolId id,
+		string name,
+		ToolingSymbolKind kind,
+		string? ownerTypeName,
+		string? packageId = null,
+		string? packageVersion = null,
+		string? namespaceName = null,
+		FunctionDeclarationSyntax? externalFunction = null)
 	{
 		public SymbolId Id { get; } = id;
 		public string Name { get; } = name;
 		public ToolingSymbolKind Kind { get; } = kind;
 		public string? OwnerTypeName { get; } = ownerTypeName;
+		public string? PackageId { get; } = packageId;
+		public string? PackageVersion { get; } = packageVersion;
+		public string? NamespaceName { get; } = namespaceName;
+		public FunctionDeclarationSyntax? ExternalFunction { get; } = externalFunction;
 		public List<SymbolDefinition> Definitions { get; } = [];
 	}
 }

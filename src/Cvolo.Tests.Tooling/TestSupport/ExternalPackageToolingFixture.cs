@@ -16,7 +16,8 @@ internal static class ExternalPackageToolingFixture
 		string consumerSource,
 		PackageApiMetadata metadata,
 		string packageId = "NativeApi",
-		string version = "1.0.0")
+		string version = "1.0.0",
+		IReadOnlyList<PackageSourceDocument>? packageSources = null)
 	{
 		var session = Guid.NewGuid();
 		var projectId = new ProjectId(session, 0);
@@ -33,12 +34,13 @@ internal static class ExternalPackageToolingFixture
 		var roundTripped = JsonSerializer.Deserialize<PackageApiMetadata>(metadata.Serialize())
 			?? throw new InvalidOperationException("Package API metadata did not deserialize.");
 		var externalUnits = roundTripped.CreateCompilationUnits(packageId, version)
-			.Select(unit => new ExternalSemanticUnit(unit, ExternalSemanticUnitKind.ExternalPackageApi))
+			.Select(unit => new ExternalSemanticUnit(unit, ExternalSemanticUnitKind.ExternalPackageApi, packageId, version))
 			.ToArray();
 		var snapshot = ProjectSnapshot.CreateOwned(
 			projectId,
 			new Dictionary<DocumentId, DocumentSnapshot> { [documentId] = document },
-			externalUnits);
+			externalUnits,
+			packageSources);
 		return (snapshot, snapshot.GetDocument(documentId));
 	}
 

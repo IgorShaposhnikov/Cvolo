@@ -57,6 +57,32 @@ public sealed class CvoloWorkspace
 		return OpenProjectCore(projectPath, libraryPaths, packageCache);
 	}
 
+	/// <summary>
+	/// Opens a self-contained session over the extracted source files of a single
+	/// package version. Package sources bind together without the consuming
+	/// project's external units so navigation inside a package's own sources
+	/// resolves locally.
+	/// </summary>
+	public CvoloProject OpenPackageSource(string projectPath, IReadOnlyList<PackageSourceDocument> sources)
+	{
+		ArgumentNullException.ThrowIfNull(projectPath);
+		ArgumentNullException.ThrowIfNull(sources);
+
+		var absolutePath = Path.GetFullPath(projectPath);
+		var projectId = AllocateProjectId();
+		var documents = new Dictionary<DocumentId, DocumentSnapshot>(sources.Count);
+
+		foreach (PackageSourceDocument source in sources)
+		{
+			var documentId = AllocateDocumentId();
+			documents[documentId] = new DocumentSnapshot(documentId, source.FilePath, SourceText.From(source.Source), null);
+		}
+
+		var snapshot = ProjectSnapshot.CreateOwned(projectId, documents);
+
+		return new CvoloProject(this, projectId, absolutePath, snapshot);
+	}
+
 	private CvoloProject OpenProjectCore(string projectPath, IReadOnlyList<string> libraryPaths, PackageCache? packageCache)
 	{
 		ArgumentNullException.ThrowIfNull(projectPath);
@@ -64,12 +90,12 @@ public sealed class CvoloWorkspace
 
 		var absolutePath = Path.GetFullPath(projectPath);
 		var projectId = AllocateProjectId();
-		var (documents, externalUnits) = CompilerProjectAdapter.DiscoverDocuments(
+		var (documents, externalUnits, packageSources) = CompilerProjectAdapter.DiscoverDocuments(
 			absolutePath,
 			AllocateDocumentId,
 			libraryPaths,
 			packageCache);
-		var snapshot = ProjectSnapshot.CreateOwned(projectId, documents, externalUnits);
+		var snapshot = ProjectSnapshot.CreateOwned(projectId, documents, externalUnits, packageSources);
 
 		return new CvoloProject(this, projectId, absolutePath, snapshot);
 	}

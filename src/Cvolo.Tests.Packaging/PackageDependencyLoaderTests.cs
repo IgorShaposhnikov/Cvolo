@@ -64,6 +64,56 @@ public sealed class PackageDependencyLoaderTests : IDisposable
 	}
 
 	[Fact]
+	public void Load_BitcodePackage_ExtractsVerifiedSourceFiles()
+	{
+		var project = CreateProject("source-app", [new PackageReference("Foo", "1.0.0")]);
+		var sourceDirectory = Path.Combine(_root, "source-app-src");
+		Directory.CreateDirectory(Path.Combine(sourceDirectory, "Native"));
+		File.WriteAllText(Path.Combine(sourceDirectory, "API.cvl"), "namespace Foo; public int Add(int a, int b) { return a + b; }");
+		File.WriteAllText(Path.Combine(sourceDirectory, "Native", "Impl.cvl"), "namespace Foo.Native; internal int Add(int a, int b) { return a + b; }");
+		var sourceBuffer = PackageSourceBundle.Build(
+			[Path.Combine(sourceDirectory, "API.cvl"), Path.Combine(sourceDirectory, "Native", "Impl.cvl")],
+			sourceDirectory);
+		var source = CreateArchive("Foo", "1.0.0", [0x10], sourceBuffer: sourceBuffer);
+		var cache = new PackageCache(Path.Combine(_root, "cache-source"));
+		new PackageInstaller(cache).InstallFromFile(source);
+		var lockFile = WriteLock(project, "Foo", "1.0.0", LocalFeed.ComputeHash(source));
+
+		var artifact = Assert.Single(new PackageDependencyLoader(cache, new PackageInstaller(cache)).Load(project, lockFile));
+
+		Assert.NotNull(artifact.SourceFiles);
+		Assert.Equal(2, artifact.SourceFiles!.Count);
+		var api = Assert.Single(artifact.SourceFiles, file => file.RelativePath == "API.cvl");
+		Assert.Equal("Foo", api.PackageId);
+		Assert.Equal("1.0.0", api.Version);
+		Assert.Equal("namespace Foo; public int Add(int a, int b) { return a + b; }", api.Source);
+		Assert.Equal(api.Source, File.ReadAllText(api.FilePath));
+		Assert.StartsWith(Path.Combine(project.ProjectDirectory, ".cvolo", "build"), api.FilePath, StringComparison.OrdinalIgnoreCase);
+		Assert.Contains(Path.Combine("foo", "1.0.0", "source"), api.FilePath, StringComparison.OrdinalIgnoreCase);
+		Assert.EndsWith(Path.Combine("source", "Native", "Impl.cvl"), Assert.Single(artifact.SourceFiles, file => file.RelativePath == "Native/Impl.cvl").FilePath, StringComparison.OrdinalIgnoreCase);
+	}
+
+	[Fact]
+	public void Load_SourceBundleEscapingPackageDirectory_IsRejected()
+	{
+		var project = CreateProject("escaping-source-app", [new PackageReference("Foo", "1.0.0")]);
+		var projectDirectory = Path.Combine(_root, "escaping-project");
+		Directory.CreateDirectory(projectDirectory);
+		var outsideSource = Path.Combine(_root, "outside.cvl");
+		File.WriteAllText(outsideSource, "namespace Foo; public int Add(int a, int b) { return a + b; }");
+		var sourceBuffer = PackageSourceBundle.Build([outsideSource], projectDirectory);
+		var source = CreateArchive("Foo", "1.0.0", [0x10], sourceBuffer: sourceBuffer);
+		var cache = new PackageCache(Path.Combine(_root, "cache-escaping-source"));
+		new PackageInstaller(cache).InstallFromFile(source);
+		var lockFile = WriteLock(project, "Foo", "1.0.0", LocalFeed.ComputeHash(source));
+
+		var exception = Assert.Throws<PackageException>(
+			() => new PackageDependencyLoader(cache, new PackageInstaller(cache)).Load(project, lockFile));
+
+		Assert.Equal(PackageDiagnosticIds.InvalidSourceBundle, exception.Code);
+	}
+
+	[Fact]
 	public async Task Load_ConcurrentBuilds_ShareAtomicExtractionWithoutDeletingEachOthersArtifacts()
 	{
 		var project = CreateProject("parallel-app", [new PackageReference("Foo", "1.0.0")]);

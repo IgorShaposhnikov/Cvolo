@@ -2,6 +2,7 @@ using Cvolo.Compiler.Tooling;
 using Cvolo.Compiler.Tooling.Completion;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
+using Cvolo.Packaging;
 
 namespace Cvolo.Tests.Tooling;
 
@@ -88,6 +89,86 @@ int Read(Callback callback, Payload payload) {
 	}
 
 	[Fact]
+	public void ExternalPackageFunction_ResolvesToVerifiedPublicApiSource()
+	{
+		const string source = """
+using NativeApi;
+int main() { return Add(1, 2); }
+""";
+		var metadata = new PackageApiMetadata
+		{
+			Units =
+			[
+				new PackageApiUnit
+				{
+					Namespace = "NativeApi",
+					Functions =
+					[
+						new PackageApiFunction
+						{
+							Name = "Add",
+							ReturnType = "int",
+							Parameters = [new PackageApiParameter("int", "a"), new PackageApiParameter("int", "b")]
+						}
+					]
+				}
+			]
+		};
+		var sources = new PackageSourceDocument[]
+		{
+			new("NativeApi", "1.0.0", "Native.cvl", @"C:\pkg\Native.cvl",
+				"namespace NativeApi; internal int Add(int a, int b) { return a + b; }"),
+			new("NativeApi", "1.0.0", "Other.cvl", @"C:\pkg\Other.cvl",
+				"namespace NativeApi; public int Add(int a, int b) { return a + b; }"),
+			new("NativeApi", "1.0.0", "API.cvl", @"C:\pkg\API.cvl",
+				"namespace NativeApi; public int Add(int a, int b) { return a + b; }")
+		};
+		var (snapshot, document) = ExternalPackageToolingFixture.Create(source, metadata, packageSources: sources);
+
+		var symbol = document.GetSymbolAtPosition(At(source, "Add"));
+
+		Assert.NotNull(symbol);
+		Assert.Equal(ToolingSymbolKind.Function, symbol!.Kind);
+		Assert.Empty(snapshot.GetDefinitions(symbol.SymbolId));
+		var definition = Assert.Single(snapshot.GetPackageSourceDefinitions(symbol.SymbolId));
+		Assert.Equal(@"C:\pkg\API.cvl", definition.FilePath);
+		Assert.Equal("Add", definition.Source.Substring(definition.SelectionSpan.Start, definition.SelectionSpan.Length));
+		Assert.Equal("public int Add(int a, int b) { return a + b; }", definition.Source.Substring(definition.Range.Start, definition.Range.Length));
+	}
+
+	[Fact]
+	public void ExternalPackageFunction_WithoutPackageSource_ReturnsNoSourceDefinition()
+	{
+		const string source = "using NativeApi;\nint main() { return Add(1, 2); }\n";
+		var metadata = new PackageApiMetadata
+		{
+			Units =
+			[
+				new PackageApiUnit
+				{
+					Namespace = "NativeApi",
+					Functions =
+					[
+						new PackageApiFunction
+						{
+							Name = "Add",
+							ReturnType = "int",
+							Parameters = [new PackageApiParameter("int", "a"), new PackageApiParameter("int", "b")]
+						}
+					]
+				}
+			]
+		};
+		var (snapshot, document) = ExternalPackageToolingFixture.Create(source, metadata);
+
+		var symbol = document.GetSymbolAtPosition(At(source, "Add"));
+
+		Assert.NotNull(symbol);
+		Assert.Empty(snapshot.GetDefinitions(symbol!.SymbolId));
+		Assert.Empty(snapshot.GetPackageSourceDefinitions(symbol.SymbolId));
+	}
+
+	[Fact]
 	public void HoverOnImportedRawUnionAndForeignGlobal_ReconstructsInteropMetadata()
 	{
 		const string source = """
@@ -169,6 +250,43 @@ int Read() { return Counter; }
 		Assert.Equal("./libnative.dylib", symbol.NativeInterop?.MacPath);
 		var definition = Assert.Single(snapshot.GetDefinitions(symbol.SymbolId));
 		Assert.Equal("Counter", document.Text.GetText(definition.SelectionSpan));
+	}
+
+	[Fact]
+	public void PackageSourceSession_NavigatesWrapperToNativeExternFunction()
+	{
+		const string main = """
+using OpenGL.Native;
+namespace OpenGL;
+public void Color3f(float red, float green, float blue)
+{
+	Native.Color3f(red, green, blue);
+}
+""";
+		const string native = """
+namespace OpenGL.Native;
+[LibraryImport("opengl32", win: "opengl32.lib", linux: "libGL.so", mac: "OpenGL.framework")]
+extern "C"
+{
+	[ImportName("glColor3f")]
+	internal void Color3f(float red, float green, float blue);
+}
+""";
+		var sources = new PackageSourceDocument[]
+		{
+			new("OpenGL", "1.0.0", "Main.cvl", @"C:\pkg\Main.cvl", main),
+			new("OpenGL", "1.0.0", "Native.cvl", @"C:\pkg\Native.cvl", native),
+		};
+		var project = CvoloWorkspace.Create().OpenPackageSource(@"C:\pkg\OpenGLPackageApp.cvlproj", sources);
+		var snapshot = project.InitialSnapshot;
+		var document = snapshot.GetDocument(project.GetDocumentId("Main.cvl"));
+
+		var symbol = document.GetSymbolAtPosition(At(main, "Native.Color3f", "Native.".Length));
+
+		Assert.NotNull(symbol);
+		Assert.Equal(ToolingSymbolKind.Function, symbol!.Kind);
+		var definition = Assert.Single(snapshot.GetDefinitions(symbol.SymbolId));
+		Assert.Equal("Color3f", snapshot.GetDocument(definition.DocumentId).Text.GetText(definition.SelectionSpan));
 	}
 
 	[Fact]
