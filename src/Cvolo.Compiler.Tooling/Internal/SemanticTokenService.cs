@@ -30,6 +30,9 @@ internal static class SemanticTokenService
 		{
 			foreach (var node in Descendants(unit))
 			{
+				if (TryAddDirectToken(node, source, tokens, seen))
+					continue;
+
 				foreach (var position in CandidatePositions(node, source))
 				{
 					if (position < 0)
@@ -49,6 +52,69 @@ internal static class SemanticTokenService
 		}
 
 		return [.. tokens.OrderBy(token => token.Span.Start).ThenBy(token => token.Span.Length)];
+	}
+
+	private static bool TryAddDirectToken(SyntaxNode node, string source, List<SemanticTokenInfo> tokens, HashSet<(int Start, int Length)> seen)
+	{
+		switch (node)
+		{
+			case NullLiteralExpressionSyntax nullLiteral:
+				AddDirectToken(tokens, seen, nullLiteral.Span, ToolingSymbolKind.Keyword);
+				return true;
+			case IdentifierExpressionSyntax identifier when identifier.Name == "this":
+				AddDirectToken(tokens, seen, identifier.Span, ToolingSymbolKind.Keyword);
+				return true;
+			case FunctionDeclarationSyntax function when function.Receiver != ReceiverContract.None:
+				TryAddReceiverToken(function, source, tokens, seen);
+				return false;
+			case BinaryExpressionSyntax binary:
+				TryAddOperatorToken(binary, source, tokens, seen);
+				return false;
+		}
+
+		return false;
+	}
+
+	private static void TryAddReceiverToken(FunctionDeclarationSyntax function, string source, List<SemanticTokenInfo> tokens, HashSet<(int Start, int Length)> seen)
+	{
+		if (function.Body is not { } body)
+			return;
+
+		var start = function.Span.Start;
+		var limit = body.Span.Start;
+		if (start < 0 || limit > source.Length || start > limit)
+			return;
+
+		var index = source.IndexOf("this", start, limit - start, StringComparison.Ordinal);
+		if (index < 0)
+			return;
+
+		AddDirectToken(tokens, seen, new Cvolo.Core.Diagnostics.TextSpan(index, "this".Length), ToolingSymbolKind.Keyword);
+	}
+
+	private static void TryAddOperatorToken(BinaryExpressionSyntax binary, string source, List<SemanticTokenInfo> tokens, HashSet<(int Start, int Length)> seen)
+	{
+		var start = binary.Left.Span.End;
+		var end = binary.Right.Span.Start;
+		if (binary.Operator.Length == 0 || start < 0 || end > source.Length || start > end)
+			return;
+
+		var index = source.IndexOf(binary.Operator, start, end - start, StringComparison.Ordinal);
+		if (index < 0)
+			return;
+
+		AddDirectToken(tokens, seen, new Cvolo.Core.Diagnostics.TextSpan(index, binary.Operator.Length), ToolingSymbolKind.Operator);
+	}
+
+	private static void AddDirectToken(List<SemanticTokenInfo> tokens, HashSet<(int Start, int Length)> seen, Cvolo.Core.Diagnostics.TextSpan span, ToolingSymbolKind kind)
+	{
+		if (span.Start < 0 || span.Length <= 0)
+			return;
+
+		if (!seen.Add((span.Start, span.Length)))
+			return;
+
+		tokens.Add(new SemanticTokenInfo(new TextSpan(span.Start, span.Length), kind, SemanticTokenModifiers.None));
 	}
 
 	private static SemanticTokenModifiers ModifiersFor(SyntaxNode node, string source, TextSpan span)

@@ -30,4 +30,5 @@ public enum ToolingSymbolKind
 	Constant,
 	Operator,
 	OtherType,
+	Keyword,
 }

@@ -1603,7 +1603,19 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 
 		public override void SyntaxError(TextWriter output, IRecognizer recognizer, IToken offendingSymbol, int line, int charPositionInLine, string msg, RecognitionException e)
 		{
-			var span = new TextSpan(offendingSymbol?.StartIndex ?? 0, offendingSymbol?.Text?.Length ?? 0);
+			var start = offendingSymbol?.StartIndex ?? 0;
+			var length = offendingSymbol?.Type == TokenConstants.EOF ? 0 : offendingSymbol?.Text?.Length ?? 0;
+
+			if (start < 0)
+				start = 0;
+			if (start > context.Source.Length)
+				start = context.Source.Length;
+			if (length > context.Source.Length - start)
+				length = context.Source.Length - start;
+			if (length < 0)
+				length = 0;
+
+			var span = new TextSpan(start, length);
 
 			// The lexer emits dedicated `Bad*` tokens for malformed literals. The parser may skip
 			// such a token and report the resulting cascade on a later token (e.g. the `:`/`)` in
@@ -1621,7 +1633,28 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				return;
 			}
 
-			diagnostics.Report(context, span, $"({line},{charPositionInLine}): {msg}");
+			diagnostics.Report(context, span, $"({line},{charPositionInLine}): {SimplifyMessage(offendingSymbol, msg)}");
+		}
+
+		private static string SimplifyMessage(IToken? offendingSymbol, string message)
+		{
+			var expectingIndex = message.IndexOf(" expecting ", StringComparison.Ordinal);
+			if (expectingIndex >= 0)
+				message = message[..expectingIndex];
+
+			if (offendingSymbol is { Type: TokenConstants.EOF })
+				return "unexpected end of file";
+
+			if (message.StartsWith("extraneous input ", StringComparison.Ordinal)
+				|| message.StartsWith("mismatched input ", StringComparison.Ordinal))
+			{
+				var quoteStart = message.IndexOf('\'');
+				var quoteEnd = quoteStart >= 0 ? message.IndexOf('\'', quoteStart + 1) : -1;
+				if (quoteStart >= 0 && quoteEnd > quoteStart)
+					return $"unexpected token {message[quoteStart..(quoteEnd + 1)]}";
+			}
+
+			return message;
 		}
 
 		private IToken? FindPrecedingBadLiteral(IToken? offending)

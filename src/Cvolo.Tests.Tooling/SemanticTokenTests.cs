@@ -218,4 +218,48 @@ public sealed class SemanticTokenTests
 			Assert.Equal(2, tokens.Count);
 		}
 	}
+
+	[Fact]
+	public void NullAndReceiverThis_AreClassifiedAsKeyword()
+	{
+		const string s =
+			"struct Window { void* handle; }\n" +
+			"extension Window {\n" +
+			"    public bool IsEmpty(ref this) { return this.handle == null; }\n" +
+			"    public void Clear(ref this) { this.handle = null; }\n" +
+			"}\n" +
+			"int main() {\n" +
+			"    return 0;\n" +
+			"}\n";
+		var x = Open(s);
+		using (x.Fixture)
+		{
+			var tokens = x.Document.GetSemanticTokens();
+
+			var thisTokens = WithText(x.Document, tokens, "this");
+			Assert.NotEmpty(thisTokens);
+			Assert.All(thisTokens, t => Assert.Equal(ToolingSymbolKind.Keyword, t.Kind));
+
+			var nullTokens = WithText(x.Document, tokens, "null");
+			Assert.NotEmpty(nullTokens);
+			Assert.All(nullTokens, t => Assert.Equal(ToolingSymbolKind.Keyword, t.Kind));
+		}
+	}
+
+	[Fact]
+	public void EqualityOperator_IsClassifiedAsOperator()
+	{
+		const string s =
+			"int main() {\n" +
+			"    val int left = 1;\n" +
+			"    val int right = 2;\n" +
+			"    return left == right;\n" +
+			"}\n";
+		var x = Open(s);
+		using (x.Fixture)
+		{
+			var token = Assert.Single(WithText(x.Document, x.Document.GetSemanticTokens(), "=="));
+			Assert.Equal(ToolingSymbolKind.Operator, token.Kind);
+		}
+	}
 }

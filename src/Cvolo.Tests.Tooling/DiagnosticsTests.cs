@@ -223,6 +223,25 @@ public sealed class DiagnosticsTests
 	}
 
 	[Fact]
+	public void MissingClosingBrace_ReturnsParserDiagnostic_WithInRangeSpan()
+	{
+		Timed.Out(() =>
+		{
+			using var fixture = TempProject.Create(("Main.cvl", "int main() {\n    return 0;\n"));
+			var project = CvoloWorkspace.Create().OpenProject(fixture.ProjectFilePath);
+			var docId = project.GetDocumentId("Main.cvl");
+			var document = project.InitialSnapshot.GetDocument(docId);
+
+			var error = Assert.Single(document.GetDiagnostics(), d => d.Severity == DiagnosticSeverity.Error);
+			Assert.Equal(docId, error.Location.DocumentId);
+			Assert.InRange(error.Location.Span.Start, 0, document.Text.Length);
+			Assert.InRange(error.Location.Span.End, 0, document.Text.Length);
+			Assert.Contains("end of file", error.Message);
+			Assert.DoesNotContain("expecting", error.Message);
+		});
+	}
+
+	[Fact]
 	public void SyntacticallyValidSource_WithSemanticError_ReturnsBinderDiagnostic()
 	{
 		Timed.Out(() =>

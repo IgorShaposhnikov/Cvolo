@@ -397,7 +397,7 @@ public sealed class NavigationTests
 	}
 
 	[Fact]
-	public void ExtensionConstructorCall_ResolvesToConstructorDeclaration()
+	public void ExtensionConstructorCall_ResolvesToStructDeclaration()
 	{
 		const string s =
 			"struct WindowParameters { public int width; }\n" +
@@ -409,10 +409,10 @@ public sealed class NavigationTests
 		{
 			var symbol = x.Document.GetSymbolAtPosition(s.IndexOf("Window(p)", StringComparison.Ordinal));
 			Assert.NotNull(symbol);
-			Assert.Equal(ToolingSymbolKind.Constructor, symbol!.Kind);
+			Assert.Equal(ToolingSymbolKind.Struct, symbol!.Kind);
 			var def = Assert.Single(x.Snapshot.GetDefinitions(symbol.SymbolId));
 			Assert.Equal("Window", x.Document.Text.GetText(def.SelectionSpan));
-			Assert.Equal(s.IndexOf("public Window(WindowParameters", StringComparison.Ordinal) + "public ".Length, def.SelectionSpan.Start);
+			Assert.Equal(s.IndexOf("struct Window {", StringComparison.Ordinal) + "struct ".Length, def.SelectionSpan.Start);
 		}
 	}
 

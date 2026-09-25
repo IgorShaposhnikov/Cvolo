@@ -324,9 +324,16 @@ internal static class SymbolResolver
 		var name = Leaf(call.FunctionName);
 		var subject = NameSpan(source, call.Span, name, fromEnd: false);
 		var isExtension = function.Parameters.Count > 0 && function.Parameters[0].Name == "this";
+
+		if (declaration is ConstructorDeclarationSyntax constructor)
+		{
+			var structDeclaration = index.FindTypeByLeafName(Leaf(constructor.StructName));
+			if (structDeclaration is not null)
+				return new ResolvedSymbol(ResolvedSymbolKind.Struct, name, null, subject, structDeclaration, Display(structDeclaration, constructor.StructName));
+		}
+
 		var kind = declaration switch
 		{
-			ConstructorDeclarationSyntax => ResolvedSymbolKind.Constructor,
 			DestructorDeclarationSyntax => ResolvedSymbolKind.Destructor,
 			_ when isExtension => ResolvedSymbolKind.ExtensionMethod,
 			_ => ResolvedSymbolKind.Function,
