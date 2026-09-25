@@ -33,6 +33,28 @@ public sealed class StandardLibraryTests
 	}
 
 	[Fact]
+	public void OpeningStandardLibrarySource_DoesNotDuplicateDeclarations()
+	{
+		var fixture = TempProject.Create(("Main.cvl", "int main() { return 0; }\n"));
+		using (fixture)
+		{
+			var reference = CvoloWorkspace.Create().OpenProject(fixture.ProjectFilePath);
+			var consolePath = reference.InitialSnapshot.Documents.Values
+				.Select(document => document.FilePath)
+				.Single(path => path.EndsWith(Path.Combine("System", "Console.cvl"), StringComparison.OrdinalIgnoreCase));
+
+			var project = CvoloWorkspace.Create().OpenProject(consolePath);
+			var snapshot = project.InitialSnapshot;
+			var consoleDocuments = snapshot.Documents.Values
+				.Where(document => string.Equals(document.FilePath, consolePath, StringComparison.OrdinalIgnoreCase))
+				.ToList();
+
+			var consoleDocument = Assert.Single(consoleDocuments);
+			Assert.DoesNotContain(consoleDocument.GetDiagnostics(), diagnostic => diagnostic.Message.Contains("Duplicate definition", StringComparison.Ordinal));
+		}
+	}
+
+	[Fact]
 	public void StdSymbolLookup_ResolvesImportedSymbolWithDefinition()
 	{
 		const string s = "using System;\nint main() { Console.WriteLine(\"hi\"); return 0; }\n";
