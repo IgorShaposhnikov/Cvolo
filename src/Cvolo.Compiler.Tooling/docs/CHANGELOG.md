@@ -3,6 +3,16 @@
 This file records changes to the public tooling surface and its observable semantics. It ships
 inside the Tooling artifact bundle under `docs/`.
 
+## 0.0.5.8
+
+Adds loose-workspace editor snapshots and explicit `.cvlib` semantic references.
+
+- opens directories without a `.cvlproj` without modifying the filesystem;
+- excludes source files owned by nested real Cvolo projects from loose snapshots;
+- accepts explicit `.cvlib` files and top-level library directories through `CvoloWorkspace.OpenProject`;
+- restores manifest-backed package dependencies before editor snapshots are built;
+- keeps real-project dependency graphs authoritative and ignores loose editor library paths for them.
+
 ## 0.0.5.6
 
 Hardens LSP-6 rename planning.

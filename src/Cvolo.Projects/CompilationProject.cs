@@ -109,9 +109,24 @@ public sealed class CompilationProject
 		}
 		else if (Directory.Exists(inputPath))
 		{
-			var files = Directory.GetFiles(inputPath, "*.cvl", SearchOption.AllDirectories).ToList();
+			var root = Path.GetFullPath(inputPath);
+			var nestedProjectDirectories = Directory.GetFiles(root, "*.cvlproj", SearchOption.AllDirectories)
+				.Select(Path.GetDirectoryName)
+				.OfType<string>()
+				.Select(Path.GetFullPath)
+				.ToList();
+			var files = Directory.GetFiles(root, "*.cvl", SearchOption.AllDirectories)
+				.Where(file => !nestedProjectDirectories.Any(projectDirectory =>
+				{
+					var relative = Path.GetRelativePath(projectDirectory, file);
+					return !Path.IsPathRooted(relative)
+						&& relative != ".."
+						&& !relative.StartsWith($"..{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
+						&& !relative.StartsWith($"..{Path.AltDirectorySeparatorChar}", StringComparison.Ordinal);
+				}))
+				.ToList();
 			sourceFiles.AddRange(files);
-			outputName = Path.GetFileName(Path.GetFullPath(inputPath).TrimEnd(Path.DirectorySeparatorChar));
+			outputName = Path.GetFileName(root.TrimEnd(Path.DirectorySeparatorChar));
 		}
 		else if (File.Exists(inputPath))
 		{
