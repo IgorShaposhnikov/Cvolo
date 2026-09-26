@@ -43,6 +43,12 @@ internal static class SymbolResolver
 				?? ResolveImplicitExtensionField(context, unit, index, identifier);
 		else if (node is StructInitializationExpressionSyntax structInitialization)
 			result = ResolveTypeReference(context, index, source, structInitialization.Span, structInitialization.StructTypeName, position);
+		else if (node is SizeofExpressionSyntax sizeofExpression)
+			result = ResolveTypeReference(context, index, source, sizeofExpression.Span, sizeofExpression.TypeName, position);
+		else if (node is AlignofExpressionSyntax alignofExpression)
+			result = ResolveTypeReference(context, index, source, alignofExpression.Span, alignofExpression.TypeName, position);
+		else if (node is OffsetofExpressionSyntax offsetofExpression)
+			result = ResolveOffsetof(context, index, source, offsetofExpression, position);
 		else
 			result = ResolveDeclarationName(context, unit, index, source, node, position);
 
@@ -391,6 +397,63 @@ internal static class SymbolResolver
 					unionDeclaration.Fields.FirstOrDefault(f => f.Name == memberName) is { } unionField)
 					return new ResolvedSymbol(ResolvedSymbolKind.Field, memberName, Leaf(unionType.Name), subject, unionField, $"{unionField.Type} {unionField.Name}");
 				break;
+		}
+
+		return null;
+	}
+
+	private static ResolvedSymbol? ResolveOffsetof(
+		BindingContext context,
+		DeclarationIndex index,
+		string source,
+		OffsetofExpressionSyntax offsetofExpression,
+		int position)
+	{
+		var typeNameStart = source.IndexOf(offsetofExpression.TypeName, offsetofExpression.Span.Start, offsetofExpression.Span.Length, StringComparison.Ordinal);
+		if (typeNameStart >= 0 && position >= typeNameStart && position < typeNameStart + offsetofExpression.TypeName.Length)
+		{
+			return ResolveTypeReference(context, index, source, offsetofExpression.Span, offsetofExpression.TypeName, position);
+		}
+
+		var type = context.ResolveType(context.NormalizeGenericName(offsetofExpression.TypeName));
+		if (type is null)
+			return null;
+
+		foreach (var member in offsetofExpression.Members)
+		{
+			var subject = member.Span;
+
+			switch (type)
+			{
+				case StructTypeSymbol structType when structType.FindField(member.Name) is { } structField:
+					if (index.FindType(structType.Name) is StructDeclarationSyntax structDeclaration &&
+						structDeclaration.Fields.FirstOrDefault(f => f.Name == member.Name) is { } structFieldSyntax)
+					{
+						if (position >= subject.Start && position < subject.End)
+							return new ResolvedSymbol(ResolvedSymbolKind.Field, member.Name, Leaf(structType.Name), subject, structFieldSyntax, $"{structFieldSyntax.Type} {structFieldSyntax.Name}");
+
+						type = structField.Type;
+						break;
+					}
+
+					return null;
+
+				case UnionTypeSymbol unionType when unionType.FindField(member.Name) is { } unionField:
+					if (index.FindType(unionType.Name) is UnionDeclarationSyntax unionDeclaration &&
+						unionDeclaration.Fields.FirstOrDefault(f => f.Name == member.Name) is { } unionFieldSyntax)
+					{
+						if (position >= subject.Start && position < subject.End)
+							return new ResolvedSymbol(ResolvedSymbolKind.Field, member.Name, Leaf(unionType.Name), subject, unionFieldSyntax, $"{unionFieldSyntax.Type} {unionFieldSyntax.Name}");
+
+						type = unionField.Type;
+						break;
+					}
+
+					return null;
+
+				default:
+					return null;
+			}
 		}
 
 		return null;

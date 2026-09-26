@@ -70,6 +70,15 @@ internal static class SemanticTokenService
 			case BinaryExpressionSyntax binary:
 				TryAddOperatorToken(binary, source, tokens, seen);
 				return false;
+			case SizeofExpressionSyntax:
+				AddDirectToken(tokens, seen, new Cvolo.Core.Diagnostics.TextSpan(node.Span.Start, "sizeof".Length), ToolingSymbolKind.Keyword);
+				return false;
+			case AlignofExpressionSyntax:
+				AddDirectToken(tokens, seen, new Cvolo.Core.Diagnostics.TextSpan(node.Span.Start, "alignof".Length), ToolingSymbolKind.Keyword);
+				return false;
+			case OffsetofExpressionSyntax:
+				AddDirectToken(tokens, seen, new Cvolo.Core.Diagnostics.TextSpan(node.Span.Start, "offsetof".Length), ToolingSymbolKind.Keyword);
+				return false;
 		}
 
 		return false;
@@ -177,6 +186,20 @@ internal static class SemanticTokenService
 				break;
 			case CallExpressionSyntax call:
 				yield return call.Span.Start + call.FunctionName.Length - Leaf(call.FunctionName).Length;
+				break;
+			case SizeofExpressionSyntax sizeofExpression:
+				if (TryIndexOf(source, sizeofExpression.Span, sizeofExpression.TypeName, out var sizeofType))
+					yield return sizeofType;
+				break;
+			case AlignofExpressionSyntax alignofExpression:
+				if (TryIndexOf(source, alignofExpression.Span, alignofExpression.TypeName, out var alignofType))
+					yield return alignofType;
+				break;
+			case OffsetofExpressionSyntax offsetofExpression:
+				if (TryIndexOf(source, offsetofExpression.Span, offsetofExpression.TypeName, out var offsetofType))
+					yield return offsetofType;
+				foreach (var offsetofMember in offsetofExpression.Members)
+					yield return offsetofMember.Span.Start;
 				break;
 			case FunctionDeclarationSyntax function:
 				yield return function.NameSpan.Start;

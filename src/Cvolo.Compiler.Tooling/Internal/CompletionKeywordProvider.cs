@@ -34,7 +34,7 @@ internal static class CompletionKeywordProvider
 
 	private static readonly string[] ExpressionKeywords =
 	[
-		"asm", "nameof", "typeof", "heap", "true", "false",
+		"asm", "nameof", "typeof", "sizeof", "alignof", "offsetof", "heap", "true", "false",
 		"null", "void", "default", "ref", "refvar", "panic"
 	];
 
