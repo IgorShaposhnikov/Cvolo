@@ -656,6 +656,22 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 	{
 		var type = GetTypeName(context.type());
 		var name = context.Identifier().GetText();
+
+		if (name.Length > 0 && name[0] == '<')
+		{
+			name = string.Empty;
+		}
+
+		if (string.IsNullOrWhiteSpace(type) && !string.IsNullOrWhiteSpace(name))
+		{
+			type = name;
+			name = string.Empty;
+		}
+		else if (!string.IsNullOrWhiteSpace(name) && string.Equals(name, type, StringComparison.Ordinal))
+		{
+			name = string.Empty;
+		}
+
 		var attributes = BuildAttributeList(context.attributeList());
 		return new ParameterSyntax(SpanOf(context), type, name, attributes);
 	}

@@ -262,4 +262,42 @@ public sealed class SemanticTokenTests
 			Assert.Equal(ToolingSymbolKind.Operator, token.Kind);
 		}
 	}
+
+	[Fact]
+	public void ProtocolParameters_AreClassifiedAsParameter()
+	{
+		const string s =
+			"protocol Allocator\n" +
+			"{\n" +
+			"    void* Allocate(nuint size, nuint alignment);\n" +
+			"}\n";
+		var x = Open(s);
+		using (x.Fixture)
+		{
+			var tokens = x.Document.GetSemanticTokens();
+			var all = string.Join(", ", tokens.Select(t => $"{x.Document.Text.GetText(t.Span)}:{t.Kind}"));
+			var size = WithText(x.Document, tokens, "size");
+			var alignment = WithText(x.Document, tokens, "alignment");
+		Assert.True(size.Any(t => t.Kind == ToolingSymbolKind.Parameter), $"size=[{string.Join(",", size.Select(t => t.Kind))}] all=[{all}]");
+		Assert.True(alignment.Any(t => t.Kind == ToolingSymbolKind.Parameter), $"alignment=[{string.Join(",", alignment.Select(t => t.Kind))}] all=[{all}]");
+		}
+	}
+
+	[Fact]
+	public void MalformedBareTypeParameter_IsNotClassifiedAsParameter()
+	{
+		const string s =
+			"protocol Allocator\n" +
+			"{\n" +
+			"    void Deallocate(void* ptr, nuint);\n" +
+			"}\n";
+		var x = Open(s);
+		using (x.Fixture)
+		{
+			var tokens = x.Document.GetSemanticTokens();
+			var all = string.Join(", ", tokens.Select(t => $"{x.Document.Text.GetText(t.Span)}:{t.Kind}"));
+			var bare = WithText(x.Document, tokens, "nuint");
+			Assert.False(bare.Any(t => t.Kind == ToolingSymbolKind.Parameter), $"nuint=[{string.Join(",", bare.Select(t => t.Kind))}] all=[{all}]");
+		}
+	}
 }
