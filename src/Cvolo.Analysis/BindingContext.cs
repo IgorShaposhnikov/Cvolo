@@ -1295,7 +1295,7 @@ public sealed class BindingContext
 		if (baseName == "main" || baseName == "Main")
 			return "main";
 
-		var signature = string.Join("_", parameterTypes.Select(t => NormalizeTypeNameForMangling(t.Name)));
+		var signature = string.Join("_", parameterTypes.Select(t => NormalizeTypeNameForMangling(t?.Name ?? "unknown")));
 		return string.IsNullOrEmpty(signature) ? $"{baseName}_void" : $"{baseName}_{signature}";
 	}
 

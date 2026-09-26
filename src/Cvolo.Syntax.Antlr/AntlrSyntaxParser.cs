@@ -655,7 +655,8 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 	private ParameterSyntax BuildParameter(CvoloParser.ParameterContext context)
 	{
 		var type = GetTypeName(context.type());
-		var name = context.Identifier().GetText();
+		var identifier = context.Identifier();
+		var name = identifier is null ? string.Empty : identifier.GetText();
 
 		if (name.Length > 0 && name[0] == '<')
 		{
@@ -1555,6 +1556,11 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 
 	private string GetTypeName(CvoloParser.TypeContext context)
 	{
+		if (context is null)
+		{
+			return string.Empty;
+		}
+
 		if (context is CvoloParser.RefVarTypeContext refVarCtx)
 		{
 			return $"refvar {GetTypeName(refVarCtx.type())}";
