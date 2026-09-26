@@ -5,4 +5,4 @@
 /// The function has no Cvolo body; the compiler supplies the implementation
 /// for each target. The attribute is erased before emission.
 /// </summary>
-public struct IntrinsicAttribute {}
+public builtin struct IntrinsicAttribute {}

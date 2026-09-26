@@ -5,4 +5,4 @@
 /// Use it for APIs whose result must not be silently dropped. The attribute
 /// is erased before emission.
 /// </summary>
-public struct MustUseAttribute {}
+public builtin struct MustUseAttribute {}

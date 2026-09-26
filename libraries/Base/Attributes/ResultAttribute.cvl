@@ -6,4 +6,4 @@
 /// type name is irrelevant, so any union with the correct shape can be used
 /// with `try`/`catch`. The attribute is erased before emission.
 /// </summary>
-public struct ResultAttribute {}
+public builtin struct ResultAttribute {}

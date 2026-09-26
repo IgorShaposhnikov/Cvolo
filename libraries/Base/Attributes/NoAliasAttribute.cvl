@@ -5,4 +5,4 @@
 /// This is a promise made to the optimizer: violating it is undefined
 /// behaviour. The attribute is erased before emission.
 /// </summary>
-public struct NoAliasAttribute {}
+public builtin struct NoAliasAttribute {}

@@ -4,4 +4,4 @@
 ///
 /// The attribute is erased before emission.
 /// </summary>
-public struct ExposeNameAttribute {}
+public builtin struct ExposeNameAttribute {}

@@ -4,4 +4,4 @@
 ///
 /// The attribute is erased before emission.
 /// </summary>
-public struct ImportNameAttribute {}
+public builtin struct ImportNameAttribute {}

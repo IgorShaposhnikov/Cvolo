@@ -4,4 +4,4 @@
 ///
 /// The attribute is erased before emission.
 /// </summary>
-public struct LibraryImportAttribute {}
+public builtin struct LibraryImportAttribute {}

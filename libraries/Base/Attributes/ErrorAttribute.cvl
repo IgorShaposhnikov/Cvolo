@@ -6,4 +6,4 @@
 /// routing may match on their variants. The attribute is erased before
 /// emission and never reaches LLVM IR.
 /// </summary>
-public struct ErrorAttribute {}
+public builtin struct ErrorAttribute {}

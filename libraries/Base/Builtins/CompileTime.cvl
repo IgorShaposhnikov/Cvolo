@@ -1,0 +1,19 @@
+/// <summary>
+/// Returns the storage size of `T` in bytes for the active compilation target.
+/// The result includes padding required by the Cvolo object layout and is
+/// evaluated at compile time.
+/// </summary>
+public builtin nuint sizeof<T>();
+
+/// <summary>
+/// Returns the required storage alignment of `T` in bytes for the active
+/// compilation target.
+/// </summary>
+public builtin nuint alignof<T>();
+
+/// <summary>
+/// Returns the byte offset of a stored member within `T`.
+///
+/// Syntax: `offsetof&lt;T&gt;(Member)` or `offsetof&lt;T&gt;(Nested.Member)`.
+/// </summary>
+public builtin nuint offsetof<T>();

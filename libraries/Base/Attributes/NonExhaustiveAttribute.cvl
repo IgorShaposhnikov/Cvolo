@@ -5,4 +5,4 @@
 ///
 /// The attribute is erased before emission.
 /// </summary>
-public struct NonExhaustiveAttribute {}
+public builtin struct NonExhaustiveAttribute {}
