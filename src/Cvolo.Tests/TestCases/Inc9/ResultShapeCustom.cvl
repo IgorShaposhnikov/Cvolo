@@ -1,0 +1,26 @@
+using System;
+
+[Error]
+public enum ParseError : int
+{
+    Bad = 1
+}
+
+[Result]
+public union Outcome<T, E>
+{
+    T Ok;
+    E Err;
+}
+
+Outcome<int, ParseError> Pick(int value)
+{
+    return Outcome<int, ParseError> { Ok: value };
+}
+
+int main()
+{
+    var int result = Pick(3) catch 0;
+    Console.WriteLine(result);
+    return 0;
+}

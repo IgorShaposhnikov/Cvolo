@@ -1,0 +1,7 @@
+/// <summary>
+/// Suppresses a specific compiler warning on the annotated declaration.
+///
+/// The warning family id is supplied as an argument, for example
+/// `[SuppressWarning("CVL1002")]`. The attribute is erased before emission.
+/// </summary>
+public struct SuppressWarningAttribute {}

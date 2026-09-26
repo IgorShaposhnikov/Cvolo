@@ -1,0 +1,8 @@
+/// <summary>
+/// Marks a union or enum as non-exhaustive, so consumers must handle an
+/// unknown or default case and adding variants later is not a breaking
+/// change.
+///
+/// The attribute is erased before emission.
+/// </summary>
+public struct NonExhaustiveAttribute {}

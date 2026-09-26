@@ -1124,7 +1124,7 @@ internal sealed class ExpressionValidator(
 			UnaryExpressionSyntax unary => GetUnaryExpressionType(unary, scope),
 			AsmExpressionSyntax asm => InlineAsm.GetResultType(asm, scope),
 			NameofExpressionSyntax => TypeSymbol.String,
-			TypeofExpressionSyntax => context.ResolveType("System.Type"),
+			TypeofExpressionSyntax => context.ResolveType("Type"),
 			IsPatternExpressionSyntax => TypeSymbol.Bool,
 			BinaryExpressionSyntax bin when bin.Operator is "|" or "&" or "^" => GetFlagsBinaryType(bin, scope),
 			BinaryExpressionSyntax bin when bin.Operator == "+" && IsConstantStringExpression(bin.Left) && IsConstantStringExpression(bin.Right) => TypeSymbol.String,

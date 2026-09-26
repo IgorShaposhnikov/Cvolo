@@ -34,7 +34,8 @@ public sealed record ProjectUniverseRequest(
 	bool MergeProjectReferences = true,
 	bool UseProjectReferencePackages = false,
 	bool LoadPackages = true,
-	bool IncludeStandardLibrary = true,
+	bool IncludeSystem = true,
+	bool Freestanding = false,
 	string Configuration = BuildOutputLayout.DefaultConfiguration,
 	PackageCache? PackageCache = null,
 	IReadOnlyList<string>? LibraryPaths = null,
@@ -94,8 +95,9 @@ public static class ProjectUniverseLoader
 			request.CompilerBaseDir,
 			request.ForceShared,
 			mergeProjectReferences: !request.UseProjectReferencePackages,
-			includeStandardLibrary: request.IncludeStandardLibrary,
-			sourceOverrides: request.SourceOverrides);
+			includeSystem: request.IncludeSystem,
+			sourceOverrides: request.SourceOverrides,
+			freestanding: request.Freestanding);
 
 		var artifacts = new List<ResolvedPackageArtifacts>();
 

@@ -1,12 +1,12 @@
 using System;
 
-union Option<T>
+union Maybe<T>
 {
 	T Some;
 	void None;
 }
 
-extension Option<T> {
+extension Maybe<T> {
 	bool IsSome()
 	{
 		return true;
@@ -15,13 +15,13 @@ extension Option<T> {
 
 int main()
 {
-	Option<int> opt = Option<int> { Some: 100 };
+	Maybe<int> opt = Maybe<int> { Some: 100 };
 	var int y = opt.Some;
 	var bool b = opt.IsSome();
 	var int bVal = b ? 1 : 0;
 	Console.WriteLine($"Some: {y}, IsSome: {bVal}");
 
-	Option<string> empty = Option<string> { None: void };
+	Maybe<string> empty = Maybe<string> { None: void };
 	Console.WriteLine("Empty option created.");
 	return 0;
 }

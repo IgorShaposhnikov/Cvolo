@@ -1,5 +1,4 @@
 using Cvolo.Core.AST.Base;
-using Cvolo.Core.AST.Declarations;
 using Cvolo.Core.AST.Directives;
 using Cvolo.Core.AST.Expressions;
 using Cvolo.Core.Diagnostics;
@@ -7,18 +6,26 @@ using Cvolo.Syntax.Rewriters;
 
 namespace Cvolo.Syntax.Antlr;
 
-internal enum LibraryTier
+internal enum SdkTier
 {
-	Core,
-	Std
+	Base,
+	System
 }
 
-internal static class StandardLibraryResolver
+public sealed record SdkNamespaceMismatch(string FilePath, string ExpectedNamespace, string ActualNamespace);
+
+internal sealed record SdkResolution(
+	IReadOnlyList<string> Sources,
+	IReadOnlyList<string> RequiredSystemNamespaces,
+	IReadOnlyList<SdkNamespaceMismatch> NamespaceMismatches);
+
+internal static class SdkLibraryResolver
 {
 	private sealed class Entry
 	{
 		public string FilePath = "";
-		public LibraryTier Tier;
+		public string RelativePath = "";
+		public SdkTier Tier;
 		public string NamespaceName = "";
 		public CompilationUnitSyntax? Unit;
 		public List<string> Usings = [];
@@ -26,42 +33,42 @@ internal static class StandardLibraryResolver
 		public List<string> ReferencedNamespaces = [];
 	}
 
-	public static IReadOnlyList<string> Resolve(
+	public static SdkResolution Resolve(
 		string libraryRoot,
 		IReadOnlyList<string> projectSources,
-		bool includeStd,
+		bool includeSystem,
 		IReadOnlyDictionary<string, string>? sourceOverrides = null)
 	{
 		var files = Directory.GetFiles(libraryRoot, "*.cvl", SearchOption.AllDirectories)
 			.Concat(Directory.GetFiles(libraryRoot, "*.cv", SearchOption.AllDirectories))
-			.OrderBy(path => path, StringComparer.Ordinal)
 			.ToList();
-
-		if (files.Count == 0)
-		{
-			return [];
-		}
 
 		var pathComparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
 		var entries = new List<Entry>(files.Count);
 		var byPath = new Dictionary<string, Entry>(pathComparer);
-		var namespaces = new HashSet<string>(StringComparer.Ordinal);
+		var mismatches = new List<SdkNamespaceMismatch>();
 
 		foreach (var path in files)
 		{
+			if (!TryClassifyTier(libraryRoot, path, out var tier, out var expectedNamespace))
+			{
+				continue;
+			}
+
 			var entry = new Entry
 			{
 				FilePath = path,
-				Tier = ClassifyTier(libraryRoot, path),
+				RelativePath = NormalizeRelative(libraryRoot, path),
+				Tier = tier,
 				Unit = ParseUnit(path, sourceOverrides)
 			};
 
 			if (entry.Unit is not null)
 			{
 				entry.NamespaceName = entry.Unit.NamespaceDeclaration?.Name ?? "";
-				if (entry.NamespaceName.Length > 0)
+				if (!string.Equals(entry.NamespaceName, expectedNamespace, StringComparison.Ordinal))
 				{
-					namespaces.Add(entry.NamespaceName);
+					mismatches.Add(new SdkNamespaceMismatch(path, expectedNamespace, entry.NamespaceName));
 				}
 
 				CollectUsings(entry);
@@ -71,6 +78,24 @@ internal static class StandardLibraryResolver
 			byPath[path] = entry;
 		}
 
+		var catalog = new Dictionary<string, List<Entry>>(StringComparer.Ordinal);
+		foreach (var entry in entries)
+		{
+			if (entry.Tier != SdkTier.System || entry.NamespaceName.Length == 0)
+			{
+				continue;
+			}
+
+			if (!catalog.TryGetValue(entry.NamespaceName, out var list))
+			{
+				list = [];
+				catalog[entry.NamespaceName] = list;
+			}
+
+			list.Add(entry);
+		}
+
+		var catalogNamespaces = new HashSet<string>(catalog.Keys, StringComparer.Ordinal);
 		foreach (var entry in entries)
 		{
 			if (entry.Unit is null)
@@ -78,11 +103,19 @@ internal static class StandardLibraryResolver
 				continue;
 			}
 
-			entry.ReferencedNamespaces.AddRange(ReferencedCandidates(entry.Unit, entry.Usings, namespaces));
+			entry.ReferencedNamespaces.AddRange(ReferencedCandidates(entry.Unit, entry.Usings, catalogNamespaces));
 		}
 
-		var candidates = includeStd ? entries : entries.Where(entry => entry.Tier == LibraryTier.Core).ToList();
-		var selected = new List<string>();
+		var required = new HashSet<string>(StringComparer.Ordinal);
+		void Require(string namespaceName)
+		{
+			if (IsSystemRooted(namespaceName))
+			{
+				required.Add(namespaceName);
+			}
+		}
+
+		var selected = new List<Entry>();
 		var selectedPaths = new HashSet<string>(pathComparer);
 		var processed = new HashSet<string>(StringComparer.Ordinal);
 		var pending = new Queue<string>();
@@ -102,26 +135,30 @@ internal static class StandardLibraryResolver
 				return;
 			}
 
-			selected.Add(entry.FilePath);
+			selected.Add(entry);
+
 			foreach (var usingName in entry.Usings)
 			{
+				Require(usingName);
 				Enqueue(usingName);
 			}
 
 			foreach (var reExport in entry.ReExports)
 			{
+				Require(reExport);
 				Enqueue(reExport);
 			}
 
 			foreach (var referenced in entry.ReferencedNamespaces)
 			{
+				Require(referenced);
 				Enqueue(referenced);
 			}
 		}
 
-		foreach (var entry in candidates)
+		foreach (var entry in entries)
 		{
-			if (entry.Tier == LibraryTier.Core)
+			if (entry.Tier == SdkTier.Base)
 			{
 				Select(entry);
 			}
@@ -144,38 +181,79 @@ internal static class StandardLibraryResolver
 			var active = ActiveUsings(unit);
 			foreach (var usingName in active)
 			{
+				Require(usingName);
 				Enqueue(usingName);
 			}
 
-			foreach (var referenced in ReferencedCandidates(unit, active, namespaces))
+			foreach (var referenced in ReferencedCandidates(unit, active, catalogNamespaces))
 			{
+				Require(referenced);
 				Enqueue(referenced);
 			}
 		}
 
-		while (pending.Count > 0)
+		if (includeSystem)
 		{
-			var namespaceName = pending.Dequeue();
-			foreach (var entry in candidates)
+			while (pending.Count > 0)
 			{
-				if (string.Equals(entry.NamespaceName, namespaceName, StringComparison.Ordinal))
+				var namespaceName = pending.Dequeue();
+				if (!catalog.TryGetValue(namespaceName, out var matches))
+				{
+					continue;
+				}
+
+				foreach (var entry in matches)
 				{
 					Select(entry);
 				}
 			}
 		}
 
-		selected.Sort(StringComparer.Ordinal);
-		return selected;
+		selected.Sort((left, right) => string.CompareOrdinal(left.RelativePath, right.RelativePath));
+		var sources = selected.Select(entry => entry.FilePath).ToList();
+
+		var requiredList = required.ToList();
+		requiredList.Sort(StringComparer.Ordinal);
+
+		return new SdkResolution(sources, requiredList, mismatches);
 	}
 
-	private static LibraryTier ClassifyTier(string libraryRoot, string filePath)
+	private static bool TryClassifyTier(string libraryRoot, string filePath, out SdkTier tier, out string expectedNamespace)
 	{
-		var relative = Path.GetRelativePath(libraryRoot, filePath);
-		var separator = relative.IndexOfAny([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar]);
-		var firstSegment = separator < 0 ? relative : relative[..separator];
-		return string.Equals(firstSegment, "Core", StringComparison.Ordinal) ? LibraryTier.Core : LibraryTier.Std;
+		var relative = Path.GetRelativePath(libraryRoot, filePath).Replace('\\', '/');
+		var segments = relative.Split('/', StringSplitOptions.RemoveEmptyEntries);
+		if (segments.Length == 0)
+		{
+			tier = SdkTier.System;
+			expectedNamespace = "";
+			return false;
+		}
+
+		switch (segments[0])
+		{
+			case "Base":
+				tier = SdkTier.Base;
+				expectedNamespace = "";
+				return true;
+			case "System":
+				tier = SdkTier.System;
+				var parts = new List<string> { "System" };
+				parts.AddRange(segments.Skip(1).Take(segments.Length - 2));
+				expectedNamespace = string.Join('.', parts);
+				return true;
+			default:
+				tier = SdkTier.System;
+				expectedNamespace = "";
+				return false;
+		}
 	}
+
+	private static string NormalizeRelative(string libraryRoot, string filePath) =>
+		Path.GetRelativePath(libraryRoot, filePath).Replace('\\', '/');
+
+	private static bool IsSystemRooted(string namespaceName) =>
+		namespaceName.Equals("System", StringComparison.Ordinal)
+		|| namespaceName.StartsWith("System.", StringComparison.Ordinal);
 
 	private static CompilationUnitSyntax? ParseUnit(string filePath, IReadOnlyDictionary<string, string>? sourceOverrides)
 	{

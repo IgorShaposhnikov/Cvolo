@@ -23,7 +23,7 @@ internal sealed class RunCommand : Command
 		var legacyVisibilityOption = new Option<bool>("--legacy-visibility") { Description = "Disable the visibility system and treat all declarations as public (v0.2.0-alpha behavior)" };
 		var strictOption = new Option<bool>("--strict-option") { Description = "Disable the '?' optional type syntax; require explicit Option<T> types" };
 		var noTbaaOption = new Option<bool>("--no-tbaa") { Description = "Disable generation of !tbaa alias-analysis metadata nodes" };
-		var noStdlibOption = new Option<bool>("--no-stdlib") { Description = "Compile without automatically including the Cvolo standard library." };
+		var freestandingOption = new Option<bool>("--freestanding") { Description = "Compile with only the Base SDK layer; System library dependencies are rejected." };
 		var targetOption = new Option<string>("--target") { Description = "Target OS for native library resolution (host, windows, linux, macos)." };
 		var checkedFfiBoundsOption = new Option<bool>("--checked-ffi-bounds") { Description = "Generate explicit null-check prologues in expose extern functions for debug builds" };
 		var configurationOption = new Option<string>("--configuration", "-c", BuildOutputLayout.DefaultConfiguration) { Description = "Build configuration (Debug or Release)." };
@@ -38,7 +38,7 @@ internal sealed class RunCommand : Command
 		Add(legacyVisibilityOption);
 		Add(strictOption);
 		Add(noTbaaOption);
-		Add(noStdlibOption);
+		Add(freestandingOption);
 		Add(targetOption);
 		Add(checkedFfiBoundsOption);
 		Add(configurationOption);
@@ -55,7 +55,7 @@ internal sealed class RunCommand : Command
 			var legacyVisibilityVal = parseResult.GetValue(legacyVisibilityOption);
 			var strictOptionVal = parseResult.GetValue(strictOption);
 			var noTbaaVal = parseResult.GetValue(noTbaaOption);
-			var noStdlibVal = parseResult.GetValue(noStdlibOption);
+			var freestandingVal = parseResult.GetValue(freestandingOption);
 			var targetOsVal = parseResult.GetValue(targetOption);
 			var checkedFfiBoundsVal = parseResult.GetValue(checkedFfiBoundsOption);
 			var configurationVal = BuildOutputLayout.NormalizeConfiguration(parseResult.GetValue(configurationOption) ?? BuildOutputLayout.DefaultConfiguration);
@@ -84,7 +84,7 @@ internal sealed class RunCommand : Command
 						$"legacyVisibility={legacyVisibilityVal}",
 						$"strictOption={strictOptionVal}",
 						$"noTbaa={noTbaaVal}",
-						$"noStdlib={noStdlibVal}",
+						$"freestanding={freestandingVal}",
 						$"target={targetOsVal ?? "host"}",
 						$"checkedFfiBounds={checkedFfiBoundsVal}");
 					var plan = ProjectBuildPlan.Create(projectGraph, projectBuildKey, configurationVal);
@@ -92,7 +92,7 @@ internal sealed class RunCommand : Command
 					useProjectReferenceArtifacts = projectReferences.UseArtifacts;
 				}
 
-				var exitCode = _compilerDriver.Compile(path, llvmOnly: false, isShared: false, emitIr: false, optLevel, checkOnly: false, runAfterCompile: true, verbose: verboseVal, emitLowered: emitLoweredVal, noWarn: noWarnVal, suppressWarnings: !warnVal, legacyVisibility: legacyVisibilityVal, strictOption: strictOptionVal, noTbaa: noTbaaVal, targetOs: targetOsVal, checkedFfiBounds: checkedFfiBoundsVal, configuration: configurationVal, useProjectReferencePackages: useProjectReferenceArtifacts, noStdlib: noStdlibVal);
+				var exitCode = _compilerDriver.Compile(path, llvmOnly: false, isShared: false, emitIr: false, optLevel, checkOnly: false, runAfterCompile: true, verbose: verboseVal, emitLowered: emitLoweredVal, noWarn: noWarnVal, suppressWarnings: !warnVal, legacyVisibility: legacyVisibilityVal, strictOption: strictOptionVal, noTbaa: noTbaaVal, targetOs: targetOsVal, checkedFfiBounds: checkedFfiBoundsVal, configuration: configurationVal, useProjectReferencePackages: useProjectReferenceArtifacts, freestanding: freestandingVal);
 				if (exitCode == 0 && projectGraph is not null && projectBuildKey is not null)
 					ProjectBuildPlan.RecordSuccessful(projectGraph, projectBuildKey, configurationVal);
 				Environment.Exit(exitCode);

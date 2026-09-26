@@ -1,0 +1,7 @@
+/// <summary>
+/// Enforces strict mutability rules on the annotated struct, requiring
+/// explicit `ref`/`refvar` annotations for mutable access.
+///
+/// The attribute is erased before emission.
+/// </summary>
+public struct StrictMutabilityAttribute {}

@@ -387,7 +387,7 @@ internal sealed class ExpressionEmitter(
 		if (_typeofGlobals.TryGetValue(typeName, out var cached))
 			return cached;
 
-		var systemType = BindingContext.ResolveType("System.Type")
+		var systemType = BindingContext.ResolveType("Type")
 			?? throw new InvalidOperationException($"typeof requires System.Type to be available for '{typeName}'.");
 		var systemLlvmType = LowerType(systemType);
 

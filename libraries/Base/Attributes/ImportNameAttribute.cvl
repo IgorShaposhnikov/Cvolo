@@ -1,0 +1,7 @@
+/// <summary>
+/// Overrides the native symbol name imported for the annotated `extern`
+/// declaration, for example `[ImportName("glColor3f")]`.
+///
+/// The attribute is erased before emission.
+/// </summary>
+public struct ImportNameAttribute {}

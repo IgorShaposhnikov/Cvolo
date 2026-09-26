@@ -1,0 +1,8 @@
+/// <summary>
+/// Declares that the annotated pointer parameter, or the parameters of the
+/// annotated function, do not alias other memory.
+///
+/// This is a promise made to the optimizer: violating it is undefined
+/// behaviour. The attribute is erased before emission.
+/// </summary>
+public struct NoAliasAttribute {}

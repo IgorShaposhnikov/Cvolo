@@ -1,0 +1,8 @@
+/// <summary>
+/// Marks the annotated function body as an unsafe context, allowing raw
+/// pointer and other unsafe operations without an explicit `unsafe` block.
+///
+/// If the body performs no unsafe operation the compiler reports
+/// `UnsafeBodyNoEffect` (CVL1001). The attribute is erased before emission.
+/// </summary>
+public struct UnsafeBodyAttribute {}

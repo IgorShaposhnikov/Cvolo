@@ -1,11 +1,10 @@
-namespace System;
-
 /// <summary>
 /// Represents a value that is either a success (Ok) or a failure (Err).
 /// This is Cvolo's safe, zero-cost alternative to throwing runtime exceptions 
 /// and handling raw, ambiguous error codes.
 /// </summary>
-union Result<T, E> {
+[Result]
+public union Result<T, E> {
     /// <summary>
     /// Contains the successful, active value of type T.
     /// </summary>

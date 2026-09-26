@@ -115,7 +115,7 @@ internal static class PackCompilation
 		var stdlibRoot = FindStdlibRoot(manifest.ProjectDirectory);
 		var stdlibFiles = stdlibRoot is null
 			? []
-			: StandardLibraryResolver.Resolve(stdlibRoot, projectFiles, includeStd: true);
+			: SdkLibraryResolver.Resolve(stdlibRoot, projectFiles, includeSystem: true).Sources;
 		var sourceFiles = stdlibFiles.Concat(projectFiles).ToList();
 		if (verbose)
 		{

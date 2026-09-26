@@ -2,7 +2,7 @@ using System;
 
 struct Point {}
 
-void Inspect(System.Type t) {
+void Inspect(Type t) {
     Console.WriteLine(t.name);
 }
 

@@ -1,0 +1,11 @@
+[Result]
+public union MissingErr<T>
+{
+    T Ok;
+    void None;
+}
+
+int main()
+{
+    return 0;
+}

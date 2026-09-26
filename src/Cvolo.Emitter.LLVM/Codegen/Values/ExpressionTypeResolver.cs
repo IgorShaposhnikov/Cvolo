@@ -77,7 +77,7 @@ internal sealed class ExpressionTypeResolver(CodegenContext codegen, Func<Functi
 			UnaryExpressionSyntax unary => ResolveUnary(unary),
 			AsmExpressionSyntax asm => ResolveAsm(asm),
 			NameofExpressionSyntax => TypeSymbol.String,
-			TypeofExpressionSyntax => BindingContext.ResolveType("System.Type") ?? TypeSymbol.String,
+			TypeofExpressionSyntax => BindingContext.ResolveType("Type") ?? TypeSymbol.String,
 			TernaryExpressionSyntax ternary => Resolve(ternary.ThenExpression),
 			CallExpressionSyntax call => ResolveCallReturn(call),
 			BinaryExpressionSyntax binary => ResolveBinary(binary),

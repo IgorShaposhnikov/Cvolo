@@ -30,6 +30,7 @@ internal sealed class AttributeValidator(BindingContext context)
 		["Intrinsic"] = (["Function", "Method"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
 		["MustUse"] = (["Function", "Method", "Constructor", "Struct", "Union", "Enum"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
 		["Error"] = (["Struct", "Union", "Enum"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
+		["Result"] = (["Union"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
 		["Inline"] = (["Function", "Method", "Constructor"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
 		["NeverInline"] = (["Function", "Method", "Constructor"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),
 		["LibraryImport"] = (["ExternBlock"], [SafetyTier.Safe, SafetyTier.Unbound, SafetyTier.Unsafe]),

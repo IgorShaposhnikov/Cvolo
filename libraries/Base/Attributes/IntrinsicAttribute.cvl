@@ -1,0 +1,8 @@
+/// <summary>
+/// Maps the annotated function to a compiler intrinsic by name, for example
+/// `[Intrinsic("abs")]`.
+///
+/// The function has no Cvolo body; the compiler supplies the implementation
+/// for each target. The attribute is erased before emission.
+/// </summary>
+public struct IntrinsicAttribute {}

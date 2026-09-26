@@ -1,0 +1,8 @@
+/// <summary>
+/// Warns when the annotated function's return value is ignored, or when a
+/// value of the annotated type is discarded.
+///
+/// Use it for APIs whose result must not be silently dropped. The attribute
+/// is erased before emission.
+/// </summary>
+public struct MustUseAttribute {}

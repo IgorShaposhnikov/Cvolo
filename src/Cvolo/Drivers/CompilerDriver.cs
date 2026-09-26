@@ -25,7 +25,7 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 {
 	private static readonly string[] _linkerCandidates = ["clang", "gcc", "g++"];
 
-	public int Compile(string path, bool llvmOnly, bool isShared, bool emitIr, string optLevel, bool checkOnly = false, bool runAfterCompile = false, bool verbose = false, bool emitLowered = false, string? noWarn = null, bool suppressWarnings = false, bool legacyVisibility = false, bool strictOption = false, bool noTbaa = false, string? targetOs = null, bool checkedFfiBounds = false, string format = "text", string configuration = BuildOutputLayout.DefaultConfiguration, bool useProjectReferencePackages = false, bool noStdlib = false)
+	public int Compile(string path, bool llvmOnly, bool isShared, bool emitIr, string optLevel, bool checkOnly = false, bool runAfterCompile = false, bool verbose = false, bool emitLowered = false, string? noWarn = null, bool suppressWarnings = false, bool legacyVisibility = false, bool strictOption = false, bool noTbaa = false, string? targetOs = null, bool checkedFfiBounds = false, string format = "text", string configuration = BuildOutputLayout.DefaultConfiguration, 	bool useProjectReferencePackages = false, bool freestanding = false)
 	{
 		configuration = BuildOutputLayout.NormalizeConfiguration(configuration);
 
@@ -53,7 +53,8 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 				MergeProjectReferences: !useProjectReferencePackages,
 				UseProjectReferencePackages: useProjectReferencePackages,
 				LoadPackages: !emitLowered,
-				IncludeStandardLibrary: !noStdlib,
+				IncludeSystem: !freestanding,
+				Freestanding: freestanding,
 				Configuration: configuration,
 				PackageCache: packageCache));
 		}
@@ -75,6 +76,20 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 
 		var project = universe.Project;
 		var packageArtifacts = universe.PackageArtifacts;
+
+		if (project.IsFreestanding && project.RequiredSystemNamespaces.Count > 0)
+		{
+			foreach (var requiredNamespace in project.RequiredSystemNamespaces)
+			{
+				reporter.ReportSynthetic(
+					DiagnosticIds.SystemInFreestanding,
+					"error",
+					$"Namespace '{requiredNamespace}' is not available in a freestanding build; the System library is disabled.",
+					path);
+			}
+
+			return 1;
+		}
 
 		if (verbose && !reporter.Exclusive && packageArtifacts.Count > 0)
 		{

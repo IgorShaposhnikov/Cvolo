@@ -12,8 +12,11 @@ public sealed class CompilationProject
 	public bool StrictOption { get; }
 	public string ProjectDirectory { get; }
 	public IReadOnlyList<string> ProjectReferences { get; }
+	public bool IsFreestanding { get; }
+	public IReadOnlyList<string> RequiredSystemNamespaces { get; }
+	public IReadOnlyList<SdkNamespaceMismatch> NamespaceMismatches { get; }
 
-	private CompilationProject(IReadOnlyList<string> sourceFiles, string outputName, bool isShared, string projectDirectory, bool strictOption = false, IReadOnlyList<string>? projectReferences = null)
+	private CompilationProject(IReadOnlyList<string> sourceFiles, string outputName, bool isShared, string projectDirectory, bool strictOption = false, IReadOnlyList<string>? projectReferences = null, bool isFreestanding = false, IReadOnlyList<string>? requiredSystemNamespaces = null, IReadOnlyList<SdkNamespaceMismatch>? namespaceMismatches = null)
 	{
 		SourceFiles = sourceFiles;
 		OutputName = outputName;
@@ -21,14 +24,18 @@ public sealed class CompilationProject
 		StrictOption = strictOption;
 		ProjectDirectory = projectDirectory;
 		ProjectReferences = projectReferences ?? [];
+		IsFreestanding = isFreestanding;
+		RequiredSystemNamespaces = requiredSystemNamespaces ?? [];
+		NamespaceMismatches = namespaceMismatches ?? [];
 	}
 
-	public static CompilationProject Load(string inputPath, string? compilerBaseDir = null, bool forceShared = false, bool mergeProjectReferences = true, bool includeStandardLibrary = true, IReadOnlyDictionary<string, string>? sourceOverrides = null)
+	public static CompilationProject Load(string inputPath, string? compilerBaseDir = null, bool forceShared = false, bool mergeProjectReferences = true, bool includeSystem = true, IReadOnlyDictionary<string, string>? sourceOverrides = null, bool freestanding = false)
 	{
 		List<string> sourceFiles = [];
 		var outputName = "main";
 		var isShared = forceShared;
 		var strictOption = false;
+		var projectFreestanding = false;
 		var projectReferences = new List<string>();
 
 		var projectDir = Directory.Exists(inputPath) ? Path.GetFullPath(inputPath) : Path.GetDirectoryName(Path.GetFullPath(inputPath))!;
@@ -84,6 +91,7 @@ public sealed class CompilationProject
 				var assemblyName = xml.Root?.Element("PropertyGroup")?.Element("AssemblyName")?.Value;
 				var outputType = xml.Root?.Element("PropertyGroup")?.Element("OutputType")?.Value;
 				var strictOptionValue = xml.Root?.Element("PropertyGroup")?.Element("StrictOption")?.Value;
+				var freestandingValue = xml.Root?.Element("PropertyGroup")?.Element("Freestanding")?.Value;
 
 				if (!string.IsNullOrEmpty(assemblyName))
 					outputName = assemblyName;
@@ -95,6 +103,9 @@ public sealed class CompilationProject
 
 				if (string.Equals(strictOptionValue, "true", StringComparison.OrdinalIgnoreCase))
 					strictOption = true;
+
+				if (string.Equals(freestandingValue, "true", StringComparison.OrdinalIgnoreCase))
+					projectFreestanding = true;
 			}
 			catch (Exception ex) when (ex is not FileNotFoundException && ex is not InvalidOperationException)
 			{
@@ -147,10 +158,12 @@ public sealed class CompilationProject
 			throw new FileNotFoundException($"Input path '{inputPath}' not found");
 		}
 
+		var effectiveFreestanding = freestanding || projectFreestanding;
+		SdkResolution? sdkResolution = null;
 		if (stdLibFullPath is not null && Directory.Exists(stdLibFullPath))
 		{
-			var librarySources = StandardLibraryResolver.Resolve(stdLibFullPath, sourceFiles, includeStandardLibrary, sourceOverrides);
-			sourceFiles.InsertRange(0, librarySources);
+			sdkResolution = SdkLibraryResolver.Resolve(stdLibFullPath, sourceFiles, includeSystem && !effectiveFreestanding, sourceOverrides);
+			sourceFiles.InsertRange(0, sdkResolution.Sources);
 		}
 
 		var seenSourceFiles = new HashSet<string>(
@@ -171,7 +184,16 @@ public sealed class CompilationProject
 			throw new InvalidOperationException($"No Cvolo source files found in '{inputPath}'");
 		}
 
-		return new CompilationProject(sourceFiles, outputName, isShared, projectDir, strictOption, projectReferences);
+		return new CompilationProject(
+			sourceFiles,
+			outputName,
+			isShared,
+			projectDir,
+			strictOption,
+			projectReferences,
+			effectiveFreestanding,
+			sdkResolution?.RequiredSystemNamespaces,
+			sdkResolution?.NamespaceMismatches);
 	}
 
 	public static void CreateNewProject(string projectName)

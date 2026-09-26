@@ -1,5 +1,6 @@
+using System;
+
 int main()
 {
-    Type type = typeof(int);
     return 0;
 }

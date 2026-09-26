@@ -114,7 +114,7 @@ public sealed class CompletionTests
 	[Fact]
 	public void UnionVariants_AreOffered()
 	{
-		var result = Complete("union Result { int Status; string Message; }\nint main() {\n    val Result r = default(Result);\n    return r.S|;\n}\n");
+		var result = Complete("union LocalResult { int Status; string Message; }\nint main() {\n    val LocalResult r = default(LocalResult);\n    return r.S|;\n}\n");
 
 		Assert.True(Contains(result, "Status", CompletionKind.UnionVariant));
 		Assert.DoesNotContain(result.Candidates, c => c.Label == "Message");

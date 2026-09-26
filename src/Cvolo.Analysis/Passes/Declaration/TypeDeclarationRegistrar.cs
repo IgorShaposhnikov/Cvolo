@@ -391,6 +391,8 @@ internal sealed class TypeDeclarationRegistrar(BindingContext context)
 
 		var (isMustUse, mustUseMsg) = _attributes.ExtractMustUse(unionDecl.Attributes);
 
+		ValidateResultShape(unionDecl);
+
 		if (unionDecl.IsUnsafe && unionDecl.GenericParameters.Count > 0)
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
@@ -490,6 +492,82 @@ internal sealed class TypeDeclarationRegistrar(BindingContext context)
 			IsUnsafe = unionDecl.IsUnsafe
 		};
 		context.UnionTypes[mangledName] = unionSymbol;
+	}
+
+	private void ValidateResultShape(UnionDeclarationSyntax unionDecl)
+	{
+		var attribute = FindResultAttribute(unionDecl.Attributes);
+		if (attribute is null)
+		{
+			return;
+		}
+
+		var currentFileContext = context.FileContexts[context.CurrentUnit!];
+
+		if (attribute.Arguments.Count > 0)
+		{
+			context.Diagnostics.Report(currentFileContext, unionDecl.Span,
+				"The '[Result]' attribute does not accept arguments.",
+				DiagnosticIds.ResultShapeArguments);
+		}
+
+		var okCount = unionDecl.Fields.Count(field => field.Name == "Ok");
+		var errCount = unionDecl.Fields.Count(field => field.Name == "Err");
+
+		if (okCount == 0)
+		{
+			context.Diagnostics.Report(currentFileContext, unionDecl.Span,
+				$"Result union '{unionDecl.Name}' must declare an 'Ok' variant.",
+				DiagnosticIds.ResultShapeMissingOk);
+		}
+
+		if (errCount == 0)
+		{
+			context.Diagnostics.Report(currentFileContext, unionDecl.Span,
+				$"Result union '{unionDecl.Name}' must declare an 'Err' variant.",
+				DiagnosticIds.ResultShapeMissingErr);
+		}
+
+		if (okCount == 1 && errCount == 1 && unionDecl.Fields.Count > 2)
+		{
+			context.Diagnostics.Report(currentFileContext, unionDecl.Span,
+				$"Result union '{unionDecl.Name}' must declare exactly the 'Ok' and 'Err' variants.",
+				DiagnosticIds.ResultShapeExtraVariant);
+		}
+
+		var errField = unionDecl.Fields.FirstOrDefault(field => field.Name == "Err");
+		if (errField is not null && errField.Type == "void")
+		{
+			context.Diagnostics.Report(currentFileContext, errField.Span,
+				$"Result union '{unionDecl.Name}' cannot use a 'void' error variant.",
+				DiagnosticIds.ResultShapeVoidErr);
+		}
+	}
+
+	private static AttributeSyntax? FindResultAttribute(IReadOnlyList<AttributeSyntax>? attributes)
+	{
+		if (attributes is null)
+		{
+			return null;
+		}
+
+		foreach (var attribute in attributes)
+		{
+			var name = attribute.Name;
+			var lastDot = name.LastIndexOf('.');
+			var leaf = lastDot >= 0 ? name[(lastDot + 1)..] : name;
+			if (leaf.EndsWith("Attribute", StringComparison.Ordinal))
+			{
+				leaf = leaf[..^"Attribute".Length];
+			}
+
+			if (leaf == "Result")
+			{
+				return attribute;
+			}
+		}
+
+		return null;
 	}
 
 

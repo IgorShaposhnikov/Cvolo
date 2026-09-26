@@ -1,0 +1,9 @@
+/// <summary>
+/// Marks a union as a result shape consumed by `try`/`catch`.
+///
+/// A `[Result]` union must declare exactly one `Ok` success variant and one
+/// `Err` error variant. `Ok` may be `void`; `Err` must carry a payload. The
+/// type name is irrelevant, so any union with the correct shape can be used
+/// with `try`/`catch`. The attribute is erased before emission.
+/// </summary>
+public struct ResultAttribute {}

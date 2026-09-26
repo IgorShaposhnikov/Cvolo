@@ -146,7 +146,7 @@ int main() {
 	Calls += 1;
 	printf("done %d %d %s\n", x, Calls, nameof(total));
 
-	var System.Type tp = typeof(Point);
+	var Type tp = typeof(Point);
 	printf("%s\n", tp.name);
 
 	var Runner rn = Runner { Speed: 5 };

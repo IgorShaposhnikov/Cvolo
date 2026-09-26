@@ -1820,7 +1820,7 @@ public sealed class BindingContext
 		if (unit is null)
 			return [];
 
-		var directUsings = new HashSet<string>(StringComparer.Ordinal) { "System" };
+		var directUsings = new HashSet<string>(StringComparer.Ordinal);
 
 		// 1. Collect standard 'using' directives (exclude 'expose using' which only re-exports)
 		foreach (var u in unit.Usings.Where(x => !x.IsExposed))

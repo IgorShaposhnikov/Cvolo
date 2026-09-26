@@ -1,0 +1,7 @@
+/// <summary>
+/// Declares the native library that backs an `extern` block, for example
+/// `[LibraryImport("opengl32", win: "opengl32.lib", linux: "libGL.so")]`.
+///
+/// The attribute is erased before emission.
+/// </summary>
+public struct LibraryImportAttribute {}

@@ -1,0 +1,7 @@
+/// <summary>
+/// Requests that the compiler inline calls to the annotated function.
+///
+/// This is a hint, not a guarantee. Marking a recursive function `[Inline]`
+/// is rejected (CVL1401). The attribute is erased before emission.
+/// </summary>
+public struct InlineAttribute {}

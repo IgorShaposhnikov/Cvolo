@@ -10,10 +10,12 @@ namespace Cvolo.Tests;
 
 public sealed class Inc9LibrarySelectionTests : CompilerTestBase
 {
-	private const string CoreOption = "Core/System/Option.cvl";
-	private const string StdConsole = "Std/System/Console.cvl";
-	private const string StdMathInt = "Std/System/Math/Int.cvl";
-	private const string StdMathDouble = "Std/System/Math/Double.cvl";
+	private const string BaseOption = "Base/Option.cvl";
+	private const string BaseType = "Base/Type.cvl";
+	private const string SystemConsole = "System/Console.cvl";
+	private const string SystemSystem = "System/System.cvl";
+	private const string SystemMathInt = "System/Math/Int.cvl";
+	private const string SystemMathDouble = "System/Math/Double.cvl";
 
 	private static string CasePath(string testCase) =>
 		Path.Combine(AppContext.BaseDirectory, TestCasesDirectory, testCase);
@@ -24,9 +26,9 @@ public sealed class Inc9LibrarySelectionTests : CompilerTestBase
 		return sources.Any(source => source.EndsWith(suffix, StringComparison.OrdinalIgnoreCase));
 	}
 
-	private static IReadOnlyList<string> ResolveSources(string testCase, bool includeStandardLibrary = true)
+	private static IReadOnlyList<string> ResolveSources(string testCase, bool includeSystem = true)
 	{
-		var project = CompilationProject.Load(CasePath(testCase), AppContext.BaseDirectory, includeStandardLibrary: includeStandardLibrary);
+		var project = CompilationProject.Load(CasePath(testCase), AppContext.BaseDirectory, includeSystem: includeSystem);
 		return project.SourceFiles;
 	}
 
@@ -42,7 +44,7 @@ public sealed class Inc9LibrarySelectionTests : CompilerTestBase
 		while (directory is not null)
 		{
 			var candidate = Path.Combine(directory.FullName, "libraries");
-			if (Directory.Exists(candidate) && Directory.Exists(Path.Combine(candidate, "Core")))
+			if (Directory.Exists(candidate) && Directory.Exists(Path.Combine(candidate, "Base")))
 			{
 				return candidate;
 			}
@@ -54,31 +56,31 @@ public sealed class Inc9LibrarySelectionTests : CompilerTestBase
 	}
 
 	[Fact]
-	public void NoImportProject_SelectsCoreAndExcludesHostedStd()
+	public void NoImportProject_SelectsBaseAndExcludesSystem()
 	{
 		var sources = ResolveSources("Inc9/NoImport.cvl");
 
-		Assert.True(HasLibrary(sources, CoreOption), "Core Option.cvl must always be selected.");
-		Assert.False(HasLibrary(sources, StdConsole), "Console.cvl must not be selected without an import.");
-		Assert.False(HasLibrary(sources, StdMathInt), "Math sources must not be selected without an import.");
+		Assert.True(HasLibrary(sources, BaseOption), "Base Option.cvl must always be selected.");
+		Assert.False(HasLibrary(sources, SystemConsole), "Console.cvl must not be selected without an import.");
+		Assert.False(HasLibrary(sources, SystemMathInt), "Math sources must not be selected without an import.");
 
 		AssertCheckSucceeds("Inc9/NoImport.cvl");
 	}
 
 	[Fact]
-	public void OptionalSyntax_ResolvesFromCoreWithoutUsing()
+	public void OptionalSyntax_ResolvesFromBaseWithoutUsing()
 	{
 		var sources = ResolveSources("Inc9/LocalOptional.cvl");
-		Assert.True(HasLibrary(sources, CoreOption));
+		Assert.True(HasLibrary(sources, BaseOption));
 
 		AssertCheckSucceeds("Inc9/LocalOptional.cvl");
 	}
 
 	[Fact]
-	public void Typeof_ResolvesSystemTypeFromCoreWithoutUsing()
+	public void Typeof_ResolvesTypeFromBaseWithoutUsing()
 	{
 		var sources = ResolveSources("Inc9/TypeofCore.cvl");
-		Assert.True(HasLibrary(sources, "Core/System/Type.cvl"));
+		Assert.True(HasLibrary(sources, BaseType));
 
 		AssertCheckSucceeds("Inc9/TypeofCore.cvl");
 	}
@@ -90,43 +92,43 @@ public sealed class Inc9LibrarySelectionTests : CompilerTestBase
 	}
 
 	[Fact]
-	public void UsingSystem_SelectsConsoleAndExcludesUnrelatedStd()
+	public void UsingSystem_SelectsConsoleAndExcludesUnrelatedSystem()
 	{
 		var sources = ResolveSources("Inc9/UsingSystemConsole.cvl");
 
-		Assert.True(HasLibrary(sources, CoreOption));
-		Assert.True(HasLibrary(sources, StdConsole));
-		Assert.False(HasLibrary(sources, StdMathInt));
-		Assert.False(HasLibrary(sources, StdMathDouble));
+		Assert.True(HasLibrary(sources, BaseOption));
+		Assert.True(HasLibrary(sources, SystemSystem));
+		Assert.True(HasLibrary(sources, SystemConsole));
+		Assert.False(HasLibrary(sources, SystemMathInt));
+		Assert.False(HasLibrary(sources, SystemMathDouble));
 	}
 
 	[Fact]
-	public void NestedStdImport_SelectsRequiredModuleOnly()
+	public void NestedSystemImport_SelectsRequiredModuleOnly()
 	{
 		var sources = ResolveSources("Inc9/UsingSystemMathInt.cvl");
 
-		Assert.True(HasLibrary(sources, StdMathInt));
-		Assert.False(HasLibrary(sources, StdMathDouble));
+		Assert.True(HasLibrary(sources, SystemMathInt));
+		Assert.False(HasLibrary(sources, SystemMathDouble));
 	}
 
 	[Fact]
-	public void FullyQualifiedStdReference_SelectsRequiredModule()
+	public void FullyQualifiedSystemReference_SelectsRequiredModule()
 	{
 		var sources = ResolveSources("Inc9/FullyQualifiedMath.cvl");
 
-		Assert.True(HasLibrary(sources, StdMathInt));
-		Assert.True(HasLibrary(sources, "Std/System/Math/Math.cvl"));
+		Assert.True(HasLibrary(sources, SystemMathInt));
 	}
 
 	[Fact]
-	public void NoStdlib_KeepsCoreAndDisablesHostedStd()
+	public void Freestanding_KeepsBaseAndDisablesSystem()
 	{
-		var consoleSources = ResolveSources("Inc9/UsingSystemConsole.cvl", includeStandardLibrary: false);
-		Assert.True(HasLibrary(consoleSources, CoreOption));
-		Assert.False(HasLibrary(consoleSources, StdConsole));
+		var consoleSources = ResolveSources("Inc9/UsingSystemConsole.cvl", includeSystem: false);
+		Assert.True(HasLibrary(consoleSources, BaseOption));
+		Assert.False(HasLibrary(consoleSources, SystemConsole));
 
-		var optionalSources = ResolveSources("Inc9/LocalOptional.cvl", includeStandardLibrary: false);
-		Assert.True(HasLibrary(optionalSources, CoreOption));
+		var optionalSources = ResolveSources("Inc9/LocalOptional.cvl", includeSystem: false);
+		Assert.True(HasLibrary(optionalSources, BaseOption));
 	}
 
 	[Fact]
@@ -142,17 +144,15 @@ public sealed class Inc9LibrarySelectionTests : CompilerTestBase
 	}
 
 	[Fact]
-	public void StandardLibraryWorkspace_DoesNotDuplicatePaths()
+	public void BaseWorkspace_DoesNotDuplicatePaths()
 	{
-		var constants = Path.Combine(FindRepositoryLibraries(), "Std", "System", "Math", "Constants.cvl");
-		var project = CompilationProject.Load(constants, AppContext.BaseDirectory);
+		var option = Path.Combine(FindRepositoryLibraries(), "Base", "Option.cvl");
+		var project = CompilationProject.Load(option, AppContext.BaseDirectory);
 		var sources = project.SourceFiles;
-
-		Assert.True(HasLibrary(sources, CoreOption));
 
 		var comparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
 		Assert.Equal(sources.Count, sources.Distinct(comparer).Count());
-		Assert.Single(sources.Where(source => string.Equals(source, constants, StringComparison.OrdinalIgnoreCase)));
+		Assert.Single(sources.Where(source => string.Equals(source, option, StringComparison.OrdinalIgnoreCase)));
 	}
 
 	[Fact]
@@ -160,18 +160,18 @@ public sealed class Inc9LibrarySelectionTests : CompilerTestBase
 	{
 		var root = Path.Combine(Path.GetTempPath(), "cvolo-inc9-" + Guid.NewGuid().ToString("N"));
 		var localLibraries = Path.Combine(root, "libraries");
-		var coreDirectory = Path.Combine(localLibraries, "Core", "System");
-		var stdDirectory = Path.Combine(localLibraries, "Std", "System");
-		Directory.CreateDirectory(coreDirectory);
-		Directory.CreateDirectory(stdDirectory);
+		var baseDirectory = Path.Combine(localLibraries, "Base");
+		var systemDirectory = Path.Combine(localLibraries, "System");
+		Directory.CreateDirectory(baseDirectory);
+		Directory.CreateDirectory(systemDirectory);
 
 		try
 		{
 			File.WriteAllText(
-				Path.Combine(coreDirectory, "Option.cvl"),
-				"namespace System;\n\nunion Option<T>\n{\n\tvoid None;\n\tT Some;\n}\n");
+				Path.Combine(baseDirectory, "Option.cvl"),
+				"union Option<T>\n{\n\tvoid None;\n\tT Some;\n}\n");
 
-			var console = Path.Combine(stdDirectory, "Console.cvl");
+			var console = Path.Combine(systemDirectory, "Console.cvl");
 			File.WriteAllText(console, "namespace System.Console;\n\npublic void WriteLine(string text)\n{\n}\n");
 
 			var project = CompilationProject.Load(console, AppContext.BaseDirectory);
@@ -184,5 +184,34 @@ public sealed class Inc9LibrarySelectionTests : CompilerTestBase
 			if (Directory.Exists(root))
 				Directory.Delete(root, recursive: true);
 		}
+	}
+
+	[Fact]
+	public void Freestanding_SystemImport_IsRejected()
+	{
+		var (exitCode, _, stderr) = RunCompilerCheck("Inc9/FreestandingSystemUse.cvl", "--freestanding");
+		Assert.Equal(1, exitCode);
+		Assert.Contains("CVL1097", stderr);
+	}
+
+	[Fact]
+	public void Freestanding_WithoutSystemImport_Succeeds()
+	{
+		var (exitCode, stdout, stderr) = RunCompilerCheck("Inc9/NoImport.cvl", "--freestanding");
+		AssertCompilationSucceeded(exitCode, stdout, stderr, "Inc9/NoImport.cvl");
+	}
+
+	[Fact]
+	public void CustomResultUnion_WorksWithTryCatch()
+	{
+		AssertCheckSucceeds("Inc9/ResultShapeCustom.cvl");
+	}
+
+	[Fact]
+	public void ResultUnion_MissingErr_IsRejected()
+	{
+		var (exitCode, _, stderr) = RunCompilerCheck("Inc9/ResultShapeMissingErr.cvl");
+		Assert.Equal(1, exitCode);
+		Assert.Contains("CVL1092", stderr);
 	}
 }

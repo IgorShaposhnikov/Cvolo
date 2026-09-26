@@ -1,12 +1,12 @@
 using System;
 
-union Result<T> {
+union LocalResult<T> {
     T Ok;
     string Err;
 }
 
 int main() {
-    Result<int> res = Result<int> { Ok: 42 };
+    LocalResult<int> res = LocalResult<int> { Ok: 42 };
     var int x = res.Ok;
     Console.WriteLine($"Ok: {x}");
     return 0;

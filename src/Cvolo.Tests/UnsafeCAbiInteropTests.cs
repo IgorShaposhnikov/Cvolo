@@ -326,10 +326,10 @@ public sealed class UnsafeCAbiInteropTests : CompilerTestBase
 	}
 
 	[Fact]
-	public void NativeInterop_CompilesAndRunsWithoutStandardLibrary()
+	public void NativeInterop_CompilesAndRunsWithoutSystemLibrary()
 	{
 		const string caseFile = "UnsafeCAbi/NativeInteropNoStdlib.cvl";
-		var (exitCode, stdout, stderr) = RunCompiler(caseFile, "--no-stdlib");
+		var (exitCode, stdout, stderr) = RunCompiler(caseFile, "--freestanding");
 		AssertCompilationSucceeded(exitCode, stdout, stderr, caseFile);
 
 		var (runCode, _) = ExecuteBinary("NativeInteropNoStdlib", "UnsafeCAbi");

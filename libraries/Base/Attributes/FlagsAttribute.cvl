@@ -1,0 +1,7 @@
+/// <summary>
+/// Marks an enum as a set of bit flags, so combinations of its variants are
+/// treated as a single value.
+///
+/// The attribute is erased before emission.
+/// </summary>
+public struct FlagsAttribute {}

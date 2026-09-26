@@ -211,7 +211,7 @@ public sealed class EnumsTests : CompilerTestBase
 	[InlineData("EnumImplicitBinaryFail.cvl", "Implicit conversion between enum 'Status' and 'int' is forbidden; use an explicit cast.")]
 	[InlineData("EnumImplicitAssignFail.cvl", "Implicit conversion between enum 'Status' and 'int' is forbidden; use an explicit cast.")]
 	[InlineData("EnumImplicitArgFail.cvl", "No overload of function 'takeInt' matches argument types (Status)")]
-	[InlineData("EnumSafeCastBindFail.cvl", "Cannot initialize variable of type 'Status' with value of type 'System.Option<Status>'")]
+	[InlineData("EnumSafeCastBindFail.cvl", "Cannot initialize variable of type 'Status' with value of type 'Option<Status>'")]
 	[InlineData("EnumReturnMismatchFail.cvl", "Function 'getIt' expects return type 'int' but found 'Status'")]
 	public void Enum_Rejections(string caseName, string expectedError)
 	{

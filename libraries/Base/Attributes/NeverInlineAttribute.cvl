@@ -1,0 +1,7 @@
+/// <summary>
+/// Prevents the compiler from inlining the annotated function.
+///
+/// Combining `[NeverInline]` with `[Inline]` on the same declaration is
+/// rejected (CVL1400). The attribute is erased before emission.
+/// </summary>
+public struct NeverInlineAttribute {}

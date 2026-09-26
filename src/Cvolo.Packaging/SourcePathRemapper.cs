@@ -16,11 +16,11 @@ public static class SourcePathRemapper
 		if (stdlibIndex >= 0)
 		{
 			var relative = normalized[(stdlibIndex + stdlibMarker.Length)..];
-			if (relative.StartsWith("Core/", StringComparison.OrdinalIgnoreCase))
-				return "/core/" + relative["Core/".Length..];
-			if (relative.StartsWith("Std/", StringComparison.OrdinalIgnoreCase))
-				return "/stdlib/" + relative["Std/".Length..];
-			return "/stdlib/" + relative;
+			if (relative.StartsWith("Base/", StringComparison.OrdinalIgnoreCase))
+				return "/base/" + relative["Base/".Length..];
+			if (relative.StartsWith("System/", StringComparison.OrdinalIgnoreCase))
+				return "/system/" + relative["System/".Length..];
+			return "/system/" + relative;
 		}
 
 		if (projectReferences is not null)

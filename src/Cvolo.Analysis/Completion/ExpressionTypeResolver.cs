@@ -82,7 +82,7 @@ internal static class ExpressionTypeResolver
 			UnaryExpressionSyntax unary => ResolveUnary(context, visible, unary),
 			AsmExpressionSyntax asm => asm.ResultType is not null ? ResolveTypeOrNull(context, asm.ResultType) : TypeSymbol.Void,
 			NameofExpressionSyntax => TypeSymbol.String,
-			TypeofExpressionSyntax => ResolveTypeOrNull(context, "System.Type"),
+			TypeofExpressionSyntax => ResolveTypeOrNull(context, "Type"),
 			IsPatternExpressionSyntax => TypeSymbol.Bool,
 			BinaryExpressionSyntax binary => ResolveBinary(context, visible, binary),
 			_ => null,

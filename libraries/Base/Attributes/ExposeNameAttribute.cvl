@@ -1,0 +1,7 @@
+/// <summary>
+/// Exports the annotated function under a specific binary symbol name inside
+/// an `expose extern` block.
+///
+/// The attribute is erased before emission.
+/// </summary>
+public struct ExposeNameAttribute {}

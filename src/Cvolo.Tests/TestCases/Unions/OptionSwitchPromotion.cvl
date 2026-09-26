@@ -1,10 +1,5 @@
 using System;
 
-union Option<T> {
-    T Some;
-    void None;
-}
-
 int main() {
     var Option<int> opt = Option<int> { Some: 42 };
     

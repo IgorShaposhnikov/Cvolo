@@ -170,6 +170,16 @@ public static class DiagnosticIds
 
 	public const string UnresolvedFunctionCall = "CVL1078";
 
+	public const string ResultShapeMissingOk = "CVL1091";
+	public const string ResultShapeMissingErr = "CVL1092";
+	public const string ResultShapeExtraVariant = "CVL1093";
+	public const string ResultShapeVoidErr = "CVL1094";
+	public const string ResultShapeArguments = "CVL1095";
+	public const string ResultShapeInvalidSubstitution = "CVL1096";
+	public const string SystemInFreestanding = "CVL1097";
+	public const string UnknownSystemNamespace = "CVL1098";
+	public const string SdkNamespaceMismatch = "CVL1099";
+
 	/// <summary>A type alias references an underlying type that does not exist.</summary>
 	public const string UnknownTypeAlias = "CVL1200";
 
