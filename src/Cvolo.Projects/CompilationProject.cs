@@ -1,5 +1,6 @@
 using System.Xml.Linq;
 using Cvolo.Packaging;
+using Cvolo.Syntax.Antlr;
 
 namespace Cvolo.Projects;
 
@@ -22,7 +23,7 @@ public sealed class CompilationProject
 		ProjectReferences = projectReferences ?? [];
 	}
 
-	public static CompilationProject Load(string inputPath, string? compilerBaseDir = null, bool forceShared = false, bool mergeProjectReferences = true, bool includeStandardLibrary = true)
+	public static CompilationProject Load(string inputPath, string? compilerBaseDir = null, bool forceShared = false, bool mergeProjectReferences = true, bool includeStandardLibrary = true, IReadOnlyDictionary<string, string>? sourceOverrides = null)
 	{
 		List<string> sourceFiles = [];
 		var outputName = "main";
@@ -34,20 +35,10 @@ public sealed class CompilationProject
 
 		// 1. Locate exactly one active "libraries" folder. A local library tree that
 		// contains the input is authoritative; otherwise the bundled/compiler root is used.
-		string? stdLibFullPath = null;
-		if (includeStandardLibrary)
-		{
-			var localLibraryRoot = FindStandardLibraryPath(projectDir);
-			stdLibFullPath = localLibraryRoot is not null && IsPathUnder(projectDir, localLibraryRoot)
-				? localLibraryRoot
-				: FindStandardLibraryPath(compilerBaseDir ?? AppContext.BaseDirectory) ?? FindStandardLibraryPath(Directory.GetCurrentDirectory());
-		}
-
-		if (stdLibFullPath != null && Directory.Exists(stdLibFullPath))
-		{
-			sourceFiles.AddRange(Directory.GetFiles(stdLibFullPath, "*.cv", SearchOption.AllDirectories));
-			sourceFiles.AddRange(Directory.GetFiles(stdLibFullPath, "*.cvl", SearchOption.AllDirectories));
-		}
+		var localLibraryRoot = FindStandardLibraryPath(projectDir);
+		var stdLibFullPath = localLibraryRoot is not null && IsPathUnder(projectDir, localLibraryRoot)
+			? localLibraryRoot
+			: FindStandardLibraryPath(compilerBaseDir ?? AppContext.BaseDirectory) ?? FindStandardLibraryPath(Directory.GetCurrentDirectory());
 
 		// 2. Add user project files. A directory containing one .cvlproj is treated the
 		// same as passing that project file explicitly, which keeps `cvolo run App`
@@ -154,6 +145,12 @@ public sealed class CompilationProject
 		else
 		{
 			throw new FileNotFoundException($"Input path '{inputPath}' not found");
+		}
+
+		if (stdLibFullPath is not null && Directory.Exists(stdLibFullPath))
+		{
+			var librarySources = StandardLibraryResolver.Resolve(stdLibFullPath, sourceFiles, includeStandardLibrary, sourceOverrides);
+			sourceFiles.InsertRange(0, librarySources);
 		}
 
 		var seenSourceFiles = new HashSet<string>(

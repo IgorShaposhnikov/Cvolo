@@ -20,11 +20,23 @@ public sealed class SourcePathRemapperTests
 	public void Map_StandardLibrarySource_DoesNotExposeCompilerInstallPath()
 	{
 		var root = Path.Combine(Path.GetTempPath(), "compiler-a", "bin", "Debug", "net10.0");
-		var source = Path.Combine(root, "libraries", "System", "Console.cvl");
+		var source = Path.Combine(root, "libraries", "Std", "System", "Console.cvl");
 
 		var mapped = SourcePathRemapper.Map(source, Path.Combine(Path.GetTempPath(), "project"));
 
 		Assert.Equal("/stdlib/System/Console.cvl", mapped);
+		Assert.DoesNotContain("compiler-a", mapped, StringComparison.OrdinalIgnoreCase);
+	}
+
+	[Fact]
+	public void Map_CoreLibrarySource_UsesCorePrefix()
+	{
+		var root = Path.Combine(Path.GetTempPath(), "compiler-a", "bin", "Debug", "net10.0");
+		var source = Path.Combine(root, "libraries", "Core", "System", "Option.cvl");
+
+		var mapped = SourcePathRemapper.Map(source, Path.Combine(Path.GetTempPath(), "project"));
+
+		Assert.Equal("/core/System/Option.cvl", mapped);
 		Assert.DoesNotContain("compiler-a", mapped, StringComparison.OrdinalIgnoreCase);
 	}
 

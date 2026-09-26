@@ -39,7 +39,8 @@ public sealed record ProjectUniverseRequest(
 	PackageCache? PackageCache = null,
 	IReadOnlyList<string>? LibraryPaths = null,
 	bool RestorePackages = false,
-	bool IgnoreAncestorProject = false);
+	bool IgnoreAncestorProject = false,
+	IReadOnlyDictionary<string, string>? SourceOverrides = null);
 
 /// <summary>
 /// The complete semantic input universe of one project: the project configuration, its
@@ -93,7 +94,8 @@ public static class ProjectUniverseLoader
 			request.CompilerBaseDir,
 			request.ForceShared,
 			mergeProjectReferences: !request.UseProjectReferencePackages,
-			includeStandardLibrary: request.IncludeStandardLibrary);
+			includeStandardLibrary: request.IncludeStandardLibrary,
+			sourceOverrides: request.SourceOverrides);
 
 		var artifacts = new List<ResolvedPackageArtifacts>();
 

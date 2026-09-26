@@ -1,0 +1,7 @@
+using System;
+
+int main()
+{
+    Console.WriteLine($"{System.Math.Int.MaxValue}");
+    return 0;
+}

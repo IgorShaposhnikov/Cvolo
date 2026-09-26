@@ -105,7 +105,6 @@ internal static class PackCompilation
 
 		// 1. Disambiguate sources: everything still compiles with the standard library,
 		//    but only project files (non-stdlib) are shipped in the package source buffer.
-		var stdlibFiles = FindStdlibFiles();
 		var projectFiles = Directory.GetFiles(manifest.ProjectDirectory, "*.cvl", SearchOption.AllDirectories)
 			.OrderBy(f => Path.GetRelativePath(manifest.ProjectDirectory, f), StringComparer.Ordinal)
 			.ToList();
@@ -113,6 +112,10 @@ internal static class PackCompilation
 		if (projectFiles.Count == 0)
 			throw new InvalidOperationException($"No .cvl source files found in '{manifest.ProjectDirectory}'.");
 
+		var stdlibRoot = FindStdlibRoot(manifest.ProjectDirectory);
+		var stdlibFiles = stdlibRoot is null
+			? []
+			: StandardLibraryResolver.Resolve(stdlibRoot, projectFiles, includeStd: true);
 		var sourceFiles = stdlibFiles.Concat(projectFiles).ToList();
 		if (verbose)
 		{
@@ -319,16 +322,28 @@ internal static class PackCompilation
 		return new PackCompileResult(ir, llPath, projectFiles, packagedProjectUnits, workspace);
 	}
 
-	private static IReadOnlyList<string> FindStdlibFiles()
+	private static string? FindStdlibRoot(string projectDirectory)
 	{
-		var stdlib = CompilationProjectLibraries.FindStandardLibraryPath(AppContext.BaseDirectory)
-			?? CompilationProjectLibraries.FindStandardLibraryPath(Directory.GetCurrentDirectory());
-		if (stdlib is null)
-			return [];
+		var local = CompilationProjectLibraries.FindStandardLibraryPath(projectDirectory);
+		if (local is not null && IsPathUnder(projectDirectory, local))
+			return local;
 
-		return Directory.GetFiles(stdlib, "*.cv", SearchOption.AllDirectories)
-			.Concat(Directory.GetFiles(stdlib, "*.cvl", SearchOption.AllDirectories))
-			.ToList();
+		return CompilationProjectLibraries.FindStandardLibraryPath(AppContext.BaseDirectory)
+			?? CompilationProjectLibraries.FindStandardLibraryPath(Directory.GetCurrentDirectory());
+	}
+
+	private static bool IsPathUnder(string path, string root)
+	{
+		var fullPath = Path.GetFullPath(path);
+		var fullRoot = Path.GetFullPath(root);
+		var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+		if (fullPath.Equals(fullRoot, comparison))
+			return true;
+
+		var rootWithSeparator = fullRoot.EndsWith(Path.DirectorySeparatorChar)
+			? fullRoot
+			: fullRoot + Path.DirectorySeparatorChar;
+		return fullPath.StartsWith(rootWithSeparator, comparison);
 	}
 
 	private static IEnumerable<string> FormatDiagnostics(IEnumerable<Diagnostic> diagnostics)

@@ -1,0 +1,7 @@
+using System;
+
+int main()
+{
+    Console.WriteLine("hello");
+    return 0;
+}

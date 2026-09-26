@@ -14,7 +14,14 @@ public static class SourcePathRemapper
 		var stdlibMarker = "/libraries/";
 		var stdlibIndex = normalized.IndexOf(stdlibMarker, StringComparison.OrdinalIgnoreCase);
 		if (stdlibIndex >= 0)
-			return "/stdlib/" + normalized[(stdlibIndex + stdlibMarker.Length)..];
+		{
+			var relative = normalized[(stdlibIndex + stdlibMarker.Length)..];
+			if (relative.StartsWith("Core/", StringComparison.OrdinalIgnoreCase))
+				return "/core/" + relative["Core/".Length..];
+			if (relative.StartsWith("Std/", StringComparison.OrdinalIgnoreCase))
+				return "/stdlib/" + relative["Std/".Length..];
+			return "/stdlib/" + relative;
+		}
 
 		if (projectReferences is not null)
 		{

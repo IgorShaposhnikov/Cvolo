@@ -1,0 +1,10 @@
+[MustUse]
+int Compute()
+{
+    return 42;
+}
+
+int main()
+{
+    return 0;
+}

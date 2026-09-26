@@ -1,0 +1,5 @@
+int main()
+{
+    System.Type type = typeof(int);
+    return 0;
+}
