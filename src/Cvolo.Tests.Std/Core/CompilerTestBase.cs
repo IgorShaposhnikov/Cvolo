@@ -34,6 +34,8 @@ public abstract class CompilerTestBase
 			}
 		}
 
+		binder.Context.BaseSourcePaths.UnionWith(project.BaseSourceFiles.Select(Path.GetFullPath));
+
 		binder.Bind(asts);
 		return (asts, binder.Context);
 	}

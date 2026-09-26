@@ -592,6 +592,33 @@ public static class DiagnosticIds
 	/// <summary>A fixed-array dimension is not a valid compile-time integer constant.</summary>
 	public const string InvalidFixedArrayConstant = "CVL2111";
 
+	/// <summary>A `builtin` declaration appeared outside the trusted Base SDK source.</summary>
+	public const string BuiltinOutsideBase = "CVL2112";
+
+	/// <summary>A `builtin` callable declares a body.</summary>
+	public const string BuiltinCallableHasBody = "CVL2113";
+
+	/// <summary>An ordinary constructor or destructor is declaration-only.</summary>
+	public const string OrdinaryCallableBodyless = "CVL2114";
+
+	/// <summary>A `builtin` declaration has no matching entry in the builtin catalog.</summary>
+	public const string UnknownBuiltinDeclaration = "CVL2115";
+
+	/// <summary>A `builtin` declaration's shape does not match its catalog entry.</summary>
+	public const string BuiltinShapeMismatch = "CVL2116";
+
+	/// <summary>The same builtin identity is declared more than once.</summary>
+	public const string DuplicateBuiltinDeclaration = "CVL2117";
+
+	/// <summary>A required builtin declaration is missing from the Base SDK.</summary>
+	public const string RequiredBuiltinMissing = "CVL2118";
+
+	/// <summary>A compile-time-only builtin type is constructed as a runtime value.</summary>
+	public const string CompileTimeBuiltinConstructed = "CVL2119";
+
+	/// <summary>A compile-time-only builtin field or layout was requested as a runtime object.</summary>
+	public const string CompileTimeBuiltinFieldAccess = "CVL2120";
+
 	/// <summary>A global initializer divides or takes the modulo of an integer constant by zero.</summary>
 	public const string ConstantIntegerDivisionByZero = "CVL2404";
 

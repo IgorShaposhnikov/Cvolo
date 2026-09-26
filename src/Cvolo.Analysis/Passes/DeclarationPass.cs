@@ -19,6 +19,7 @@ public sealed class DeclarationPass(BindingContext context)
 	private readonly GlobalVariableRegistrar _globals = new(context);
 	private readonly ExposeUsingValidator _exposeUsings = new(context);
 	private readonly NativeAbiPostDeclarationValidator _nativeAbiPost = new(context);
+	private readonly BuiltinValidator _builtins = new(context);
 	private ExtensionRegistrar? _extensions;
 	private ExtensionRegistrar Extensions => _extensions ??= new(context, _functions, _destructors, _genericDefaultCopies);
 	/// <summary>
@@ -32,6 +33,7 @@ public sealed class DeclarationPass(BindingContext context)
 
 	public void Process(IEnumerable<CompilationUnitSyntax> units)
 	{
+		_builtins.Validate(units);
 		_exposeUsings.Process(units);
 
 		// Pass 0a-pre: Register all type aliases before any type/field/parameter resolution

@@ -113,10 +113,15 @@ internal static class PackCompilation
 			throw new InvalidOperationException($"No .cvl source files found in '{manifest.ProjectDirectory}'.");
 
 		var stdlibRoot = FindStdlibRoot(manifest.ProjectDirectory);
-		var stdlibFiles = stdlibRoot is null
-			? []
-			: SdkLibraryResolver.Resolve(stdlibRoot, projectFiles, includeSystem: true).Sources;
+		var sdkResolution = stdlibRoot is null
+			? null
+			: SdkLibraryResolver.Resolve(stdlibRoot, projectFiles, includeSystem: true);
+		var stdlibFiles = sdkResolution is null ? [] : sdkResolution.Sources;
 		var sourceFiles = stdlibFiles.Concat(projectFiles).ToList();
+		var pathComparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+		var baseSourceSet = sdkResolution is null
+			? new HashSet<string>(pathComparer)
+			: new HashSet<string>(sdkResolution.BaseSources.Select(Path.GetFullPath), pathComparer);
 		if (verbose)
 		{
 			Console.WriteLine("Files selected for compilation:");
@@ -137,6 +142,7 @@ internal static class PackCompilation
 		{
 			var artifactPath = SourcePathRemapper.Map(file, manifest.ProjectDirectory);
 			var context = new CompilationContext(File.ReadAllText(file), artifactPath);
+			context.Origin = baseSourceSet.Contains(Path.GetFullPath(file)) ? SourceOrigin.BaseSdk : SourceOrigin.Project;
 			firstContext ??= context;
 
 			var ast = parser.Parse(context);
@@ -230,6 +236,9 @@ internal static class PackCompilation
 		// 4. Semantic analysis.
 		binder.Context.LegacyVisibility = false;
 		binder.Context.StrictOption = effectiveStrictOption;
+		if (sdkResolution is not null)
+			binder.Context.BaseSourcePaths.UnionWith(sdkResolution.BaseSources.Select(Path.GetFullPath));
+
 		binder.Bind(asts);
 
 		// Capture ownership while symbol DeclaringUnit still points at the post-rewrite,

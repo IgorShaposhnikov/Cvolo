@@ -124,12 +124,16 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 		var asts = new List<CompilationUnitSyntax>();
 		ISyntaxParser parser = new AntlrSyntaxParser();
 		CompilationContext? firstContext = null;
+		var baseSourceSet = new HashSet<string>(
+			project.BaseSourceFiles.Select(Path.GetFullPath),
+			OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
 
 		foreach (var file in project.SourceFiles)
 		{
 			var sourceCode = File.ReadAllText(file);
 			var artifactPath = SourcePathRemapper.Map(file, project.ProjectDirectory, project.ProjectReferences);
 			var context = new CompilationContext(sourceCode, artifactPath);
+			context.Origin = baseSourceSet.Contains(Path.GetFullPath(file)) ? SourceOrigin.BaseSdk : SourceOrigin.Project;
 			firstContext ??= context;
 
 			var ast = parser.Parse(context);
@@ -221,6 +225,8 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 		// 4. Semantic analysis passes (Name resolution, types, moves, borrows, and lifetimes validation)
 		binder.Context.LegacyVisibility = legacyVisibility;
 		binder.Context.StrictOption = effectiveStrictOption;
+		binder.Context.BaseSourcePaths.UnionWith(baseSourceSet);
+
 		binder.Bind(asts);
 
 		if (binder.Diagnostics.HasErrors)

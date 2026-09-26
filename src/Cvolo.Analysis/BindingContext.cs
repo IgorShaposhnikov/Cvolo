@@ -233,6 +233,10 @@ public sealed class BindingContext
 	public HashSet<CompilationUnitSyntax> ExternalPackageUnits { get; } = [];
 	public HashSet<CompilationUnitSyntax> PackageTemplateUnits { get; } = [];
 
+	public Dictionary<SyntaxNode, Builtins.BuiltinId> BuiltinBindings { get; } = new(ReferenceEqualityComparer.Instance);
+	public HashSet<string> CompileTimeOnlyBuiltinTypes { get; } = new(StringComparer.Ordinal);
+	public HashSet<string> BaseSourcePaths { get; } = new(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+
 	/// <summary>Current safety tier used during attribute validation in DeclarationPass.</summary>
 	public SafetyTier CurrentSafetyTier { get; set; }
 

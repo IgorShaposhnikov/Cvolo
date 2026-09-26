@@ -1,9 +1,18 @@
 namespace Cvolo.Core.Diagnostics;
 
+public enum SourceOrigin
+{
+	BaseSdk,
+	SystemSdk,
+	Project,
+	Package
+}
+
 public sealed class CompilationContext(string source, string filePath)
 {
 	public string Source { get; } = source;
 	public string FilePath { get; } = filePath;
+	public SourceOrigin Origin { get; set; } = SourceOrigin.Project;
 
 	public (int Line, int Col) GetCoordinates(int position)
 	{

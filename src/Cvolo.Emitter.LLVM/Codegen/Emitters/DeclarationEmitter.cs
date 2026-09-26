@@ -99,6 +99,8 @@ internal sealed class DeclarationEmitter(
 	{
 		foreach (var structType in BindingContext.StructTypes.Values)
 		{
+			if (BindingContext.CompileTimeOnlyBuiltinTypes.Contains(structType.Name))
+				continue;
 			if (!codegen.LlvmStructTypes.ContainsKey(structType.Name))
 			{
 				codegen.LlvmStructTypes[structType.Name] = codegen.LLVMContext.CreateNamedStruct(structType.Name);
@@ -107,6 +109,8 @@ internal sealed class DeclarationEmitter(
 
 		foreach (var unionType in BindingContext.UnionTypes.Values)
 		{
+			if (BindingContext.CompileTimeOnlyBuiltinTypes.Contains(unionType.Name))
+				continue;
 			if (!codegen.LlvmStructTypes.ContainsKey(unionType.Name))
 			{
 				codegen.LlvmStructTypes[unionType.Name] = codegen.LLVMContext.CreateNamedStruct(unionType.Name);
@@ -115,6 +119,8 @@ internal sealed class DeclarationEmitter(
 
 		foreach (var structType in BindingContext.StructTypes.Values)
 		{
+			if (BindingContext.CompileTimeOnlyBuiltinTypes.Contains(structType.Name))
+				continue;
 			var llvmStruct = codegen.LlvmStructTypes[structType.Name];
 			var fieldTypes = structType.Fields.Select(f => codegen.Types.Lower(f.Type)).ToArray();
 			llvmStruct.StructSetBody(fieldTypes, false);
@@ -122,6 +128,8 @@ internal sealed class DeclarationEmitter(
 
 		foreach (var unionType in BindingContext.UnionTypes.Values)
 		{
+			if (BindingContext.CompileTimeOnlyBuiltinTypes.Contains(unionType.Name))
+				continue;
 			if (unionType.IsNpoEligible)
 			{
 				continue;

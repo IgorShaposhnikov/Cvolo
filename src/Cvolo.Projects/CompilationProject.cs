@@ -15,8 +15,9 @@ public sealed class CompilationProject
 	public bool IsFreestanding { get; }
 	public IReadOnlyList<string> RequiredSystemNamespaces { get; }
 	public IReadOnlyList<SdkNamespaceMismatch> NamespaceMismatches { get; }
+	public IReadOnlyList<string> BaseSourceFiles { get; }
 
-	private CompilationProject(IReadOnlyList<string> sourceFiles, string outputName, bool isShared, string projectDirectory, bool strictOption = false, IReadOnlyList<string>? projectReferences = null, bool isFreestanding = false, IReadOnlyList<string>? requiredSystemNamespaces = null, IReadOnlyList<SdkNamespaceMismatch>? namespaceMismatches = null)
+	private CompilationProject(IReadOnlyList<string> sourceFiles, string outputName, bool isShared, string projectDirectory, bool strictOption = false, IReadOnlyList<string>? projectReferences = null, bool isFreestanding = false, IReadOnlyList<string>? requiredSystemNamespaces = null, IReadOnlyList<SdkNamespaceMismatch>? namespaceMismatches = null, IReadOnlyList<string>? baseSourceFiles = null)
 	{
 		SourceFiles = sourceFiles;
 		OutputName = outputName;
@@ -27,6 +28,7 @@ public sealed class CompilationProject
 		IsFreestanding = isFreestanding;
 		RequiredSystemNamespaces = requiredSystemNamespaces ?? [];
 		NamespaceMismatches = namespaceMismatches ?? [];
+		BaseSourceFiles = baseSourceFiles ?? [];
 	}
 
 	public static CompilationProject Load(string inputPath, string? compilerBaseDir = null, bool forceShared = false, bool mergeProjectReferences = true, bool includeSystem = true, IReadOnlyDictionary<string, string>? sourceOverrides = null, bool freestanding = false)
@@ -193,7 +195,8 @@ public sealed class CompilationProject
 			projectReferences,
 			effectiveFreestanding,
 			sdkResolution?.RequiredSystemNamespaces,
-			sdkResolution?.NamespaceMismatches);
+			sdkResolution?.NamespaceMismatches,
+			sdkResolution?.BaseSources);
 	}
 
 	public static void CreateNewProject(string projectName)

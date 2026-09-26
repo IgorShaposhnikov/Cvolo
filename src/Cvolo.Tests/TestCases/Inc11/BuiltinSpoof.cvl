@@ -1,0 +1,8 @@
+public builtin struct ErrorAttribute
+{
+}
+
+int main()
+{
+    return 0;
+}

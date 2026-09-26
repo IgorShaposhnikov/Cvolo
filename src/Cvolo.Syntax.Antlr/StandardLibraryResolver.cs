@@ -16,6 +16,7 @@ public sealed record SdkNamespaceMismatch(string FilePath, string ExpectedNamesp
 
 internal sealed record SdkResolution(
 	IReadOnlyList<string> Sources,
+	IReadOnlyList<string> BaseSources,
 	IReadOnlyList<string> RequiredSystemNamespaces,
 	IReadOnlyList<SdkNamespaceMismatch> NamespaceMismatches);
 
@@ -211,11 +212,12 @@ internal static class SdkLibraryResolver
 
 		selected.Sort((left, right) => string.CompareOrdinal(left.RelativePath, right.RelativePath));
 		var sources = selected.Select(entry => entry.FilePath).ToList();
+		var baseSources = selected.Where(entry => entry.Tier == SdkTier.Base).Select(entry => entry.FilePath).ToList();
 
 		var requiredList = required.ToList();
 		requiredList.Sort(StringComparer.Ordinal);
 
-		return new SdkResolution(sources, requiredList, mismatches);
+		return new SdkResolution(sources, baseSources, requiredList, mismatches);
 	}
 
 	private static bool TryClassifyTier(string libraryRoot, string filePath, out SdkTier tier, out string expectedNamespace)
