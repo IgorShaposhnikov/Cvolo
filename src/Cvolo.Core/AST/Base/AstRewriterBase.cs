@@ -61,7 +61,11 @@ public abstract class AstRewriterBase
 		if (node is FunctionDeclarationSyntax func)
 		{
 			var rewrittenBody = func.Body != null ? (BlockStatementSyntax)Rewrite(func.Body) : null;
-			return new FunctionDeclarationSyntax(func.Span, func.ReturnType, func.Name, func.GenericParameters, func.Parameters, rewrittenBody, func.Attributes, func.Modifier, func.Receiver, func.Visibility, callingConvention: func.CallingConvention);
+			return new FunctionDeclarationSyntax(func.Span, func.ReturnType, func.Name, func.GenericParameters, func.Parameters, rewrittenBody, func.Attributes, func.Modifier, func.Receiver, func.Visibility, callingConvention: func.CallingConvention)
+			{
+				IsBuiltin = func.IsBuiltin,
+				BuiltinSpan = func.BuiltinSpan
+			};
 		}
 
 		if (node is DelegateBlockDeclarationSyntax delegateBlock)
@@ -87,7 +91,12 @@ public abstract class AstRewriterBase
 		if (node is DestructorDeclarationSyntax dtor)
 		{
 			var rewrittenDtorBody = (BlockStatementSyntax)Rewrite(dtor.Body);
-			return new DestructorDeclarationSyntax(dtor.Span, dtor.StructName, rewrittenDtorBody, dtor.Attributes, dtor.Visibility);
+			return new DestructorDeclarationSyntax(dtor.Span, dtor.StructName, rewrittenDtorBody, dtor.Attributes, dtor.Visibility)
+			{
+				IsBuiltin = dtor.IsBuiltin,
+				IsDeclarationOnly = dtor.IsDeclarationOnly,
+				BuiltinSpan = dtor.BuiltinSpan
+			};
 		}
 
 		if (node is GlobalVariableDeclarationSyntax globalDecl)
@@ -115,7 +124,12 @@ public abstract class AstRewriterBase
 				constructorArguments: rewrittenCtorArgs,
 				constructorInitializerSpan: ctor.ConstructorInitializerSpan,
 				attributes: ctor.Attributes,
-				visibility: ctor.SyntacticVisibility);
+				visibility: ctor.SyntacticVisibility)
+			{
+				IsBuiltin = ctor.IsBuiltin,
+				IsDeclarationOnly = ctor.IsDeclarationOnly,
+				BuiltinSpan = ctor.BuiltinSpan
+			};
 		}
 
 		if (node is BlockStatementSyntax block)
@@ -245,7 +259,11 @@ public abstract class AstRewriterBase
 		if (node is UnionDeclarationSyntax unionDecl)
 		{
 			var rewrittenFields = unionDecl.Fields.Select(Rewrite).Cast<UnionFieldSyntax>().ToList();
-			return new UnionDeclarationSyntax(unionDecl.Span, unionDecl.Name, unionDecl.GenericParameters, rewrittenFields, unionDecl.Attributes, unionDecl.Visibility, isUnsafe: unionDecl.IsUnsafe);
+			return new UnionDeclarationSyntax(unionDecl.Span, unionDecl.Name, unionDecl.GenericParameters, rewrittenFields, unionDecl.Attributes, unionDecl.Visibility, isUnsafe: unionDecl.IsUnsafe)
+			{
+				IsBuiltin = unionDecl.IsBuiltin,
+				BuiltinSpan = unionDecl.BuiltinSpan
+			};
 		}
 
 		if (node is UnionFieldSyntax unionField)
@@ -256,7 +274,11 @@ public abstract class AstRewriterBase
 		if (node is EnumDeclarationSyntax enumDecl)
 		{
 			var rewrittenVariants = enumDecl.Variants.Select(Rewrite).Cast<EnumVariantDeclarationSyntax>().ToList();
-			return new EnumDeclarationSyntax(enumDecl.Span, enumDecl.Name, enumDecl.StorageType, rewrittenVariants, enumDecl.Attributes, enumDecl.Visibility);
+			return new EnumDeclarationSyntax(enumDecl.Span, enumDecl.Name, enumDecl.StorageType, rewrittenVariants, enumDecl.Attributes, enumDecl.Visibility)
+			{
+				IsBuiltin = enumDecl.IsBuiltin,
+				BuiltinSpan = enumDecl.BuiltinSpan
+			};
 		}
 
 		if (node is EnumVariantDeclarationSyntax enumVariant)

@@ -34,6 +34,9 @@ public sealed class StructDeclarationSyntax(
 	public IReadOnlyDictionary<string, List<string>> GenericParameterConstraints { get; } = genericParameterConstraints ?? new Dictionary<string, List<string>>();
 	public IReadOnlyDictionary<string, string> GenericParameterDefaults { get; } = genericParameterDefaults ?? new Dictionary<string, string>();
 
+	public bool IsBuiltin { get; set; }
+	public TextSpan? BuiltinSpan { get; set; }
+
 	public override IEnumerable<SyntaxNode> GetChildren() => Fields;
 }
 

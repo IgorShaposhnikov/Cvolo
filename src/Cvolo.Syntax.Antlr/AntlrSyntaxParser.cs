@@ -454,7 +454,8 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 	private FunctionDeclarationSyntax BuildFunctionDeclaration(CvoloParser.FunctionDeclarationContext context)
 	{
 		var returnType = GetReturnTypeName(context.returnType());
-		var name = context.Identifier().GetText();
+		var nameCtx = context.builtinCapableIdentifier();
+		var name = nameCtx.GetText();
 
 		// Parse optional generic parameters list (which can now contain concrete types like <int>)
 		var generics = new List<string>();
@@ -511,12 +512,19 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				callingConvention = callingConvention[1..^1];
 		}
 
-		return new FunctionDeclarationSyntax(
+		var function = new FunctionDeclarationSyntax(
 			SpanOf(context), returnType, name, generics, parameters, body, attributes, modifier, receiver,
 			GetVisibilityModifier(context.visibilityModifier()),
-			nameSpan: SpanOf(context.Identifier().Symbol),
+			nameSpan: SpanOf(nameCtx),
 			returnTypeSpan: SpanOf(context.returnType()),
 			callingConvention: callingConvention);
+		if (context.BUILTIN() is { } builtinToken)
+		{
+			function.IsBuiltin = true;
+			function.BuiltinSpan = SpanOf(builtinToken.Symbol);
+		}
+
+		return function;
 	}
 
 	private bool TryGetReceiverContract(CvoloParser.ParameterContext context, out ReceiverContract contract, out string receiverName)
@@ -640,7 +648,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			fields.Add(new StructFieldSyntax(SpanOf(field), GetTypeName(field.type()), field.Identifier().GetText(), GetVisibilityModifier(field.visibilityModifier())));
 		var embeddedType = context.EMBED() is not null && context.qualifiedName() is { } embedCtx ? embedCtx.GetText() : null;
 		var structAttributes = BuildAttributeList(context.attributeList());
-		return new StructDeclarationSyntax(
+		var structDeclaration = new StructDeclarationSyntax(
 			SpanOf(context),
 			name,
 			generics,
@@ -650,6 +658,13 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			GetVisibilityModifier(context.visibilityModifier()),
 			defaults,
 			constraints);
+		if (context.BUILTIN() is { } builtinToken)
+		{
+			structDeclaration.IsBuiltin = true;
+			structDeclaration.BuiltinSpan = SpanOf(builtinToken.Symbol);
+		}
+
+		return structDeclaration;
 	}
 
 	private ParameterSyntax BuildParameter(CvoloParser.ParameterContext context)
@@ -1763,7 +1778,16 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		foreach (var dtorCtx in context.destructorDeclaration())
 		{
 			var dtorAttributes = BuildAttributeList(dtorCtx.attributeList());
-			destructors.Add(new DestructorDeclarationSyntax(SpanOf(dtorCtx), dtorCtx.Identifier().GetText(), BuildBlockStatement(dtorCtx.blockStatement()), dtorAttributes, GetVisibilityModifier(dtorCtx.visibilityModifier())));
+			var dtorBody = dtorCtx.blockStatement() is { } dtorBlock ? BuildBlockStatement(dtorBlock) : new BlockStatementSyntax(SpanOf(dtorCtx), []);
+			var destructor = new DestructorDeclarationSyntax(SpanOf(dtorCtx), dtorCtx.Identifier().GetText(), dtorBody, dtorAttributes, GetVisibilityModifier(dtorCtx.visibilityModifier()));
+			if (dtorCtx.BUILTIN() is { } dtorBuiltin)
+			{
+				destructor.IsBuiltin = true;
+				destructor.IsDeclarationOnly = dtorCtx.blockStatement() is null;
+				destructor.BuiltinSpan = SpanOf(dtorBuiltin.Symbol);
+			}
+
+			destructors.Add(destructor);
 		}
 
 		var constructors = new List<ConstructorDeclarationSyntax>();
@@ -1809,7 +1833,15 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				}
 			}
 
-			constructors.Add(new ConstructorDeclarationSyntax(SpanOf(ctorCtx), structName, ctorParams, BuildBlockStatement(ctorCtx.blockStatement()), ctorArgs, ctorInitSpan, ctorAttributes, GetVisibilityModifier(ctorCtx.visibilityModifier()), nameSpan: SpanOf(ctorCtx.Identifier(0).Symbol)));
+			constructors.Add(new ConstructorDeclarationSyntax(SpanOf(ctorCtx), structName, ctorParams, ctorCtx.blockStatement() is { } ctorBlock ? BuildBlockStatement(ctorBlock) : new BlockStatementSyntax(SpanOf(ctorCtx), []), ctorArgs, ctorInitSpan, ctorAttributes, GetVisibilityModifier(ctorCtx.visibilityModifier()), nameSpan: SpanOf(ctorCtx.Identifier(0).Symbol)));
+			if (ctorCtx.BUILTIN() is { } ctorBuiltin)
+			{
+				var declarationOnly = ctorCtx.blockStatement() is null;
+				var lastConstructor = constructors[^1];
+				lastConstructor.IsBuiltin = true;
+				lastConstructor.IsDeclarationOnly = declarationOnly;
+				lastConstructor.BuiltinSpan = SpanOf(ctorBuiltin.Symbol);
+			}
 		}
 
 		var generics = new List<string>();
@@ -1930,7 +1962,14 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			fields.Add(new UnionFieldSyntax(SpanOf(field), GetTypeName(field.type()), field.Identifier().GetText(), GetVisibilityModifier(field.visibilityModifier())));
 
 		var unionAttributes = BuildAttributeList(context.attributeList());
-		return new UnionDeclarationSyntax(SpanOf(context), name, generics, fields, unionAttributes, GetVisibilityModifier(context.visibilityModifier()), defaults, context.UNSAFE() is not null);
+		var unionDeclaration = new UnionDeclarationSyntax(SpanOf(context), name, generics, fields, unionAttributes, GetVisibilityModifier(context.visibilityModifier()), defaults, context.UNSAFE() is not null);
+		if (context.BUILTIN() is { } builtinToken)
+		{
+			unionDeclaration.IsBuiltin = true;
+			unionDeclaration.BuiltinSpan = SpanOf(builtinToken.Symbol);
+		}
+
+		return unionDeclaration;
 	}
 
 	private EnumDeclarationSyntax BuildEnumDeclaration(CvoloParser.EnumDeclarationContext context)
@@ -1950,7 +1989,14 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		}
 
 		var enumAttributes = BuildAttributeList(context.attributeList());
-		return new EnumDeclarationSyntax(SpanOf(context), name, storageType, variants, enumAttributes, GetVisibilityModifier(context.visibilityModifier()));
+		var enumDeclaration = new EnumDeclarationSyntax(SpanOf(context), name, storageType, variants, enumAttributes, GetVisibilityModifier(context.visibilityModifier()));
+		if (context.BUILTIN() is { } builtinToken)
+		{
+			enumDeclaration.IsBuiltin = true;
+			enumDeclaration.BuiltinSpan = SpanOf(builtinToken.Symbol);
+		}
+
+		return enumDeclaration;
 	}
 
 	private SyntaxNode BuildSwitchStatement(CvoloParser.SwitchStatementContext context)

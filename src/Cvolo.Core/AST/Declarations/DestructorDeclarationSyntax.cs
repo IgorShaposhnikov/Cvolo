@@ -14,6 +14,10 @@ public sealed class DestructorDeclarationSyntax(TextSpan span, string structName
 	public Visibility Visibility { get; } = visibility ?? Visibility.Internal;
 	public Visibility? SyntacticVisibility { get; } = visibility;
 
+	public bool IsBuiltin { get; set; }
+	public bool IsDeclarationOnly { get; set; }
+	public TextSpan? BuiltinSpan { get; set; }
+
 	public override IEnumerable<SyntaxNode> GetChildren()
 	{
 		yield return Body;

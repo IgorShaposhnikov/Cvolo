@@ -109,7 +109,11 @@ public sealed class OptionalSyntaxRewriter(bool strictOption, DiagnosticBag diag
 			var rewrittenParams = func.Parameters.Select(p => (ParameterSyntax)Rewrite(p)).ToList();
 			var rewrittenBody = func.Body != null ? (BlockStatementSyntax)Rewrite(func.Body) : null;
 			return new FunctionDeclarationSyntax(func.Span, RewriteType(func.ReturnType, func.Span), func.Name, func.GenericParameters,
-				rewrittenParams, rewrittenBody!, func.Attributes, func.Modifier, func.Receiver, func.Visibility, callingConvention: func.CallingConvention);
+				rewrittenParams, rewrittenBody!, func.Attributes, func.Modifier, func.Receiver, func.Visibility, callingConvention: func.CallingConvention)
+			{
+				IsBuiltin = func.IsBuiltin,
+				BuiltinSpan = func.BuiltinSpan
+			};
 		}
 
 		if (node is ConstructorDeclarationSyntax ctor)
@@ -117,14 +121,23 @@ public sealed class OptionalSyntaxRewriter(bool strictOption, DiagnosticBag diag
 			var rewrittenParams = ctor.Parameters.Select(p => (ParameterSyntax)Rewrite(p)).ToList();
 			var rewrittenBody = (BlockStatementSyntax)Rewrite(ctor.Body);
 			return new ConstructorDeclarationSyntax(ctor.Span, ctor.StructName, rewrittenParams, rewrittenBody,
-				ctor.ConstructorArguments, ctor.ConstructorInitializerSpan, ctor.Attributes, ctor.Visibility);
+				ctor.ConstructorArguments, ctor.ConstructorInitializerSpan, ctor.Attributes, ctor.Visibility)
+			{
+				IsBuiltin = ctor.IsBuiltin,
+				IsDeclarationOnly = ctor.IsDeclarationOnly,
+				BuiltinSpan = ctor.BuiltinSpan
+			};
 		}
 
 		if (node is StructDeclarationSyntax structDecl)
 		{
 			var rewrittenFields = structDecl.Fields.Select(f => new StructFieldSyntax(f.Span, RewriteType(f.Type, f.Span), f.Name, f.Visibility)).ToList();
 			return new StructDeclarationSyntax(structDecl.Span, structDecl.Name, structDecl.GenericParameters, rewrittenFields,
-				structDecl.EmbeddedType, structDecl.Attributes, structDecl.Visibility, structDecl.GenericParameterDefaults, structDecl.GenericParameterConstraints);
+				structDecl.EmbeddedType, structDecl.Attributes, structDecl.Visibility, structDecl.GenericParameterDefaults, structDecl.GenericParameterConstraints)
+			{
+				IsBuiltin = structDecl.IsBuiltin,
+				BuiltinSpan = structDecl.BuiltinSpan
+			};
 		}
 
 		if (node is UnionFieldSyntax unionField)

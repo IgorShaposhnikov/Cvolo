@@ -51,6 +51,9 @@ public sealed class FunctionDeclarationSyntax(
 	/// </summary>
 	public string? CallingConvention { get; } = callingConvention;
 
+	public bool IsBuiltin { get; set; }
+	public TextSpan? BuiltinSpan { get; set; }
+
 	public override IEnumerable<SyntaxNode> GetChildren()
 	{
 		foreach (var p in Parameters)

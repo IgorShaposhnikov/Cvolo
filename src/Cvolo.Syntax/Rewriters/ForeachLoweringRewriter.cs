@@ -61,19 +61,33 @@ public sealed class ForeachLoweringRewriter : AstRewriterBase
 			case FunctionDeclarationSyntax func:
 				{
 					var body = func.Body != null ? (BlockStatementSyntax)Rewrite(func.Body) : null;
-					return new FunctionDeclarationSyntax(func.Span, func.ReturnType, func.Name, func.GenericParameters, func.Parameters, body, func.Attributes, func.Modifier, func.Receiver, func.Visibility, callingConvention: func.CallingConvention);
+					return new FunctionDeclarationSyntax(func.Span, func.ReturnType, func.Name, func.GenericParameters, func.Parameters, body, func.Attributes, func.Modifier, func.Receiver, func.Visibility, callingConvention: func.CallingConvention)
+					{
+						IsBuiltin = func.IsBuiltin,
+						BuiltinSpan = func.BuiltinSpan
+					};
 				}
 
 			case DestructorDeclarationSyntax dtor:
 				{
 					var body = (BlockStatementSyntax)Rewrite(dtor.Body);
-					return new DestructorDeclarationSyntax(dtor.Span, dtor.StructName, body, dtor.Attributes, dtor.Visibility);
+					return new DestructorDeclarationSyntax(dtor.Span, dtor.StructName, body, dtor.Attributes, dtor.Visibility)
+					{
+						IsBuiltin = dtor.IsBuiltin,
+						IsDeclarationOnly = dtor.IsDeclarationOnly,
+						BuiltinSpan = dtor.BuiltinSpan
+					};
 				}
 
 			case ConstructorDeclarationSyntax ctor:
 				{
 					var body = (BlockStatementSyntax)Rewrite(ctor.Body);
-					return new ConstructorDeclarationSyntax(ctor.Span, ctor.StructName, ctor.Parameters, body, ctor.ConstructorArguments, ctor.ConstructorInitializerSpan, ctor.Attributes, ctor.SyntacticVisibility);
+					return new ConstructorDeclarationSyntax(ctor.Span, ctor.StructName, ctor.Parameters, body, ctor.ConstructorArguments, ctor.ConstructorInitializerSpan, ctor.Attributes, ctor.SyntacticVisibility)
+					{
+						IsBuiltin = ctor.IsBuiltin,
+						IsDeclarationOnly = ctor.IsDeclarationOnly,
+						BuiltinSpan = ctor.BuiltinSpan
+					};
 				}
 
 			case BlockStatementSyntax block:

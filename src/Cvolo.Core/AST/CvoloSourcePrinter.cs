@@ -45,7 +45,8 @@ public sealed class CvoloSourcePrinter
 				var fPrefix = f.CallingConvention is not null
 					? $"unsafe \"{f.CallingConvention}\" "
 					: f.Modifier is not null ? $"{f.Modifier.ToString()!.ToLowerInvariant()} " : "";
-				return $"{fAttrs}\n{ind}{fPrefix}{f.ReturnType} {f.Name}{fGenerics}({fParms}){fBody}";
+				var fBuiltin = f.IsBuiltin ? "builtin " : "";
+				return $"{fAttrs}\n{ind}{fBuiltin}{fPrefix}{f.ReturnType} {f.Name}{fGenerics}({fParms}){fBody}";
 
 			case ExternDeclarationSyntax ed:
 				var edParms = string.Join(", ", ed.Parameters.Select(Print)) + (ed.IsVariadic ? ", ..." : "");
@@ -68,7 +69,7 @@ public sealed class CvoloSourcePrinter
 
 			case StructDeclarationSyntax st:
 				var stFields = string.Join("", st.Fields.Select(f => $"{ind}    {Print(f)}"));
-				return $"{PrintAttributes(st.Attributes, indent)}\n{ind}struct {st.Name}{Generics(st.GenericParameters)}{(st.EmbeddedType != null ? $" : {st.EmbeddedType}" : "")} {{\n{stFields}{ind}}}\n";
+				return $"{PrintAttributes(st.Attributes, indent)}\n{ind}{(st.IsBuiltin ? "builtin " : "")}struct {st.Name}{Generics(st.GenericParameters)}{(st.EmbeddedType != null ? $" : {st.EmbeddedType}" : "")} {{\n{stFields}{ind}}}\n";
 
 			case ProtocolDeclarationSyntax proto:
 				var protoMembers = string.Join("", proto.Members.Select(pm => $"{ind}    {pm.ReturnType} {pm.Name}({string.Join(", ", pm.Parameters.Select(Print))});\n"));
@@ -88,10 +89,10 @@ public sealed class CvoloSourcePrinter
 				var ctorInit = ctor.ConstructorArguments is { } cargs && cargs.Count > 0
 					? $" : {ctor.StructName}({string.Join(", ", cargs.Select(Print))})"
 					: "";
-				return $"{PrintAttributes(ctor.Attributes, indent)}\n{ind}{ctor.StructName}({string.Join(", ", ctor.Parameters.Select(Print))}){ctorInit} {Print(ctor.Body, indent)}";
+				return $"{PrintAttributes(ctor.Attributes, indent)}\n{ind}{(ctor.IsBuiltin ? "builtin " : "")}{ctor.StructName}({string.Join(", ", ctor.Parameters.Select(Print))}){ctorInit}{(ctor.IsDeclarationOnly ? ";" : $" {Print(ctor.Body, indent)}")}";
 
 			case DestructorDeclarationSyntax dtor:
-				return $"{PrintAttributes(dtor.Attributes, indent)}\n{ind}~{dtor.StructName}() {Print(dtor.Body, indent)}";
+				return $"{PrintAttributes(dtor.Attributes, indent)}\n{ind}{(dtor.IsBuiltin ? "builtin " : "")}~{dtor.StructName}(){(dtor.IsDeclarationOnly ? ";" : $" {Print(dtor.Body, indent)}")}";
 
 			case BlockStatementSyntax b:
 				var stmts = string.Join("", b.Statements.Select(s => Print(s, indent + 1)));
@@ -240,7 +241,7 @@ public sealed class CvoloSourcePrinter
 
 			case UnionDeclarationSyntax ud:
 				var udFields = string.Join("", ud.Fields.Select(uf => $"{ind}    {Print(uf)}"));
-				return $"{PrintAttributes(ud.Attributes, indent)}\n{ind}{(ud.IsUnsafe ? "unsafe " : "")}union {ud.Name}{Generics(ud.GenericParameters)} {{\n{udFields}{ind}}}\n";
+				return $"{PrintAttributes(ud.Attributes, indent)}\n{ind}{(ud.IsBuiltin ? "builtin " : "")}{(ud.IsUnsafe ? "unsafe " : "")}union {ud.Name}{Generics(ud.GenericParameters)} {{\n{udFields}{ind}}}\n";
 
 			case UnionFieldSyntax uf:
 				return $"{uf.Type} {uf.Name};\n";
@@ -248,7 +249,7 @@ public sealed class CvoloSourcePrinter
 			case EnumDeclarationSyntax en:
 				var storage = en.StorageType != null ? $" : {en.StorageType}" : "";
 				var variants = string.Join(", ", en.Variants.Select(v => v.Value != null ? $"{v.Name} = {Print(v.Value)}" : v.Name));
-				return $"\n{ind}enum {en.Name}{storage} {{ {variants} }}\n";
+				return $"\n{ind}{(en.IsBuiltin ? "builtin " : "")}enum {en.Name}{storage} {{ {variants} }}\n";
 
 			case EnumVariantDeclarationSyntax ev:
 				return ev.Value != null ? $"{ev.Name} = {Print(ev.Value)}" : ev.Name;

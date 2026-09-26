@@ -29,6 +29,9 @@ public sealed class UnionDeclarationSyntax(
 
 	public IReadOnlyDictionary<string, string> GenericParameterDefaults { get; } = genericParameterDefaults ?? new Dictionary<string, string>();
 
+	public bool IsBuiltin { get; set; }
+	public TextSpan? BuiltinSpan { get; set; }
+
 	public override IEnumerable<SyntaxNode> GetChildren() => Fields;
 }
 

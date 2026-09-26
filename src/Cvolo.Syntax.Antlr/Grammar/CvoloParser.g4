@@ -92,7 +92,17 @@ functionModifier
 	;
 
 functionDeclaration
-	: attributeList* visibilityModifier? ((UNSAFE callingConvention) | functionModifier)? returnType Identifier (LT typeList GT)? LPAREN parameterList? RPAREN (blockStatement | SEMI)
+	: attributeList* visibilityModifier? BUILTIN? ((UNSAFE callingConvention) | functionModifier)? returnType builtinCapableIdentifier (LT typeList GT)? LPAREN parameterList? RPAREN (blockStatement | SEMI)
+	;
+
+builtinCapableIdentifier
+	: Identifier
+	| SIZEOF
+	| ALIGNOF
+	| OFFSETOF
+	| NAMEOF
+	| TYPEOF
+	| DEFAULT
 	;
 
 externDeclaration
@@ -137,11 +147,11 @@ exposeExternFunction
 	;
 
 structDeclaration
-	: attributeList* visibilityModifier? STRUCT Identifier (LT genericParameterList GT)? (EMBED qualifiedName)? whereClause* LBRACE structField* RBRACE SEMI?
+	: attributeList* visibilityModifier? BUILTIN? STRUCT Identifier (LT genericParameterList GT)? (EMBED qualifiedName)? whereClause* LBRACE structField* RBRACE SEMI?
 	;
 
 unionDeclaration
-	: attributeList* visibilityModifier? UNSAFE? UNION Identifier (LT genericParameterList GT)? whereClause? LBRACE unionField* RBRACE SEMI?
+	: attributeList* visibilityModifier? BUILTIN? UNSAFE? UNION Identifier (LT genericParameterList GT)? whereClause? LBRACE unionField* RBRACE SEMI?
 	;
 
 unionField
@@ -149,7 +159,7 @@ unionField
 	;
 
 enumDeclaration
-	: attributeList* visibilityModifier? ENUM Identifier (COLON type)? LBRACE enumVariant (COMMA enumVariant)* RBRACE SEMI?
+	: attributeList* visibilityModifier? BUILTIN? ENUM Identifier (COLON type)? LBRACE enumVariant (COMMA enumVariant)* RBRACE SEMI?
 	;
 
 enumVariant
@@ -177,11 +187,11 @@ protocolMember
 	;
 
 destructorDeclaration
-	: attributeList* visibilityModifier? TILDE Identifier LPAREN RPAREN blockStatement SEMI?
+	: attributeList* visibilityModifier? BUILTIN? TILDE Identifier LPAREN RPAREN (blockStatement | SEMI)
 	;
 
 constructorDeclaration
-	: attributeList* visibilityModifier? Identifier LPAREN parameterList? RPAREN (COLON Identifier LPAREN argumentList? RPAREN)? blockStatement SEMI?
+	: attributeList* visibilityModifier? BUILTIN? Identifier LPAREN parameterList? RPAREN (COLON Identifier LPAREN argumentList? RPAREN)? (blockStatement | SEMI)
 	;
 
 structField

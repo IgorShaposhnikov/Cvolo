@@ -19,6 +19,9 @@ public sealed class EnumDeclarationSyntax(
 	public IReadOnlyList<AttributeSyntax> Attributes { get; } = attributes ?? [];
 	public Visibility Visibility { get; } = visibility ?? Visibility.Internal;
 
+	public bool IsBuiltin { get; set; }
+	public TextSpan? BuiltinSpan { get; set; }
+
 	public override IEnumerable<SyntaxNode> GetChildren() => Variants;
 }
 

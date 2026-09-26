@@ -41,6 +41,7 @@ INTERNAL: 'internal';
 PUBLIC: 'public';
 UNSAFE: 'unsafe';
 UNBOUND: 'unbound';
+BUILTIN: 'builtin';
 PANIC: 'panic';
 EXTENSION: 'extension';
 INTERFACE: 'interface';

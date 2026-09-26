@@ -43,6 +43,10 @@ public sealed class ConstructorDeclarationSyntax(
 	public Visibility Visibility { get; } = visibility ?? Visibility.Internal;
 	public Visibility? SyntacticVisibility { get; } = visibility;
 
+	public bool IsBuiltin { get; set; }
+	public bool IsDeclarationOnly { get; set; }
+	public TextSpan? BuiltinSpan { get; set; }
+
 	public override IEnumerable<SyntaxNode> GetChildren()
 	{
 		foreach (var p in Parameters) yield return p;
