@@ -156,6 +156,20 @@ internal sealed class FunctionBodyValidator(
 		if (extendedType is not (StructTypeSymbol or UnionTypeSymbol) && extendedType?.GetType().Name != "EnumTypeSymbol")
 			return;
 
+		if (!method.HasBody)
+		{
+			if (context.CurrentUnit is not null && context.ExternalPackageUnits.Contains(context.CurrentUnit))
+				return;
+
+			if (!intrinsics.IsIntrinsicDeclaration(method))
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, method.NameSpan, $"Method '{method.Name}' must declare a body unless decorated with '[Intrinsic]'.");
+			}
+
+			return;
+		}
+
 		var baseUnsafeDepth2 = validation.UnsafeDepth;
 		validation.UnsafeDepth = IsUnsafeFunction(method) ? 1 : 0;
 		var baseInUnbound2 = validation.InUnbound;
@@ -282,6 +296,16 @@ internal sealed class FunctionBodyValidator(
 		}
 
 		statements.CheckBlock(method.Body, localScope, method);
+
+		if (!isCtorOrDtor && method.ReturnType != "void" && !EndsWithReturn(method.Body!))
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(
+				currentFileContext,
+				method.NameSpan,
+				$"Method '{method.Name}' is declared to return '{method.ReturnType}' but is missing a return statement."
+			);
+		}
 
 		// Restore original depth context
 		validation.UnsafeDepth = baseUnsafeDepth2;
