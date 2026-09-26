@@ -58,9 +58,7 @@ internal static class ExpressionTypeResolver
 			NullLiteralExpressionSyntax => TypeSymbol.Null,
 			StringLiteralExpressionSyntax => TypeSymbol.String,
 			CharacterLiteralExpressionSyntax => TypeSymbol.Char,
-			CallExpressionSyntax call => call.FunctionName == "sizeof"
-				? TypeSymbol.Int
-				: context.ResolvedCalls.TryGetValue(call, out var resolved) ? resolved.ReturnType : null,
+			CallExpressionSyntax call => context.ResolvedCalls.TryGetValue(call, out var resolved) ? resolved.ReturnType : null,
 			MemberAccessExpressionSyntax memberAccess => ResolveMember(context, visible, memberAccess),
 			BorrowExpressionSyntax borrow => new PointerTypeSymbol(Resolve(context, visible, borrow.Expression) ?? TypeSymbol.Int, borrow.IsMutable),
 			StructInitializationExpressionSyntax structInit => ResolveTypeOrNull(context, structInit.StructTypeName),
@@ -83,6 +81,7 @@ internal static class ExpressionTypeResolver
 			AsmExpressionSyntax asm => asm.ResultType is not null ? ResolveTypeOrNull(context, asm.ResultType) : TypeSymbol.Void,
 			NameofExpressionSyntax => TypeSymbol.String,
 			TypeofExpressionSyntax => ResolveTypeOrNull(context, "Type"),
+			SizeofExpressionSyntax or AlignofExpressionSyntax or OffsetofExpressionSyntax => TypeSymbol.NUInt,
 			IsPatternExpressionSyntax => TypeSymbol.Bool,
 			BinaryExpressionSyntax binary => ResolveBinary(context, visible, binary),
 			_ => null,

@@ -10,6 +10,7 @@ public sealed class MemoryTests : CompilerTestBase
 	[InlineData("MoveReassign", "20")]
 	[InlineData("DynamicHeapArray", "Buffer 0: 10, Buffer 4: 50, Length: 5")]
 	[InlineData("SizeOf", "Int: 4\nDouble: 8\nPoint: 8\nSlice: 16")]
+	[InlineData("LayoutOperators", "PairSize: 8\nPairAlign: 4\nBOffset: 4\nLengthOffset: 4\nUnionOffset: 0")]
 	[InlineData("AutoDestructor", "Disposing resource handle: 100\nDisposing resource handle: 200\nDone!")]
 	public void Execution(string caseName, string expected)
 	{

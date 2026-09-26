@@ -160,23 +160,6 @@ internal sealed class ExpressionValidator(
 
 					FunctionSymbol? func = null;
 
-					if (call.FunctionName == "sizeof")
-					{
-						if (call.TypeArguments.Count != 1)
-						{
-							var currentFileContext = context.FileContexts[context.CurrentUnit!];
-							context.Diagnostics.Report(currentFileContext, call.Span, "sizeof expects exactly 1 type argument.");
-						}
-
-						if (call.Arguments.Count != 0)
-						{
-							var currentFileContext = context.FileContexts[context.CurrentUnit!];
-							context.Diagnostics.Report(currentFileContext, call.Span, "sizeof does not accept value arguments.");
-						}
-
-						break;
-					}
-
 					// Callable value paths take precedence over direct function/function-group lookup.
 					// This is required for both safe and native delegate variables that collide with
 					// a function of the same source name.
@@ -449,6 +432,15 @@ internal sealed class ExpressionValidator(
 			case TypeofExpressionSyntax typeofExpr:
 				Intrinsics.ValidateTypeof(typeofExpr);
 				break;
+			case SizeofExpressionSyntax sizeofExpr:
+				ValidateLayoutQuery(sizeofExpr, sizeofExpr.TypeName, wantAlignment: false);
+				break;
+			case AlignofExpressionSyntax alignofExpr:
+				ValidateLayoutQuery(alignofExpr, alignofExpr.TypeName, wantAlignment: true);
+				break;
+			case OffsetofExpressionSyntax offsetofExpr:
+				ValidateOffsetof(offsetofExpr);
+				break;
 			case UnaryExpressionSyntax unary:
 				if (unary.Operator == "&" && IsFunctionAddressOperand(unary.Operand, scope))
 				{
@@ -531,6 +523,119 @@ internal sealed class ExpressionValidator(
 
 				break;
 		}
+	}
+
+	private void ValidateLayoutQuery(ExpressionSyntax node, string typeName, bool wantAlignment)
+	{
+		var currentFileContext = context.FileContexts[context.CurrentUnit!];
+		var queryName = wantAlignment ? "alignof" : "sizeof";
+		var diagnosticId = wantAlignment ? DiagnosticIds.AlignofInvalidTypeError : DiagnosticIds.SizeofInvalidTypeError;
+		var type = context.ResolveType(typeName);
+
+		if (type is null)
+		{
+			context.Diagnostics.Report(currentFileContext, node.Span, $"Unknown type '{typeName}' in {queryName} expression.", diagnosticId);
+			return;
+		}
+
+		if (type.Equals(TypeSymbol.Void))
+		{
+			context.Diagnostics.Report(currentFileContext, node.Span, $"{queryName} cannot be applied to 'void'.", DiagnosticIds.LayoutQueryOnVoid);
+			return;
+		}
+
+		if (ContainsTypeParameter(type))
+			return;
+
+		if (type is ProtocolTypeSymbol or InterfaceTypeSymbol)
+		{
+			context.Diagnostics.Report(currentFileContext, node.Span,
+				$"Type '{typeName}' has no concrete runtime layout and cannot be used with {queryName}.",
+				DiagnosticIds.LayoutQueryIncompleteType);
+			return;
+		}
+
+		var layout = context.LayoutService.GetLayout(type);
+		context.ResolvedLayoutConstants[node] = wantAlignment ? layout.Alignment : layout.Size;
+	}
+
+	private void ValidateOffsetof(OffsetofExpressionSyntax node)
+	{
+		var currentFileContext = context.FileContexts[context.CurrentUnit!];
+		var type = context.ResolveType(node.TypeName);
+
+		if (type is null)
+		{
+			context.Diagnostics.Report(currentFileContext, node.Span, $"Unknown type '{node.TypeName}' in offsetof expression.", DiagnosticIds.OffsetofInvalidTargetError);
+			return;
+		}
+
+		if (type.Equals(TypeSymbol.Void) || type is ProtocolTypeSymbol or InterfaceTypeSymbol or EnumTypeSymbol)
+		{
+			context.Diagnostics.Report(currentFileContext, node.Span, $"Type '{node.TypeName}' does not have addressable stored members.", DiagnosticIds.OffsetofInvalidTargetError);
+			return;
+		}
+
+		if (ContainsTypeParameter(type))
+			return;
+
+		long offset = 0;
+		var current = type;
+
+		foreach (var member in node.Members)
+		{
+			if (current is UnionTypeSymbol { IsUnsafe: false })
+			{
+				context.Diagnostics.Report(currentFileContext, member.Span, "offsetof cannot address a variant of a safe union.", DiagnosticIds.OffsetofSafeUnionVariant);
+				return;
+			}
+
+			var step = context.LayoutService.TryGetFieldOffset(current, [member.Name]);
+			var next = ResolveStoredMemberType(current, member.Name);
+
+			if (step is null || next is null)
+			{
+				context.Diagnostics.Report(currentFileContext, member.Span,
+					$"Type '{current.Name}' does not contain a stored member named '{member.Name}'.",
+					DiagnosticIds.OffsetofMissingMember);
+				return;
+			}
+
+			offset += step.Value;
+			current = next;
+		}
+
+		context.ResolvedLayoutConstants[node] = offset;
+	}
+
+	private static TypeSymbol? ResolveStoredMemberType(TypeSymbol type, string name) => type switch
+	{
+		StructTypeSymbol structType => structType.FindField(name)?.Type,
+		UnionTypeSymbol unionType => unionType.FindField(name)?.Type,
+		_ => null,
+	};
+
+	internal static bool ContainsTypeParameter(TypeSymbol type) => ContainsTypeParameter(type, []);
+
+	private static bool ContainsTypeParameter(TypeSymbol type, HashSet<TypeSymbol> active)
+	{
+		if (type is TypeParameterSymbol)
+			return true;
+		if (!active.Add(type))
+			return false;
+
+		return type switch
+		{
+			StructTypeSymbol structType => structType.Fields.Any(field => ContainsTypeParameter(field.Type, active)),
+			UnionTypeSymbol unionType => unionType.Fields.Any(field => ContainsTypeParameter(field.Type, active)),
+			ArrayTypeSymbol arrayType => ContainsTypeParameter(arrayType.ElementType, active),
+			SliceTypeSymbol sliceType => ContainsTypeParameter(sliceType.ElementType, active),
+			PointerTypeSymbol pointerType => ContainsTypeParameter(pointerType.ReferencedType, active),
+			RawPointerTypeSymbol rawPointerType => ContainsTypeParameter(rawPointerType.ElementType, active),
+			DelegateTypeSymbol delegateType => delegateType.Parameters.Any(parameter => ContainsTypeParameter(parameter.Type, active))
+				|| ContainsTypeParameter(delegateType.ReturnType, active),
+			_ => false,
+		};
 	}
 
 	/// <summary>
@@ -1104,7 +1209,7 @@ internal sealed class ExpressionValidator(
 			NullLiteralExpressionSyntax => TypeSymbol.Null,
 			StringLiteralExpressionSyntax => TypeSymbol.String,
 			CharacterLiteralExpressionSyntax => TypeSymbol.Char,
-			CallExpressionSyntax call when call.FunctionName == "sizeof" => TypeSymbol.Int,
+			SizeofExpressionSyntax or AlignofExpressionSyntax or OffsetofExpressionSyntax => TypeSymbol.NUInt,
 			CallExpressionSyntax call => context.ResolvedCalls.TryGetValue(call, out var resolved) ? resolved.ReturnType
 				: context.ResolvedDelegateCalls.TryGetValue(call, out var resolvedDelegate) ? resolvedDelegate.ReturnType
 				: null,

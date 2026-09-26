@@ -221,6 +221,15 @@ public sealed class CvoloSourcePrinter
 			case TypeofExpressionSyntax tf:
 				return $"typeof({tf.TypeName})";
 
+			case SizeofExpressionSyntax sof:
+				return $"sizeof<{sof.TypeName}>()";
+
+			case AlignofExpressionSyntax aof:
+				return $"alignof<{aof.TypeName}>()";
+
+			case OffsetofExpressionSyntax oof:
+				return $"offsetof<{oof.TypeName}>({string.Join(".", oof.Members.Select(member => member.Name))})";
+
 			case InterpolatedStringExpressionSyntax istr:
 				return istr.RawText;
 

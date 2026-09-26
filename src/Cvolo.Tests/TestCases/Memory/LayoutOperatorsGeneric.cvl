@@ -1,0 +1,12 @@
+using System;
+
+nuint Size<T>()
+{
+    return sizeof<T>();
+}
+
+int main()
+{
+    Console.WriteLine($"Int: {Size<int>()} Long: {Size<long>()}");
+    return 0;
+}

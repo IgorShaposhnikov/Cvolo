@@ -1,0 +1,39 @@
+using System;
+
+struct Pair
+{
+    byte A;
+    int B;
+}
+
+struct Header
+{
+    int Length;
+}
+
+struct Packet
+{
+    byte Kind;
+    Header Header;
+}
+
+unsafe union Value
+{
+    int Integer;
+    double Floating;
+}
+
+int main()
+{
+    nuint pairSize = sizeof<Pair>();
+    nuint pairAlign = alignof<Pair>();
+    nuint bOffset = offsetof<Pair>(B);
+    nuint lengthOffset = offsetof<Packet>(Header.Length);
+    nuint unionOffset = offsetof<Value>(Floating);
+    Console.WriteLine($"PairSize: {pairSize}");
+    Console.WriteLine($"PairAlign: {pairAlign}");
+    Console.WriteLine($"BOffset: {bOffset}");
+    Console.WriteLine($"LengthOffset: {lengthOffset}");
+    Console.WriteLine($"UnionOffset: {unionOffset}");
+    return 0;
+}

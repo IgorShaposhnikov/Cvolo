@@ -45,6 +45,66 @@ public sealed class BindingContext
 	public Dictionary<CallExpressionSyntax, FunctionSymbol> ResolvedCalls { get; } = [];
 
 	/// <summary>
+	/// Compile-time layout constants folded for <c>sizeof</c>/<c>alignof</c>/<c>offsetof</c>,
+	/// keyed by the operator expression node, consumed by LLVM emission and global/array
+	/// constant evaluation.
+	/// </summary>
+	public Dictionary<ExpressionSyntax, long> ResolvedLayoutConstants { get; } = [];
+
+	private Cvolo.Analysis.Layout.TypeLayoutService? _layoutService;
+	private int _layoutServicePointerBytes = -1;
+
+	/// <summary>The shared target-aware semantic layout service for the active pointer width.</summary>
+	public Cvolo.Analysis.Layout.TypeLayoutService LayoutService
+	{
+		get
+		{
+			if (_layoutService is null || _layoutServicePointerBytes != NativePointerBytes)
+			{
+				_layoutService = new Cvolo.Analysis.Layout.TypeLayoutService(NativePointerBytes);
+				_layoutServicePointerBytes = NativePointerBytes;
+			}
+
+			return _layoutService;
+		}
+	}
+
+	/// <summary>
+	/// Evaluates a compile-time layout operator (<c>sizeof</c>/<c>alignof</c>/<c>offsetof</c>)
+	/// against the current target layout, independent of the semantic validation pass.
+	/// </summary>
+	public long EvaluateLayoutConstant(ExpressionSyntax expression)
+	{
+		switch (expression)
+		{
+			case SizeofExpressionSyntax sizeofExpression:
+				{
+					var type = ResolveType(sizeofExpression.TypeName);
+					return type is null ? 0L : LayoutService.GetLayout(type).Size;
+				}
+			case AlignofExpressionSyntax alignofExpression:
+				{
+					var type = ResolveType(alignofExpression.TypeName);
+					return type is null ? 0L : LayoutService.GetLayout(type).Alignment;
+				}
+			case OffsetofExpressionSyntax offsetofExpression:
+				{
+					var type = ResolveType(offsetofExpression.TypeName);
+					if (type is null)
+						return 0L;
+
+					var path = new List<string>(offsetofExpression.Members.Count);
+					foreach (var member in offsetofExpression.Members)
+						path.Add(member.Name);
+
+					return LayoutService.TryGetFieldOffset(type, path) ?? 0L;
+				}
+			default:
+				return 0L;
+		}
+	}
+
+	/// <summary>
 	/// Lambda expressions bound against an expected delegate type (§4/§5).
 	/// Keyed by the lambda AST node so the safety pass and code generator can find them.
 	/// </summary>
@@ -662,6 +722,9 @@ public sealed class BindingContext
 		if (long.TryParse(trimmed, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var literal))
 			return literal;
 
+		if (TryEvaluateLayoutTerm(trimmed, out var layoutValue))
+			return layoutValue;
+
 		var dot = trimmed.LastIndexOf('.');
 		if (dot <= 0 || dot == trimmed.Length - 1)
 			return null;
@@ -683,6 +746,68 @@ public sealed class BindingContext
 	}
 
 	private static bool IsPowerOfTwo(long value) => value > 0 && (value & (value - 1)) == 0;
+
+	private bool TryEvaluateLayoutTerm(string term, out long value)
+	{
+		value = 0L;
+
+		if (term.StartsWith("sizeof<", StringComparison.Ordinal) && term.EndsWith(">()", StringComparison.Ordinal))
+		{
+			var type = ResolveLayoutType(term, "sizeof<");
+			if (type is null)
+				return false;
+			value = LayoutService.GetLayout(type).Size;
+			return true;
+		}
+
+		if (term.StartsWith("alignof<", StringComparison.Ordinal) && term.EndsWith(">()", StringComparison.Ordinal))
+		{
+			var type = ResolveLayoutType(term, "alignof<");
+			if (type is null)
+				return false;
+			value = LayoutService.GetLayout(type).Alignment;
+			return true;
+		}
+
+		if (term.StartsWith("offsetof<", StringComparison.Ordinal) && term.EndsWith(")", StringComparison.Ordinal))
+		{
+			var closeAngle = term.IndexOf('>');
+			var openParen = term.IndexOf('(', closeAngle + 1);
+			if (closeAngle < 0 || openParen < 0)
+				return false;
+
+			var type = ResolveType(term["offsetof<".Length..closeAngle].Trim());
+			if (type is null || Cvolo.Analysis.Passes.Validation.ExpressionValidator.ContainsTypeParameter(type))
+				return false;
+
+			var memberText = term[(openParen + 1)..^1].Trim();
+			if (memberText.Length == 0)
+				return false;
+
+			var path = new List<string>();
+			foreach (var segment in memberText.Split('.'))
+				path.Add(segment.Trim());
+
+			var offset = LayoutService.TryGetFieldOffset(type, path);
+			if (offset is null)
+				return false;
+
+			value = offset.Value;
+			return true;
+		}
+
+		return false;
+	}
+
+	private TypeSymbol? ResolveLayoutType(string term, string prefix)
+	{
+		var typeName = term[prefix.Length..^"()>".Length].Trim();
+		var type = ResolveType(typeName);
+		if (type is null || Cvolo.Analysis.Passes.Validation.ExpressionValidator.ContainsTypeParameter(type) || type == TypeSymbol.Void)
+			return null;
+		return type;
+	}
+
 	/// Returns false with a diagnostic if any argument cannot be resolved, so a
 	/// null type is never smuggled into generic instantiation (which would NRE).
 	/// </summary>
@@ -1495,6 +1620,15 @@ public sealed class BindingContext
 					}
 
 					return new DefaultExpressionSyntax(def.Span, newDefaultType);
+
+				case SizeofExpressionSyntax sof:
+					return new SizeofExpressionSyntax(sof.Span, SubstituteTypeString(sof.TypeName, substitutionMap));
+
+				case AlignofExpressionSyntax aof:
+					return new AlignofExpressionSyntax(aof.Span, SubstituteTypeString(aof.TypeName, substitutionMap));
+
+				case OffsetofExpressionSyntax oof:
+					return new OffsetofExpressionSyntax(oof.Span, SubstituteTypeString(oof.TypeName, substitutionMap), oof.Members);
 
 				default:
 					return expr;

@@ -383,6 +383,9 @@ expression
 	| ASM asmOption* (LT type GT)? LPAREN StringLiteral (COMMA asmArgument)* RPAREN	# asmExpression
 	| NAMEOF LPAREN expression RPAREN												# nameofExpression
 	| TYPEOF LPAREN type RPAREN														# typeofExpression
+	| SIZEOF LT type GT LPAREN RPAREN												# sizeofExpression
+	| ALIGNOF LT type GT LPAREN RPAREN												# alignofExpression
+	| OFFSETOF LT type GT LPAREN memberDesignator RPAREN							# offsetofExpression
 	| HEAP expression                                       							# heapAllocationExpression
 	| HEAP type LBRACK expression RBRACK                                                # heapArrayAllocationExpression
 	| LBRACE (expression (COMMA expression)*)? RBRACE									# arrayInitializationExpression
@@ -430,6 +433,10 @@ lambdaParameter
 
 argumentList
 	: expression (COMMA expression)*
+	;
+
+memberDesignator
+	: Identifier (DOT Identifier)*
 	;
 
 asmOption

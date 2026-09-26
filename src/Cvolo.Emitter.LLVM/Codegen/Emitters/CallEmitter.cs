@@ -57,14 +57,6 @@ internal sealed class CallEmitter(
 
 	private LLVMValueRef EmitCore(CallExpressionSyntax call, LLVMValueRef? implicitThisPtr, int paramOffset)
 	{
-		if (call.FunctionName == "sizeof")
-		{
-			var targetTypeName = call.TypeArguments[0];
-			var targetType = BindingContext.ResolveType(targetTypeName)!;
-			var size = codegen.AggregateLayout.GetByteSize(targetType);
-			return LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (ulong)size);
-		}
-
 		// Safe delegates are represented as { invoke thunk, context }. Invocation is uniform
 		// regardless of whether the value originated from a free function, bound method, or closure.
 		if (BindingContext.ResolvedDelegateCalls.TryGetValue(call, out var delegateType))

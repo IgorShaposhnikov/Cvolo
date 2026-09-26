@@ -859,6 +859,23 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				return new NameofExpressionSyntax(SpanOf(nameofCtx), BuildExpression(nameofCtx.expression()));
 			case CvoloParser.TypeofExpressionContext typeofCtx:
 				return new TypeofExpressionSyntax(SpanOf(typeofCtx), GetTypeName(typeofCtx.type()));
+			case CvoloParser.SizeofExpressionContext sizeofCtx:
+				return new SizeofExpressionSyntax(SpanOf(sizeofCtx), GetTypeName(sizeofCtx.type()));
+			case CvoloParser.AlignofExpressionContext alignofCtx:
+				return new AlignofExpressionSyntax(SpanOf(alignofCtx), GetTypeName(alignofCtx.type()));
+			case CvoloParser.OffsetofExpressionContext offsetofCtx:
+				{
+					var members = new List<OffsetofMemberSyntax>();
+					foreach (var identifier in offsetofCtx.memberDesignator().Identifier())
+					{
+						var token = identifier.Symbol;
+						var start = Math.Max(token.StartIndex, 0);
+						var end = token.StopIndex >= start ? token.StopIndex + 1 : start;
+						members.Add(new OffsetofMemberSyntax(token.Text, TextSpan.FromBounds(start, end)));
+					}
+
+					return new OffsetofExpressionSyntax(SpanOf(offsetofCtx), GetTypeName(offsetofCtx.type()), members);
+				}
 			case CvoloParser.BadRawStringExpressionContext badRawCtx:
 				{
 					ReportParseError(badRawCtx, "Unterminated raw string literal. Every `@\"` must have a matching closing quote.", DiagnosticIds.UnbalancedRawStringLiteral);

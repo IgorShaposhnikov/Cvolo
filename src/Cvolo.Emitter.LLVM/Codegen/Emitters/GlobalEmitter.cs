@@ -147,10 +147,15 @@ internal sealed class GlobalEmitter
 				}
 
 				return LLVMValueRef.CreateConstNull(llvmType);
+			case SizeofExpressionSyntax or AlignofExpressionSyntax or OffsetofExpressionSyntax:
+				return LLVMValueRef.CreateConstInt(llvmType, unchecked((ulong)LayoutConstantOf(initializer)));
 			default:
 				return LLVMValueRef.CreateConstNull(llvmType);
 		}
 	}
+
+	private long LayoutConstantOf(ExpressionSyntax expression)
+		=> BindingContext.ResolvedLayoutConstants.TryGetValue(expression, out var value) ? value : BindingContext.EvaluateLayoutConstant(expression);
 
 	/// <summary>
 	/// Returns whether an initializer node is one of the literal forms accepted directly inside a
@@ -160,13 +165,16 @@ internal sealed class GlobalEmitter
 		=> expression is IntegerLiteralExpressionSyntax
 			or DoubleLiteralExpressionSyntax
 			or BooleanLiteralExpressionSyntax
-			or CharacterLiteralExpressionSyntax;
+			or CharacterLiteralExpressionSyntax
+			or SizeofExpressionSyntax
+			or AlignofExpressionSyntax
+			or OffsetofExpressionSyntax;
 
 	/// <summary>
 	/// Recursively evaluates the existing global-constant arithmetic subset, preserving integer
 	/// division-by-zero rejection and IEEE floating-point division behavior.
 	/// </summary>
-	private static bool TryEvaluateConstant(
+	private bool TryEvaluateConstant(
 		ExpressionSyntax expression,
 		out bool isDouble,
 		out double doubleValue,
@@ -174,6 +182,11 @@ internal sealed class GlobalEmitter
 	{
 		switch (expression)
 		{
+			case SizeofExpressionSyntax or AlignofExpressionSyntax or OffsetofExpressionSyntax:
+				isDouble = false;
+				integerValue = LayoutConstantOf(expression);
+				doubleValue = integerValue;
+				return true;
 			case IntegerLiteralExpressionSyntax integerLiteral:
 				isDouble = false;
 				doubleValue = integerLiteral.Value;

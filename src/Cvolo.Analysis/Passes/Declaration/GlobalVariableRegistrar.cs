@@ -461,6 +461,7 @@ internal sealed class GlobalVariableRegistrar(BindingContext context)
 			BinaryExpressionSyntax { Operator: "+" or "-" or "*" or "/" or "%" } bin
 				=> IsCompileTimeConstant(bin.Left) && IsCompileTimeConstant(bin.Right),
 			StructInitializationExpressionSyntax structInit => structInit.Initializers.All(static m => IsCompileTimeConstant(m.Expression)),
+			SizeofExpressionSyntax or AlignofExpressionSyntax or OffsetofExpressionSyntax => true,
 			_ => false
 		};
 	}

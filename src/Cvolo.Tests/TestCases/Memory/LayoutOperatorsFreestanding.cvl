@@ -1,0 +1,13 @@
+struct Pair
+{
+    byte A;
+    int B;
+}
+
+int main()
+{
+    nuint size = sizeof<Pair>();
+    nuint align = alignof<Pair>();
+    nuint offset = offsetof<Pair>(B);
+    return (int)(size + align + offset);
+}

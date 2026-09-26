@@ -104,6 +104,12 @@ internal sealed class ExpressionEmitter(
 				return EmitStringLiteral(GetNameofFoldedName(nameofExpr.Argument));
 			case TypeofExpressionSyntax typeofExpr:
 				return EmitTypeof(typeofExpr);
+			case SizeofExpressionSyntax sizeofExpr:
+				return EmitLayoutConstant(sizeofExpr);
+			case AlignofExpressionSyntax alignofExpr:
+				return EmitLayoutConstant(alignofExpr);
+			case OffsetofExpressionSyntax offsetofExpr:
+				return EmitLayoutConstant(offsetofExpr);
 			case NullLiteralExpressionSyntax:
 				// Defensive: the binder rejects 'null' in safe code before emission.
 				return LLVMValueRef.CreateConstPointerNull(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0));
@@ -381,6 +387,12 @@ internal sealed class ExpressionEmitter(
 	/// <summary>
 	/// Materializes and caches the constant System.Type value produced by a typeof expression.
 	/// </summary>
+	private LLVMValueRef EmitLayoutConstant(ExpressionSyntax expr)
+	{
+		var value = BindingContext.ResolvedLayoutConstants.TryGetValue(expr, out var folded) ? folded : BindingContext.EvaluateLayoutConstant(expr);
+		return LLVMValueRef.CreateConstInt(LowerType(TypeSymbol.NUInt), (ulong)value);
+	}
+
 	private LLVMValueRef EmitTypeof(TypeofExpressionSyntax typeofExpr)
 	{
 		var typeName = typeofExpr.TypeName;

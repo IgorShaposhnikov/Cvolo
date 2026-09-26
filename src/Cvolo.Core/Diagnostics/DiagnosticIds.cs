@@ -565,6 +565,33 @@ public static class DiagnosticIds
 	/// <summary>`nameof` was applied to an expression with no valid identifier.</summary>
 	public const string NameofExpressionInvalid = "CVL2102";
 
+	/// <summary>The type referenced by `sizeof` could not be resolved.</summary>
+	public const string SizeofInvalidTypeError = "CVL2103";
+
+	/// <summary>The type referenced by `alignof` could not be resolved.</summary>
+	public const string AlignofInvalidTypeError = "CVL2104";
+
+	/// <summary>A layout query was applied to `void`, which has no object layout.</summary>
+	public const string LayoutQueryOnVoid = "CVL2105";
+
+	/// <summary>The struct or raw-union referenced by `offsetof` could not be resolved.</summary>
+	public const string OffsetofInvalidTargetError = "CVL2106";
+
+	/// <summary>An `offsetof` member designator does not name a stored member.</summary>
+	public const string OffsetofMissingMember = "CVL2107";
+
+	/// <summary>`offsetof` cannot address a safe/tagged union variant.</summary>
+	public const string OffsetofSafeUnionVariant = "CVL2108";
+
+	/// <summary>A layout query was applied to a type with no concrete runtime storage.</summary>
+	public const string LayoutQueryIncompleteType = "CVL2109";
+
+	/// <summary>An evaluation was expected to produce a `nuint` value.</summary>
+	public const string LayoutConstantNotNuint = "CVL2110";
+
+	/// <summary>A fixed-array dimension is not a valid compile-time integer constant.</summary>
+	public const string InvalidFixedArrayConstant = "CVL2111";
+
 	/// <summary>A global initializer divides or takes the modulo of an integer constant by zero.</summary>
 	public const string ConstantIntegerDivisionByZero = "CVL2404";
 

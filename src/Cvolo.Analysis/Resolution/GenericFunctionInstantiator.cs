@@ -290,6 +290,16 @@ internal sealed class GenericFunctionInstantiator(
 		return System.Text.RegularExpressions.Regex.Replace(text, $@"\b{System.Text.RegularExpressions.Regex.Escape(key)}\b", value);
 	}
 
+	private static string SubstituteTypeName(string typeName, Dictionary<string, TypeSymbol> substitutionMap)
+	{
+		foreach (var kv in substitutionMap)
+		{
+			typeName = SubstituteTypeToken(typeName, kv.Key, kv.Value.Name);
+		}
+
+		return typeName;
+	}
+
 	/// <summary>
 	/// Registers, substitutes, and validates the shared monomorphized body used by interface and protocol dispatch.
 	/// </summary>
@@ -660,6 +670,15 @@ internal sealed class GenericFunctionInstantiator(
 				}
 
 				return new DefaultExpressionSyntax(def.Span, newDefaultType);
+
+			case SizeofExpressionSyntax sof:
+				return new SizeofExpressionSyntax(sof.Span, SubstituteTypeName(sof.TypeName, substitutionMap));
+
+			case AlignofExpressionSyntax aof:
+				return new AlignofExpressionSyntax(aof.Span, SubstituteTypeName(aof.TypeName, substitutionMap));
+
+			case OffsetofExpressionSyntax oof:
+				return new OffsetofExpressionSyntax(oof.Span, SubstituteTypeName(oof.TypeName, substitutionMap), oof.Members);
 
 			default:
 				return expr;
