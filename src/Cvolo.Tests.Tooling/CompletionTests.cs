@@ -65,6 +65,24 @@ public sealed class CompletionTests
 	}
 
 	[Fact]
+	public void Parameters_AreOfferedInExtensionConstructorBody()
+	{
+		var result = Complete(
+			"struct Layout { public nuint Size; public nuint Alignment; }\n" +
+			"extension Layout\n" +
+			"{\n" +
+			"    public Layout(nuint size, nuint alignment)\n" +
+			"    {\n" +
+			"        Size = size;\n" +
+			"        Alignment = al|\n" +
+			"    }\n" +
+			"}\n");
+
+		var all = string.Join(", ", result.Candidates.Select(c => $"{c.Label}:{c.Kind}"));
+		Assert.True(Contains(result, "alignment", CompletionKind.Parameter), all);
+	}
+
+	[Fact]
 	public void Locals_DeclaredAfterCursor_AreNotOffered()
 	{
 		var result = Complete("int main() {\n    |\n    val int z = 1;\n}\n");

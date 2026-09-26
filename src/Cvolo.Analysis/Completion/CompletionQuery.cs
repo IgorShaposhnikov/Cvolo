@@ -271,6 +271,10 @@ public static class CompletionQuery
 
 		if (node is FunctionDeclarationSyntax fn && fn.Body is not null && Touching(fn.Body.Span, position))
 			return fn;
+		if (node is ConstructorDeclarationSyntax constructor && Touching(constructor.Body.Span, position))
+			return constructor.ToFunctionDeclaration();
+		if (node is DestructorDeclarationSyntax destructor && Touching(destructor.Body.Span, position))
+			return destructor.ToFunctionDeclaration();
 
 		return null;
 	}
