@@ -313,6 +313,64 @@ internal sealed class FunctionBodyValidator(
 	}
 
 	/// <summary>
+	/// Validates an associated (leading-dot) extension body.
+	/// </summary>
+	/// <remarks>
+	/// An associated function has no receiver, so this path differs from
+	/// <see cref="ValidateExtensionBody"/> in three ways: there is no <c>this</c> parameter, the
+	/// extended type's fields are NOT lifted into scope as flat locals (that implicit instance scope
+	/// is exactly what "no receiver" means), and no receiver mutability contract applies — which also
+	/// exempts the function from <c>[StrictMutability]</c> and from the auto-inference warning.
+	/// </remarks>
+	public void ValidateAssociatedFunctionBody(string extendedTypeName, FunctionDeclarationSyntax method)
+	{
+		if (method.IsBuiltin)
+			return;
+
+		if (!method.HasBody)
+		{
+			if (context.CurrentUnit is not null && context.ExternalPackageUnits.Contains(context.CurrentUnit))
+				return;
+
+			if (!intrinsics.IsIntrinsicDeclaration(method))
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, method.NameSpan, $"Function '{method.Name}' must declare a body unless decorated with '[Intrinsic]'.");
+			}
+
+			return;
+		}
+
+		var baseUnsafeDepth = validation.UnsafeDepth;
+		validation.UnsafeDepth = IsUnsafeFunction(method) ? 1 : 0;
+		var baseInUnbound = validation.InUnbound;
+		validation.InUnbound = method.Modifier == SafetyTier.Unbound;
+
+		var localScope = new SymbolTable(context.Globals);
+		foreach (var param in method.Parameters)
+		{
+			var paramType = context.ResolveType(param.Type);
+			if (paramType is not null)
+				localScope.Declare(new VariableSymbol(param.Name, paramType, isMutable: false) { IsInitialized = true, Origin = OriginKind.Parameter });
+		}
+
+		statements.CheckBlock(method.Body, localScope, method);
+
+		if (method.ReturnType != "void" && !EndsWithReturn(method.Body!))
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(
+				currentFileContext,
+				method.NameSpan,
+				$"Function '{method.Name}' is declared to return '{method.ReturnType}' but is missing a return statement."
+			);
+		}
+
+		validation.UnsafeDepth = baseUnsafeDepth;
+		validation.InUnbound = baseInUnbound;
+	}
+
+	/// <summary>
 	/// Returns whether an extension body assigns to a field of the extended struct.
 	/// </summary>
 	private bool DetectFieldMutation(SyntaxNode node, StructTypeSymbol structType)

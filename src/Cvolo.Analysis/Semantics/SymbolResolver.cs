@@ -329,7 +329,10 @@ internal static class SymbolResolver
 
 		var name = Leaf(call.FunctionName);
 		var subject = NameSpan(source, call.Span, name, fromEnd: false);
-		var isExtension = function.Parameters.Count > 0 && function.Parameters[0].Name == "this";
+		// Only receiver-backed callables are instance methods; an associated function is called
+		// through its type and must not be reported as an extension method of that type.
+		var isExtension = function.IsInstanceExtension
+			|| (function.CallableKind == CallableKind.Free && function.Parameters.Count > 0 && function.Parameters[0].Name == "this");
 
 		if (declaration is ConstructorDeclarationSyntax constructor)
 		{
@@ -341,6 +344,7 @@ internal static class SymbolResolver
 		var kind = declaration switch
 		{
 			DestructorDeclarationSyntax => ResolvedSymbolKind.Destructor,
+			_ when function.CallableKind == CallableKind.Associated => ResolvedSymbolKind.AssociatedFunction,
 			_ when isExtension => ResolvedSymbolKind.ExtensionMethod,
 			_ => ResolvedSymbolKind.Function,
 		};
@@ -474,7 +478,7 @@ internal static class SymbolResolver
 		{
 			case FunctionDeclarationSyntax function:
 				return ResolveTypeReference(context, index, source, function.ReturnTypeSpan, function.ReturnType, position)
-					?? OnName(function.NameSpan, function.Name, position, IsExtensionMethod(unit, function) ? ResolvedSymbolKind.ExtensionMethod : ResolvedSymbolKind.Function, function, Display(function, function.ReturnType));
+					?? OnName(function.NameSpan, function.Name, position, DeclarationKind(unit, function), function, Display(function, function.ReturnType));
 			case ConstructorDeclarationSyntax constructor:
 				return OnName(constructor.NameSpan, constructor.StructName, position, ResolvedSymbolKind.Constructor, constructor, Display(constructor, constructor.StructName), constructor.StructName);
 			case DestructorDeclarationSyntax destructor:
@@ -566,15 +570,24 @@ internal static class SymbolResolver
 		return new ResolvedSymbol(KindOf(type), leaf, null, span, declaration, Display(declaration, type.Name));
 	}
 
-	private static bool IsExtensionMethod(CompilationUnitSyntax unit, FunctionDeclarationSyntax function)
+	/// <summary>
+	/// Classifies a function declaration by where it lives. An associated function is an extension
+	/// member that is called through its owner type, so it stays distinct from a receiver-backed
+	/// extension method and from a free function.
+	/// </summary>
+	private static ResolvedSymbolKind DeclarationKind(CompilationUnitSyntax unit, FunctionDeclarationSyntax function)
 	{
 		foreach (var member in Members(unit))
 		{
-			if (member is ExtensionDeclarationSyntax extension && extension.Methods.Contains(function))
-				return true;
+			if (member is not ExtensionDeclarationSyntax extension || !extension.Methods.Contains(function))
+				continue;
+
+			return function.IsAssociated
+				? ResolvedSymbolKind.AssociatedFunction
+				: ResolvedSymbolKind.ExtensionMethod;
 		}
 
-		return false;
+		return ResolvedSymbolKind.Function;
 	}
 
 	private static IEnumerable<SyntaxNode> Members(CompilationUnitSyntax unit)

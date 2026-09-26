@@ -1,0 +1,15 @@
+using System;
+
+struct MemBlock {
+    nuint Size;
+}
+
+nuint .OutsideExtension(nuint value) {
+    return value + 1;
+}
+
+int main() {
+    nuint value = OutsideExtension(1);
+    Console.WriteLine($"value={value}");
+    return 0;
+}

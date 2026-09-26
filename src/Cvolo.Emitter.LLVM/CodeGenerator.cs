@@ -1,4 +1,5 @@
 using Cvolo.Analysis;
+using Cvolo.Analysis.Symbols;
 using Cvolo.Analysis.Symbols.Base;
 using Cvolo.Analysis.Symbols.Structs;
 using Cvolo.Core.AST.Base;
@@ -233,11 +234,22 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 						.Concat(extDecl.Destructors.Select(static d => d.ToFunctionDeclaration()))
 						.Where(m => m.GenericParameters.Count == 0 || m.GenericParameters.All(p => bindingContext.ResolveType(p) is not null)))
 					{
+						// Instance and associated overload sets are disjoint, but they can share a source
+						// name, so the candidate table is chosen by the declared callable form. Consulting
+						// both tables would emit this method's body under a candidate belonging to the
+						// other form (and skip the candidate that actually belongs to this one).
 						var baseMangledName = bindingContext.GetMangledName($"{extDecl.ExtendedTypeName}.{method.Name}", ns);
-						if (bindingContext.OverloadedFunctions.TryGetValue(baseMangledName, out var candidates))
+						var candidatesByForm = method.IsAssociated
+							? bindingContext.AssociatedFunctions
+							: bindingContext.OverloadedFunctions;
+
+						if (candidatesByForm.TryGetValue(baseMangledName, out var candidates))
 						{
 							foreach (var candidate in candidates)
 							{
+								if (method.IsAssociated != (candidate.CallableKind == CallableKind.Associated))
+									continue;
+
 								if (emittedFunctionNames.Add(candidate.Name))
 								{
 									_functions.EmitBody(method, candidate.Name);

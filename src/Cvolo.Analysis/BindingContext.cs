@@ -42,6 +42,16 @@ public sealed class BindingContext
 	private readonly Dictionary<string, TypeSymbol> _typeCache = [];
 	public Dictionary<string, CompilationUnitSyntax> SymbolUnits { get; } = [];
 	public Dictionary<string, List<FunctionSymbol>> OverloadedFunctions { get; } = [];
+
+	/// <summary>
+	/// Receiverless extension members (declared with a leading dot) keyed by the same base mangled
+	/// name shape as <see cref="OverloadedFunctions"/> (<c>Namespace.Type.Member</c>).
+	/// Associated and instance extension members that share a source name live in separate tables so
+	/// that the two callable groups never merge into one overload set, and so that code generation
+	/// declares exactly the candidates that belong to each declaration.
+	/// </summary>
+	public Dictionary<string, List<FunctionSymbol>> AssociatedFunctions { get; } = [];
+
 	public Dictionary<CallExpressionSyntax, FunctionSymbol> ResolvedCalls { get; } = [];
 
 	/// <summary>
@@ -146,6 +156,15 @@ public sealed class BindingContext
 	public Dictionary<string, List<FunctionSymbol>> Constructors { get; } = [];
 	// Store generic extension templates, keyed by the extended template struct name (mangled)
 	public Dictionary<string, List<ExtensionDeclarationSyntax>> GenericExtensionTemplates { get; } = [];
+
+	/// <summary>
+	/// Extension members that declare their own type parameters (<c>extension Box { Box .From&lt;T&gt;() }</c>),
+	/// keyed by the same base mangled name shape as <see cref="OverloadedFunctions"/>
+	/// (<c>Namespace.Type.Member</c>). The owner type is retained so a call site can resolve the owner
+	/// semantically, substitute the type arguments, and only then register a concrete candidate in the
+	/// associated or instance overload table. A template never becomes a callable symbol on its own.
+	/// </summary>
+	public Dictionary<string, List<GenericExtensionMethodTemplate>> GenericExtensionMethodTemplates { get; } = [];
 
 	// Store monomorphized extension method/constructor declarations
 	public List<SyntaxNode> MonomorphizedExtensionDecls { get; } = [];
@@ -1658,11 +1677,16 @@ public sealed class BindingContext
 
 				var baseMangledName = $"{instantiatedType.Name}.{method.Name}";
 
-				var thisParamType = new PointerTypeSymbol(instantiatedType, isMutable: false);
-				var thisParam = new ParameterSymbol("this", thisParamType);
+				// Associated functions never receive a synthetic `this` receiver.
+				var isAssociated = method.IsAssociated;
 
-				var parameters = new List<ParameterSymbol> { thisParam };
+				var parameters = new List<ParameterSymbol>();
 				var instParams = new List<ParameterSyntax>();
+
+				if (!isAssociated)
+				{
+					parameters.Add(new ParameterSymbol("this", new PointerTypeSymbol(instantiatedType, isMutable: false)));
+				}
 
 				foreach (var param in method.Parameters)
 				{
@@ -1677,7 +1701,8 @@ public sealed class BindingContext
 				{
 					SafetyTier = method.Modifier ?? SafetyTier.Safe,
 					Visibility = method.Visibility,
-					DeclaringUnit = originalUnit
+					DeclaringUnit = originalUnit,
+					CallableKind = isAssociated ? CallableKind.Associated : CallableKind.InstanceExtension
 				};
 
 				// Copy UnsafeBody and MustUse attributes to the monomorphized instance
@@ -1694,10 +1719,11 @@ public sealed class BindingContext
 
 				Globals.Declare(newSymbol);
 
-				if (!OverloadedFunctions.TryGetValue(baseMangledName, out var candidates))
+				var overloadTable = isAssociated ? AssociatedFunctions : OverloadedFunctions;
+				if (!overloadTable.TryGetValue(baseMangledName, out var candidates))
 				{
 					candidates = [];
-					OverloadedFunctions[baseMangledName] = candidates;
+					overloadTable[baseMangledName] = candidates;
 				}
 
 				candidates.Add(newSymbol);
@@ -1723,7 +1749,11 @@ public sealed class BindingContext
 					method.Attributes,
 					method.Modifier,
 					method.Receiver,
-					method.Visibility);
+					method.Visibility,
+					method.NameSpan,
+					method.ReturnTypeSpan,
+					method.CallingConvention,
+					method.BindingKind);
 
 				MonomorphizedExtensionDecls.Add(instDecl);
 				MonomorphizedExtensionExtendedTypes[overloadedName] = instantiatedType.Name;
@@ -2056,6 +2086,221 @@ public sealed class BindingContext
 		return results;
 	}
 
+	/// <summary>
+	/// Splits a dotted call path into the longest prefix that names a type visible from
+	/// <paramref name="unit"/> and the remaining member name. This is shared infrastructure for every
+	/// type-qualified member lookup, so <c>System.Memory.Layout.FromType</c> resolves with
+	/// <c>System.Memory.Layout</c> as the owner and <c>FromType</c> as the member.
+	/// Returns false when no prefix of the path names a type.
+	/// </summary>
+	internal bool TrySplitTypeQualifiedName(
+		string dottedName,
+		CompilationUnitSyntax? unit,
+		out string typeName,
+		out string memberName)
+	{
+		typeName = "";
+		memberName = "";
+
+		// Longest prefix first: the owner type may itself be namespace-qualified, and its generic
+		// argument list may contain qualified names that are not owner/member boundaries.
+		for (var end = LastTopLevelDotIndex(dottedName); end > 0; end = LastTopLevelDotIndex(dottedName[..end]))
+		{
+			var candidate = dottedName[..end];
+			var member = dottedName[(end + 1)..];
+			if (member.Length == 0 || candidate.Length == 0)
+				continue;
+
+			if (!TryResolveTypeByLookupName(candidate, unit, out _))
+				continue;
+
+			typeName = candidate;
+			memberName = member;
+			return true;
+		}
+
+		return false;
+	}
+
+	/// <summary>
+	/// Resolves a written type name (possibly namespace-qualified, possibly generic) without
+	/// reporting diagnostics, honouring the current namespace and active usings.
+	/// </summary>
+	internal bool TryResolveTypeByLookupName(string writtenName, CompilationUnitSyntax? unit, out TypeSymbol type)
+	{
+		type = null!;
+
+		if (string.IsNullOrEmpty(writtenName))
+			return false;
+
+		var currentNamespace = unit?.NamespaceDeclaration?.Name;
+
+		IEnumerable<string> candidates = writtenName.Contains('.')
+			? new[] { writtenName }
+			: BuildLookupCandidates(writtenName, currentNamespace, unit);
+
+		foreach (var candidate in candidates)
+		{
+			if (ResolveType(candidate) is TypeSymbol resolvedType)
+			{
+				type = resolvedType;
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	private IEnumerable<string> BuildLookupCandidates(string writtenName, string? currentNamespace, CompilationUnitSyntax? unit)
+	{
+		if (!string.IsNullOrEmpty(currentNamespace))
+			yield return GetMangledName(writtenName, currentNamespace);
+
+		foreach (var ns in GetActiveUsings(unit).OrderBy(n => n, StringComparer.Ordinal))
+			yield return GetMangledName(writtenName, ns);
+
+		yield return writtenName;
+	}
+
+	/// <summary>
+	/// Returns receiverless associated functions (leading-dot extension members) resolvable for
+	/// <paramref name="ownerType"/> from <paramref name="unit"/>. Mirrors
+	/// <see cref="GetExtensionMethodCandidates"/> but draws from the associated table and never
+	/// synthesizes a receiver parameter.
+	/// </summary>
+	internal IReadOnlyList<(string MemberName, FunctionSymbol Function)> GetAssociatedFunctionCandidates(
+		TypeSymbol ownerType,
+		CompilationUnitSyntax? unit,
+		string? memberName = null)
+	{
+		var prefixes = BuildOwnerTypePrefixes(ownerType, unit);
+
+		var results = new List<(string MemberName, FunctionSymbol Function)>();
+		var seenFunctions = new HashSet<FunctionSymbol>();
+
+		void AddFromEntry(string resolvedMemberName, IReadOnlyList<FunctionSymbol> functions)
+		{
+			foreach (var function in functions)
+			{
+				if (!function.IsAssociated || !seenFunctions.Add(function))
+					continue;
+
+				results.Add((resolvedMemberName, function));
+			}
+		}
+
+		if (memberName is not null)
+		{
+			foreach (var prefix in prefixes)
+			{
+				if (AssociatedFunctions.TryGetValue($"{prefix}.{memberName}", out var functions))
+					AddFromEntry(memberName, functions);
+			}
+
+			return results;
+		}
+
+		var allowedPrefixes = new HashSet<string>(prefixes, StringComparer.Ordinal);
+		foreach (var entry in AssociatedFunctions.OrderBy(e => e.Key, StringComparer.Ordinal))
+		{
+			var separator = entry.Key.LastIndexOf('.');
+			if (separator < 0 || !allowedPrefixes.Contains(entry.Key[..separator]))
+				continue;
+
+			AddFromEntry(entry.Key[(separator + 1)..], entry.Value);
+		}
+
+		return results;
+	}
+
+	/// <summary>
+	/// Returns the still-generic extension member templates owned by <paramref name="ownerType"/> and
+	/// resolvable from <paramref name="unit"/>. A template is only a candidate here: the call site must
+	/// supply type arguments, which materialize a concrete candidate in the owner's overload table
+	/// before overload validation runs.
+	/// </summary>
+	internal IReadOnlyList<GenericExtensionMethodTemplate> GetGenericExtensionMethodTemplates(
+		TypeSymbol ownerType,
+		CompilationUnitSyntax? unit,
+		string? memberName = null)
+	{
+		if (ownerType is PointerTypeSymbol pointer)
+			ownerType = pointer.ReferencedType;
+
+		var prefixes = BuildOwnerTypePrefixes(ownerType, unit);
+		var results = new List<GenericExtensionMethodTemplate>();
+		var seen = new HashSet<FunctionDeclarationSyntax>();
+
+		void AddFromEntry(string baseMangledName, IReadOnlyList<GenericExtensionMethodTemplate> templates)
+		{
+			foreach (var template in templates)
+			{
+				// The extended type recorded at registration is the authoritative owner; a prefix may match
+				// for a same-named type in another namespace, so re-check the resolved type identity.
+				if (!string.Equals(template.OwnerType.Name, ownerType.Name, StringComparison.Ordinal)
+					|| !seen.Add(template.Method))
+				{
+					continue;
+				}
+
+				results.Add(template);
+			}
+		}
+
+		if (memberName is not null)
+		{
+			foreach (var prefix in prefixes)
+			{
+				if (GenericExtensionMethodTemplates.TryGetValue($"{prefix}.{memberName}", out var templates))
+					AddFromEntry($"{prefix}.{memberName}", templates);
+			}
+
+			return results;
+		}
+
+		var allowedPrefixes = new HashSet<string>(prefixes, StringComparer.Ordinal);
+		foreach (var entry in GenericExtensionMethodTemplates.OrderBy(e => e.Key, StringComparer.Ordinal))
+		{
+			var separator = entry.Key.LastIndexOf('.');
+			if (separator < 0 || !allowedPrefixes.Contains(entry.Key[..separator]))
+				continue;
+
+			AddFromEntry(entry.Key, entry.Value);
+		}
+
+		return results;
+	}
+
+	/// <summary>
+	/// Builds the ordered set of mangled owner-name prefixes under which a member declared on
+	/// <paramref name="ownerType"/> is registered: the fully qualified name, the unqualified leaf, the
+	/// current-namespace mangling, and every active using.
+	/// </summary>
+	private List<string> BuildOwnerTypePrefixes(TypeSymbol ownerType, CompilationUnitSyntax? unit)
+	{
+		var leafName = GetUnqualifiedTypeName(ownerType.Name);
+		var prefixes = new List<string>();
+		var seenPrefixes = new HashSet<string>(StringComparer.Ordinal);
+
+		void AddPrefix(string prefix)
+		{
+			if (!string.IsNullOrEmpty(prefix) && seenPrefixes.Add(prefix))
+				prefixes.Add(prefix);
+		}
+
+		AddPrefix(ownerType.Name);
+		AddPrefix(leafName);
+
+		var currentNamespace = unit?.NamespaceDeclaration?.Name;
+		if (!string.IsNullOrEmpty(currentNamespace))
+			AddPrefix(GetMangledName(leafName, currentNamespace));
+
+		foreach (var ns in GetActiveUsings(unit).OrderBy(n => n, StringComparer.Ordinal))
+			AddPrefix(GetMangledName(leafName, ns));
+
+		return prefixes;
+	}
+
 	private static bool IsExtensionReceiverFor(TypeSymbol baseType, FunctionSymbol function)
 	{
 		if (function.Parameters.Count == 0 ||
@@ -2069,6 +2314,18 @@ public sealed class BindingContext
 	}
 
 	private static string GetUnqualifiedTypeName(string name)
+	{
+		var lastTopLevelDot = LastTopLevelDotIndex(name);
+		return lastTopLevelDot < 0 ? name : name[(lastTopLevelDot + 1)..];
+	}
+
+	/// <summary>
+	/// Finds the last '.' that is not nested inside generic argument brackets, or -1 when the name has
+	/// no top-level separator. A dotted call path or written type name may contain a generic owner
+	/// (<c>Result&lt;int, Ns.MyError&gt;.Ok</c>), whose inner qualified names must not be mistaken for the
+	/// owner/member boundary.
+	/// </summary>
+	private static int LastTopLevelDotIndex(string name)
 	{
 		var genericDepth = 0;
 		var lastTopLevelDot = -1;
@@ -2090,7 +2347,7 @@ public sealed class BindingContext
 			}
 		}
 
-		return lastTopLevelDot < 0 ? name : name[(lastTopLevelDot + 1)..];
+		return lastTopLevelDot;
 	}
 
 	private Visibility GetSymbolVisibility(TypeSymbol type)

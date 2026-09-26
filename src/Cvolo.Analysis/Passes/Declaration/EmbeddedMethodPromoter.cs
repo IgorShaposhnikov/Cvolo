@@ -127,6 +127,9 @@ internal sealed class EmbeddedMethodPromoter(BindingContext context)
 
 					// Register under the OUTER struct's method key so `w.Method(...)`
 					// resolves through the existing dotted-extension machinery.
+					if (method.IsAssociated)
+						continue; // associated functions are never promoted across embedding per spec §18
+
 					var baseKey = context.GetMangledName($"{outerStruct.Name}.{method.Name}", outerBaseNamespace);
 					var overloadedName = context.GetOverloadedMangledName(baseKey, parameters.Select(p => p.Type).ToList());
 
@@ -136,7 +139,8 @@ internal sealed class EmbeddedMethodPromoter(BindingContext context)
 					var newSymbol = new FunctionSymbol(overloadedName, returnType, parameters)
 					{
 						Visibility = method.Visibility,
-						DeclaringUnit = sourceUnit
+						DeclaringUnit = sourceUnit,
+						CallableKind = CallableKind.InstanceExtension
 					};
 					context.Globals.Declare(newSymbol);
 

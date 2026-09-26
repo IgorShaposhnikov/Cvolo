@@ -1,0 +1,66 @@
+using System;
+
+struct MyStruct {
+    int Value;
+}
+
+struct MemBlock {
+    nuint Size;
+    nuint Alignment;
+}
+
+extension MemBlock {
+    MemBlock(nuint size, nuint alignment) {
+        Size = size;
+        Alignment = alignment;
+    }
+
+    bool IsAligned(nuint address) {
+        return (address % Alignment) == 0;
+    }
+
+    nuint Repeat(nuint count) {
+        var nuint total = 0;
+        for (var nuint i = 0; i < count; i = i + 1) {
+            total = total + Size;
+        }
+        return total;
+    }
+
+    MemBlock .FromType<T>() {
+        nuint size = sizeof<T>();
+        nuint alignment = alignof<T>();
+        val MemBlock block(Size: size, Alignment: alignment);
+        return block;
+    }
+
+    nuint .AlignUp(nuint value, nuint alignment) {
+        nuint remainder = value % alignment;
+        if (remainder == 0) {
+            return value;
+        }
+        return value + (alignment - remainder);
+    }
+
+    bool .IsPowerOfTwo(nuint value) {
+        if (value == 0) {
+            return false;
+        }
+        return (value & (value - 1)) == 0;
+    }
+}
+
+int main() {
+    var MemBlock block(Size: (nuint)16, Alignment: (nuint)16);
+    nuint address = 64;
+
+    MemBlock fromStruct = MemBlock.FromType<MyStruct>();
+    nuint aligned = MemBlock.AlignUp(37, block.Alignment);
+    bool ok = MemBlock.IsPowerOfTwo(block.Alignment) && block.IsAligned(address);
+
+    Console.WriteLine($"aligned={aligned}");
+    Console.WriteLine($"ok={ok}");
+    Console.WriteLine($"repeat={block.Repeat(3)}");
+    Console.WriteLine($"generic={fromStruct.Size}");
+    return 0;
+}

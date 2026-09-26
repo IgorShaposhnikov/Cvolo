@@ -544,14 +544,22 @@ internal sealed class DeclarationEmitter(
 			.Where(m => m.GenericParameters.Count == 0 || m.GenericParameters.All(p => BindingContext.ResolveType(p) is not null)))
 		{
 			var baseName = BindingContext.GetMangledName($"{extension.ExtendedTypeName}.{method.Name}", currentNamespace);
-			if (!BindingContext.OverloadedFunctions.TryGetValue(baseName, out var candidates))
-			{
-				continue;
-			}
+			// Instance and associated overload sets are disjoint but may share a source name, so the
+			// candidate table is selected by the declared callable form. Consulting both tables would
+			// declare this signature's prototype under a candidate of the other form.
+			var candidatesByForm = method.IsAssociated
+				? BindingContext.AssociatedFunctions
+				: BindingContext.OverloadedFunctions;
 
-			foreach (var candidate in candidates)
+			if (candidatesByForm.TryGetValue(baseName, out var candidates))
 			{
-				DeclareFunction(method, candidate.Name);
+				foreach (var candidate in candidates)
+				{
+					if (method.IsAssociated != (candidate.CallableKind == CallableKind.Associated))
+						continue;
+
+					DeclareFunction(method, candidate.Name);
+				}
 			}
 		}
 

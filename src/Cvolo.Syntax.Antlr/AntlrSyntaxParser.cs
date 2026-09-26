@@ -27,9 +27,12 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		var parser = new CvoloParser(tokenStream);
 
 		parser.RemoveErrorListeners();
-		parser.AddErrorListener(new SyntaxErrorListener(_diagnostics, context, tokenStream));
+		var errorListener = new SyntaxErrorListener(_diagnostics, context, tokenStream);
+		parser.AddErrorListener(errorListener);
 
 		var tree = parser.compilationUnit();
+
+		ReportLeadingDotOutsideExtension(tree, tokenStream, errorListener);
 
 		// Unterminated raw strings abort tree building (the surrounding statement is
 		// missing its ';'), so surface them here from the raw token stream as CVL2000.
@@ -102,6 +105,79 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		}
 
 		return -1;
+	}
+
+	// Token types that can end a type, i.e. can be immediately followed by a leading dot in
+	// `ReturnType .Name(...)`. Mirrors the `type` rule: a `primitiveType` keyword, a
+	// `qualifiedName`/`Identifier`, or one of the postfix forms (`[]`, `<...>`, `*`, `?`).
+	private static bool EndsType(int tokenType) => tokenType is
+		CvoloLexer.Identifier
+		or CvoloLexer.INT or CvoloLexer.UINT or CvoloLexer.LONG or CvoloLexer.ULONG
+		or CvoloLexer.SHORT or CvoloLexer.USHORT or CvoloLexer.BYTE or CvoloLexer.SBYTE
+		or CvoloLexer.NINT or CvoloLexer.NUINT
+		or CvoloLexer.FLOAT or CvoloLexer.DOUBLE
+		or CvoloLexer.GT or CvoloLexer.RBRACK or CvoloLexer.STAR or CvoloLexer.QMARK;
+
+	/// <summary>
+	/// A leading dot is only meaningful inside an extension block. The top-level
+	/// <c>functionDeclaration</c> rule has no DOT alternative, so a stray leading dot surfaces as a
+	/// bare syntax error; upgrade it to a dedicated, actionable diagnostic.
+	/// </summary>
+	private void ReportLeadingDotOutsideExtension(
+		CvoloParser.CompilationUnitContext tree,
+		CommonTokenStream tokenStream,
+		SyntaxErrorListener errorListener)
+	{
+		if (errorListener.RejectedDotIndices.Count == 0)
+			return;
+
+		// Character ranges covered by extension blocks; a rejected dot inside one of them is some
+		// other (already reported) syntax error and must not be relabelled.
+		var extensionRanges = new List<(int Start, int Stop)>();
+		foreach (var ext in CollectExtensionDeclarations(tree))
+			extensionRanges.Add((ext.Start.StartIndex, ext.Stop.StopIndex));
+
+		var tokens = tokenStream.GetTokens();
+		for (var i = 0; i < tokens.Count; i++)
+		{
+			var dot = tokens[i];
+			if (dot.Type != CvoloLexer.DOT || dot.Channel != TokenConstants.DefaultChannel)
+				continue;
+
+			if (!errorListener.RejectedDotIndices.Contains(dot.StartIndex))
+				continue;
+
+			if (extensionRanges.Any(r => dot.StartIndex >= r.Start && dot.StartIndex <= r.Stop))
+				continue;
+
+			var nameIndex = NextVisibleIndex(tokens, i);
+			if (nameIndex < 0 || tokens[nameIndex].Type != CvoloLexer.Identifier)
+				continue;
+
+			var typeIndex = i - 1;
+			while (typeIndex >= 0 && tokens[typeIndex].Channel != TokenConstants.DefaultChannel)
+				typeIndex--;
+			if (typeIndex < 0 || !EndsType(tokens[typeIndex].Type))
+				continue;
+
+			_diagnostics.Report(_compilationContext, SpanOf(dot),
+				"Associated function declarations are only allowed inside an extension block.",
+				DiagnosticIds.AssociatedFunctionOutsideExtension);
+		}
+	}
+
+	private static IEnumerable<CvoloParser.ExtensionDeclarationContext> CollectExtensionDeclarations(CvoloParser.CompilationUnitContext tree)
+	{
+		var collector = new ExtensionDeclarationCollector();
+		Antlr4.Runtime.Tree.ParseTreeWalker.Default.Walk(collector, tree);
+		return collector.Found;
+	}
+
+	private sealed class ExtensionDeclarationCollector : CvoloParserBaseListener
+	{
+		public List<CvoloParser.ExtensionDeclarationContext> Found { get; } = [];
+
+		public override void EnterExtensionDeclaration(CvoloParser.ExtensionDeclarationContext context) => Found.Add(context);
 	}
 
 	private CompilationUnitSyntax BuildCompilationUnit(CvoloParser.CompilationUnitContext context, CompilationContext compilationContext)
@@ -452,14 +528,56 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 	}
 
 	private FunctionDeclarationSyntax BuildFunctionDeclaration(CvoloParser.FunctionDeclarationContext context)
+		=> BuildFunctionDeclarationCore(
+			declarationContext: context,
+			returnTypeCtx: context.returnType(),
+			nameCtx: context.builtinCapableIdentifier(),
+			typeListCtx: context.typeList(),
+			parameterListCtx: context.parameterList(),
+			blockCtx: context.blockStatement(),
+			attributeListCtx: context.attributeList(),
+			functionModifierCtx: context.functionModifier(),
+			callingConventionCtx: context.callingConvention(),
+			visibilityCtx: context.visibilityModifier(),
+			builtinToken: context.BUILTIN()?.Symbol,
+			leadingDot: null);
+
+	private FunctionDeclarationSyntax BuildExtensionFunctionDeclaration(CvoloParser.ExtensionFunctionDeclarationContext context)
+		=> BuildFunctionDeclarationCore(
+			declarationContext: context,
+			returnTypeCtx: context.returnType(),
+			nameCtx: context.builtinCapableIdentifier(),
+			typeListCtx: context.typeList(),
+			parameterListCtx: context.parameterList(),
+			blockCtx: context.blockStatement(),
+			attributeListCtx: context.attributeList(),
+			functionModifierCtx: context.functionModifier(),
+			callingConventionCtx: context.callingConvention(),
+			visibilityCtx: context.visibilityModifier(),
+			builtinToken: context.BUILTIN()?.Symbol,
+			leadingDot: context.DOT()?.Symbol);
+
+	private FunctionDeclarationSyntax BuildFunctionDeclarationCore(
+		Antlr4.Runtime.ParserRuleContext declarationContext,
+		CvoloParser.ReturnTypeContext returnTypeCtx,
+		CvoloParser.BuiltinCapableIdentifierContext nameCtx,
+		CvoloParser.TypeListContext? typeListCtx,
+		CvoloParser.ParameterListContext? parameterListCtx,
+		CvoloParser.BlockStatementContext? blockCtx,
+		IEnumerable<CvoloParser.AttributeListContext> attributeListCtx,
+		CvoloParser.FunctionModifierContext? functionModifierCtx,
+		CvoloParser.CallingConventionContext? callingConventionCtx,
+		CvoloParser.VisibilityModifierContext? visibilityCtx,
+		Antlr4.Runtime.IToken? builtinToken,
+		Antlr4.Runtime.IToken? leadingDot)
 	{
-		var returnType = GetReturnTypeName(context.returnType());
-		var nameCtx = context.builtinCapableIdentifier();
+		var returnType = GetReturnTypeName(returnTypeCtx);
 		var name = nameCtx.GetText();
+		var isAssociated = leadingDot is not null;
 
 		// Parse optional generic parameters list (which can now contain concrete types like <int>)
 		var generics = new List<string>();
-		if (context.typeList() is { } typeListCtx)
+		if (typeListCtx is not null)
 		{
 			foreach (var t in typeListCtx.type())
 				generics.Add(GetTypeName(t));
@@ -467,12 +585,21 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 
 		var parameters = new List<ParameterSyntax>();
 		var receiver = ReceiverContract.None;
-		if (context.parameterList() is { } paramList)
+		if (parameterListCtx is not null)
 		{
-			foreach (var param in paramList.parameter())
+			foreach (var param in parameterListCtx.parameter())
 			{
 				if (TryGetReceiverContract(param, out var contract, out var receiverName))
 				{
+					if (isAssociated)
+					{
+						ReportParseError(
+							param,
+							$"Associated function '{name}' cannot declare an instance receiver.",
+							DiagnosticIds.AssociatedFunctionWithReceiver);
+						continue;
+					}
+
 					if (parameters.Count > 0)
 					{
 						ReportParseError(param, "Receiver parameter ('refvar this' / 'ref this') must be the first parameter of the method.");
@@ -493,19 +620,19 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			}
 		}
 
-		var body = context.blockStatement() is { } blockCtx ? BuildBlockStatement(blockCtx) : null;
-		var attributes = BuildAttributeList(context.attributeList());
+		var body = blockCtx is not null ? BuildBlockStatement(blockCtx) : null;
+		var attributes = BuildAttributeList(attributeListCtx);
 
 		// Extract optional function modifier (unsafe / unbound)
 		SafetyTier? modifier = null;
-		if (context.functionModifier() is { } modCtx)
-			modifier = modCtx.GetText() == "unsafe" ? SafetyTier.Unsafe : SafetyTier.Unbound;
+		if (functionModifierCtx is not null)
+			modifier = functionModifierCtx.GetText() == "unsafe" ? SafetyTier.Unsafe : SafetyTier.Unbound;
 
 		// Optional native-ABI calling convention slot: 'unsafe "C"' / 'unsafe "system"' before the
 		// return type. Requires the function modifier to be absent (the convention keyword is
 		// parsed from the leading UNSAFE token).
 		string? callingConvention = null;
-		if (context.callingConvention() is { } ccCtx)
+		if (callingConventionCtx is { } ccCtx)
 		{
 			callingConvention = ccCtx.StringLiteral().GetText();
 			if (callingConvention.Length >= 2)
@@ -513,15 +640,16 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		}
 
 		var function = new FunctionDeclarationSyntax(
-			SpanOf(context), returnType, name, generics, parameters, body, attributes, modifier, receiver,
-			GetVisibilityModifier(context.visibilityModifier()),
+			SpanOf(declarationContext), returnType, name, generics, parameters, body, attributes, modifier, receiver,
+			GetVisibilityModifier(visibilityCtx),
 			nameSpan: SpanOf(nameCtx),
-			returnTypeSpan: SpanOf(context.returnType()),
-			callingConvention: callingConvention);
-		if (context.BUILTIN() is { } builtinToken)
+			returnTypeSpan: SpanOf(returnTypeCtx),
+			callingConvention: callingConvention,
+			bindingKind: isAssociated ? FunctionBindingKind.Associated : FunctionBindingKind.Default);
+		if (builtinToken is not null)
 		{
 			function.IsBuiltin = true;
-			function.BuiltinSpan = SpanOf(builtinToken.Symbol);
+			function.BuiltinSpan = SpanOf(builtinToken);
 		}
 
 		return function;
@@ -1044,6 +1172,37 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 						argumentListSpan = TextSpan.FromBounds(leftParen.Symbol.StartIndex, rightParen.Symbol.StopIndex + 1);
 
 					return new CallExpressionSyntax(SpanOf(callCtx), funcName, typeArgs, args, argumentListSpan);
+				}
+
+			case CvoloParser.GenericTypeQualifiedCallExpressionContext genericCallCtx:
+				{
+					// A generic owner type may be written before the member separator
+					// ('Result<int, MyError>.Ok(42)'). The owner is resolved semantically, so the call keeps
+					// the owner and member as one dotted path exactly like any other type-qualified call.
+					var ownerTypeList = genericCallCtx.typeList(0);
+					var funcName = $"{genericCallCtx.qualifiedName().GetText()}<{string.Join(", ", ownerTypeList.type().Select(GetTypeName))}>.{genericCallCtx.builtinCapableIdentifier().GetText()}";
+
+					// The owner's type arguments are part of the owner path, not of the member's; only a
+					// second list is the member's own explicit type argument list.
+					var typeArgs = new List<string>();
+					if (genericCallCtx.typeList().Length > 1)
+					{
+						foreach (var t in genericCallCtx.typeList(1).type())
+							typeArgs.Add(GetTypeName(t));
+					}
+
+					var args = new List<ExpressionSyntax>();
+					if (genericCallCtx.argumentList() is { } genericArgList)
+					{
+						foreach (var arg in genericArgList.expression())
+							args.Add(BuildExpression(arg));
+					}
+
+					TextSpan? genericArgumentListSpan = null;
+					if (genericCallCtx.LPAREN() is { } genericLeftParen && genericCallCtx.RPAREN() is { } genericRightParen)
+						genericArgumentListSpan = TextSpan.FromBounds(genericLeftParen.Symbol.StartIndex, genericRightParen.Symbol.StopIndex + 1);
+
+					return new CallExpressionSyntax(SpanOf(genericCallCtx), funcName, typeArgs, args, genericArgumentListSpan);
 				}
 
 			case CvoloParser.UnaryMinusExpressionContext unaryMinus:
@@ -1655,8 +1814,16 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 	{
 		private readonly HashSet<int> _cascadeLines = new();
 
+		/// <summary>
+		/// Start indices of DOT tokens the parser rejected. Used after parsing to turn a top-level
+		/// leading dot into the dedicated associated-function diagnostic.
+		/// </summary>
+		public HashSet<int> RejectedDotIndices { get; } = new();
+
 		public override void SyntaxError(TextWriter output, IRecognizer recognizer, IToken offendingSymbol, int line, int charPositionInLine, string msg, RecognitionException e)
 		{
+			if (offendingSymbol is { Type: CvoloLexer.DOT })
+				RejectedDotIndices.Add(offendingSymbol.StartIndex);
 			var start = offendingSymbol?.StartIndex ?? 0;
 			var length = offendingSymbol?.Type == TokenConstants.EOF ? 0 : offendingSymbol?.Text?.Length ?? 0;
 
@@ -1769,13 +1936,20 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 	{
 		var extendedTypeName = context.Identifier().GetText();
 		var methods = new List<FunctionDeclarationSyntax>();
-		foreach (var funcCtx in context.functionDeclaration())
+		var destructorContexts = new List<CvoloParser.DestructorDeclarationContext>();
+		var constructorContexts = new List<CvoloParser.ConstructorDeclarationContext>();
+		foreach (var memberCtx in context.extensionMember())
 		{
-			methods.Add(BuildFunctionDeclaration(funcCtx));
+			if (memberCtx.extensionFunctionDeclaration() is { } funcCtx)
+				methods.Add(BuildExtensionFunctionDeclaration(funcCtx));
+			else if (memberCtx.destructorDeclaration() is { } dtorCtx)
+				destructorContexts.Add(dtorCtx);
+			else if (memberCtx.constructorDeclaration() is { } ctorCtx)
+				constructorContexts.Add(ctorCtx);
 		}
 
 		var destructors = new List<DestructorDeclarationSyntax>();
-		foreach (var dtorCtx in context.destructorDeclaration())
+		foreach (var dtorCtx in destructorContexts)
 		{
 			var dtorAttributes = BuildAttributeList(dtorCtx.attributeList());
 			var dtorBody = dtorCtx.blockStatement() is { } dtorBlock ? BuildBlockStatement(dtorBlock) : new BlockStatementSyntax(SpanOf(dtorCtx), []);
@@ -1791,7 +1965,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		}
 
 		var constructors = new List<ConstructorDeclarationSyntax>();
-		foreach (var ctorCtx in context.constructorDeclaration())
+		foreach (var ctorCtx in constructorContexts)
 		{
 			var ctorParams = new List<ParameterSyntax>();
 			if (ctorCtx.parameterList() is { } paramListCtx)

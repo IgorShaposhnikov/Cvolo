@@ -7,6 +7,46 @@ using Cvolo.Core.AST.Expressions;
 namespace Cvolo.Analysis.Resolution;
 
 /// <summary>
+/// Which of the two dotted-call modes a call expression is in.
+/// </summary>
+internal enum DottedCallForm
+{
+	/// <summary>
+	/// Not a dotted call, or the receiver is neither a value nor a resolvable type.
+	/// </summary>
+	None,
+	/// <summary>
+	/// <c>value.Member(...)</c> — instance extension dispatch with a synthetic receiver.
+	/// </summary>
+	ValueReceiver,
+
+	/// <summary>
+	/// <c>Type.Member(...)</c> — associated dispatch, receiverless.
+	/// </summary>
+	TypeReceiver
+}
+
+/// <summary>
+/// A dotted call whose receiver form contradicts the declared callable kind. Reported separately
+/// from "no overload matches" so the diagnostic can name the correct call syntax.
+/// </summary>
+internal enum DottedCallMismatch
+{
+	/// <summary>
+	/// The call form matches the declared callable kind.
+	/// </summary>
+	None,
+	/// <summary>
+	/// Only a receiverless associated function exists but the call went through a value.
+	/// </summary>
+	AssociatedCalledThroughValue,
+	/// <summary>
+	/// Only a receiver-backed instance method exists but the call went through the type.
+	/// </summary>
+	InstanceCalledThroughType
+}
+
+/// <summary>
 /// Discovers overload candidates and scores callable signatures without depending on validation traversal.
 /// </summary>
 /// <remarks>
@@ -36,41 +76,79 @@ internal sealed class OverloadResolver(BindingContext context)
 	/// <param name="call">Optional call syntax used to reconstruct generic constructor names.</param>
 	/// <returns>The highest-scoring compatible function, or <see langword="null"/> when none matches.</returns>
 	public FunctionSymbol? Resolve(string name, IReadOnlyList<TypeSymbol> argumentTypes, SymbolTable scope, CallExpressionSyntax? call = null)
+		=> Resolve(name, argumentTypes, scope, call, out _, out _);
+
+	/// <summary>
+	/// Resolves a call and additionally reports how a dotted call form disagreed with the declared
+	/// callable kind, so the caller can explain "called through the value" versus "called through the
+	/// type" instead of falling back to a generic "no overload matches" message.
+	/// </summary>
+	/// <param name="mismatch">
+	/// Set when a receiver of one kind names only callables of the other kind: a value receiver that
+	/// only matches associated functions, or a type receiver that only matches instance methods.
+	/// </param>
+	/// <param name="mismatchOwnerName">
+	/// The owner type the mismatched call resolved to, so diagnostics can name the type rather than
+	/// whatever receiver expression happened to be written at the call site.
+	/// </param>
+	/// <param name="allowTypeReceiverInstanceFallback">
+	/// Lets a qualified name whose prefix is a type fall back to the plain overload tables when no
+	/// associated function carries the member name. This is for the compiler's own protocol queries
+	/// (the <c>GetEnumerator</c>/<c>MoveNext</c>/<c>Current</c> triple, which are always addressed by
+	/// qualified name and are receiver-backed instance methods), never for a user call site: there a
+	/// type receiver naming only instance methods is the "called through the type" error.
+	/// </param>
+	public FunctionSymbol? Resolve(
+		string name,
+		IReadOnlyList<TypeSymbol> argumentTypes,
+		SymbolTable scope,
+		CallExpressionSyntax? call,
+		out DottedCallMismatch mismatch,
+		out string? mismatchOwnerName,
+		bool allowTypeReceiverInstanceFallback = false)
 	{
 		var candidates = new List<FunctionSymbol>();
 		var baseName = name;
 		var adjustedArgumentTypes = new List<TypeSymbol>(argumentTypes);
+		mismatch = DottedCallMismatch.None;
+		mismatchOwnerName = null;
 
-		var isDottedExtension = false;
-		TypeSymbol? dottedReceiverType = null;
-		string? dottedMemberName = null;
+		var form = DottedCallForm.None;
+		TypeSymbol? ownerType = null;
+		string? memberName = null;
 
-		if (name.Contains('.'))
+		if (name.Contains('.') && TrySplitDottedReceiver(name, scope, out var receiver))
 		{
-			var parts = name.Split('.');
-			var receiverName = parts[0];
-			var methodName = parts[1];
-
-			var receiverSymbol = scope.Lookup(receiverName) as VariableSymbol
-				?? context.ResolveGlobalReference(receiverName, out _);
-			if (receiverSymbol is not null)
+			if (receiver.IsValue)
 			{
-				var receiverType = receiverSymbol.Type;
-				if (receiverType is PointerTypeSymbol pointer)
-					receiverType = pointer.ReferencedType;
+				var receiverType = receiver.ValueType!;
+				if (receiverType is PointerTypeSymbol receiverPointer)
+					receiverType = receiverPointer.ReferencedType;
 
+				// Only struct/union/enum values can carry an instance receiver.
 				if (receiverType is StructTypeSymbol or UnionTypeSymbol or EnumTypeSymbol)
 				{
-					isDottedExtension = true;
-					dottedReceiverType = receiverType;
-					dottedMemberName = methodName;
-					baseName = $"{receiverType.Name}.{methodName}";
-					adjustedArgumentTypes.Insert(0, new PointerTypeSymbol(receiverType, isMutable: receiverSymbol.IsMutable));
+					form = DottedCallForm.ValueReceiver;
+					ownerType = receiverType;
+					memberName = receiver.MemberName;
+					baseName = $"{receiverType.Name}.{receiver.MemberName}";
+					adjustedArgumentTypes.Insert(0, new PointerTypeSymbol(receiverType, isMutable: receiver.IsMutable));
 				}
+			}
+			else
+			{
+				// A type receiver has no value to pass, so no receiver argument is inserted and the
+				// constructor / implicit-`this` fallbacks below do not apply.
+				form = DottedCallForm.TypeReceiver;
+				memberName = receiver.MemberName;
+				context.TryResolveTypeByLookupName(
+					name[..(name.Length - receiver.MemberName.Length - 1)],
+					context.CurrentUnit,
+					out ownerType);
 			}
 		}
 
-		if (!isDottedExtension)
+		if (form == DottedCallForm.None)
 		{
 			var constructorName = name;
 			if (call is not null && call.TypeArguments.Count > 0 && !name.Contains('<'))
@@ -105,16 +183,45 @@ internal sealed class OverloadResolver(BindingContext context)
 			}
 		}
 
-		if (isDottedExtension && dottedReceiverType is not null && dottedMemberName is not null)
+		if (form == DottedCallForm.ValueReceiver && ownerType is not null && memberName is not null)
 		{
+			// Value receiver: only receiver-backed extension methods are callable this way.
 			candidates.AddRange(context
-				.GetExtensionMethodCandidates(dottedReceiverType, context.CurrentUnit, dottedMemberName)
+				.GetExtensionMethodCandidates(ownerType, context.CurrentUnit, memberName)
 				.Select(candidate => candidate.Function));
+
+			if (candidates.Count == 0
+				&& context.GetAssociatedFunctionCandidates(ownerType, context.CurrentUnit, memberName).Count > 0)
+			{
+				mismatch = DottedCallMismatch.AssociatedCalledThroughValue;
+				mismatchOwnerName = ownerType.Name;
+			}
 		}
-		else
+		else if (form == DottedCallForm.TypeReceiver && ownerType is not null && memberName is not null)
+		{
+			// Type receiver: only receiverless associated functions are callable this way, and the
+			// declared arguments alone participate in scoring.
+			candidates.AddRange(context
+				.GetAssociatedFunctionCandidates(ownerType, context.CurrentUnit, memberName)
+				.Select(candidate => candidate.Function));
+
+			if (candidates.Count == 0)
+			{
+				if (context.GetExtensionMethodCandidates(ownerType, context.CurrentUnit, memberName).Count > 0)
+				{
+					mismatch = DottedCallMismatch.InstanceCalledThroughType;
+					mismatchOwnerName = ownerType.Name;
+				}
+
+				if (allowTypeReceiverInstanceFallback)
+					GatherCandidates(baseName, candidates);
+			}
+		}
+		else if (form == DottedCallForm.None)
 		{
 			GatherCandidates(baseName, candidates);
 		}
+
 
 		FunctionSymbol? bestMatch = null;
 		var bestScore = -1;
@@ -131,6 +238,66 @@ internal sealed class OverloadResolver(BindingContext context)
 
 		return bestScore >= 0 ? bestMatch : null;
 	}
+
+	/// <summary>
+	/// Resolves the longest prefix of a dotted call path that denotes either a value (instance
+	/// dispatch) or a type (associated dispatch). Values win, matching the language rule that
+	/// <c>value.Member()</c> is always instance dispatch and only a name that is not a value can be
+	/// read as an owner type. The prefix search is longest-first so namespace-qualified owners
+	/// (<c>System.Memory.Layout.FromType</c>) resolve to <c>System.Memory.Layout</c>.
+	/// </summary>
+	private bool TrySplitDottedReceiver(string dottedName, SymbolTable scope, out DottedReceiver receiver)
+	{
+		receiver = default;
+
+		for (var dot = dottedName.LastIndexOf('.'); dot > 0;)
+		{
+			var prefix = dottedName[..dot];
+			if ((scope.Lookup(prefix) ?? context.ResolveGlobalReference(prefix, out _)) is VariableSymbol value)
+			{
+				receiver = new DottedReceiver(true, value.Type, dottedName[(dot + 1)..], value.IsMutable);
+				return true;
+			}
+
+			var nextDot = prefix.LastIndexOf('.');
+			dot = nextDot;
+		}
+
+		if (!context.TrySplitTypeQualifiedName(dottedName, context.CurrentUnit, out _, out var memberName))
+			return false;
+
+		receiver = new DottedReceiver(false, null, memberName, false);
+		return true;
+	}
+
+	/// <summary>
+	/// Splits a dotted call path into the receiver it dispatches on and the member name, using the same
+	/// value-wins rule as ordinary call resolution. Exposed so a call site can recognize a generic
+	/// extension member with exactly the dispatch form it wrote: a value receiver selects the
+	/// receiver-backed template, a type receiver the receiverless one.
+	/// </summary>
+	/// <param name="receiverType">The receiver's type for a value receiver; null for a type receiver.</param>
+	public bool TrySplitDottedReceiver(
+		string dottedName,
+		SymbolTable scope,
+		out bool receiverIsValue,
+		out TypeSymbol? receiverType,
+		out string memberName)
+	{
+		receiverIsValue = false;
+		receiverType = null;
+		memberName = "";
+
+		if (!TrySplitDottedReceiver(dottedName, scope, out var receiver))
+			return false;
+
+		receiverIsValue = receiver.IsValue;
+		receiverType = receiver.ValueType;
+		memberName = receiver.MemberName;
+		return true;
+	}
+
+	private readonly record struct DottedReceiver(bool IsValue, TypeSymbol? ValueType, string MemberName, bool IsMutable);
 
 	/// <summary>
 	/// Appends all overloads visible for a name through exact, current-namespace, and active-using lookup.

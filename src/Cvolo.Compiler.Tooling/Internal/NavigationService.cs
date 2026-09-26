@@ -445,7 +445,7 @@ internal sealed class NavigationIndex
 					Register(documentId, source, extension, $"extension {owner}", ToolingSymbolKind.OtherType, null);
 					foreach (var method in extension.Methods)
 					{
-						Register(documentId, source, method, method.Name, method.Name.StartsWith('~') ? ToolingSymbolKind.Destructor : ToolingSymbolKind.ExtensionMethod, method.NameSpan, owner);
+						Register(documentId, source, method, method.Name, DeclarationKind(method), method.NameSpan, owner);
 						IndexParameters(documentId, source, method.Parameters, owner);
 						IndexLocals(documentId, source, method.Body);
 					}
@@ -755,6 +755,18 @@ internal sealed class NavigationIndex
 			: new TextSpan(start + index, name.Length);
 	}
 
+	/// <summary>
+	/// Classifies an extension member declaration. A leading-dot member has no synthetic receiver and
+	/// is called through its owner type, so it is indexed as its own kind rather than as a
+	/// receiver-backed extension method.
+	/// </summary>
+	private static ToolingSymbolKind DeclarationKind(FunctionDeclarationSyntax method) => method switch
+	{
+		_ when method.Name.StartsWith('~') => ToolingSymbolKind.Destructor,
+		_ when method.IsAssociated => ToolingSymbolKind.AssociatedFunction,
+		_ => ToolingSymbolKind.ExtensionMethod,
+	};
+
 	internal static ToolingSymbolKind MapKind(ResolvedSymbolKind kind) => kind switch
 	{
 		ResolvedSymbolKind.Namespace => ToolingSymbolKind.Namespace,
@@ -771,6 +783,7 @@ internal sealed class NavigationIndex
 		ResolvedSymbolKind.Function => ToolingSymbolKind.Function,
 		ResolvedSymbolKind.Method => ToolingSymbolKind.Method,
 		ResolvedSymbolKind.ExtensionMethod => ToolingSymbolKind.ExtensionMethod,
+		ResolvedSymbolKind.AssociatedFunction => ToolingSymbolKind.AssociatedFunction,
 		ResolvedSymbolKind.Constructor => ToolingSymbolKind.Constructor,
 		ResolvedSymbolKind.Destructor => ToolingSymbolKind.Destructor,
 		ResolvedSymbolKind.Field => ToolingSymbolKind.Field,

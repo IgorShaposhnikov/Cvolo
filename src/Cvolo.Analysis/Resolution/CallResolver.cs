@@ -26,10 +26,24 @@ internal sealed class CallResolver(BindingContext context, OverloadResolver over
 	/// overload set exactly as the legacy validation path did.
 	/// </summary>
 	public FunctionSymbol? ResolveOrdinaryCall(CallExpressionSyntax call, IReadOnlyList<TypeSymbol> argumentTypes, SymbolTable scope)
+		=> ResolveOrdinaryCall(call, argumentTypes, scope, out _, out _);
+
+	/// <summary>
+	/// Resolves a non-generic ordinary call and reports any dotted-call form that disagreed with the
+	/// declared callable kind, so the caller can emit the associated/instance-specific diagnostic.
+	/// </summary>
+	public FunctionSymbol? ResolveOrdinaryCall(
+		CallExpressionSyntax call,
+		IReadOnlyList<TypeSymbol> argumentTypes,
+		SymbolTable scope,
+		out DottedCallMismatch mismatch,
+		out string? mismatchOwnerName)
 	{
+		mismatch = DottedCallMismatch.None;
+		mismatchOwnerName = null;
 		return TryResolveEnumName(call, argumentTypes, scope)
 			?? TryResolveFlagsHasFlag(call, argumentTypes, scope)
-			?? overloads.Resolve(call.FunctionName, argumentTypes, scope);
+			?? overloads.Resolve(call.FunctionName, argumentTypes, scope, null, out mismatch, out mismatchOwnerName);
 	}
 
 	/// <summary>

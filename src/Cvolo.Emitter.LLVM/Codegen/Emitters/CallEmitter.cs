@@ -138,6 +138,9 @@ internal sealed class CallEmitter(
 		var isExtensionCall = BindingContext.ResolvedCalls.TryGetValue(call, out var resolvedExt)
 			&& resolvedExt.Parameters.Count > 0
 			&& resolvedExt.Parameters[0].Name == "this";
+		// Set when a struct constructor is called from a position that supplies no destination
+		// storage, so the constructed value is materialized into a temporary slot.
+		LLVMValueRef? constructorDestination = null;
 
 		if (isExtensionCall && call.FunctionName.Contains('.'))
 		{
@@ -194,10 +197,23 @@ internal sealed class CallEmitter(
 		}
 		else if (isExtensionCall)
 		{
-			if (!Function.Locals.TryGetValue("this", out var thisSlot))
+			if (Function.Locals.TryGetValue("this", out var thisSlot))
+			{
+				args.Add(Builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), thisSlot, "loaded_this_ptr"));
+			}
+			else if (IsDestinationConstructor(resolvedExt!))
+			{
+				// A struct constructor receives its destination storage as the implicit 'this'
+				// parameter. Inside a function that has no receiver (notably an associated
+				// function) nothing supplies that storage, so materialize a temporary slot and
+				// return the value constructed into it.
+				constructorDestination = Builder.BuildAlloca(codegen.Types.Lower(resolvedExt!.ReturnType), "ctor_destination");
+				args.Add(constructorDestination.Value);
+			}
+			else
+			{
 				throw new InvalidOperationException($"Cannot resolve implicit receiver 'this' for method call '{call.FunctionName}'.");
-
-			args.Add(Builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), thisSlot, "loaded_this_ptr"));
+			}
 		}
 
 		var actualParamOffset = paramOffset + (isExtensionCall ? 1 : 0);
@@ -399,8 +415,21 @@ internal sealed class CallEmitter(
 			return Builder.BuildTrunc(directCall, LLVMTypeRef.Int1, "bool.from_abi");
 		}
 
+		if (constructorDestination is not null)
+			return Builder.BuildLoad2(codegen.Types.Lower(resolvedExt!.ReturnType), constructorDestination.Value, "ctor_value");
+
 		return directCall;
 	}
+
+	/// <summary>
+	/// Reports whether a bound symbol is a struct or union constructor, whose implicit 'this'
+	/// parameter is destination storage rather than a receiver of the enclosing function.
+	/// </summary>
+	private static bool IsDestinationConstructor(FunctionSymbol symbol)
+		=> symbol.ReturnType is StructTypeSymbol or UnionTypeSymbol
+			&& symbol.Parameters.Count > 0
+			&& symbol.Parameters[0].Type is PointerTypeSymbol destination
+			&& destination.ReferencedType == symbol.ReturnType;
 
 	/// <summary>
 	/// Loads a two-word safe delegate value and emits the uniform thunk call
@@ -629,23 +658,23 @@ internal sealed class CallEmitter(
 				break;
 			case "rotl":
 			case "rotr":
-			{
-				var rotateAmount = args[^1];
-				var valueType = args[0].TypeOf;
-				var shiftType = rotateAmount.TypeOf;
-				if (shiftType.Kind != LLVMTypeKind.LLVMIntegerTypeKind || shiftType.IntWidth != valueType.IntWidth)
 				{
-					rotateAmount = valueType.IntWidth > shiftType.IntWidth
-						? Builder.BuildZExt(rotateAmount, valueType, "rot_zext")
-						: Builder.BuildTrunc(rotateAmount, valueType, "rot_trunc");
-				}
+					var rotateAmount = args[^1];
+					var valueType = args[0].TypeOf;
+					var shiftType = rotateAmount.TypeOf;
+					if (shiftType.Kind != LLVMTypeKind.LLVMIntegerTypeKind || shiftType.IntWidth != valueType.IntWidth)
+					{
+						rotateAmount = valueType.IntWidth > shiftType.IntWidth
+							? Builder.BuildZExt(rotateAmount, valueType, "rot_zext")
+							: Builder.BuildTrunc(rotateAmount, valueType, "rot_trunc");
+					}
 
-				var widthMask = LLVMValueRef.CreateConstInt(valueType, (ulong)valueType.IntWidth - 1);
-				rotateAmount = Builder.BuildAnd(rotateAmount, widthMask, "rot_mask");
-				args = [args[0], args[0], rotateAmount];
-				baseName = baseName == "rotl" ? "fshl" : "fshr";
-				break;
-			}
+					var widthMask = LLVMValueRef.CreateConstInt(valueType, (ulong)valueType.IntWidth - 1);
+					rotateAmount = Builder.BuildAnd(rotateAmount, widthMask, "rot_mask");
+					args = [args[0], args[0], rotateAmount];
+					baseName = baseName == "rotl" ? "fshl" : "fshr";
+					break;
+				}
 			case "fpc.nan":
 			case "fpc.inf":
 			case "fpc.finite":

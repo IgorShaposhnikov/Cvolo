@@ -60,7 +60,7 @@ internal static class SignatureHelpService
 
 		var namespaceName = unit.NamespaceDeclaration?.Name;
 		var key = context.GetMangledName(call.FunctionName, namespaceName);
-		if (!context.OverloadedFunctions.TryGetValue(key, out var group) || group.Count == 0)
+		if (!GroupFor(context, key, out var group) || group.Count == 0)
 			return null;
 
 		var signatures = new SignatureCandidateInfo[group.Count];
@@ -215,43 +215,51 @@ internal static class SignatureHelpService
 		switch (node)
 		{
 			case FunctionDeclarationSyntax func:
-			{
-				var baseName = func.Name is "main" or "Main" ? "main" : context.GetMangledName(func.Name, ns);
-				return TryResolveParameters(context, func.Parameters) is { } types
-					&& string.Equals(context.GetOverloadedMangledName(baseName, types), function.Name, StringComparison.Ordinal)
-					? node
-					: null;
-			}
+				{
+					var baseName = func.Name is "main" or "Main" ? "main" : context.GetMangledName(func.Name, ns);
+					return TryResolveParameters(context, func.Parameters) is { } types
+						&& string.Equals(context.GetOverloadedMangledName(baseName, types), function.Name, StringComparison.Ordinal)
+						? node
+						: null;
+				}
 			case ExtensionDeclarationSyntax extension:
-			{
-				var extendedType = context.ResolveType(context.NormalizeGenericName(extension.ExtendedTypeName));
-				foreach (var method in extension.Methods)
 				{
-					var baseName = context.GetMangledName($"{extension.ExtendedTypeName}.{method.Name}", ns);
-					if (extendedType is not null && TryResolveParameters(context, method.Parameters) is { } types)
+					var extendedType = context.ResolveType(context.NormalizeGenericName(extension.ExtendedTypeName));
+					foreach (var method in extension.Methods)
 					{
-						var withReceiver = new List<TypeSymbol>(types.Count + 1)
+						var baseName = context.GetMangledName($"{extension.ExtendedTypeName}.{method.Name}", ns);
+						if (extendedType is not null && TryResolveParameters(context, method.Parameters) is { } types)
 						{
-							new PointerTypeSymbol(extendedType, isMutable: false),
-						};
-						withReceiver.AddRange(types);
-						if (string.Equals(context.GetOverloadedMangledName(baseName, withReceiver), function.Name, StringComparison.Ordinal))
-							return method;
-					}
-				}
+							// Associated callables carry no synthetic receiver, so their signature is
+							// compared against the declared parameters only.
+							IReadOnlyList<TypeSymbol> signatureTypes = types;
+							if (!method.IsAssociated)
+							{
+								var withReceiver = new List<TypeSymbol>(types.Count + 1)
+							{
+								new PointerTypeSymbol(extendedType, isMutable: false),
+							};
+								withReceiver.AddRange(types);
+								signatureTypes = withReceiver;
+							}
 
-				foreach (var constructor in extension.Constructors)
-				{
-					var baseName = context.GetMangledName(extension.ExtendedTypeName, ns);
-					if (TryResolveParameters(context, constructor.Parameters) is { } types
-						&& string.Equals(context.GetOverloadedMangledName(baseName, types), function.Name, StringComparison.Ordinal))
+							if (string.Equals(context.GetOverloadedMangledName(baseName, signatureTypes), function.Name, StringComparison.Ordinal))
+								return method;
+						}
+					}
+
+					foreach (var constructor in extension.Constructors)
 					{
-						return constructor;
+						var baseName = context.GetMangledName(extension.ExtendedTypeName, ns);
+						if (TryResolveParameters(context, constructor.Parameters) is { } types
+							&& string.Equals(context.GetOverloadedMangledName(baseName, types), function.Name, StringComparison.Ordinal))
+						{
+							return constructor;
+						}
 					}
-				}
 
-				return null;
-			}
+					return null;
+				}
 			default:
 				return null;
 		}
@@ -316,7 +324,7 @@ internal static class SignatureHelpService
 	/// </summary>
 	private static (IReadOnlyList<FunctionSymbol> Group, int ResolvedIndex) ResolveOverloadGroup(BindingContext context, FunctionSymbol resolved)
 	{
-		if (KeyOf(context, resolved) is { } key && context.OverloadedFunctions.TryGetValue(key, out var group))
+		if (KeyOf(context, resolved) is { } key && GroupFor(context, key, out var group))
 		{
 			for (var index = 0; index < group.Count; index++)
 			{
@@ -326,6 +334,28 @@ internal static class SignatureHelpService
 		}
 
 		return ([resolved], 0);
+	}
+
+	/// <summary>
+	/// Instance extension groups and associated groups live in separate overload tables that share
+	/// one key shape, so an exact key names exactly one of them. Signatures are never merged.
+	/// </summary>
+	private static bool GroupFor(BindingContext context, string key, out IReadOnlyList<FunctionSymbol> group)
+	{
+		if (context.OverloadedFunctions.TryGetValue(key, out var instance))
+		{
+			group = instance;
+			return true;
+		}
+
+		if (context.AssociatedFunctions.TryGetValue(key, out var associated))
+		{
+			group = associated;
+			return true;
+		}
+
+		group = [];
+		return false;
 	}
 
 	private static string? KeyOf(BindingContext context, FunctionSymbol resolved)

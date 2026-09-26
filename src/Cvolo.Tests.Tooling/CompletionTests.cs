@@ -165,6 +165,42 @@ public sealed class CompletionTests
 	}
 
 	[Fact]
+	public void AssociatedFunctions_AreOfferedOnStructTypeNameReceiver()
+	{
+		var result = Complete(
+			"struct Layout { nuint Size; }\n" +
+			"extension Layout {\n    nuint .AlignUp(nuint value, nuint alignment) { return value; }\n    bool IsAligned() { return true; }\n}\n" +
+			"int main() {\n    val nuint a = Layout.Ali|;\n    return 0;\n}\n");
+
+		Assert.True(Contains(result, "AlignUp", CompletionKind.Method));
+		Assert.DoesNotContain(result.Candidates, c => c.Label == "IsAligned");
+		Assert.DoesNotContain(result.Candidates, c => c.Label == "Size");
+	}
+
+	[Fact]
+	public void AssociatedFunctions_AreOfferedOnImportedTypeNameReceiver()
+	{
+		var result = Complete(
+			"namespace App;\nusing ShapeLib;\nint main() { val nuint a = Layout.Ali|; return 0; }\n",
+			("ShapeLib.cvl", "namespace ShapeLib;\nstruct Layout { nuint Size; }\n"),
+			("ShapeLibExt.cvl", "namespace ShapeLib;\nextension Layout { nuint .AlignUp(nuint value) { return value; } }\n"));
+
+		Assert.True(Contains(result, "AlignUp", CompletionKind.Method));
+	}
+
+	[Fact]
+	public void AssociatedFunctions_AreNotOfferedOnValueReceiver()
+	{
+		var result = Complete(
+			"struct Layout { nuint Size; }\n" +
+			"extension Layout { nuint .AlignUp(nuint value) { return value; } }\n" +
+			"int main() {\n    val Layout l;\n    val nuint a = l.Ali|;\n    return 0;\n}\n");
+
+		Assert.DoesNotContain(result.Candidates, c => c.Label == "AlignUp");
+	}
+
+
+	[Fact]
 	public void ExtensionThisFieldReceiver_OffersMembersOfFieldType()
 	{
 		var result = Complete(

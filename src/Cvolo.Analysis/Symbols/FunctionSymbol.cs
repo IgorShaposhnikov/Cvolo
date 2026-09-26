@@ -1,7 +1,31 @@
 using Cvolo.Analysis.Symbols.Base;
 using Cvolo.Core.AST.Base;
+using Cvolo.Core.AST.Declarations;
 
 namespace Cvolo.Analysis.Symbols;
+
+/// <summary>
+/// How a function callable is reached. This is the authoritative source of truth for
+/// receiver-backedness; the synthetic parameter-0 named "this" is only an implementation detail
+/// used for instance code generation.
+/// </summary>
+public enum CallableKind
+{
+	/// <summary>
+	/// A plain function with no receiver (top-level, extern block, expose block, ...).
+	/// </summary>
+	Free,
+	/// <summary>
+	/// An extension block member written without a leading dot. Receives a synthetic 'this'
+	/// parameter at index 0 and is called through a value: <c>value.Method()</c>.
+	/// </summary>
+	InstanceExtension,
+	/// <summary>
+	/// An extension block member written with a leading dot ('.Method'). Has no receiver at all
+	/// and is called through its owner type: <c>Type.Method()</c>.
+	/// </summary>
+	Associated
+}
 
 public sealed class FunctionSymbol(
 	string name,
@@ -14,6 +38,23 @@ public sealed class FunctionSymbol(
 	public IReadOnlyList<ParameterSymbol> Parameters { get; } = parameters;
 	public bool IsExtern { get; } = isExtern;
 	public bool IsVariadic { get; } = isVariadic;
+
+	/// <summary>
+	/// How this callable is reached. Defaults to <see cref="CallableKind.Free"/>; extension
+	/// registration sets <see cref="CallableKind.InstanceExtension"/> or
+	/// <see cref="CallableKind.Associated"/>.
+	/// </summary>
+	public CallableKind CallableKind { get; set; } = CallableKind.Free;
+
+	/// <summary>
+	/// True when the callable takes a receiver (instance extension method).
+	/// </summary>
+	public bool IsInstanceExtension => CallableKind == CallableKind.InstanceExtension;
+
+	/// <summary>
+	/// True when the callable is receiverless and called through its owner type.
+	/// </summary>
+	public bool IsAssociated => CallableKind == CallableKind.Associated;
 
 	/// <summary>
 	/// Intrinsic [UnsafeBody] marker - SafetyPass treats the body as unsafe (consumed by the unmanaged milestone).
@@ -95,3 +136,17 @@ public sealed class FunctionSymbol(
 	/// </summary>
 	public string? ExposeName { get; set; }
 }
+
+/// <summary>
+/// An extension block member that declares its own type parameters, captured before parameter and
+/// return types are resolved because those types may name the method's type parameters. A call site
+/// substitutes concrete type arguments, then a <see cref="FunctionSymbol"/> is registered on the owner's
+/// associated or instance overload table, mirroring how an ordinary generic function is instantiated.
+/// </summary>
+/// <param name="Method">The source declaration, still generic.</param>
+/// <param name="OwnerType">The resolved extended type, used as the receiver type for instance forms.</param>
+/// <param name="BaseMangledName">The <c>Namespace.Type.Member</c> key of the owning overload table.</param>
+public sealed record GenericExtensionMethodTemplate(
+	FunctionDeclarationSyntax Method,
+	TypeSymbol OwnerType,
+	string BaseMangledName);

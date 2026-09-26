@@ -1,0 +1,17 @@
+using System;
+
+struct MemBlock {
+    nuint Size;
+}
+
+extension MemBlock {
+    nuint .WithReceiver(refvar this, nuint extra) {
+        return Size + extra;
+    }
+}
+
+int main() {
+    nuint value = MemBlock.WithReceiver(4);
+    Console.WriteLine($"value={value}");
+    return 0;
+}

@@ -17,7 +17,8 @@ public sealed class FunctionDeclarationSyntax(
 	Visibility? visibility = null,
 	TextSpan? nameSpan = null,
 	TextSpan? returnTypeSpan = null,
-	string? callingConvention = null) : SyntaxNode(span)
+	string? callingConvention = null,
+	FunctionBindingKind bindingKind = FunctionBindingKind.Default) : SyntaxNode(span)
 {
 	public override SyntaxKind Kind => SyntaxKind.FunctionDeclaration;
 
@@ -50,6 +51,19 @@ public sealed class FunctionDeclarationSyntax(
 	/// 'unsafe "C" R F(...) { ... }'. Null for ordinary Cvolo functions.
 	/// </summary>
 	public string? CallingConvention { get; } = callingConvention;
+
+	/// <summary>
+	/// How the declared function binds to its receiver. <see cref="FunctionBindingKind.Default"/>
+	/// is an ordinary free function or an instance extension method (extension members without a
+	/// leading dot, which receive a synthetic 'this'). <see cref="FunctionBindingKind.Associated"/>
+	/// is an associated function written with a leading dot ('.Name'); it has no receiver at all.
+	/// </summary>
+	public FunctionBindingKind BindingKind { get; } = bindingKind;
+
+	/// <summary>
+	/// True when this function is an associated (receiverless) extension member.
+	/// </summary>
+	public bool IsAssociated => BindingKind == FunctionBindingKind.Associated;
 
 	public bool IsBuiltin { get; set; }
 	public TextSpan? BuiltinSpan { get; set; }

@@ -1,0 +1,36 @@
+using System;
+
+struct MyError {
+    int Code;
+}
+
+// A generic associated function on the generic owner 'Result<T, E>': the owner is written with its
+// type arguments before the member separator, and it is resolved semantically rather than by string
+// concatenation. Generic substitution happens before overload validation and code generation.
+extension Result<T, E> {
+    Result<T, E> .With(T value) {
+        return Result<T, E>(value);
+    }
+}
+
+struct ScaleBox {
+    nuint Size;
+}
+
+extension ScaleBox {
+    // A generic instance extension method: the receiver keeps its synthetic 'this', and the member's
+    // own type parameters are substituted before overload validation.
+    nuint Scale<T>(T factor) {
+        return Size * 2;
+    }
+}
+
+int main() {
+    Result<int, MyError> ok = Result<int, MyError>.With(42);
+    var ScaleBox box(Size: (nuint)4);
+    nuint scaled = box.Scale<int>(3);
+
+    Console.WriteLine($"value={ok.Ok}");
+    Console.WriteLine($"scaled={scaled}");
+    return 0;
+}

@@ -167,7 +167,22 @@ enumVariant
 	;
 
 extensionDeclaration
-	: visibilityModifier? EXTENSION Identifier (LT genericParameterList GT)? (COLON qualifiedName)? whereClause* LBRACE (functionDeclaration | destructorDeclaration | constructorDeclaration)* RBRACE SEMI?
+	: visibilityModifier? EXTENSION Identifier (LT genericParameterList GT)? (COLON qualifiedName)? whereClause* LBRACE extensionMember* RBRACE SEMI?
+	;
+
+extensionMember
+	: extensionFunctionDeclaration
+	| destructorDeclaration
+	| constructorDeclaration
+	;
+
+// Members of an extension block accept an optional leading DOT. The DOT marks an
+// associated (receiverless) function; without it the member is an instance
+// extension method that receives a synthetic 'this' parameter. The top-level
+// functionDeclaration rule deliberately has no DOT so a leading dot stays a
+// syntax error outside extension blocks.
+extensionFunctionDeclaration
+	: attributeList* visibilityModifier? BUILTIN? ((UNSAFE callingConvention) | functionModifier)? returnType DOT? builtinCapableIdentifier (LT typeList GT)? LPAREN parameterList? RPAREN (blockStatement | SEMI)
 	;
 
 interfaceDeclaration
@@ -390,6 +405,7 @@ expression
 	| expression ASSIGN expression														# assignmentExpression
 	| expression (PLUS_ASSIGN | MINUS_ASSIGN | STAR_ASSIGN | DIV_ASSIGN | AND_ASSIGN | OR_ASSIGN | XOR_ASSIGN | LSHIFT_ASSIGN | RSHIFT_ASSIGN | URSHIFT_ASSIGN) expression		# compoundAssignmentExpression
 	| qualifiedName (LT typeList GT)? LPAREN argumentList? RPAREN						# callExpression
+	| qualifiedName LT typeList GT DOT builtinCapableIdentifier (LT typeList GT)? LPAREN argumentList? RPAREN	# genericTypeQualifiedCallExpression
 	| ASM asmOption* (LT type GT)? LPAREN StringLiteral (COMMA asmArgument)* RPAREN	# asmExpression
 	| NAMEOF LPAREN expression RPAREN												# nameofExpression
 	| TYPEOF LPAREN type RPAREN														# typeofExpression

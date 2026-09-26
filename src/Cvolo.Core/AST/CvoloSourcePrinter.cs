@@ -46,7 +46,8 @@ public sealed class CvoloSourcePrinter
 					? $"unsafe \"{f.CallingConvention}\" "
 					: f.Modifier is not null ? $"{f.Modifier.ToString()!.ToLowerInvariant()} " : "";
 				var fBuiltin = f.IsBuiltin ? "builtin " : "";
-				return $"{fAttrs}\n{ind}{fBuiltin}{fPrefix}{f.ReturnType} {f.Name}{fGenerics}({fParms}){fBody}";
+				var fDot = f.IsAssociated ? "." : " ";
+				return $"{fAttrs}\n{ind}{fBuiltin}{fPrefix}{f.ReturnType}{fDot}{f.Name}{fGenerics}({fParms}){fBody}";
 
 			case ExternDeclarationSyntax ed:
 				var edParms = string.Join(", ", ed.Parameters.Select(Print)) + (ed.IsVariadic ? ", ..." : "");

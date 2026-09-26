@@ -225,6 +225,11 @@ internal static class ReferenceRenameService
 
 	private static bool SameCallableSignature(FunctionDeclarationSyntax left, FunctionDeclarationSyntax right)
 	{
+		// An associated function and an instance method of the same name are distinct callables
+		// and never share a rename/refs group.
+		if (left.IsAssociated != right.IsAssociated)
+			return false;
+
 		if (left.GenericParameters.Count != right.GenericParameters.Count
 			|| left.Parameters.Count != right.Parameters.Count
 			|| left.Receiver != right.Receiver)

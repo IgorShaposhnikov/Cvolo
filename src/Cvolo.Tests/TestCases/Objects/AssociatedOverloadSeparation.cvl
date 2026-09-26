@@ -1,0 +1,24 @@
+using System;
+
+struct MemBlock {
+    nuint Size;
+}
+
+extension MemBlock {
+    nuint Scaled(nuint factor) {
+        return Size * factor;
+    }
+
+    nuint .Scaled(nuint factor, nuint offset) {
+        return factor + offset;
+    }
+}
+
+int main() {
+    val MemBlock block(Size: (nuint)4);
+    nuint viaValue = block.Scaled(3);
+    nuint viaType = MemBlock.Scaled(3, (nuint)8);
+    Console.WriteLine($"value={viaValue}");
+    Console.WriteLine($"type={viaType}");
+    return 0;
+}

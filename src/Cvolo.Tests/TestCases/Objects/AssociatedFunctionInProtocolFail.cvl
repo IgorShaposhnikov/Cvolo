@@ -1,0 +1,16 @@
+using System;
+
+protocol Shape {
+    nuint Area();
+}
+
+extension Shape {
+    nuint .NotAllowed() {
+        return 1;
+    }
+}
+
+int main() {
+    Console.WriteLine("unreachable");
+    return 0;
+}

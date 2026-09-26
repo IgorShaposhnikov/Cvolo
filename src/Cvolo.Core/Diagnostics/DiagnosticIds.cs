@@ -102,6 +102,21 @@ public static class DiagnosticIds
 	/// <summary>A delegating constructor's body is not empty after `this(...)`.</summary>
 	public const string NonEmptyDelegatingConstructorBody = "CVL1044";
 
+	/// <summary>An associated function (leading dot) is declared outside an extension block.</summary>
+	public const string AssociatedFunctionOutsideExtension = "CVL1045";
+
+	/// <summary>An associated function declares an instance receiver (`ref this` / `refvar this`).</summary>
+	public const string AssociatedFunctionWithReceiver = "CVL1046";
+
+	/// <summary>An associated function is called through a value instead of through its owner type.</summary>
+	public const string AssociatedFunctionCalledThroughValue = "CVL1047";
+
+	/// <summary>A receiver-backed instance extension method is called through its owner type.</summary>
+	public const string InstanceExtensionCalledThroughType = "CVL1048";
+
+	/// <summary>An associated function is declared in an `extension Protocol` block.</summary>
+	public const string AssociatedFunctionInProtocolExtension = "CVL1049";
+
 	/// <summary>A `ref`/`refvar` type argument is used for a generic type other than an Option-shaped union.</summary>
 	public const string RefTypeArgumentNotAllowed = "CVL1103";
 

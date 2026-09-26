@@ -61,7 +61,7 @@ public sealed class ForeachLoweringRewriter : AstRewriterBase
 			case FunctionDeclarationSyntax func:
 				{
 					var body = func.Body != null ? (BlockStatementSyntax)Rewrite(func.Body) : null;
-					return new FunctionDeclarationSyntax(func.Span, func.ReturnType, func.Name, func.GenericParameters, func.Parameters, body, func.Attributes, func.Modifier, func.Receiver, func.Visibility, callingConvention: func.CallingConvention)
+					return new FunctionDeclarationSyntax(func.Span, func.ReturnType, func.Name, func.GenericParameters, func.Parameters, body, func.Attributes, func.Modifier, func.Receiver, func.Visibility, callingConvention: func.CallingConvention, bindingKind: func.BindingKind)
 					{
 						IsBuiltin = func.IsBuiltin,
 						BuiltinSpan = func.BuiltinSpan

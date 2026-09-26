@@ -119,7 +119,7 @@ internal sealed class GenericFunctionInstantiator(
 		context.MonomorphizedFunctions[instName] = instSymbol;
 
 		var instBody = SubstituteBlockGenerics(templateDecl.Body, substitutionMap);
-		var instDecl = new FunctionDeclarationSyntax(templateDecl.Span, returnType.Name, instName, [], instParameters, instBody, modifier: templateDecl.Modifier, visibility: templateDecl.Visibility);
+		var instDecl = new FunctionDeclarationSyntax(templateDecl.Span, returnType.Name, instName, [], instParameters, instBody, modifier: templateDecl.Modifier, visibility: templateDecl.Visibility, bindingKind: templateDecl.BindingKind);
 
 		context.MonomorphizedFunctionDecls.Add(instDecl);
 
@@ -137,6 +137,144 @@ internal sealed class GenericFunctionInstantiator(
 		}
 
 		validateBlock(instBody, localScope, instDecl);
+
+		return instSymbol;
+	}
+
+	// ---------------------------------------------------------------------------
+	// Generic extension members.
+	// A member that declares its own type parameters is parked as a template at declaration time
+	// because its signature may not resolve yet. A call site resolves the owner type, substitutes
+	// the supplied type arguments, and registers one concrete candidate in the owner's associated
+	// or instance overload table. Overload validation and code generation then see an ordinary
+	// symbol, so generic associated functions use exactly the same machinery as generic free
+	// functions: nothing here knows about receivers, except that an instance form keeps its
+	// synthetic 'this' at parameter index 0 and an associated form has none.
+	// ---------------------------------------------------------------------------
+
+	/// <summary>
+	/// Materializes one concrete candidate for a generic extension member template and registers it in
+	/// the owner's associated or instance overload table so the call being validated resolves against
+	/// a real signature. Returns null when the substituted signature does not resolve, in which case
+	/// the caller keeps its own "no matching candidate" reporting.
+	/// </summary>
+	public FunctionSymbol? InstantiateGenericExtensionMethod(GenericExtensionMethodTemplate template, IReadOnlyList<TypeSymbol> typeArgs)
+	{
+		var method = template.Method;
+		if (typeArgs.Count != method.GenericParameters.Count)
+			return null;
+
+		// Canonical global name, shared by the symbol, the AST node the emitter consumes, and the
+		// per-node name table used to associate them.
+		var instName = context.NormalizeGenericName(
+			$"{template.BaseMangledName}<{string.Join(",", typeArgs.Select(t => t.Name))}>");
+
+		var isAssociated = method.IsAssociated;
+		var overloadTable = isAssociated ? context.AssociatedFunctions : context.OverloadedFunctions;
+		var existing = context.MonomorphizedFunctions.TryGetValue(instName, out var cached)
+			? cached
+			: overloadTable.TryGetValue(template.BaseMangledName, out var existingCandidates)
+				? existingCandidates.FirstOrDefault(c => c.Name == instName)
+				: null;
+
+		if (existing is not null)
+			return existing;
+
+		var substitutionMap = new Dictionary<string, TypeSymbol>();
+		for (var i = 0; i < method.GenericParameters.Count; i++)
+			substitutionMap[method.GenericParameters[i]] = typeArgs[i];
+
+		// Resolves one template signature type after applying the current substitution map.
+		TypeSymbol? ResolveSubstitutedType(string typeName)
+		{
+			var substitutedTypeName = SubstituteTypeName(typeName, substitutionMap);
+
+			if (substitutedTypeName.StartsWith("refvar ", StringComparison.Ordinal)
+				|| substitutedTypeName.StartsWith("ref ", StringComparison.Ordinal))
+			{
+				var isMutable = substitutedTypeName.StartsWith("refvar ", StringComparison.Ordinal);
+				var innerName = isMutable ? substitutedTypeName[7..] : substitutedTypeName[4..];
+				var innerType = ResolveSubstitutedType(innerName);
+				return innerType is null ? null : new PointerTypeSymbol(innerType, isMutable);
+			}
+
+			return context.ResolveType(substitutedTypeName);
+		}
+
+		var returnType = ResolveSubstitutedType(method.ReturnType);
+		if (returnType is null)
+			return null;
+
+		// The receiver is part of the signature shape, not of the substitution map: the owner is
+		// already concrete, and an associated function must not acquire one.
+		var parameters = new List<ParameterSymbol>();
+		var instParameters = new List<ParameterSyntax>();
+
+		if (!isAssociated)
+			parameters.Add(new ParameterSymbol("this", new PointerTypeSymbol(template.OwnerType, isMutable: false)));
+
+		foreach (var param in method.Parameters)
+		{
+			var paramType = ResolveSubstitutedType(param.Type);
+			if (paramType is null)
+				return null;
+
+			parameters.Add(new ParameterSymbol(param.Name, paramType));
+			instParameters.Add(new ParameterSyntax(param.Span, paramType.Name, param.Name));
+		}
+
+		var instSymbol = new FunctionSymbol(instName, returnType, parameters)
+		{
+			Visibility = method.Visibility,
+			SafetyTier = method.Modifier ?? SafetyTier.Safe,
+			DeclaringUnit = context.CurrentUnit,
+			CallableKind = isAssociated ? CallableKind.Associated : CallableKind.InstanceExtension
+		};
+
+		if (method.Attributes.Any(a => a.Name.Contains("UnsafeBody", StringComparison.Ordinal)))
+		{
+			instSymbol.IsUnsafeBody = true;
+			instSymbol.SafetyTier = SafetyTier.Unsafe;
+		}
+
+		if (method.Attributes.Any(a => a.Name.Contains("MustUse", StringComparison.Ordinal)))
+			instSymbol.IsMustUse = true;
+
+		context.MonomorphizedFunctions[instName] = instSymbol;
+		context.Globals.Declare(instSymbol);
+		context.SymbolUnits[instName] = context.CurrentUnit!;
+
+		if (!overloadTable.TryGetValue(template.BaseMangledName, out var candidates))
+		{
+			candidates = [];
+			overloadTable[template.BaseMangledName] = candidates;
+		}
+
+		candidates.Add(instSymbol);
+
+		// The body and node are registered as a monomorphized extension member so that validation,
+		// prototype declaration, and body emission all pick the candidate up through the existing
+		// generic-owner path (which already distinguishes associated from receiver-backed members).
+		var instBody = SubstituteBlockGenerics(method.Body, substitutionMap);
+		var instDecl = new FunctionDeclarationSyntax(
+			method.Span,
+			returnType.Name,
+			instName,
+			[],
+			instParameters,
+			instBody,
+			method.Attributes,
+			method.Modifier,
+			method.Receiver,
+			method.Visibility,
+			method.NameSpan,
+			method.ReturnTypeSpan,
+			method.CallingConvention,
+			method.BindingKind);
+
+		context.MonomorphizedExtensionDecls.Add(instDecl);
+		context.MonomorphizedExtensionExtendedTypes[instName] = template.OwnerType.Name;
+		context.MonomorphizedExtensionNames[instDecl] = instName;
 
 		return instSymbol;
 	}
@@ -355,7 +493,7 @@ internal sealed class GenericFunctionInstantiator(
 		context.MonomorphizedFunctions[instName] = instSymbol;
 
 		var instBody = SubstituteBlockGenerics(templateDecl.Body, substitutionMap);
-		var instDecl = new FunctionDeclarationSyntax(templateDecl.Span, returnType.Name, instName, [], instParameters, instBody, modifier: templateDecl.Modifier, visibility: templateDecl.Visibility);
+		var instDecl = new FunctionDeclarationSyntax(templateDecl.Span, returnType.Name, instName, [], instParameters, instBody, modifier: templateDecl.Modifier, visibility: templateDecl.Visibility, bindingKind: templateDecl.BindingKind);
 
 		context.MonomorphizedFunctionDecls.Add(instDecl);
 

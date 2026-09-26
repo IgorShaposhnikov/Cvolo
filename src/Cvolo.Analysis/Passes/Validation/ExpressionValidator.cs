@@ -159,6 +159,8 @@ internal sealed class ExpressionValidator(
 					}
 
 					FunctionSymbol? func = null;
+					var mismatch = DottedCallMismatch.None;
+					string? mismatchOwnerName = null;
 
 					// Callable value paths take precedence over direct function/function-group lookup.
 					// This is required for both safe and native delegate variables that collide with
@@ -168,30 +170,44 @@ internal sealed class ExpressionValidator(
 
 					if (call.TypeArguments.Count > 0)
 					{
-						// Reconstruct and resolve the struct/union instantiation name to check if this is a generic constructor call
-						var structNameWithArgs = $"{call.FunctionName}<{string.Join(", ", call.TypeArguments)}>";
-						var resolvedType = context.ResolveType(structNameWithArgs);
-
-						if (resolvedType is StructTypeSymbol or UnionTypeSymbol)
+						// A generic extension member is reached through its owner type. Instantiate it first so a
+						// concrete candidate lands in the owner's overload table, then let the ordinary
+						// receiver-splitting overload path resolve the call against it.
+						var extensionMember = TryInstantiateGenericExtensionMember(call, argTypes, scope);
+						if (extensionMember is not null)
 						{
-							// This is a generic constructor call! Use the fully qualified resolved type name for overload resolution
-							func = Overloads.Resolve(resolvedType.Name, argTypes, scope, call);
+							func = extensionMember == true
+								? ResolveInstantiatedExtensionMember(call, argTypes, scope, out mismatch, out mismatchOwnerName)
+								: null;
 						}
 						else
 						{
-							// Fallback to standard generic function monomorphization
-							var templateName = Generics.ResolveFunctionTemplateName(call.FunctionName, scope);
-							if (templateName != null && context.GenericFunctionTemplates.TryGetValue(templateName, out var templateDecl))
+							// Reconstruct and resolve the struct/union instantiation name to check if this is a generic constructor call
+							var structNameWithArgs = $"{call.FunctionName}<{string.Join(", ", call.TypeArguments)}>";
+							var resolvedType = context.ResolveType(structNameWithArgs);
+
+							if (resolvedType is StructTypeSymbol or UnionTypeSymbol)
 							{
-								var typeArgs = call.TypeArguments.Select(t => context.ResolveType(t)!).ToList();
-								func = Generics.InstantiateGenericFunction(templateDecl, typeArgs, scope);
+								// This is a generic constructor call! Use the fully qualified resolved type name for overload resolution
+								func = Overloads.Resolve(resolvedType.Name, argTypes, scope, call);
+							}
+							else
+							{
+								// Fallback to standard generic function monomorphization
+								var templateName = Generics.ResolveFunctionTemplateName(call.FunctionName, scope);
+								if (templateName != null && context.GenericFunctionTemplates.TryGetValue(templateName, out var templateDecl))
+								{
+									var typeArgs = call.TypeArguments.Select(t => context.ResolveType(t)!).ToList();
+									func = Generics.InstantiateGenericFunction(templateDecl, typeArgs, scope);
+								}
 							}
 						}
 					}
 					else
 					{
 						// Use overload resolution logic for standard non-generic functions / constructors
-						func = Calls.ResolveOrdinaryCall(call, argTypes, scope);
+						func = Calls.ResolveOrdinaryCall(call, argTypes, scope, out mismatch, out mismatchOwnerName);
+
 
 						// No concrete overload matched: fall back to interface-parameterized dispatch
 						// (implicit generic templates monomorphized with the concrete conforming arg types).
@@ -221,6 +237,15 @@ internal sealed class ExpressionValidator(
 
 					if (func is null)
 					{
+						// A dotted call that picked the wrong receiver form gets a dedicated
+						// diagnostic so the fix ('call it through the type' / 'call it on a value')
+						// is explicit instead of hidden behind a generic arity/type mismatch.
+						if (mismatch != DottedCallMismatch.None
+							&& ReportDottedCallMismatch(call, mismatch, mismatchOwnerName))
+						{
+							return;
+						}
+
 						var currentFileContext = context.FileContexts[context.CurrentUnit!];
 						var sigString = string.Join(", ", argTypes.Select(t => t.Name));
 						var diagnosticId = call.FunctionName.Contains('.', StringComparison.Ordinal)
@@ -237,7 +262,9 @@ internal sealed class ExpressionValidator(
 					// parameter declarations (§4.2 contextual lambda typing, §22 group conversion).
 					if (deferredGroupArgs.Count > 0)
 					{
-						var isExtensionForDeferred = func.Parameters.Count > 0 && func.Parameters[0].Name == "this";
+						var isExtensionForDeferred = func.IsInstanceExtension
+							|| (func.CallableKind == CallableKind.Free && func.Parameters.Count > 0 && func.Parameters[0].Name == "this");
+
 						foreach (var (arg, argIndex) in deferredGroupArgs)
 						{
 							var paramIndex = isExtensionForDeferred ? argIndex + 1 : argIndex;
@@ -281,8 +308,12 @@ internal sealed class ExpressionValidator(
 					var paramCount = func.Parameters.Count;
 					var isVariadic = func.IsVariadic;
 
-					var isExtensionCall = func.Parameters.Count > 0 && func.Parameters[0].Name == "this";
+					// An associated function is receiverless, so argument positions map 1:1 onto the
+					// declared parameters; only receiver-backed callables shift by the synthetic `this`.
+					var isExtensionCall = !func.IsAssociated
+						&& (func.IsInstanceExtension || (func.Parameters.Count > 0 && func.Parameters[0].Name == "this"));
 					var expectedParamCount = isExtensionCall ? paramCount - 1 : paramCount;
+
 
 					if (!isVariadic && argCount != expectedParamCount)
 					{
@@ -691,6 +722,165 @@ internal sealed class ExpressionValidator(
 		return true;
 	}
 
+
+	/// <summary>
+	/// Reports the "wrong receiver form" diagnostic for a dotted call and returns whether one was
+	/// reported. A leading-dot associated function is receiverless, so it can only be reached through
+	/// its owner type; a receiver-backed method is the mirror image.
+	/// </summary>
+	/// <param name="ownerName">
+	/// Owner type resolved for the mismatched call, preferred over the receiver text so a
+	/// value-receiver call still names the type the associated function belongs to.
+	/// </param>
+	private bool ReportDottedCallMismatch(CallExpressionSyntax call, DottedCallMismatch mismatch, string? ownerName)
+	{
+		var lastDot = LastTopLevelDotIndex(call.FunctionName);
+		if (lastDot <= 0 || lastDot == call.FunctionName.Length - 1)
+			return false;
+
+		var writtenOwner = call.FunctionName[..lastDot];
+		var memberName = call.FunctionName[(lastDot + 1)..];
+		var qualifiedOwner = $"{ownerName ?? writtenOwner}.{memberName}";
+
+		var currentFileContext = context.FileContexts[context.CurrentUnit!];
+		switch (mismatch)
+		{
+			case DottedCallMismatch.AssociatedCalledThroughValue:
+				context.Diagnostics.Report(currentFileContext, call.Span,
+					$"Associated function `{qualifiedOwner}` must be called through the type.",
+					DiagnosticIds.AssociatedFunctionCalledThroughValue);
+				return true;
+
+			case DottedCallMismatch.InstanceCalledThroughType:
+				context.Diagnostics.Report(currentFileContext, call.Span,
+					$"'{memberName}' is an instance method of '{ownerName ?? writtenOwner}' and must be called on a value, not through the type.",
+					DiagnosticIds.InstanceExtensionCalledThroughType);
+				return true;
+
+			default:
+				return false;
+		}
+	}
+
+	/// <summary>
+	/// Finds the last '.' of a dotted call path that is not nested inside generic argument brackets, so a
+	/// generic owner written as <c>Result&lt;int, Ns.MyError&gt;.Ok</c> keeps its inner qualified type names.
+	/// </summary>
+	private static int LastTopLevelDotIndex(string name)
+	{
+		var genericDepth = 0;
+		var lastTopLevelDot = -1;
+
+		for (var i = 0; i < name.Length; i++)
+		{
+			switch (name[i])
+			{
+				case '<':
+					genericDepth++;
+					break;
+				case '>':
+					if (genericDepth > 0)
+						genericDepth--;
+					break;
+				case '.' when genericDepth == 0:
+					lastTopLevelDot = i;
+					break;
+			}
+		}
+
+		return lastTopLevelDot;
+	}
+
+	/// <summary>
+	/// Instantiates a generic extension member reached through its owner, such as
+	/// <c>Layout.FromType&lt;MyStruct&gt;()</c>, <c>Pair&lt;int, Error&gt;.Ok(42)</c>, or
+	/// <c>block.Scale&lt;int&gt;(3)</c>. The owner is resolved semantically, never assembled by string
+	/// concatenation, and the type arguments are substituted into the signature before any overload
+	/// validation runs; the resulting candidate is then an ordinary associated or instance symbol in the
+	/// owner's overload table. A value receiver selects the receiver-backed form, a type receiver the
+	/// receiverless one, matching the language's dispatch rule.
+	/// </summary>
+	/// <returns>
+	/// Null when the callee is not a generic extension member, so the caller keeps its other generic-call
+	/// paths. False when the callee was recognized but the type arguments are unusable (a diagnostic was
+	/// reported). True when a concrete candidate was registered and the call should be resolved again.
+	/// </returns>
+	private bool? TryInstantiateGenericExtensionMember(CallExpressionSyntax call, IReadOnlyList<TypeSymbol> argTypes, SymbolTable scope)
+	{
+		if (!Overloads.TrySplitDottedReceiver(call.FunctionName, scope, out var receiverIsValue, out var receiverType, out var memberName))
+			return null;
+
+		TypeSymbol? ownerType;
+		if (receiverIsValue)
+		{
+			ownerType = receiverType;
+			if (ownerType is PointerTypeSymbol receiverPointer)
+				ownerType = receiverPointer.ReferencedType;
+
+			if (ownerType is null)
+				return null;
+		}
+		else if (!context.TrySplitTypeQualifiedName(call.FunctionName, context.CurrentUnit, out var ownerTypeName, out _)
+			|| !context.TryResolveTypeByLookupName(ownerTypeName, context.CurrentUnit, out ownerType))
+		{
+			return null;
+		}
+
+		// A value receiver can only reach a receiver-backed member, and a type receiver only a
+		// receiverless one; the wrong form is reported by the ordinary resolution that follows.
+		var templates = context.GetGenericExtensionMethodTemplates(ownerType, context.CurrentUnit, memberName)
+			.Where(t => t.Method.IsAssociated != receiverIsValue)
+			.ToList();
+
+		if (templates.Count == 0)
+			return null;
+
+		var currentFileContext = context.FileContexts[context.CurrentUnit!];
+		var template = templates.FirstOrDefault(t => t.Method.GenericParameters.Count == call.TypeArguments.Count);
+		if (template is null)
+		{
+			var expected = templates.Min(t => t.Method.GenericParameters.Count);
+			var expectedArgs = expected == 1 ? "argument" : "arguments";
+			context.Diagnostics.Report(currentFileContext, call.Span,
+				$"Function '{call.FunctionName}' expects {expected} type {expectedArgs} but received {call.TypeArguments.Count}");
+			return false;
+		}
+
+		var typeArgs = new List<TypeSymbol>(call.TypeArguments.Count);
+		foreach (var writtenTypeArg in call.TypeArguments)
+		{
+			if (context.ResolveType(writtenTypeArg) is not TypeSymbol resolvedTypeArg)
+			{
+				context.Diagnostics.Report(currentFileContext, call.Span,
+					$"Unknown type '{writtenTypeArg}' in type argument list of '{call.FunctionName}'");
+				return false;
+			}
+
+			typeArgs.Add(resolvedTypeArg);
+		}
+
+		if (Generics.InstantiateGenericExtensionMethod(template, typeArgs) is null)
+		{
+			context.Diagnostics.Report(currentFileContext, call.Span,
+				$"Cannot resolve the signature of '{call.FunctionName}' for the given type arguments");
+			return false;
+		}
+
+		return true;
+	}
+
+	/// <summary>
+	/// Resolves a call whose generic extension member was just instantiated, reusing the ordinary
+	/// overload path so receiver form, receiver conversion, and the wrong-receiver-form diagnostics
+	/// behave exactly as they do for a non-generic member.
+	/// </summary>
+	private FunctionSymbol? ResolveInstantiatedExtensionMember(
+		CallExpressionSyntax call,
+		IReadOnlyList<TypeSymbol> argTypes,
+		SymbolTable scope,
+		out DottedCallMismatch mismatch,
+		out string? mismatchOwnerName)
+		=> Calls.ResolveOrdinaryCall(call, argTypes, scope, out mismatch, out mismatchOwnerName);
 
 	/// <summary>
 	/// Validates member access and returns the resolved semantic member type when available.

@@ -271,7 +271,7 @@ internal static class CompletionService
 		BindingContext? context, string? callableGroupKey, string label, Completion.CompletionKind kind, SourceText text, TextSpan span)
 	{
 		if (context is null || callableGroupKey is null
-			|| !context.OverloadedFunctions.TryGetValue(callableGroupKey, out var functions)
+			|| !GroupFor(context, callableGroupKey, out var functions)
 			|| functions.Count == 0)
 		{
 			return null;
@@ -299,10 +299,28 @@ internal static class CompletionService
 		return result;
 	}
 
+	/// <summary>
+	/// Resolves one callable overload group by its exact compiler-selected key. Instance
+	/// extension groups and associated groups live in separate tables, so a key names exactly
+	/// one of them and the two forms never merge.
+	/// </summary>
+	private static bool GroupFor(BindingContext context, string key, out List<FunctionSymbol> functions)
+	{
+		if (context.OverloadedFunctions.TryGetValue(key, out var instance))
+		{
+			functions = instance;
+			return true;
+		}
+
+		return context.AssociatedFunctions.TryGetValue(key, out functions);
+	}
+
 	private static List<FunctionSymbol> EnumerateAll(BindingContext context)
 	{
 		var result = new List<FunctionSymbol>();
 		foreach (var entry in context.OverloadedFunctions.OrderBy(e => e.Key, StringComparer.Ordinal))
+			result.AddRange(entry.Value);
+		foreach (var entry in context.AssociatedFunctions.OrderBy(e => e.Key, StringComparer.Ordinal))
 			result.AddRange(entry.Value);
 		return result;
 	}
@@ -484,43 +502,51 @@ internal static class CompletionService
 		switch (node)
 		{
 			case FunctionDeclarationSyntax func:
-			{
-				var baseName = func.Name is "main" or "Main" ? "main" : context.GetMangledName(func.Name, ns);
-				return TryResolveParameters(context, func.Parameters) is { } types
-					&& string.Equals(context.GetOverloadedMangledName(baseName, types), function.Name, StringComparison.Ordinal)
-					? node
-					: null;
-			}
+				{
+					var baseName = func.Name is "main" or "Main" ? "main" : context.GetMangledName(func.Name, ns);
+					return TryResolveParameters(context, func.Parameters) is { } types
+						&& string.Equals(context.GetOverloadedMangledName(baseName, types), function.Name, StringComparison.Ordinal)
+						? node
+						: null;
+				}
 			case ExtensionDeclarationSyntax extension:
-			{
-				var extendedType = context.ResolveType(context.NormalizeGenericName(extension.ExtendedTypeName));
-				foreach (var method in extension.Methods)
 				{
-					var baseName = context.GetMangledName($"{extension.ExtendedTypeName}.{method.Name}", ns);
-					if (extendedType is not null && TryResolveParameters(context, method.Parameters) is { } types)
+					var extendedType = context.ResolveType(context.NormalizeGenericName(extension.ExtendedTypeName));
+					foreach (var method in extension.Methods)
 					{
-						var withReceiver = new List<TypeSymbol>(types.Count + 1)
+						var baseName = context.GetMangledName($"{extension.ExtendedTypeName}.{method.Name}", ns);
+						if (extendedType is not null && TryResolveParameters(context, method.Parameters) is { } types)
 						{
-							new PointerTypeSymbol(extendedType, isMutable: false),
-						};
-						withReceiver.AddRange(types);
-						if (string.Equals(context.GetOverloadedMangledName(baseName, withReceiver), function.Name, StringComparison.Ordinal))
-							return method;
-					}
-				}
+							// An associated callable is registered without the synthetic receiver, so
+							// its signature must be compared against the declared parameters only.
+							IReadOnlyList<TypeSymbol> signatureTypes = types;
+							if (!method.IsAssociated)
+							{
+								var withReceiver = new List<TypeSymbol>(types.Count + 1)
+							{
+								new PointerTypeSymbol(extendedType, isMutable: false),
+							};
+								withReceiver.AddRange(types);
+								signatureTypes = withReceiver;
+							}
 
-				foreach (var constructor in extension.Constructors)
-				{
-					var baseName = context.GetMangledName(extension.ExtendedTypeName, ns);
-					if (TryResolveParameters(context, constructor.Parameters) is { } types
-						&& string.Equals(context.GetOverloadedMangledName(baseName, types), function.Name, StringComparison.Ordinal))
+							if (string.Equals(context.GetOverloadedMangledName(baseName, signatureTypes), function.Name, StringComparison.Ordinal))
+								return method;
+						}
+					}
+
+					foreach (var constructor in extension.Constructors)
 					{
-						return constructor;
+						var baseName = context.GetMangledName(extension.ExtendedTypeName, ns);
+						if (TryResolveParameters(context, constructor.Parameters) is { } types
+							&& string.Equals(context.GetOverloadedMangledName(baseName, types), function.Name, StringComparison.Ordinal))
+						{
+							return constructor;
+						}
 					}
-				}
 
-				return null;
-			}
+					return null;
+				}
 			default:
 				return null;
 		}

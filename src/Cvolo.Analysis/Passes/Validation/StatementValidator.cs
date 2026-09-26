@@ -277,10 +277,12 @@ internal sealed class StatementValidator(
 			var enumeratorName = enumeratorType.Name;
 
 			var moveNextName = $"{enumeratorName}.MoveNext";
-			var moveNextFunc = Overloads.Resolve(moveNextName, [new PointerTypeSymbol(enumeratorType, isMutable: true)], scope);
+			var moveNextFunc = Overloads.Resolve(moveNextName, [new PointerTypeSymbol(enumeratorType, isMutable: true)], scope,
+				call: null, out _, out _, allowTypeReceiverInstanceFallback: true);
 
 			var currentName = $"{enumeratorName}.Current";
-			var currentFunc2 = Overloads.Resolve(currentName, [new PointerTypeSymbol(enumeratorType, isMutable: true)], scope);
+			var currentFunc2 = Overloads.Resolve(currentName, [new PointerTypeSymbol(enumeratorType, isMutable: true)], scope,
+				call: null, out _, out _, allowTypeReceiverInstanceFallback: true);
 
 			if (moveNextFunc is null)
 			{

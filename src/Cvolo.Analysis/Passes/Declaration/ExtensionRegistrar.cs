@@ -99,8 +99,21 @@ internal sealed class ExtensionRegistrar(
 				context.ProtocolDefaults[protoExtType.Name] = defaults;
 			}
 
+			// Associated functions are receiverless, so they cannot be protocol defaults; the
+			// conformance surface of a protocol is entirely receiver-backed.
 			foreach (var method in extDecl.Methods)
+			{
+				if (method.IsAssociated)
+				{
+					ReportDeclarationDiagnostic(
+						method,
+						$"Associated function '{extDecl.ExtendedTypeName}.{method.Name}' cannot be declared in an extension block on a protocol.",
+						DiagnosticIds.AssociatedFunctionInProtocolExtension);
+					continue;
+				}
+
 				defaults.Add((method.Name, method));
+			}
 		}
 
 		// RETROACTIVE CONFORMANCE: "extension T : IName" records that the
@@ -117,15 +130,45 @@ internal sealed class ExtensionRegistrar(
 			if (isDestructor && !destructors.ValidateDeclaration(extDecl.ExtendedTypeName, method))
 				continue;
 
+			// An associated function has no receiver at all: no synthetic 'this', no receiver
+			// contract, and a separate overload table so it never merges with receiver-backed
+			// candidates that share the same source name.
+			var isAssociated = method.IsAssociated;
+			if (isAssociated && method.Receiver != ReceiverContract.None)
+			{
+				ReportDeclarationDiagnostic(
+					method,
+					$"Associated function '{extDecl.ExtendedTypeName}.{method.Name}' cannot declare an instance receiver.",
+					DiagnosticIds.AssociatedFunctionWithReceiver);
+				continue;
+			}
+
 			// Mangled name represents the scoped path, e.g., "MyNamespace.Point.Move"
 			var baseMangledName = context.GetMangledName($"{extDecl.ExtendedTypeName}.{method.Name}", context.CurrentNamespace);
 
+			// A member that declares its own type parameters cannot be registered yet: its parameter and
+			// return types may name those parameters, and no concrete mangled signature exists until a call
+			// site supplies type arguments. Park it as a template on the owner; the call site instantiates it
+			// into the correct overload table (associated or instance) with the arguments already substituted.
+			if (method.GenericParameters.Count > 0 && method.GenericParameters.Any(p => context.ResolveType(p) is null))
+			{
+				if (!context.GenericExtensionMethodTemplates.TryGetValue(baseMangledName, out var methodTemplates))
+				{
+					methodTemplates = [];
+					context.GenericExtensionMethodTemplates[baseMangledName] = methodTemplates;
+				}
+
+				methodTemplates.Add(new GenericExtensionMethodTemplate(method, extendedType, baseMangledName));
+				continue;
+			}
+
 			// 1. Inject the implicit first parameter: "this"
 			// It starts as a read-only pointer. The ValidationPass will upgrade it to mutable if needed!
-			var thisParamType = new PointerTypeSymbol(extendedType, isMutable: false);
-			var thisParam = new ParameterSymbol("this", thisParamType);
+			// Associated functions skip this entirely: they are receiverless by construction.
+			var parameters = new List<ParameterSymbol>();
+			if (!isAssociated)
+				parameters.Add(new ParameterSymbol("this", new PointerTypeSymbol(extendedType, isMutable: false)));
 
-			var parameters = new List<ParameterSymbol> { thisParam };
 			foreach (var param in method.Parameters)
 			{
 				var paramSymbol = functions.CreateParameter(param);
@@ -161,7 +204,8 @@ internal sealed class ExtensionRegistrar(
 			var newSymbol = new FunctionSymbol(overloadedName, returnType, parameters)
 			{
 				Visibility = memberVisibility,
-				DeclaringUnit = context.CurrentUnit
+				DeclaringUnit = context.CurrentUnit,
+				CallableKind = isAssociated ? CallableKind.Associated : CallableKind.InstanceExtension
 			};
 			var methodSuppressedWarnings = new List<string>();
 			_attributes.ApplyFunctionAttributes(
@@ -174,6 +218,8 @@ internal sealed class ExtensionRegistrar(
 			// COLLISION RULE: an extension may not re-declare a method the type already
 			// has with a matching signature (another extension block, the proto-default
 			// registry's naked symbols, or a conformer-declared override). First wins.
+			// Instance and associated overload sets are disjoint by construction, so the
+			// same source name may legitimately exist once in each form.
 			if (context.Globals.Lookup(overloadedName) is not null)
 			{
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
@@ -184,10 +230,11 @@ internal sealed class ExtensionRegistrar(
 
 			context.Globals.Declare(newSymbol);
 
-			if (!context.OverloadedFunctions.TryGetValue(baseMangledName, out var candidates))
+			var overloadTable = isAssociated ? context.AssociatedFunctions : context.OverloadedFunctions;
+			if (!overloadTable.TryGetValue(baseMangledName, out var candidates))
 			{
 				candidates = [];
-				context.OverloadedFunctions[baseMangledName] = candidates;
+				overloadTable[baseMangledName] = candidates;
 			}
 
 			candidates.Add(newSymbol);
@@ -333,10 +380,16 @@ internal sealed class ExtensionRegistrar(
 		CollectInterfaceAncestors(interfaceDecl, interfaces);
 
 		// A conforming type must provide every required member of the effective
-		// interface (own members + base-clause closure).
+		// interface (own members + base-clause closure). Associated functions are
+		// receiverless and can never satisfy an interface requirement.
 		var providedMethods = new HashSet<(string Name, string ReturnType, string Params)>();
 		foreach (var method in extDecl.Methods)
+		{
+			if (method.IsAssociated)
+				continue;
+
 			providedMethods.Add((method.Name, method.ReturnType, ParamsSignature(method.Parameters)));
+		}
 
 		foreach (var member in GetEffectiveInterfaceMembers(interfaceSymbol, new Dictionary<string, List<InterfaceMethodDeclarationSyntax>>(), new HashSet<string>()))
 		{

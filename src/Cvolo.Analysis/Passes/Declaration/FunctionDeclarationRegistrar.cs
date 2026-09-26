@@ -89,7 +89,7 @@ internal sealed class FunctionDeclarationRegistrar(BindingContext context)
 				};
 				context.MonomorphizedFunctions[instName] = instSymbol;
 
-				var instDecl = new FunctionDeclarationSyntax(func.Span, func.ReturnType, instName, [], func.Parameters, func.Body, modifier: func.Modifier, visibility: func.Visibility, callingConvention: func.CallingConvention);
+				var instDecl = new FunctionDeclarationSyntax(func.Span, func.ReturnType, instName, [], func.Parameters, func.Body, modifier: func.Modifier, visibility: func.Visibility, callingConvention: func.CallingConvention, bindingKind: func.BindingKind);
 				context.MonomorphizedFunctionDecls.Add(instDecl);
 				return;
 			}
@@ -659,7 +659,7 @@ internal sealed class FunctionDeclarationRegistrar(BindingContext context)
 
 		// Declare the function through the normal path (with [ExposeName] stripped) so it is
 		// registered, attribute-verified, and validatable exactly like any other function.
-		var clone = new FunctionDeclarationSyntax(func.Span, func.ReturnType, func.Name, func.GenericParameters, func.Parameters, func.Body!, filteredAttributes, func.Modifier, func.Receiver, func.Visibility, callingConvention: func.CallingConvention);
+		var clone = new FunctionDeclarationSyntax(func.Span, func.ReturnType, func.Name, func.GenericParameters, func.Parameters, func.Body!, filteredAttributes, func.Modifier, func.Receiver, func.Visibility, callingConvention: func.CallingConvention, bindingKind: func.BindingKind);
 		DeclareFunction(clone);
 
 		// Locate the symbol the normal path just registered to tag it for export.

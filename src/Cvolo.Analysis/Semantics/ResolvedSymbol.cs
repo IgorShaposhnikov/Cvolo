@@ -24,6 +24,7 @@ public enum ResolvedSymbolKind
 	Function,
 	Method,
 	ExtensionMethod,
+	AssociatedFunction,
 	Constructor,
 	Destructor,
 	Field,

@@ -44,7 +44,8 @@ public sealed class PackageApiMetadata
 					Parameters = function.Parameters
 						.Select(parameter => new PackageApiParameter(parameter.Type, parameter.Name))
 						.ToArray(),
-					Modifier = function.Modifier
+					Modifier = function.Modifier,
+					IsAssociated = function.IsAssociated
 				})
 				.ToArray();
 
@@ -272,7 +273,8 @@ public sealed class PackageApiMetadata
 				.DistinctBy(function => (
 					function.Name,
 					Parameters: string.Join("\u001f", function.Parameters.Select(parameter => parameter.Type)),
-					function.Modifier))
+					function.Modifier,
+					function.IsAssociated))
 				.ToArray(),
 			Structs = group.SelectMany(unit => unit.Structs)
 				.DistinctBy(type => type.Name)
@@ -365,7 +367,8 @@ public sealed class PackageApiMetadata
 					function.Parameters.Select(parameter => new ParameterSyntax(span, parameter.Type, parameter.Name)).ToArray(),
 					null!,
 					modifier: function.Modifier,
-					visibility: Visibility.Public)));
+					visibility: Visibility.Public,
+					bindingKind: function.IsAssociated ? FunctionBindingKind.Associated : FunctionBindingKind.Default)));
 
 			members.AddRange(unit.Delegates.Select(type =>
 				(SyntaxNode)new DelegateDeclarationSyntax(
@@ -524,6 +527,13 @@ public sealed class PackageApiFunction
 	public IReadOnlyList<string> GenericParameters { get; init; } = [];
 	public IReadOnlyList<PackageApiParameter> Parameters { get; init; } = [];
 	public SafetyTier? Modifier { get; init; }
+
+	/// <summary>
+	/// True when the source declaration was a receiverless associated function (leading dot).
+	/// Preserved so the API surface round-trips the callable kind instead of silently turning an
+	/// associated function into a receiver-backed extension method on reload.
+	/// </summary>
+	public bool IsAssociated { get; init; }
 }
 
 public sealed class PackageApiStruct

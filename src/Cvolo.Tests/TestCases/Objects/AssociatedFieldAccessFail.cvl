@@ -1,0 +1,17 @@
+using System;
+
+struct MemBlock {
+    nuint Size;
+}
+
+extension MemBlock {
+    nuint .Describe() {
+        return Size;
+    }
+}
+
+int main() {
+    nuint bad = MemBlock.Describe();
+    Console.WriteLine($"bad={bad}");
+    return 0;
+}

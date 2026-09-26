@@ -472,7 +472,7 @@ public static class CompletionQuery
 			// functions. Compiler-generated receiver-backed callables carry the synthetic first
 			// parameter named "this"; a free-function label survives when any reachable overload
 			// is not receiver-backed and is visible. Never let declaration order choose visibility.
-			if (!entry.Value.Any(fn => !IsReceiverBacked(fn) && IsVisible(state, fn.Visibility, fn.DeclaringUnit)))
+			if (!entry.Value.Any(fn => !IsReceiverBacked(fn) && !fn.IsAssociated && IsVisible(state, fn.Visibility, fn.DeclaringUnit)))
 				continue;
 
 			AddCandidate(candidates, seen, Leaf(entry.Key), CompletionKind.Function, entry.Key);
@@ -622,6 +622,7 @@ public static class CompletionQuery
 		var receiver = memberNode.Expression;
 		TypeSymbol? type = null;
 		var isEnumTypeNameReceiver = false;
+		var isTypeNameReceiver = false;
 		string? dotted = null;
 
 		if (ExpressionTypeResolver.GetDottedName(receiver) is { } dottedName)
@@ -641,6 +642,19 @@ public static class CompletionQuery
 			{
 				type = enumType;
 				isEnumTypeNameReceiver = true;
+			}
+
+			// A receiver written as a *type* name (Layout. / System.Memory.Layout.) selects the
+			// associated callables of that owner. A receiver that resolves to a value is never
+			// re-read as a type name, so a local that shadows a type name stays a value receiver.
+			// The owner is resolved semantically by walking the receiver's own prefixes, so a
+			// qualified owner works even when the type was already found above by a bare lookup.
+			if (!isEnumTypeNameReceiver
+				&& !IsValueName(dottedName, visible, state)
+				&& TryResolveOwnerType(state, dottedName, out var ownerType))
+			{
+				type = ownerType;
+				isTypeNameReceiver = true;
 			}
 		}
 
@@ -672,29 +686,42 @@ public static class CompletionQuery
 				}
 
 			case EnumTypeSymbol:
-				AddExtensionMethods(candidates, type, state);
+				if (!isTypeNameReceiver)
+					AddExtensionMethods(candidates, type, state);
 				break;
 
 			case UnionTypeSymbol unionType:
-				foreach (var field in unionType.Fields)
+				if (!isTypeNameReceiver)
 				{
-					if (!IsFieldVisible(state, unionType, field.Visibility))
-						continue;
-					AddCandidate(candidates, field.Name, field.Name, CompletionKind.UnionVariant);
+					foreach (var field in unionType.Fields)
+					{
+						if (!IsFieldVisible(state, unionType, field.Visibility))
+							continue;
+						AddCandidate(candidates, field.Name, field.Name, CompletionKind.UnionVariant);
+					}
 				}
 
-				AddExtensionMethods(candidates, type, state);
+				if (isTypeNameReceiver)
+					AddAssociatedFunctions(candidates, type, state);
+				else
+					AddExtensionMethods(candidates, type, state);
 				break;
 
 			case StructTypeSymbol structType:
-				foreach (var field in structType.Fields)
+				if (!isTypeNameReceiver)
 				{
-					if (!IsFieldVisible(state, structType, field.Visibility))
-						continue;
-					AddCandidate(candidates, field.Name, field.Name, CompletionKind.StructField);
+					foreach (var field in structType.Fields)
+					{
+						if (!IsFieldVisible(state, structType, field.Visibility))
+							continue;
+						AddCandidate(candidates, field.Name, field.Name, CompletionKind.StructField);
+					}
 				}
 
-				AddExtensionMethods(candidates, type, state);
+				if (isTypeNameReceiver)
+					AddAssociatedFunctions(candidates, type, state);
+				else
+					AddExtensionMethods(candidates, type, state);
 				break;
 
 			default:
@@ -704,6 +731,78 @@ public static class CompletionQuery
 		}
 
 		return candidates;
+	}
+
+	/// <summary>
+	/// Whether a written receiver name denotes a value (completion-visible local/parameter or a
+	/// declared global) rather than a type name. Value receivers never gain associated callables.
+	/// </summary>
+	private static bool IsValueName(string dottedName, Dictionary<string, ScopedVariable> visible, QueryState state)
+	{
+		var leaf = dottedName[(dottedName.LastIndexOf('.') + 1)..];
+		return visible.ContainsKey(leaf) || state.Context.ResolveGlobalReference(leaf, out _) is not null;
+	}
+
+	/// <summary>
+	/// Resolves the longest written prefix of a dotted receiver that names a struct, union, or
+	/// enum type, using the compiler's own type lookup (current namespace, then active usings).
+	/// The whole receiver is tried first because at <c>Owner.</c> the owner is the entire written
+	/// name — a bare owner has no member separator, and a generic owner
+	/// (<c>Result&lt;int, MyError&gt;.</c>) has none outside its argument list.
+	/// </summary>
+	private static bool TryResolveOwnerType(QueryState state, string dottedName, out TypeSymbol ownerType)
+	{
+		ownerType = null!;
+
+		var dot = LastTopLevelDotIndex(dottedName);
+		for (var end = dot < 0 ? dottedName.Length : dot; end > 0;)
+		{
+			if (state.Context.TryResolveTypeByLookupName(dottedName[..end], state.Unit, out var resolved)
+				&& resolved is StructTypeSymbol or UnionTypeSymbol or EnumTypeSymbol)
+			{
+				ownerType = resolved;
+				return true;
+			}
+
+			dot = LastTopLevelDotIndex(dottedName[..end]);
+			if (dot < 0)
+				return false;
+
+			end = dot;
+		}
+
+		return false;
+	}
+
+	/// <summary>
+	/// Index of the last '.' that is not inside a generic argument list, or -1 when there is none.
+	/// A qualified owner may itself contain dots (<c>System.Memory.Layout</c>, and the qualified
+	/// names inside <c>Result&lt;int, MyError&gt;</c>), so only a top-level dot separates owner from
+	/// member.
+	/// </summary>
+	private static int LastTopLevelDotIndex(string name)
+	{
+		var depth = 0;
+		var last = -1;
+
+		for (var i = 0; i < name.Length; i++)
+		{
+			switch (name[i])
+			{
+				case '<':
+					depth++;
+					break;
+				case '>':
+					if (depth > 0)
+						depth--;
+					break;
+				case '.' when depth == 0:
+					last = i;
+					break;
+			}
+		}
+
+		return last;
 	}
 
 	/// <summary>
@@ -744,7 +843,9 @@ public static class CompletionQuery
 
 		var prefix = candidate + ".";
 		return state.Context.OverloadedFunctions.Keys.Any(k => k.StartsWith(prefix, StringComparison.Ordinal))
+			|| state.Context.AssociatedFunctions.Keys.Any(k => k.StartsWith(prefix, StringComparison.Ordinal))
 			|| state.Context.GenericFunctionTemplates.Keys.Any(k => k.StartsWith(prefix, StringComparison.Ordinal))
+			|| state.Context.GenericExtensionMethodTemplates.Keys.Any(k => k.StartsWith(prefix, StringComparison.Ordinal))
 			|| state.Context.InterfaceFunctionTemplates.Keys.Any(k => k.StartsWith(prefix, StringComparison.Ordinal))
 			|| state.Context.ProtocolFunctionTemplates.Keys.Any(k => k.StartsWith(prefix, StringComparison.Ordinal))
 			|| state.Context.StructTypes.Keys.Any(k => k.StartsWith(prefix, StringComparison.Ordinal))
@@ -857,9 +958,34 @@ public static class CompletionQuery
 			candidates.Add(new CompletionCandidate(methodName, methodName, CompletionKind.Method, groupKey));
 	}
 
+	/// <summary>
+	/// Adds the associated (receiverless) callables of a type written as a receiver. Associated
+	/// functions are offered only for a type receiver; a value receiver never sees them.
+	/// </summary>
+	private static void AddAssociatedFunctions(List<CompletionCandidate> candidates, TypeSymbol type, QueryState state)
+	{
+		var visibleFunctions = new SortedDictionary<string, string?>(StringComparer.Ordinal);
+		foreach (var (memberName, function) in state.Context.GetAssociatedFunctionCandidates(type, state.Unit))
+		{
+			if (!IsVisible(state, function.Visibility, function.DeclaringUnit))
+				continue;
+
+			visibleFunctions.TryAdd(memberName, FindCallableGroupKey(state.Context, function));
+		}
+
+		foreach (var (functionName, groupKey) in visibleFunctions)
+			candidates.Add(new CompletionCandidate(functionName, functionName, CompletionKind.Method, groupKey));
+	}
+
 	private static string? FindCallableGroupKey(BindingContext context, FunctionSymbol function)
 	{
 		foreach (var (key, overloads) in context.OverloadedFunctions)
+		{
+			if (overloads.Any(candidate => ReferenceEquals(candidate, function)))
+				return key;
+		}
+
+		foreach (var (key, overloads) in context.AssociatedFunctions)
 		{
 			if (overloads.Any(candidate => ReferenceEquals(candidate, function)))
 				return key;

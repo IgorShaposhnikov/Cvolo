@@ -161,6 +161,14 @@ internal sealed class DeclarationIndex
 			if (extendedType is null || !TryResolveParameters(context, method.Parameters, out var parameterTypes))
 				continue;
 
+			// An associated callable is registered without the synthetic receiver, so only the
+			// instance form mangles a receiver into its signature.
+			if (method.IsAssociated)
+			{
+				_functions[context.GetOverloadedMangledName(baseName, parameterTypes)] = method;
+				continue;
+			}
+
 			var withReceiver = new List<TypeSymbol>(parameterTypes.Count + 1)
 			{
 				new PointerTypeSymbol(extendedType, isMutable: false),

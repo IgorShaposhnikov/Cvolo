@@ -1,0 +1,19 @@
+using System;
+
+struct MemBlock {
+    nuint Size;
+    nuint Alignment;
+}
+
+extension MemBlock {
+    nuint .AlignUp(nuint value, nuint alignment) {
+        return value + alignment;
+    }
+}
+
+int main() {
+    var MemBlock block(Size: (nuint)16, Alignment: (nuint)16);
+    nuint bad = block.AlignUp(37, (nuint)16);
+    Console.WriteLine($"bad={bad}");
+    return 0;
+}

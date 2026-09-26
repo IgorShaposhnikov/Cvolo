@@ -1,0 +1,18 @@
+using System;
+
+struct MemBlock {
+    nuint Size;
+    nuint Alignment;
+}
+
+extension MemBlock {
+    bool IsAligned(nuint address) {
+        return (address % Alignment) == 0;
+    }
+}
+
+int main() {
+    nuint bad = MemBlock.IsAligned(64);
+    Console.WriteLine($"bad={bad}");
+    return 0;
+}

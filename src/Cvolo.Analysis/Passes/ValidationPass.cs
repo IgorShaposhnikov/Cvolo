@@ -203,7 +203,12 @@ public sealed class ValidationPass(BindingContext context)
 						if (isMethodTemplate)
 							continue;
 
-						FunctionBodies.ValidateExtensionBody(extDecl.ExtendedTypeName, method);
+						// Associated functions are receiverless: no `this`, no lifted fields, and no
+						// mutability contract, so they take a separate body-validation path.
+						if (method.IsAssociated)
+							FunctionBodies.ValidateAssociatedFunctionBody(extDecl.ExtendedTypeName, method);
+						else
+							FunctionBodies.ValidateExtensionBody(extDecl.ExtendedTypeName, method);
 					}
 
 					foreach (var ctorDecl in extDecl.Constructors)
@@ -242,7 +247,10 @@ public sealed class ValidationPass(BindingContext context)
 
 				if (decl is FunctionDeclarationSyntax func)
 				{
-					FunctionBodies.ValidateExtensionBody(extendedTypeName, func);
+					if (func.IsAssociated)
+						FunctionBodies.ValidateAssociatedFunctionBody(extendedTypeName, func);
+					else
+						FunctionBodies.ValidateExtensionBody(extendedTypeName, func);
 				}
 				else if (decl is ConstructorDeclarationSyntax ctor)
 				{
