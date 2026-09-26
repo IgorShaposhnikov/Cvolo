@@ -1,3 +1,6 @@
+using Cvolo.Compiler.Tooling.Internal;
+using Cvolo.Packaging;
+
 namespace Cvolo.Compiler.Tooling;
 
 /// <summary>
@@ -7,6 +10,9 @@ namespace Cvolo.Compiler.Tooling;
 public sealed class CvoloProject
 {
 	private readonly CvoloWorkspace _workspace;
+	private readonly IReadOnlyList<string> _libraryPaths;
+	private readonly PackageCache? _packageCache;
+	private readonly IReadOnlyDictionary<string, DocumentId> _documentIds;
 
 	/// <summary>
 	/// The workspace-session-local identifier of this project.
@@ -21,12 +27,65 @@ public sealed class CvoloProject
 	/// </summary>
 	public ProjectSnapshot InitialSnapshot { get; }
 
-	internal CvoloProject(CvoloWorkspace workspace, ProjectId id, string projectPath, ProjectSnapshot initialSnapshot)
+	internal CvoloProject(
+		CvoloWorkspace workspace,
+		ProjectId id,
+		string projectPath,
+		ProjectSnapshot initialSnapshot,
+		IReadOnlyList<string>? libraryPaths = null,
+		PackageCache? packageCache = null,
+		IReadOnlyDictionary<string, DocumentId>? documentIds = null)
 	{
 		_workspace = workspace;
 		Id = id;
 		ProjectPath = projectPath;
 		InitialSnapshot = initialSnapshot;
+		_libraryPaths = libraryPaths ?? [];
+		_packageCache = packageCache;
+		_documentIds = documentIds ?? CreateDocumentIdMap(initialSnapshot, null);
+	}
+
+	/// <summary>
+	/// Recomputes this project's semantic universe from <paramref name="sourceOverrides"/>
+	/// (canonical physical path to in-memory text) and returns a new project whose
+	/// <see cref="InitialSnapshot"/> is the advanced snapshot. Documents whose paths remain
+	/// present keep their <see cref="DocumentId"/> across the closure change.
+	/// </summary>
+	public CvoloProject Advance(IReadOnlyDictionary<string, string>? sourceOverrides)
+	{
+		var (documents, externalUnits, packageSources) = CompilerProjectAdapter.DiscoverDocuments(
+			ProjectPath,
+			_workspace.AllocateDocumentId,
+			_libraryPaths,
+			_packageCache,
+			sourceOverrides,
+			_documentIds,
+			allowRestore: false);
+
+		var snapshot = ProjectSnapshot.CreateOwned(Id, documents, externalUnits, packageSources);
+		return new CvoloProject(
+			_workspace,
+			Id,
+			ProjectPath,
+			snapshot,
+			_libraryPaths,
+			_packageCache,
+			CreateDocumentIdMap(snapshot, _documentIds));
+	}
+
+	private static IReadOnlyDictionary<string, DocumentId> CreateDocumentIdMap(
+		ProjectSnapshot snapshot,
+		IReadOnlyDictionary<string, DocumentId>? previous)
+	{
+		var comparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+		var map = previous is null
+			? new Dictionary<string, DocumentId>(comparer)
+			: new Dictionary<string, DocumentId>(previous, comparer);
+
+		foreach (var document in snapshot.Documents.Values)
+			map[document.FilePath] = document.Id;
+
+		return map;
 	}
 
 	/// <summary>

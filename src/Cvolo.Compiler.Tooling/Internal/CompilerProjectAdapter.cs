@@ -23,7 +23,10 @@ internal static class CompilerProjectAdapter
 		string projectPath,
 		Func<DocumentId> allocateDocumentId,
 		IReadOnlyList<string>? libraryPaths = null,
-		PackageCache? packageCache = null)
+		PackageCache? packageCache = null,
+		IReadOnlyDictionary<string, string>? sourceOverrides = null,
+		IReadOnlyDictionary<string, DocumentId>? existingDocumentIds = null,
+		bool allowRestore = true)
 	{
 		var semanticRoot = Directory.Exists(projectPath)
 			? Path.GetFullPath(projectPath)
@@ -45,17 +48,22 @@ internal static class CompilerProjectAdapter
 			LoadPackages: true,
 			PackageCache: packageCache,
 			LibraryPaths: resolvedLibraryPaths,
-			RestorePackages: manifestBacked,
-			IgnoreAncestorProject: !manifestBacked));
+			RestorePackages: manifestBacked && allowRestore,
+			IgnoreAncestorProject: !manifestBacked,
+			SourceOverrides: sourceOverrides));
 
 		var documents = new Dictionary<DocumentId, DocumentSnapshot>();
 
 		foreach (var file in universe.SourceFiles)
 		{
 			var fullPath = Path.GetFullPath(file);
-			var text = File.ReadAllText(fullPath);
+			var text = sourceOverrides is not null && sourceOverrides.TryGetValue(fullPath, out var overrideText)
+				? overrideText
+				: File.ReadAllText(fullPath);
 			var sourceText = SourceText.From(text);
-			var docId = allocateDocumentId();
+			var docId = existingDocumentIds is not null && existingDocumentIds.TryGetValue(fullPath, out var existing)
+				? existing
+				: allocateDocumentId();
 			documents[docId] = new DocumentSnapshot(docId, fullPath, sourceText, null);
 		}
 

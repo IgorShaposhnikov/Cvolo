@@ -21,27 +21,48 @@ public sealed class StandardLibraryTests
 	}
 
 	[Fact]
-	public void StandardLibrary_ContributesDocumentsToTheSnapshot()
+	public void Core_ContributesDocumentsWithoutUsingSystem()
 	{
-		const string s = "using System;\nint main() { return 0; }\n";
+		const string s = "int main() { return 0; }\n";
 		var x = Open(s);
 		using (x.Fixture)
 		{
-			// The std sources are part of the same universe, discovered (not hardcoded).
-			Assert.Contains(x.Snapshot.Documents.Values, d => d.FilePath.EndsWith("System" + Path.DirectorySeparatorChar + "Console.cvl", StringComparison.OrdinalIgnoreCase));
+			Assert.Contains(x.Snapshot.Documents.Values, d => d.FilePath.EndsWith(Path.Combine("Core", "System", "Option.cvl"), StringComparison.OrdinalIgnoreCase));
+		}
+	}
+
+	[Fact]
+	public void NoStdImport_DoesNotContributeConsoleDocument()
+	{
+		const string s = "int main() { return 0; }\n";
+		var x = Open(s);
+		using (x.Fixture)
+		{
+			Assert.DoesNotContain(x.Snapshot.Documents.Values, d => d.FilePath.EndsWith(Path.Combine("Std", "System", "Console.cvl"), StringComparison.OrdinalIgnoreCase));
+		}
+	}
+
+	[Fact]
+	public void UsingSystem_ContributesRequiredStdDocument()
+	{
+		const string s = "using System;\nint main() { Console.WriteLine(\"hi\"); return 0; }\n";
+		var x = Open(s);
+		using (x.Fixture)
+		{
+			Assert.Contains(x.Snapshot.Documents.Values, d => d.FilePath.EndsWith(Path.Combine("Std", "System", "Console.cvl"), StringComparison.OrdinalIgnoreCase));
 		}
 	}
 
 	[Fact]
 	public void OpeningStandardLibrarySource_DoesNotDuplicateDeclarations()
 	{
-		var fixture = TempProject.Create(("Main.cvl", "int main() { return 0; }\n"));
+		var fixture = TempProject.Create(("Main.cvl", "using System;\nint main() { Console.WriteLine(\"hi\"); return 0; }\n"));
 		using (fixture)
 		{
 			var reference = CvoloWorkspace.Create().OpenProject(fixture.ProjectFilePath);
 			var consolePath = reference.InitialSnapshot.Documents.Values
 				.Select(document => document.FilePath)
-				.Single(path => path.EndsWith(Path.Combine("System", "Console.cvl"), StringComparison.OrdinalIgnoreCase));
+				.Single(path => path.EndsWith(Path.Combine("Std", "System", "Console.cvl"), StringComparison.OrdinalIgnoreCase));
 
 			var project = CvoloWorkspace.Create().OpenProject(consolePath);
 			var snapshot = project.InitialSnapshot;
@@ -154,5 +175,113 @@ public sealed class StandardLibraryTests
 			Assert.NotEmpty(x.Snapshot.GetDefinitions(symbol!.SymbolId));
 			Assert.Equal("int main() { return 0; }\n", edited.GetDocument(x.Document.Id).Text.ToString());
 		}
+	}
+
+	[Fact]
+	public void EditAddingUsing_RecomputesLibraryClosureWithoutProjectReopen()
+	{
+		const string original = "int main() { return 0; }\n";
+		var x = Open(original);
+		using (x.Fixture)
+		{
+			Assert.DoesNotContain(x.Snapshot.Documents.Values, d => IsConsoleDocument(d.FilePath));
+
+			const string edited = "using System;\nint main() { Console.WriteLine(\"hi\"); return 0; }\n";
+			var advanced = x.Project.Advance(Overrides(x.Snapshot, x.Document.FilePath, edited));
+
+			Assert.Contains(advanced.InitialSnapshot.Documents.Values, d => IsConsoleDocument(d.FilePath));
+			Assert.True(advanced.InitialSnapshot.TryGetDocument(x.Document.Id, out var main));
+			Assert.Equal(edited, main.Text.ToString());
+			Assert.Equal(original, File.ReadAllText(x.Document.FilePath));
+		}
+	}
+
+	[Fact]
+	public void EditRemovingUsing_RecomputesLibraryClosureCoherently()
+	{
+		const string original = "using System;\nint main() { Console.WriteLine(\"hi\"); return 0; }\n";
+		var x = Open(original);
+		using (x.Fixture)
+		{
+			Assert.Contains(x.Snapshot.Documents.Values, d => IsConsoleDocument(d.FilePath));
+
+			const string edited = "int main() { return 0; }\n";
+			var advanced = x.Project.Advance(Overrides(x.Snapshot, x.Document.FilePath, edited));
+
+			Assert.DoesNotContain(advanced.InitialSnapshot.Documents.Values, d => IsConsoleDocument(d.FilePath));
+			Assert.True(advanced.InitialSnapshot.TryGetDocument(x.Document.Id, out var main));
+			Assert.Equal(edited, main.Text.ToString());
+		}
+	}
+
+	[Fact]
+	public void ExistingDocumentIdsRemainStableAcrossClosureChanges()
+	{
+		const string original = "int main() { return 0; }\n";
+		var x = Open(original);
+		using (x.Fixture)
+		{
+			var optionId = x.Snapshot.Documents.Values
+				.Single(d => d.FilePath.EndsWith(Path.Combine("Core", "System", "Option.cvl"), StringComparison.OrdinalIgnoreCase))
+				.Id;
+			var mainId = x.Document.Id;
+
+			const string edited = "using System;\nint main() { Console.WriteLine(\"hi\"); return 0; }\n";
+			var advanced = x.Project.Advance(Overrides(x.Snapshot, x.Document.FilePath, edited));
+
+			Assert.True(advanced.InitialSnapshot.TryGetDocument(mainId, out _));
+			Assert.True(advanced.InitialSnapshot.TryGetDocument(optionId, out _));
+		}
+	}
+
+	[Fact]
+	public void NewStdDocumentIdIsStableWhenModuleLeavesAndReentersClosure()
+	{
+		const string original = "int main() { return 0; }\n";
+		const string withUsing = "using System;\nint main() { Console.WriteLine(\"hi\"); return 0; }\n";
+		const string withoutUsing = "int main() { return 0; }\n";
+		var x = Open(original);
+		using (x.Fixture)
+		{
+			var added = x.Project.Advance(Overrides(x.Snapshot, x.Document.FilePath, withUsing));
+			var consoleId = added.InitialSnapshot.Documents.Values.Single(d => IsConsoleDocument(d.FilePath)).Id;
+
+			var removed = added.Advance(Overrides(added.InitialSnapshot, x.Document.FilePath, withoutUsing));
+			Assert.DoesNotContain(removed.InitialSnapshot.Documents.Values, d => IsConsoleDocument(d.FilePath));
+
+			var reentered = removed.Advance(Overrides(removed.InitialSnapshot, x.Document.FilePath, withUsing));
+			var consoleAgain = reentered.InitialSnapshot.Documents.Values.Single(d => IsConsoleDocument(d.FilePath)).Id;
+
+			Assert.Equal(consoleId, consoleAgain);
+		}
+	}
+
+	[Fact]
+	public void IncompleteUsing_DoesNotCrashAndPreservesCoherentSnapshot()
+	{
+		const string original = "int main() { return 0; }\n";
+		var x = Open(original);
+		using (x.Fixture)
+		{
+			const string incomplete = "using \nint main() { return 0; }\n";
+			var advanced = x.Project.Advance(Overrides(x.Snapshot, x.Document.FilePath, incomplete));
+
+			Assert.Contains(advanced.InitialSnapshot.Documents.Values, d => d.FilePath.EndsWith(Path.Combine("Core", "System", "Option.cvl"), StringComparison.OrdinalIgnoreCase));
+			Assert.NotEmpty(advanced.InitialSnapshot.Documents);
+		}
+	}
+
+	private static bool IsConsoleDocument(string filePath) =>
+		filePath.EndsWith(Path.Combine("Std", "System", "Console.cvl"), StringComparison.OrdinalIgnoreCase);
+
+	private static IReadOnlyDictionary<string, string> Overrides(ProjectSnapshot snapshot, string path, string text)
+	{
+		var comparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+		var map = new Dictionary<string, string>(comparer);
+		foreach (var document in snapshot.Documents.Values)
+			map[document.FilePath] = document.Text.ToString();
+
+		map[Path.GetFullPath(path)] = text;
+		return map;
 	}
 }

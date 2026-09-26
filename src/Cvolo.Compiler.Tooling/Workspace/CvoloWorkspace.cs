@@ -97,7 +97,7 @@ public sealed class CvoloWorkspace
 			packageCache);
 		var snapshot = ProjectSnapshot.CreateOwned(projectId, documents, externalUnits, packageSources);
 
-		return new CvoloProject(this, projectId, absolutePath, snapshot);
+		return new CvoloProject(this, projectId, absolutePath, snapshot, libraryPaths, packageCache);
 	}
 
 	internal ProjectId AllocateProjectId()
