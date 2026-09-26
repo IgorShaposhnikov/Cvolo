@@ -14,7 +14,7 @@ public sealed class LexerKeywordCatalogTests
 			"val", "var", "refvar", "heap", "ref", "extern", "return", "if", "else", "while", "for",
 			"true", "false", "null", "void", "int", "uint", "long", "ulong", "short", "ushort", "byte",
 			"sbyte", "double", "float", "nint", "nuint", "bool", "string", "char", "struct", "union",
-			"enum", "private", "internal", "public", "unsafe", "unbound", "panic", "extension",
+			"enum", "private", "internal", "public", "unsafe", "unbound", "builtin", "panic", "extension",
 			"interface", "protocol", "embed", "namespace", "using", "expose", "global", "switch",
 			"case", "default", "where", "is", "alias", "defer", "move", "delegate", "asm", "volatile", "alignstack",
 			"intel", "nameof", "typeof", "sizeof", "alignof", "offsetof", "break", "continue", "foreach", "in", "try", "catch",

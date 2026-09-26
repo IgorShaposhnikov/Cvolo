@@ -48,6 +48,7 @@ internal sealed class NavigationIndex
 	private readonly Dictionary<DocumentId, IReadOnlyList<DocumentSymbolInfo>> _outlines = new();
 	private readonly Dictionary<Entry, Entry> _conformanceTargets = new();
 	private readonly Dictionary<int, List<PackageSourceDefinition>> _packageSourceDefinitions = new();
+	private readonly Dictionary<string, Entry> _builtinByName = new(StringComparer.Ordinal);
 	private int _nextId;
 
 	private NavigationIndex(ProjectSnapshot snapshot)
@@ -71,6 +72,9 @@ internal sealed class NavigationIndex
 
 		if (_binderContext is null || !_analysis.UnitsByDocument.TryGetValue(document, out var unit) || unit is null)
 			return null;
+
+		if (LookupBuiltinOperator(unit, position) is { } builtinResult)
+			return builtinResult;
 
 		ResolvedSymbol? resolved;
 		lock (_binderContext)
@@ -101,6 +105,48 @@ internal sealed class NavigationIndex
 			NativeInteropFor(resolved.Declaration));
 	}
 
+	private SymbolLookupResult? LookupBuiltinOperator(SyntaxNode unit, int position)
+	{
+		foreach (var node in Descendants(unit))
+		{
+			var name = node switch
+			{
+				SizeofExpressionSyntax => "sizeof",
+				AlignofExpressionSyntax => "alignof",
+				OffsetofExpressionSyntax => "offsetof",
+				_ => null,
+			};
+
+			if (name is null || position < node.Span.Start || position >= node.Span.Start + name.Length)
+				continue;
+
+			if (!_builtinByName.TryGetValue(name, out var entry))
+				continue;
+
+			return new SymbolLookupResult(
+				entry.Id,
+				new TextSpan(node.Span.Start, name.Length),
+				entry.Kind,
+				name,
+				entry.Name,
+				null,
+				null);
+		}
+
+		return null;
+	}
+
+	private static IEnumerable<SyntaxNode> Descendants(SyntaxNode node)
+	{
+		foreach (var child in node.GetChildren())
+		{
+			yield return child;
+
+			foreach (var descendant in Descendants(child))
+				yield return descendant;
+		}
+	}
+
 	internal IReadOnlyList<SymbolDefinition> Definitions(SymbolId symbol)
 	{
 		if (symbol.SnapshotToken != _token)
@@ -121,7 +167,7 @@ internal sealed class NavigationIndex
 		=> symbol.SnapshotToken == _token && _byId.ContainsKey(symbol.Value);
 
 	internal bool IsSourceOwned(SymbolId symbol)
-		=> Owns(symbol) && _byId[symbol.Value].Definitions.Count > 0;
+		=> Owns(symbol) && _byId[symbol.Value].Definitions.Count > 0 && !_byId[symbol.Value].IsBuiltin;
 
 	/// <summary>
 	/// Returns the compiler syntax declaration that owns a snapshot-local symbol identity.
@@ -512,12 +558,27 @@ internal sealed class NavigationIndex
 			: ComputeNameSpan(source, declaration.Span, name);
 
 		var declarationSpan = new TextSpan(Math.Max(declaration.Span.Start, 0), Math.Max(declaration.Span.Length, 0));
-		var entry = new Entry(new SymbolId(_token, _nextId++), name, kind, owner);
+		var entry = new Entry(new SymbolId(_token, _nextId++), name, kind, owner, isBuiltin: IsBuiltinDeclaration(declaration));
 		entry.Definitions.Add(new SymbolDefinition(documentId, declarationSpan, selectionSpan));
 		_byDeclaration[declaration] = entry;
 		_byId[entry.Id.Value] = entry;
+
+		if (entry.IsBuiltin && kind == ToolingSymbolKind.Function && !_builtinByName.ContainsKey(name))
+			_builtinByName[name] = entry;
+
 		return entry;
 	}
+
+	private static bool IsBuiltinDeclaration(SyntaxNode declaration) => declaration switch
+	{
+		FunctionDeclarationSyntax function => function.IsBuiltin,
+		StructDeclarationSyntax structDeclaration => structDeclaration.IsBuiltin,
+		UnionDeclarationSyntax unionDeclaration => unionDeclaration.IsBuiltin,
+		EnumDeclarationSyntax enumDeclaration => enumDeclaration.IsBuiltin,
+		ConstructorDeclarationSyntax constructor => constructor.IsBuiltin,
+		DestructorDeclarationSyntax destructor => destructor.IsBuiltin,
+		_ => false,
+	};
 
 	private Entry RegisterExternal(
 		SyntaxNode declaration,
@@ -741,7 +802,8 @@ internal sealed class NavigationIndex
 		string? packageId = null,
 		string? packageVersion = null,
 		string? namespaceName = null,
-		FunctionDeclarationSyntax? externalFunction = null)
+		FunctionDeclarationSyntax? externalFunction = null,
+		bool isBuiltin = false)
 	{
 		public SymbolId Id { get; } = id;
 		public string Name { get; } = name;
@@ -751,6 +813,7 @@ internal sealed class NavigationIndex
 		public string? PackageVersion { get; } = packageVersion;
 		public string? NamespaceName { get; } = namespaceName;
 		public FunctionDeclarationSyntax? ExternalFunction { get; } = externalFunction;
+		public bool IsBuiltin { get; } = isBuiltin;
 		public List<SymbolDefinition> Definitions { get; } = [];
 	}
 }

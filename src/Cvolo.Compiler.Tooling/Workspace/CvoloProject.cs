@@ -53,7 +53,7 @@ public sealed class CvoloProject
 	/// </summary>
 	public CvoloProject Advance(IReadOnlyDictionary<string, string>? sourceOverrides)
 	{
-		var (documents, externalUnits, packageSources) = CompilerProjectAdapter.DiscoverDocuments(
+		var (documents, externalUnits, packageSources, baseSourceFiles) = CompilerProjectAdapter.DiscoverDocuments(
 			ProjectPath,
 			_workspace.AllocateDocumentId,
 			_libraryPaths,
@@ -62,7 +62,7 @@ public sealed class CvoloProject
 			_documentIds,
 			allowRestore: false);
 
-		var snapshot = ProjectSnapshot.CreateOwned(Id, documents, externalUnits, packageSources);
+		var snapshot = ProjectSnapshot.CreateOwned(Id, documents, externalUnits, packageSources, baseSourceFiles);
 		return new CvoloProject(
 			_workspace,
 			Id,

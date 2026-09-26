@@ -19,7 +19,8 @@ internal static class CompilerProjectAdapter
 	public static (
 		IReadOnlyDictionary<DocumentId, DocumentSnapshot> Documents,
 		IReadOnlyList<ExternalSemanticUnit> ExternalUnits,
-		IReadOnlyList<PackageSourceDocument> PackageSources) DiscoverDocuments(
+		IReadOnlyList<PackageSourceDocument> PackageSources,
+		IReadOnlyList<string> BaseSourceFiles) DiscoverDocuments(
 		string projectPath,
 		Func<DocumentId> allocateDocumentId,
 		IReadOnlyList<string>? libraryPaths = null,
@@ -77,7 +78,7 @@ internal static class CompilerProjectAdapter
 				source.Source))
 			.ToArray();
 
-		return (documents, universe.ExternalUnits, packageSources);
+		return (documents, universe.ExternalUnits, packageSources, universe.Project.BaseSourceFiles);
 	}
 	private static bool IsManifestBackedInput(string projectPath)
 	{

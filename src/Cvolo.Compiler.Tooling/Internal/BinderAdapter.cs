@@ -85,6 +85,8 @@ internal static class BinderAdapter
 					binder.Context.PackageTemplateUnits.Add(external.Unit);
 			}
 
+			binder.Context.BaseSourcePaths.UnionWith(snapshot.BaseSourceFiles.Select(Path.GetFullPath));
+
 			binder.Bind(allUnits);
 			binderContext = binder.Context;
 

@@ -225,6 +225,10 @@ internal static class CompletionService
 				null, null, CompletionResolvableFields.None));
 		}
 
+		candidates.RemoveAll(candidate =>
+			candidate.Kind == Completion.CompletionKind.Function &&
+			candidate.Label is "sizeof" or "alignof" or "offsetof");
+
 		if (textContext.IsTypeContext)
 		{
 			candidates.RemoveAll(candidate =>

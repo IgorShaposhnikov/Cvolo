@@ -79,6 +79,24 @@ internal static class SemanticTokenService
 			case OffsetofExpressionSyntax:
 				AddDirectToken(tokens, seen, new Cvolo.Core.Diagnostics.TextSpan(node.Span.Start, "offsetof".Length), ToolingSymbolKind.Keyword);
 				return false;
+			case FunctionDeclarationSyntax builtinFunction when builtinFunction.BuiltinSpan is { } builtinFunctionSpan:
+				AddDirectToken(tokens, seen, builtinFunctionSpan, ToolingSymbolKind.Keyword);
+				return false;
+			case StructDeclarationSyntax builtinStruct when builtinStruct.BuiltinSpan is { } builtinStructSpan:
+				AddDirectToken(tokens, seen, builtinStructSpan, ToolingSymbolKind.Keyword);
+				return false;
+			case UnionDeclarationSyntax builtinUnion when builtinUnion.BuiltinSpan is { } builtinUnionSpan:
+				AddDirectToken(tokens, seen, builtinUnionSpan, ToolingSymbolKind.Keyword);
+				return false;
+			case EnumDeclarationSyntax builtinEnum when builtinEnum.BuiltinSpan is { } builtinEnumSpan:
+				AddDirectToken(tokens, seen, builtinEnumSpan, ToolingSymbolKind.Keyword);
+				return false;
+			case ConstructorDeclarationSyntax builtinConstructor when builtinConstructor.BuiltinSpan is { } builtinConstructorSpan:
+				AddDirectToken(tokens, seen, builtinConstructorSpan, ToolingSymbolKind.Keyword);
+				return false;
+			case DestructorDeclarationSyntax builtinDestructor when builtinDestructor.BuiltinSpan is { } builtinDestructorSpan:
+				AddDirectToken(tokens, seen, builtinDestructorSpan, ToolingSymbolKind.Keyword);
+				return false;
 		}
 
 		return false;

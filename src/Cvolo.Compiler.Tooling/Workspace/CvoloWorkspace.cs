@@ -90,12 +90,12 @@ public sealed class CvoloWorkspace
 
 		var absolutePath = Path.GetFullPath(projectPath);
 		var projectId = AllocateProjectId();
-		var (documents, externalUnits, packageSources) = CompilerProjectAdapter.DiscoverDocuments(
+		var (documents, externalUnits, packageSources, baseSourceFiles) = CompilerProjectAdapter.DiscoverDocuments(
 			absolutePath,
 			AllocateDocumentId,
 			libraryPaths,
 			packageCache);
-		var snapshot = ProjectSnapshot.CreateOwned(projectId, documents, externalUnits, packageSources);
+		var snapshot = ProjectSnapshot.CreateOwned(projectId, documents, externalUnits, packageSources, baseSourceFiles);
 
 		return new CvoloProject(this, projectId, absolutePath, snapshot, libraryPaths, packageCache);
 	}

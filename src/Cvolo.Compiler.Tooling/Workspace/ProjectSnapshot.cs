@@ -35,12 +35,14 @@ public sealed class ProjectSnapshot
 		ProjectId projectId,
 		IReadOnlyDictionary<DocumentId, DocumentSnapshot> documents,
 		IReadOnlyList<ExternalSemanticUnit> externalUnits,
-		IReadOnlyList<PackageSourceDocument> packageSources)
+		IReadOnlyList<PackageSourceDocument> packageSources,
+		IReadOnlyList<string> baseSourceFiles)
 	{
 		ProjectId = projectId;
 		_documents = documents;
 		_externalUnits = externalUnits;
 		_packageSources = packageSources;
+		BaseSourceFiles = baseSourceFiles;
 		DocumentIds = [.. documents.Keys];
 		_lazyAnalysis = new Lazy<AnalyzedProject>(() => BinderAdapter.AnalyzeSnapshot(this));
 		_lazyNavigation = new Lazy<NavigationIndex>(() => NavigationIndex.Build(this));
@@ -51,9 +53,10 @@ public sealed class ProjectSnapshot
 		ProjectId projectId,
 		IReadOnlyDictionary<DocumentId, DocumentSnapshot> documents,
 		IReadOnlyList<ExternalSemanticUnit>? externalUnits = null,
-		IReadOnlyList<PackageSourceDocument>? packageSources = null)
+		IReadOnlyList<PackageSourceDocument>? packageSources = null,
+		IReadOnlyList<string>? baseSourceFiles = null)
 	{
-		var snapshot = new ProjectSnapshot(projectId, documents, externalUnits ?? [], packageSources ?? []);
+		var snapshot = new ProjectSnapshot(projectId, documents, externalUnits ?? [], packageSources ?? [], baseSourceFiles ?? []);
 
 		foreach (var document in snapshot.Documents.Values)
 			document.OwningSnapshot = snapshot;
@@ -84,6 +87,8 @@ public sealed class ProjectSnapshot
 	internal IReadOnlyList<ExternalSemanticUnit> ExternalUnits => _externalUnits;
 
 	internal IReadOnlyList<PackageSourceDocument> PackageSources => _packageSources;
+
+	internal IReadOnlyList<string> BaseSourceFiles { get; }
 
 	/// <summary>
 	/// Returns the source declarations of <paramref name="symbol"/> within this snapshot. A symbol
@@ -223,6 +228,6 @@ public sealed class ProjectSnapshot
 			newDocuments[id] = new DocumentSnapshot(id, old.FilePath, text, null);
 		}
 
-		return CreateOwned(ProjectId, newDocuments, _externalUnits, _packageSources);
+		return CreateOwned(ProjectId, newDocuments, _externalUnits, _packageSources, BaseSourceFiles);
 	}
 }
