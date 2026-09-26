@@ -199,6 +199,10 @@ public sealed class ValidationPass(BindingContext context)
 
 					foreach (var method in extDecl.Methods.Concat(extDecl.Destructors.Select(static d => d.ToFunctionDeclaration())))
 					{
+						var isMethodTemplate = method.GenericParameters.Count > 0 && method.GenericParameters.Any(p => context.ResolveType(p) == null);
+						if (isMethodTemplate)
+							continue;
+
 						FunctionBodies.ValidateExtensionBody(extDecl.ExtendedTypeName, method);
 					}
 

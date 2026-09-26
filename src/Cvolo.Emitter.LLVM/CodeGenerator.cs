@@ -230,7 +230,8 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 						continue;
 
 					foreach (var method in extDecl.Methods
-						.Concat(extDecl.Destructors.Select(static d => d.ToFunctionDeclaration())))
+						.Concat(extDecl.Destructors.Select(static d => d.ToFunctionDeclaration()))
+						.Where(m => m.GenericParameters.Count == 0 || m.GenericParameters.All(p => bindingContext.ResolveType(p) is not null)))
 					{
 						var baseMangledName = bindingContext.GetMangledName($"{extDecl.ExtendedTypeName}.{method.Name}", ns);
 						if (bindingContext.OverloadedFunctions.TryGetValue(baseMangledName, out var candidates))
