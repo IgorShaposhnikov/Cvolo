@@ -157,6 +157,9 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 				binder.Context.ExternalPackageUnits.Add(external.Unit);
 			else
 				binder.Context.PackageTemplateUnits.Add(external.Unit);
+
+			if (external.PackageId is { } externalPackageId && external.Unit.Context is { } externalContext)
+				binder.Context.UnitPackageIds[externalContext] = externalPackageId;
 		}
 
 		// Cross-file declaration index feeding the try/catch lowering (function

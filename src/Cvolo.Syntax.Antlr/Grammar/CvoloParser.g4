@@ -172,8 +172,31 @@ extensionDeclaration
 
 extensionMember
 	: extensionFunctionDeclaration
+	| operatorDeclaration
 	| destructorDeclaration
 	| constructorDeclaration
+	;
+
+// An operator overload is a receiverless associated callable. It needs no leading dot: 'operator'
+// is already unambiguous. Operators are never generic and never declare a receiver, so the
+// parameter list is mandatory and plain (an operator must declare at least one operand, so the
+// empty form is only reachable from metadata round-trips and is rejected by declaration analysis).
+// The body may be omitted for declarations imported from package metadata. ASSIGN is listed only
+// so that 'operator =' produces a dedicated diagnostic instead of a bare syntax error; assignment
+// is compiler-owned and not overloadable.
+operatorDeclaration
+	: attributeList* visibilityModifier? returnType OPERATOR overloadableOperator LPAREN parameterList? RPAREN (blockStatement | SEMI)
+	;
+
+overloadableOperator
+	: PLUS | MINUS | STAR | DIV | PERCENT
+	| EQ | NEQ
+	| LT | LTE | GT | GTE
+	| AMPERSAND | PIPE | CARET
+	| LSHIFT
+	| GT GT
+	| EXCLAMATION | TILDE
+	| ASSIGN
 	;
 
 // Members of an extension block accept an optional leading DOT. The DOT marks an

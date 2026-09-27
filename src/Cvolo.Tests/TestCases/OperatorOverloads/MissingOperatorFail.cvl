@@ -1,0 +1,28 @@
+using System;
+
+// 'Vec2' declares '+' for (Vec2, Vec2) but '/' only for (Vec2, int). Using 'a / b' on two
+// Vec2 values therefore reaches overload resolution with no candidate.
+public struct Vec2 {
+    public int X;
+    public int Y;
+}
+
+public extension Vec2 {
+    public Vec2 operator +(Vec2 left, Vec2 right) {
+        val Vec2 result(X: left.X + right.X, Y: left.Y + right.Y);
+        return result;
+    }
+
+    public Vec2 operator /(Vec2 value, int scale) {
+        val Vec2 result(X: value.X / scale, Y: value.Y / scale);
+        return result;
+    }
+}
+
+int main() {
+    val Vec2 a(X: 6, Y: 8);
+    val Vec2 b(X: 2, Y: 4);
+    val Vec2 quotient = a / b;
+    Console.WriteLine($"{quotient.X},{quotient.Y}");
+    return 0;
+}

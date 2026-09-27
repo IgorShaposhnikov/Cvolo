@@ -540,7 +540,9 @@ internal sealed class DeclarationEmitter(
 		if (BindingContext.ResolveType(extension.ExtendedTypeName) is ProtocolTypeSymbol)
 			return;
 
-		foreach (var method in extension.Methods.Concat(extension.Destructors.Select(static d => d.ToFunctionDeclaration()))
+		foreach (var method in extension.Methods
+			.Concat(extension.Destructors.Select(static d => d.ToFunctionDeclaration()))
+			.Concat(extension.Operators.Select(static o => o.ToFunctionDeclaration()))
 			.Where(m => m.GenericParameters.Count == 0 || m.GenericParameters.All(p => BindingContext.ResolveType(p) is not null)))
 		{
 			var baseName = BindingContext.GetMangledName($"{extension.ExtendedTypeName}.{method.Name}", currentNamespace);

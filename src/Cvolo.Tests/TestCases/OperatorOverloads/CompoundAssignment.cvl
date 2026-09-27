@@ -1,0 +1,29 @@
+using System;
+
+struct Counter {
+    int Total;
+}
+
+public extension Counter {
+    public Counter operator +(Counter left, Counter right) {
+        val Counter result(Total: left.Total + right.Total);
+        return result;
+    }
+
+    public Counter operator -(Counter left, Counter right) {
+        val Counter result(Total: left.Total - right.Total);
+        return result;
+    }
+}
+
+int main() {
+    val Counter start(Total: 5);
+
+    // Compound assignment derives from the underlying overloaded operator: 'total = total + step'.
+    var Counter total(Total: start.Total);
+    total += start;
+    Console.WriteLine($"afterAdd={total.Total}");
+    total -= start;
+    Console.WriteLine($"afterSub={total.Total}");
+    return 0;
+}

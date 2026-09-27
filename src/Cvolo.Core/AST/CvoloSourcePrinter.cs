@@ -64,8 +64,9 @@ public sealed class CvoloSourcePrinter
 				var extConform = ext.ConformsTo != null ? $" : {ext.ConformsTo}" : "";
 				var extConstructors = string.Join("\n", ext.Constructors.Select(c => Print(c, indent + 1)));
 				var extDestructors = string.Join("\n", ext.Destructors.Select(d => Print(d, indent + 1)));
+				var extOperators = string.Join("\n", ext.Operators.Select(o => Print(o, indent + 1)));
 				var extMethods = string.Join("\n", ext.Methods.Select(m => Print(m, indent + 1)));
-				var extAll = string.Join("\n", new[] { extConstructors, extDestructors, extMethods }.Where(s => s.Length > 0));
+				var extAll = string.Join("\n", new[] { extConstructors, extDestructors, extMethods, extOperators }.Where(s => s.Length > 0));
 				return $"\n{ind}extension {ext.ExtendedTypeName}{extGenerics}{extConform} {{\n{extAll}\n{ind}}}";
 
 			case StructDeclarationSyntax st:
@@ -92,8 +93,14 @@ public sealed class CvoloSourcePrinter
 					: "";
 				return $"{PrintAttributes(ctor.Attributes, indent)}\n{ind}{(ctor.IsBuiltin ? "builtin " : "")}{ctor.StructName}({string.Join(", ", ctor.Parameters.Select(Print))}){ctorInit}{(ctor.IsDeclarationOnly ? ";" : $" {Print(ctor.Body, indent)}")}";
 
-			case DestructorDeclarationSyntax dtor:
-				return $"{PrintAttributes(dtor.Attributes, indent)}\n{ind}{(dtor.IsBuiltin ? "builtin " : "")}~{dtor.StructName}(){(dtor.IsDeclarationOnly ? ";" : $" {Print(dtor.Body, indent)}")}";
+		case DestructorDeclarationSyntax dtor:
+			return $"{PrintAttributes(dtor.Attributes, indent)}\n{ind}{(dtor.IsBuiltin ? "builtin " : "")}~{dtor.StructName}(){(dtor.IsDeclarationOnly ? ";" : $" {Print(dtor.Body, indent)}")}";
+
+		case OperatorDeclarationSyntax op:
+			var opVis = op.SyntacticVisibility is null ? "" : $"{op.Visibility.ToString().ToLowerInvariant()} ";
+			var opBody = op.Body != null ? $" {Print(op.Body, indent)}" : ";\n";
+			return $"{PrintAttributes(op.Attributes, indent)}\n{ind}{opVis}{op.ReturnType} operator {op.Operator}({string.Join(", ", op.Parameters.Select(Print))}){opBody}";
+
 
 			case BlockStatementSyntax b:
 				var stmts = string.Join("", b.Statements.Select(s => Print(s, indent + 1)));

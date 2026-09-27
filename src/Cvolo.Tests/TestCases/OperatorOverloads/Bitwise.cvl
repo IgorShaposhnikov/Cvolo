@@ -1,0 +1,62 @@
+using System;
+
+struct FlagSet {
+    nuint Bits;
+}
+
+public extension FlagSet {
+    public FlagSet operator &(FlagSet left, FlagSet right) {
+        val FlagSet result(Bits: left.Bits & right.Bits);
+        return result;
+    }
+
+    public FlagSet operator |(FlagSet left, FlagSet right) {
+        val FlagSet result(Bits: left.Bits | right.Bits);
+        return result;
+    }
+
+    public FlagSet operator ^(FlagSet left, FlagSet right) {
+        val FlagSet result(Bits: left.Bits ^ right.Bits);
+        return result;
+    }
+
+    public FlagSet operator <<(FlagSet value, nuint shift) {
+        val FlagSet result(Bits: value.Bits << shift);
+        return result;
+    }
+
+    public FlagSet operator >>(FlagSet value, nuint shift) {
+        val FlagSet result(Bits: value.Bits >> shift);
+        return result;
+    }
+
+    public FlagSet operator ~(FlagSet value) {
+        val FlagSet result(Bits: ~value.Bits);
+        return result;
+    }
+
+    public bool operator !(FlagSet value) {
+        return value.Bits == 0;
+    }
+}
+
+int main() {
+    val FlagSet a(Bits: (nuint)12);
+    val FlagSet b(Bits: (nuint)10);
+
+    val FlagSet and = a & b;
+    val FlagSet or = a | b;
+    val FlagSet xor = a ^ b;
+    val FlagSet left = a << 2;
+    val FlagSet right = a >> 2;
+    val FlagSet complement = ~a;
+
+    Console.WriteLine($"and={and.Bits}");
+    Console.WriteLine($"or={or.Bits}");
+    Console.WriteLine($"xor={xor.Bits}");
+    Console.WriteLine($"left={left.Bits}");
+    Console.WriteLine($"right={right.Bits}");
+    Console.WriteLine($"complement={complement.Bits}");
+    Console.WriteLine($"empty={!b}");
+    return 0;
+}

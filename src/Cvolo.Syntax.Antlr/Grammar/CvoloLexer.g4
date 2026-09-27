@@ -76,6 +76,7 @@ IN: 'in';
 TRY: 'try';
 CATCH: 'catch';
 FINALLY: 'finally';
+OPERATOR: 'operator';
 
 // Punctuation
 LPAREN: '(';

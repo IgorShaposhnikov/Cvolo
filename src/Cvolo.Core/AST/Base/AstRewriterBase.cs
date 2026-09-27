@@ -31,7 +31,17 @@ public abstract class AstRewriterBase
 			var rewrittenMethods = extDecl.Methods.Select(Rewrite).Cast<FunctionDeclarationSyntax>().ToList();
 			var rewrittenDestructors = extDecl.Destructors.Select(Rewrite).Cast<DestructorDeclarationSyntax>().ToList();
 			var rewrittenConstructors = extDecl.Constructors.Select(Rewrite).Cast<ConstructorDeclarationSyntax>().ToList();
-			return new ExtensionDeclarationSyntax(extDecl.Span, extDecl.ExtendedTypeName, rewrittenMethods, rewrittenDestructors, rewrittenConstructors, extDecl.GenericParameters, extDecl.ConformsTo, extDecl.Visibility);
+			var rewrittenOperators = extDecl.Operators.Select(Rewrite).Cast<OperatorDeclarationSyntax>().ToList();
+			return new ExtensionDeclarationSyntax(extDecl.Span, extDecl.ExtendedTypeName, rewrittenMethods, rewrittenDestructors, rewrittenConstructors, extDecl.GenericParameters, extDecl.ConformsTo, extDecl.Visibility, operators: rewrittenOperators);
+		}
+
+		if (node is OperatorDeclarationSyntax op)
+		{
+			var rewrittenBody = op.Body is not null ? (BlockStatementSyntax)Rewrite(op.Body) : null;
+			return new OperatorDeclarationSyntax(op.Span, op.ReturnType, op.Operator, op.OperatorToken, op.IsUnary, op.Parameters, rewrittenBody!, op.Attributes, op.SyntacticVisibility, op.OperatorSpan, op.ReturnTypeSpan)
+			{
+				HasSyntaxError = op.HasSyntaxError
+			};
 		}
 
 		if (node is InterfaceDeclarationSyntax interfaceDecl)

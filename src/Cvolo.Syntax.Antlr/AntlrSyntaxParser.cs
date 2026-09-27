@@ -1938,10 +1938,13 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		var methods = new List<FunctionDeclarationSyntax>();
 		var destructorContexts = new List<CvoloParser.DestructorDeclarationContext>();
 		var constructorContexts = new List<CvoloParser.ConstructorDeclarationContext>();
+		var operators = new List<OperatorDeclarationSyntax>();
 		foreach (var memberCtx in context.extensionMember())
 		{
 			if (memberCtx.extensionFunctionDeclaration() is { } funcCtx)
 				methods.Add(BuildExtensionFunctionDeclaration(funcCtx));
+			else if (memberCtx.operatorDeclaration() is { } opCtx)
+				operators.Add(BuildOperatorDeclaration(opCtx));
 			else if (memberCtx.destructorDeclaration() is { } dtorCtx)
 				destructorContexts.Add(dtorCtx);
 			else if (memberCtx.constructorDeclaration() is { } ctorCtx)
@@ -2032,7 +2035,62 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		if (context.qualifiedName() is { } conformsCtx)
 			conformsTo = conformsCtx.GetText();
 
-		return new ExtensionDeclarationSyntax(SpanOf(context), extendedTypeName, methods, destructors, constructors, generics, conformsTo, GetVisibilityModifier(context.visibilityModifier()), defaults, nameSpan: SpanOf(context.Identifier().Symbol), conformsToSpan: context.qualifiedName() is { } conformsSpanCtx ? SpanOf(conformsSpanCtx) : null);
+		return new ExtensionDeclarationSyntax(SpanOf(context), extendedTypeName, methods, destructors, constructors, generics, conformsTo, GetVisibilityModifier(context.visibilityModifier()), defaults, nameSpan: SpanOf(context.Identifier().Symbol), conformsToSpan: context.qualifiedName() is { } conformsSpanCtx ? SpanOf(conformsSpanCtx) : null, operators: operators);
+	}
+
+	/// <summary>
+	/// Builds an operator overload declaration. Operators are receiverless associated callables, so
+	/// the shape is fixed: a mandatory plain parameter list (one operand for prefix operators, two
+	/// for infix ones), no type parameters and no body-optional receiver. The arity and the
+	/// overloadability of the spelling are validated during declaration registration, which owns
+	/// the semantic rules; parsing only rejects the parts that cannot be represented at all.
+	/// </summary>
+	private OperatorDeclarationSyntax BuildOperatorDeclaration(CvoloParser.OperatorDeclarationContext context)
+	{
+		var operatorCtx = context.overloadableOperator();
+		var spelling = operatorCtx.GetText();
+		var operatorSpan = SpanOf(operatorCtx);
+
+		var parameters = new List<ParameterSyntax>();
+		var hasSyntaxError = false;
+		if (context.parameterList() is { } operatorParamList)
+		{
+			foreach (var param in operatorParamList.parameter())
+			{
+				if (TryGetReceiverContract(param, out _, out _))
+				{
+					ReportParseError(param, $"Operator '{spelling}' cannot declare an instance receiver; operators are receiverless.", DiagnosticIds.OperatorWithReceiver);
+					hasSyntaxError = true;
+					continue;
+				}
+
+				parameters.Add(BuildParameter(param));
+			}
+		}
+
+		// A single operand selects the prefix form of '+' and '-'; every other spelling is infix.
+		// The best-effort token keeps the node well-formed for tooling even when the arity is wrong;
+		// registration then reports the arity diagnostic against the real parameter list.
+		var unary = parameters.Count == 1;
+		var token = OperatorTokens.TryGetToken(spelling, unary)
+			?? OperatorTokens.TryGetToken(spelling, !unary)
+			?? (spelling == "=" ? OperatorTokens.Prefix + "assign" : OperatorTokens.Prefix + "invalid");
+
+		return new OperatorDeclarationSyntax(
+			SpanOf(context),
+			GetReturnTypeName(context.returnType()),
+			spelling,
+			token,
+			OperatorTokens.IsUnary(token),
+			parameters,
+			context.blockStatement() is { } opBlock ? BuildBlockStatement(opBlock) : null,
+			BuildAttributeList(context.attributeList()),
+			GetVisibilityModifier(context.visibilityModifier()),
+			operatorSpan,
+			SpanOf(context.returnType()))
+		{
+			HasSyntaxError = hasSyntaxError
+		};
 	}
 
 	private InterfaceDeclarationSyntax BuildInterfaceDeclaration(CvoloParser.InterfaceDeclarationContext context)

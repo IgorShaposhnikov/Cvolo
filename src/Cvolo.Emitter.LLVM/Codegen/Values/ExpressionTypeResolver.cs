@@ -199,6 +199,11 @@ internal sealed class ExpressionTypeResolver(CodegenContext codegen, Func<Functi
 	/// </summary>
 	private TypeSymbol ResolveUnary(UnaryExpressionSyntax unary)
 	{
+		// A declared operator overload (spec §14) answers before the builtin meanings of '*', '&',
+		// the explicit cast, and the operand's own type.
+		if (BindingContext.FindOperatorOverload(unary.Operator, Resolve(unary.Operand)) is { } overloaded)
+			return overloaded.ReturnType;
+
 		if (unary.Operator == "*")
 		{
 			var operandType = Resolve(unary.Operand);
@@ -252,14 +257,20 @@ internal sealed class ExpressionTypeResolver(CodegenContext codegen, Func<Functi
 	/// </summary>
 	private TypeSymbol ResolveBinary(BinaryExpressionSyntax binary)
 	{
+		var leftType = Resolve(binary.Left);
+		var rightType = Resolve(binary.Right);
+
+		// A declared operator overload (spec §14) is an ordinary receiverless call, so it decides
+		// the expression type before the builtin string, comparison and promotion rules apply.
+		if (BindingContext.FindOperatorOverload(binary.Operator, leftType, rightType) is { } overloaded)
+			return overloaded.ReturnType;
+
 		if (binary.Operator == "+" && IsConstantStringTree(binary.Left) && IsConstantStringTree(binary.Right))
 			return TypeSymbol.String;
 
 		if (binary.Operator is "==" or "!=" or "<" or ">" or "<=" or ">=")
 			return TypeSymbol.Bool;
 
-		var leftType = Resolve(binary.Left);
-		var rightType = Resolve(binary.Right);
 		if (leftType.Equals(TypeSymbol.Double) || rightType.Equals(TypeSymbol.Double))
 			return TypeSymbol.Double;
 

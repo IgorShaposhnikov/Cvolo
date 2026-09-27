@@ -437,10 +437,17 @@ internal sealed class ExpressionValidator(
 					{
 						Check(bin.Left, scope);
 						Check(bin.Right, scope);
-						CheckEnumIntMismatch(GetType(bin.Left, scope), GetType(bin.Right, scope), bin.Span);
 
 						var binLeftType = GetType(bin.Left, scope);
 						var binRightType = GetType(bin.Right, scope);
+
+						// OPERATOR OVERLOAD (§14): a declared operator is an ordinary call to a
+						// receiverless associated function, so the builtin-only rules below do not
+						// apply and the emitter lowers the expression as that call.
+						if (context.FindOperatorOverload(bin.Operator, binLeftType, binRightType) is not null)
+							break;
+
+						CheckEnumIntMismatch(binLeftType, binRightType, bin.Span);
 						if (bin.Operator == "+" &&
 							((binLeftType?.Equals(TypeSymbol.String) ?? false) || (binRightType?.Equals(TypeSymbol.String) ?? false)) &&
 							(!IsConstantStringExpression(bin.Left) || !IsConstantStringExpression(bin.Right)))
@@ -450,6 +457,8 @@ internal sealed class ExpressionValidator(
 								"The `+` operator on strings is only allowed between compile-time constant strings (literals).",
 								DiagnosticIds.DynamicStringConcatenation);
 						}
+
+						ReportMissingOperatorOverload(bin.Operator, binLeftType, binRightType, unary: false, bin.Span);
 					}
 
 					break;
@@ -483,8 +492,16 @@ internal sealed class ExpressionValidator(
 				}
 
 				Check(unary.Operand, scope);
+
+				// OPERATOR OVERLOAD (§14): a declared unary operator answers before the builtin
+				// cast and [Flags] meanings of '-', '!' and '~'.
+				var unaryOperandType = GetType(unary.Operand, scope);
+				if (context.FindOperatorOverload(unary.Operator, unaryOperandType) is not null)
+					break;
+
 				CheckUnaryCast(unary, scope);
 				CheckUnaryEnumTilde(unary, scope);
+				ReportMissingOperatorOverload(unary.Operator, unaryOperandType, null, unary: true, unary.Span);
 				break;
 			case IsPatternExpressionSyntax isPat:
 				CheckIsPatternExpression(isPat, scope);
@@ -1421,6 +1438,7 @@ internal sealed class ExpressionValidator(
 			NameofExpressionSyntax => TypeSymbol.String,
 			TypeofExpressionSyntax => context.ResolveType("Type"),
 			IsPatternExpressionSyntax => TypeSymbol.Bool,
+			BinaryExpressionSyntax bin when context.FindOperatorOverload(bin.Operator, GetType(bin.Left, scope), GetType(bin.Right, scope)) is { } overloaded => overloaded.ReturnType,
 			BinaryExpressionSyntax bin when bin.Operator is "|" or "&" or "^" => GetFlagsBinaryType(bin, scope),
 			BinaryExpressionSyntax bin when bin.Operator == "+" && IsConstantStringExpression(bin.Left) && IsConstantStringExpression(bin.Right) => TypeSymbol.String,
 			_ => null
@@ -2200,6 +2218,11 @@ internal sealed class ExpressionValidator(
 	/// </summary>
 	private TypeSymbol? GetUnaryExpressionType(UnaryExpressionSyntax unary, SymbolTable scope)
 	{
+		// Operator overloads (§14) answer before the builtin meanings of '-', '!' and '~'.
+		if (GetType(unary.Operand, scope) is { } unaryOperand
+			&& context.FindOperatorOverload(unary.Operator, unaryOperand) is { } overloaded)
+			return overloaded.ReturnType;
+
 		if (unary.Operator == "&")
 		{
 			var opType = GetType(unary.Operand, scope);
@@ -2240,6 +2263,31 @@ internal sealed class ExpressionValidator(
 		}
 
 		return GetType(unary.Operand, scope);
+	}
+
+	/// <summary>
+	/// Reports an operator expression whose operand type declares the operator but accepts none of
+	/// these operands. Without it the expression falls back to builtin lowering and fails later with
+	/// an unrelated type error, or silently ignores the declared operator.
+	/// </summary>
+	private void ReportMissingOperatorOverload(string spelling, TypeSymbol? left, TypeSymbol? right, bool unary, TextSpan span)
+	{
+		if (OperatorTokens.TryGetToken(spelling, unary) is null)
+			return;
+
+		var owner = left is not null && context.DeclaresOperatorOverload(spelling, left, unary)
+			? left
+			: right is not null && context.DeclaresOperatorOverload(spelling, right, unary)
+				? right
+				: null;
+		if (owner is null)
+			return;
+
+		var operandTypes = unary ? left?.Name ?? "?" : $"{left?.Name ?? "?"}, {right?.Name ?? "?"}";
+		var currentFileContext = context.FileContexts[context.CurrentUnit!];
+		context.Diagnostics.Report(currentFileContext, span,
+			$"No '{spelling}' operator overload declared on '{owner.Name}' accepts operand type(s) {operandTypes}.",
+			DiagnosticIds.OperatorNoMatch);
 	}
 
 	/// <summary>

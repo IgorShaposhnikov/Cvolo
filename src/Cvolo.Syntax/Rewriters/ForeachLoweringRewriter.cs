@@ -55,7 +55,17 @@ public sealed class ForeachLoweringRewriter : AstRewriterBase
 					var methods = ext.Methods.Select(Rewrite).Cast<FunctionDeclarationSyntax>().ToList();
 					var destructors = ext.Destructors.Select(Rewrite).Cast<DestructorDeclarationSyntax>().ToList();
 					var constructors = ext.Constructors.Select(Rewrite).Cast<ConstructorDeclarationSyntax>().ToList();
-					return new ExtensionDeclarationSyntax(ext.Span, ext.ExtendedTypeName, methods, destructors, constructors, ext.GenericParameters, ext.ConformsTo, ext.Visibility);
+					var operators = ext.Operators.Select(Rewrite).Cast<OperatorDeclarationSyntax>().ToList();
+					return new ExtensionDeclarationSyntax(ext.Span, ext.ExtendedTypeName, methods, destructors, constructors, ext.GenericParameters, ext.ConformsTo, ext.Visibility, operators: operators);
+				}
+
+			case OperatorDeclarationSyntax op:
+				{
+					var body = (BlockStatementSyntax)Rewrite(op.Body!);
+					return new OperatorDeclarationSyntax(op.Span, op.ReturnType, op.Operator, op.OperatorToken, op.IsUnary, op.Parameters, body, op.Attributes, op.SyntacticVisibility, op.OperatorSpan, op.ReturnTypeSpan)
+					{
+						HasSyntaxError = op.HasSyntaxError
+					};
 				}
 
 			case FunctionDeclarationSyntax func:

@@ -967,6 +967,12 @@ public static class CompletionQuery
 		var visibleFunctions = new SortedDictionary<string, string?>(StringComparer.Ordinal);
 		foreach (var (memberName, function) in state.Context.GetAssociatedFunctionCandidates(type, state.Unit))
 		{
+			// Operators are associated callables but are never named in source: they are reached
+			// through the operator token in an expression, so offering their mangled token
+			// (`op_add`) as a member label would be both misleading and non-insertable.
+			if (OperatorTokens.IsOperatorToken(memberName))
+				continue;
+
 			if (!IsVisible(state, function.Visibility, function.DeclaringUnit))
 				continue;
 

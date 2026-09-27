@@ -70,6 +70,11 @@ internal static class SemanticTokenService
 			case BinaryExpressionSyntax binary:
 				TryAddOperatorToken(binary, source, tokens, seen);
 				return false;
+			case OperatorDeclarationSyntax operatorDeclaration:
+				// The declared operator token is the declaration's name; the `operator` keyword
+				// itself stays unclassified so it renders as ordinary punctuation-adjacent text.
+				AddDirectToken(tokens, seen, operatorDeclaration.OperatorSpan, ToolingSymbolKind.Operator);
+				return false;
 			case SizeofExpressionSyntax:
 				AddDirectToken(tokens, seen, new Cvolo.Core.Diagnostics.TextSpan(node.Span.Start, "sizeof".Length), ToolingSymbolKind.Keyword);
 				return false;

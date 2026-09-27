@@ -1,0 +1,20 @@
+using System;
+
+struct Cell {
+    int Value;
+}
+
+struct Helpers {
+    int Seed;
+}
+
+public extension Helpers {
+    // CVL2202: the owner 'Helpers' is not one of the operand types of '+'.
+    public Cell operator +(Cell left, Cell right) {
+        return left;
+    }
+}
+
+int main() {
+    return 0;
+}

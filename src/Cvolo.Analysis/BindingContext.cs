@@ -252,6 +252,28 @@ public sealed class BindingContext
 	public HashSet<CompilationUnitSyntax> ExternalPackageUnits { get; } = [];
 	public HashSet<CompilationUnitSyntax> PackageTemplateUnits { get; } = [];
 
+	/// <summary>
+	/// The package that owns each packaged unit. A package contributes two kinds of unit - the API
+	/// stub that declares its public types and the template source that carries their bodies - and
+	/// both belong to the same package, which is what lets a rule such as operator ownership
+	/// (spec §16) be enforced per package instead of per compilation unit. Units that are ordinary
+	/// project source are absent, because a project is its own ownership scope.
+	/// </summary>
+	public Dictionary<CompilationContext, string> UnitPackageIds { get; } = new(ReferenceEqualityComparer.Instance);
+
+	/// <summary>
+	/// The owning package of a unit, if it came from a package rather than from project source.
+	/// Keyed by the unit's source context so the answer survives the AST rewrites that produce the
+	/// unit the binding passes actually see.
+	/// </summary>
+	public bool TryGetUnitPackageId(CompilationUnitSyntax? unit, out string packageId)
+	{
+		packageId = string.Empty;
+		return unit is not null
+			&& unit.Context is { } unitContext
+			&& UnitPackageIds.TryGetValue(unitContext, out packageId!);
+	}
+
 	public Dictionary<SyntaxNode, Builtins.BuiltinId> BuiltinBindings { get; } = new(ReferenceEqualityComparer.Instance);
 	public HashSet<string> CompileTimeOnlyBuiltinTypes { get; } = new(StringComparer.Ordinal);
 	public HashSet<string> BaseSourcePaths { get; } = new(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
@@ -2211,6 +2233,106 @@ public sealed class BindingContext
 		}
 
 		return results;
+	}
+
+	/// <summary>
+	/// Returns the operator overload that answers for a binary operator expression, or null when the
+	/// expression is not an overloaded operator and must be lowered as a builtin operation.
+	/// </summary>
+	/// <remarks>
+	/// An operator overload is a receiverless associated callable (spec §14), so it is looked up in
+	/// the associated table under the operator's stable token. Spec §16 requires the owner type to be
+	/// one of the operand types rather than the left operand specifically, so the right operand is
+	/// tried as a fallback.
+	/// </remarks>
+	public FunctionSymbol? FindOperatorOverload(string spelling, TypeSymbol? left, TypeSymbol? right)
+	{
+		// The common case is an expression with no operator overloads declared anywhere: one field
+		// read keeps every builtin arithmetic expression off the candidate-gathering path.
+		if (AssociatedFunctions.Count == 0 || left is null || right is null)
+			return null;
+
+		if (OperatorTokens.TryGetToken(spelling, unary: false) is not { } token)
+			return null;
+
+		var argumentTypes = new[] { left, right };
+		if (FindOwnerOperatorOverload(left, token, argumentTypes) is { } match)
+			return match;
+
+		return right.Name == left.Name ? null : FindOwnerOperatorOverload(right, token, argumentTypes);
+	}
+
+	/// <summary>
+	/// Returns the operator overload that answers for a unary operator expression, or null when the
+	/// expression is not an overloaded operator.
+	/// </summary>
+	public FunctionSymbol? FindOperatorOverload(string spelling, TypeSymbol? operand)
+	{
+		if (AssociatedFunctions.Count == 0 || operand is null)
+			return null;
+
+		return OperatorTokens.TryGetToken(spelling, unary: true) is { } token
+			? FindOwnerOperatorOverload(operand, token, [operand])
+			: null;
+	}
+
+	/// <summary>
+	/// True when <paramref name="owner"/> declares at least one operator overload for the spelling.
+	/// Lets a call site tell "this type has no such operator" apart from "the operator exists but does
+	/// not accept these operands".
+	/// </summary>
+	public bool DeclaresOperatorOverload(string spelling, TypeSymbol? owner, bool unary)
+	{
+		if (AssociatedFunctions.Count == 0 || owner is null)
+			return false;
+
+		return OperatorTokens.TryGetToken(spelling, unary) is { } token
+			&& GetAssociatedFunctionCandidates(owner, CurrentUnit, token).Count > 0;
+	}
+
+	private FunctionSymbol? FindOwnerOperatorOverload(TypeSymbol owner, string token, IReadOnlyList<TypeSymbol> argumentTypes)
+	{
+		FunctionSymbol? bestMatch = null;
+		var bestScore = -1;
+
+		foreach (var (_, candidate) in GetAssociatedFunctionCandidates(owner, CurrentUnit, token))
+		{
+			var score = ScoreOperatorSignature([.. candidate.Parameters.Select(parameter => parameter.Type)], argumentTypes);
+			if (score > bestScore)
+			{
+				bestScore = score;
+				bestMatch = candidate;
+			}
+		}
+
+		return bestScore >= 0 ? bestMatch : null;
+	}
+
+	/// <summary>
+	/// Scores an operator candidate against the operand types. Identity wins outright; the only
+	/// conversions an operator declaration can rely on are the builtin numeric widenings, so a literal
+	/// still reaches a <c>float</c> operand. Anything else is not a match, which keeps a wrong
+	/// operand type an honest "no matching operator" instead of a silent binding.
+	/// </summary>
+	private static int ScoreOperatorSignature(IReadOnlyList<TypeSymbol> parameterTypes, IReadOnlyList<TypeSymbol> argumentTypes)
+	{
+		if (parameterTypes.Count != argumentTypes.Count)
+			return -1;
+
+		var score = 0;
+		for (var i = 0; i < parameterTypes.Count; i++)
+		{
+			if (parameterTypes[i].Equals(argumentTypes[i]))
+				score += 4;
+			else if (TypeSymbol.IsIntegerType(parameterTypes[i]) && TypeSymbol.IsFloatingPointType(argumentTypes[i]))
+				score += 1;
+			else if (TypeSymbol.IsIntegerType(parameterTypes[i]) && TypeSymbol.IsIntegerType(argumentTypes[i]))
+				score += 1;
+			else
+				return -1;
+		}
+
+		return score;
 	}
 
 	/// <summary>

@@ -459,6 +459,15 @@ internal sealed class NavigationIndex
 
 					foreach (var destructor in extension.Destructors)
 						Register(documentId, source, destructor, destructor.StructName, ToolingSymbolKind.Destructor, null, owner);
+
+					foreach (var op in extension.Operators)
+					{
+						// An operator's name is punctuation, so the outline entry is presented as
+						// `operator +` and its selection range is the operator token itself.
+						Register(documentId, source, op, op.DisplayName, ToolingSymbolKind.Operator, op.OperatorSpan, owner);
+						IndexParameters(documentId, source, op.Parameters, owner);
+						IndexLocals(documentId, source, op.Body);
+					}
 					break;
 				}
 
@@ -736,6 +745,8 @@ internal sealed class NavigationIndex
 			yield return constructor;
 		foreach (var destructor in extension.Destructors)
 			yield return destructor;
+		foreach (var op in extension.Operators)
+			yield return op;
 	}
 
 	private static IEnumerable<SyntaxNode> Members(CompilationUnitSyntax unit)

@@ -481,6 +481,11 @@ internal static class SymbolResolver
 					?? OnName(function.NameSpan, function.Name, position, DeclarationKind(unit, function), function, Display(function, function.ReturnType));
 			case ConstructorDeclarationSyntax constructor:
 				return OnName(constructor.NameSpan, constructor.StructName, position, ResolvedSymbolKind.Constructor, constructor, Display(constructor, constructor.StructName), constructor.StructName);
+			// An operator's name is its punctuation token, so the hover subject is the operator span
+			// itself and the presentation is the `operator +(...)` form rather than an identifier.
+			case OperatorDeclarationSyntax op:
+				return ResolveTypeReference(context, index, source, op.ReturnTypeSpan, op.ReturnType, position)
+					?? OnName(op.OperatorSpan, op.DisplayName, position, ResolvedSymbolKind.Operator, op, Display(op, op.ReturnType));
 			case DestructorDeclarationSyntax destructor:
 				return OnName(NameSpan(source, destructor.Span, destructor.StructName, fromEnd: false), destructor.StructName, position, ResolvedSymbolKind.Destructor, destructor, Display(destructor, destructor.StructName), destructor.StructName);
 			case ExtensionDeclarationSyntax extension:
@@ -653,6 +658,7 @@ internal static class SymbolResolver
 			? $"extern \"{global.CallingConvention ?? "C"}\" global {(global.IsMutable ? "var " : string.Empty)}{global.Type} {global.Name}"
 			: $"{global.Type} {global.Name}",
 		FunctionDeclarationSyntax function => $"{function.ReturnType} {function.Name}{Generic(function.GenericParameters)}({ParameterList(function.Parameters)})",
+		OperatorDeclarationSyntax op => $"{op.ReturnType} operator {op.Operator}({ParameterList(op.Parameters)})",
 		ConstructorDeclarationSyntax constructor => $"{constructor.StructName}({ParameterList(constructor.Parameters)})",
 		DestructorDeclarationSyntax destructor => $"~{destructor.StructName}()",
 		StructFieldSyntax structField => $"{structField.Type} {structField.Name}",

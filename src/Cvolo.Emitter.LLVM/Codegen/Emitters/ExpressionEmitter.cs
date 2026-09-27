@@ -545,6 +545,11 @@ internal sealed class ExpressionEmitter(
 			return EmitAssignStore(bin);
 		}
 
+		// OPERATOR OVERLOAD (spec §14): the expression is an ordinary call to a receiverless
+		// associated function, so it is emitted as one before any builtin operator rule applies.
+		if (BindingContext.FindOperatorOverload(bin.Operator, expressionTypes.Resolve(bin.Left), expressionTypes.Resolve(bin.Right)) is { } overload)
+			return EmitOperatorOverload(overload, [bin.Left, bin.Right]);
+
 		// Fold '+': constant string concatenation lowers to a single constant.
 		if (bin.Operator == "+" && IsConstantStringTree(bin.Left) && IsConstantStringTree(bin.Right))
 		{
@@ -1060,6 +1065,50 @@ internal sealed class ExpressionEmitter(
 	}
 
 	/// <summary>
+	/// Emits a call to a declared operator overload (spec §14). An operator overload is a
+	/// receiverless associated function, so the call is an ordinary direct call whose only arguments
+	/// are the operands. Operands are normalized exactly as at a normal call site: a struct value
+	/// held in a storage pointer is loaded, and a builtin numeric literal is widened to the declared
+	/// operand type.
+	/// </summary>
+	private LLVMValueRef EmitOperatorOverload(FunctionSymbol overload, IReadOnlyList<ExpressionSyntax> operands)
+	{
+		if (!codegen.Globals.TryGetValue(overload.Name, out var callee)
+			|| !codegen.FunctionTypes.TryGetValue(overload.Name, out var functionType))
+		{
+			throw new InvalidOperationException($"Operator overload '{overload.Name}' was never declared for emission.");
+		}
+
+		var args = new LLVMValueRef[operands.Count];
+		for (var i = 0; i < operands.Count; i++)
+		{
+			var operandType = expressionTypes.Resolve(operands[i]);
+			var parameterType = i < overload.Parameters.Count ? overload.Parameters[i].Type : operandType;
+			var value = Emit(operands[i]);
+
+			if (operandType is PointerTypeSymbol storedType && !parameterType.Equals(operandType))
+			{
+				value = Builder.BuildLoad2(LowerType(storedType.ReferencedType), value, "operator_operand");
+			}
+
+			if (TypeSymbol.IsFloatingPointType(parameterType) && TypeSymbol.IsIntegerType(operandType))
+			{
+				value = TypeSymbol.IsSignedIntegerType(operandType)
+					? Builder.BuildSIToFP(value, LowerType(parameterType), "operator_sitofp")
+					: Builder.BuildUIToFP(value, LowerType(parameterType), "operator_uitofp");
+			}
+			else if (TypeSymbol.IsIntegerType(operandType) && TypeSymbol.IsIntegerType(parameterType) && !parameterType.Equals(operandType))
+			{
+				value = coercion.CoerceIntegerWidth(value, operandType, parameterType);
+			}
+
+			args[i] = value;
+		}
+
+		return Builder.BuildCall2(functionType, callee, args, overload.ReturnType.Equals(TypeSymbol.Void) ? "" : "operator_call");
+	}
+
+	/// <summary>
 	/// Lowers unary operators and explicit casts without changing the existing cast semantics.
 	/// </summary>
 	private LLVMValueRef EmitUnaryExpression(UnaryExpressionSyntax unary)
@@ -1068,6 +1117,10 @@ internal sealed class ExpressionEmitter(
 		{
 			return EmitIncrementDecrement(unary, unary.Operator.EndsWith("_prefix"), unary.Operator.StartsWith("++"));
 		}
+
+		// OPERATOR OVERLOAD (spec §14): a declared unary operator is a receiverless associated call.
+		if (BindingContext.FindOperatorOverload(unary.Operator, expressionTypes.Resolve(unary.Operand)) is { } overload)
+			return EmitOperatorOverload(overload, [unary.Operand]);
 
 		var operand = Emit(unary.Operand);
 

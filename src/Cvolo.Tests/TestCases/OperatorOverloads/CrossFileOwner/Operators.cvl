@@ -1,0 +1,22 @@
+// The owner type is declared in another file of THIS project. Operator ownership (spec §16) is
+// scoped to the package or project that declares the type, not to the single compilation unit, so
+// this operator belongs to the same project as Vec2 and is accepted.
+public extension Vec2 {
+    public Vec2 operator +(Vec2 left, Vec2 right) {
+        val Vec2 result(X: left.X + right.X, Y: left.Y + right.Y);
+        return result;
+    }
+
+    public Vec2 operator -(Vec2 value) {
+        val Vec2 result(X: -value.X, Y: -value.Y);
+        return result;
+    }
+}
+
+int main() {
+    val Vec2 a(X: 1, Y: 2);
+    val Vec2 b(X: 3, Y: 5);
+    val Vec2 sum = a + b;
+    val Vec2 negated = -a;
+    return sum.X + sum.Y + negated.X + negated.Y;
+}

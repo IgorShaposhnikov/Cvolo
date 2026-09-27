@@ -232,6 +232,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 					foreach (var method in extDecl.Methods
 						.Concat(extDecl.Destructors.Select(static d => d.ToFunctionDeclaration()))
+						.Concat(extDecl.Operators.Select(static o => o.ToFunctionDeclaration()))
 						.Where(m => m.GenericParameters.Count == 0 || m.GenericParameters.All(p => bindingContext.ResolveType(p) is not null)))
 					{
 						// Instance and associated overload sets are disjoint, but they can share a source

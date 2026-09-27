@@ -14,7 +14,8 @@ public sealed class ExtensionDeclarationSyntax(
 	Visibility? visibility = null,
 	IReadOnlyDictionary<string, string>? genericParameterDefaults = null,
 	TextSpan? nameSpan = null,
-	TextSpan? conformsToSpan = null) : SyntaxNode(span)
+	TextSpan? conformsToSpan = null,
+	IReadOnlyList<OperatorDeclarationSyntax>? operators = null) : SyntaxNode(span)
 {
 	public override SyntaxKind Kind => SyntaxKind.ExtensionDeclaration;
 
@@ -28,6 +29,12 @@ public sealed class ExtensionDeclarationSyntax(
 	public IReadOnlyList<FunctionDeclarationSyntax> Methods { get; } = methods;
 	public IReadOnlyList<DestructorDeclarationSyntax> Destructors { get; } = destructors ?? [];
 	public IReadOnlyList<ConstructorDeclarationSyntax> Constructors { get; } = constructors ?? [];
+
+	/// <summary>
+	/// Operator overloads declared in this block. They are receiverless associated callables that
+	/// register through the same path as a leading-dot function.
+	/// </summary>
+	public IReadOnlyList<OperatorDeclarationSyntax> Operators { get; } = operators ?? [];
 	public IReadOnlyList<string> GenericParameters { get; } = genericParameters ?? [];
 
 	/// <summary>The nominal interface this extension makes its type conform to, if any.</summary>
@@ -44,5 +51,5 @@ public sealed class ExtensionDeclarationSyntax(
 
 	public IReadOnlyDictionary<string, string> GenericParameterDefaults { get; } = genericParameterDefaults ?? new Dictionary<string, string>();
 
-	public override IEnumerable<SyntaxNode> GetChildren() => [.. Methods, .. Destructors, .. Constructors];
+	public override IEnumerable<SyntaxNode> GetChildren() => [.. Methods, .. Destructors, .. Constructors, .. Operators];
 }

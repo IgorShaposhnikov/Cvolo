@@ -1,0 +1,16 @@
+using System;
+
+struct Cell {
+    int Value;
+}
+
+public extension Cell {
+    // CVL2201: binary '+' must declare both operands, not three.
+    public Cell operator +(Cell left, Cell right, Cell extra) {
+        return left;
+    }
+}
+
+int main() {
+    return 0;
+}

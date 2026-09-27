@@ -26,6 +26,7 @@ public enum SyntaxKind
 	StructDeclaration,
 	ExtensionDeclaration,
 	DestructorDeclaration,
+	OperatorDeclaration,
 	GlobalVariableDeclaration,
 	ConstructorDeclaration,
 	DoubleLiteralExpression,

@@ -83,6 +83,9 @@ internal static class BinderAdapter
 					binder.Context.ExternalPackageUnits.Add(external.Unit);
 				else
 					binder.Context.PackageTemplateUnits.Add(external.Unit);
+
+				if (external.PackageId is { } externalPackageId && external.Unit.Context is { } externalContext)
+					binder.Context.UnitPackageIds[externalContext] = externalPackageId;
 			}
 
 			binder.Context.BaseSourcePaths.UnionWith(snapshot.BaseSourceFiles.Select(Path.GetFullPath));

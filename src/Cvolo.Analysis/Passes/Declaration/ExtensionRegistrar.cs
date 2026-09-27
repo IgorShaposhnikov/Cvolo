@@ -81,6 +81,13 @@ internal sealed class ExtensionRegistrar(
 
 			genericDefaultCopies.Validate(extDecl);
 
+			// Operators are never generic, so a generic owner block cannot declare any of them
+			// (spec §15/§16). Reject explicitly instead of dropping them silently with the block.
+			RejectOperators(
+				extDecl,
+				op => $"Operator '{op.Operator}' cannot be declared in generic extension '{extDecl.ExtendedTypeName}': operator overloads do not support generic owners.",
+				DiagnosticIds.OperatorGenericNotSupported);
+
 			templates.Add(extDecl);
 			return;
 		}
@@ -123,8 +130,15 @@ internal sealed class ExtensionRegistrar(
 		if (extDecl.ConformsTo is not null)
 			RegisterConformance(extDecl, extendedType);
 
+		// OPERATORS: an operator overload is a receiverless associated callable, so it validates
+		// once up front and then enters the registration loop as an ordinary associated function
+		// carrying its stable operator token as the source name.
+		var operatorFunctions = PrepareOperatorFunctions(extDecl, extendedType);
+
 		// Destructors register as ordinary extension methods named "~T" (void, this-only)
-		foreach (var method in extDecl.Methods.Concat(extDecl.Destructors.Select(static d => d.ToFunctionDeclaration())))
+		foreach (var method in extDecl.Methods
+			.Concat(extDecl.Destructors.Select(static d => d.ToFunctionDeclaration()))
+			.Concat(operatorFunctions))
 		{
 			var isDestructor = method.Name.StartsWith('~');
 			if (isDestructor && !destructors.ValidateDeclaration(extDecl.ExtendedTypeName, method))
@@ -339,6 +353,128 @@ internal sealed class ExtensionRegistrar(
 
 			registeredCtors.Add(ctorSymbol);
 		}
+	}
+
+	/// <summary>
+	/// Validates the operator overloads declared by an extension block and converts the accepted
+	/// ones into the associated function declarations consumed by the registration loop.
+	/// Rejected operators are reported here and dropped, so the loop itself stays unaware of the
+	/// operator rule set.
+	/// </summary>
+	private List<FunctionDeclarationSyntax> PrepareOperatorFunctions(ExtensionDeclarationSyntax extDecl, TypeSymbol extendedType)
+	{
+		var prepared = new List<FunctionDeclarationSyntax>(extDecl.Operators.Count);
+		if (extDecl.Operators.Count == 0)
+			return prepared;
+
+		// A protocol member describes receiver-backed behavior, and an operator is receiverless.
+		if (extendedType is ProtocolTypeSymbol)
+		{
+			RejectOperators(
+				extDecl,
+				op => $"Operator '{op.Operator}' cannot be declared in an extension block on protocol '{extDecl.ExtendedTypeName}'.",
+				DiagnosticIds.AssociatedFunctionInProtocolExtension);
+			return prepared;
+		}
+
+		// OWNERSHIP (spec §16): operators are not a globally open extension point, so only the
+		// package or project that declares the owner type may define its operators.
+		if (IsForeignOperatorOwner(extendedType.Name, context.CurrentUnit))
+		{
+			RejectOperators(
+				extDecl,
+				op => $"Operator '{op.Operator}' for '{extDecl.ExtendedTypeName}' must be declared in the same package or project that declares the type.",
+				DiagnosticIds.OperatorForeignOwner);
+			return prepared;
+		}
+
+		foreach (var op in extDecl.Operators)
+		{
+			// Shapes the parser cannot represent (e.g. a receiver parameter) are already reported.
+			if (op.HasSyntaxError)
+				continue;
+
+			// 1. ARITY: the parameter count decides the operator's position, so a wrong count is
+			//    the more fundamental error and is reported before the position-specific lookup.
+			if (op.Parameters.Count is 0 or > 2)
+			{
+				ReportDeclarationDiagnostic(
+					op,
+					$"Operator '{op.Operator}' must declare one operand (unary) or two operands (binary), but declares {op.Parameters.Count}.",
+					DiagnosticIds.OperatorArityMismatch);
+				continue;
+			}
+
+			// 2. POSITION: the spelling must be overloadable in the position its arity implies.
+			//    Comparison and shift operators are binary-only, '!' and '~' are unary-only, and
+			//    assignment is never overloadable. The parser derived its token with the same
+			//    (spelling, position) pair, so an accepted operator already carries this token.
+			if (OperatorTokens.TryGetToken(op.Operator, op.IsUnary) is null)
+			{
+				var isAssignment = op.Operator == "=";
+				ReportDeclarationDiagnostic(
+					op,
+					isAssignment
+						? $"Assignment operator '{op.Operator}' cannot be overloaded: assignment is compiler-owned and participates in initialization, copy/move semantics, lifetime, destruction, mutability, references and borrow analysis."
+						: $"Operator '{op.Operator}' cannot be declared with {(op.IsUnary ? "one operand" : "two operands")}.",
+					isAssignment ? DiagnosticIds.OperatorAssignmentNotOverloadable : DiagnosticIds.OperatorArityMismatch);
+				continue;
+			}
+
+			// 3. COHERENCE (spec §16): the owner must be one of the operand types, otherwise the
+			//    overload would answer for operands that have nothing to do with it. Operands that
+			//    do not resolve are ignored here; the registration loop reports them as unknown.
+			var operandTypes = op.Parameters.Select(p => context.ResolveType(p.Type)).ToList();
+			if (operandTypes.Any(static t => t is not null) && !operandTypes.Any(t => t?.Name == extendedType.Name))
+			{
+				ReportDeclarationDiagnostic(
+					op,
+					$"Operator '{op.Operator}' may only be declared in an extension whose owner type is one of its operand types: '{extDecl.ExtendedTypeName}' is not an operand of operator '{op.Operator}'.",
+					DiagnosticIds.OperatorOwnerNotOperand);
+				continue;
+			}
+
+			prepared.Add(op.ToFunctionDeclaration());
+		}
+
+		return prepared;
+	}
+
+	/// <summary>
+	/// Decides whether an operator's owner type belongs to a different ownership scope than the
+	/// extension that declares it. Ownership is per package or project, not per file: the source
+	/// files of one project share a scope, and a package owns both its API stub and its template
+	/// source, so an operator declared in either one still belongs to the package that owns the
+	/// type. A type with no recorded declaring unit (a builtin, a protocol) has no foreign owner.
+	/// </summary>
+	private bool IsForeignOperatorOwner(string ownerName, CompilationUnitSyntax? declaringUnit)
+	{
+		if (!context.SymbolUnits.TryGetValue(ownerName, out var ownerUnit) || ownerUnit == declaringUnit)
+			return false;
+
+		var declaringIsPackaged = context.TryGetUnitPackageId(declaringUnit, out var declaringPackage);
+		var ownerIsPackaged = context.TryGetUnitPackageId(ownerUnit, out var ownerPackage);
+
+		// Both units are plain project source: one project owns both, however many files they span.
+		if (!declaringIsPackaged && !ownerIsPackaged)
+			return false;
+
+		// One unit is packaged and the other is not, or the two packages differ.
+		return !declaringIsPackaged
+			|| !ownerIsPackaged
+			|| !string.Equals(declaringPackage, ownerPackage, StringComparison.OrdinalIgnoreCase);
+	}
+
+	/// <summary>
+	/// Reports one diagnostic per operator of an extension block and discards all of them.
+	/// </summary>
+	private void RejectOperators(ExtensionDeclarationSyntax extDecl, Func<OperatorDeclarationSyntax, string> message, string diagnosticId)
+	{
+		if (extDecl.Operators.Count == 0)
+			return;
+
+		foreach (var op in extDecl.Operators)
+			ReportDeclarationDiagnostic(op, message(op), diagnosticId);
 	}
 
 	/// <summary>

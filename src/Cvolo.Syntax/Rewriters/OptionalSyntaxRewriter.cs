@@ -150,8 +150,10 @@ public sealed class OptionalSyntaxRewriter(bool strictOption, DiagnosticBag diag
 			var rewrittenMethods = extDecl.Methods.Select(m => (FunctionDeclarationSyntax)Rewrite(m)).ToList();
 			var rewrittenDtors = extDecl.Destructors.Select(d => (DestructorDeclarationSyntax)Rewrite(d)).ToList();
 			var rewrittenCtors = extDecl.Constructors.Select(c => (ConstructorDeclarationSyntax)Rewrite(c)).ToList();
+			var rewrittenOps = extDecl.Operators.Select(RewriteOperator).ToList();
 			return new ExtensionDeclarationSyntax(extDecl.Span, RewriteType(extDecl.ExtendedTypeName, extDecl.Span), rewrittenMethods,
-				rewrittenDtors, rewrittenCtors, extDecl.GenericParameters, extDecl.ConformsTo, extDecl.Visibility, extDecl.GenericParameterDefaults);
+				rewrittenDtors, rewrittenCtors, extDecl.GenericParameters, extDecl.ConformsTo, extDecl.Visibility, extDecl.GenericParameterDefaults,
+				operators: rewrittenOps);
 		}
 
 		if (node is InterfaceMethodDeclarationSyntax interfaceMember)
@@ -236,6 +238,28 @@ public sealed class OptionalSyntaxRewriter(bool strictOption, DiagnosticBag diag
 
 		return "Option<" + RewriteType(inner, reportSpan) + ">";
 	}
+
+	/// <summary>
+	/// Operators need no rewrite-specific form of their own: the return type and the operand types
+	/// are rewritten exactly as they are for an ordinary method.
+	/// </summary>
+	private OperatorDeclarationSyntax RewriteOperator(OperatorDeclarationSyntax op)
+		=> new(
+			op.Span,
+			RewriteType(op.ReturnType, op.ReturnTypeSpan),
+			op.Operator,
+			op.OperatorToken,
+			op.IsUnary,
+			op.Parameters.Select(p => (ParameterSyntax)Rewrite(p)).ToList(),
+			(BlockStatementSyntax)Rewrite(op.Body!),
+			op.Attributes,
+			op.SyntacticVisibility,
+			op.OperatorSpan,
+			op.ReturnTypeSpan)
+		{
+			HasSyntaxError = op.HasSyntaxError
+		};
+
 
 	/// <summary>
 	/// True when '?' applies to the outermost type (a true T? root). Reference roots

@@ -639,4 +639,30 @@ public static class DiagnosticIds
 
 	/// <summary>A global variable initializer is not a compile-time constant expression.</summary>
 	public const string GlobalInitializerNotConstant = "CVL2405";
+
+	// ── Operator Overloads (CVL22xx) ──
+
+	/// <summary>`operator =` is declared; assignment is compiler-owned and not overloadable.</summary>
+	public const string OperatorAssignmentNotOverloadable = "CVL2200";
+
+	/// <summary>An operator declares a parameter count that does not match its arity.</summary>
+	public const string OperatorArityMismatch = "CVL2201";
+
+	/// <summary>An operator is declared in an extension whose owner is not one of the operand types.</summary>
+	public const string OperatorOwnerNotOperand = "CVL2202";
+
+	/// <summary>An operator for a foreign type is declared in a project that does not own the type.</summary>
+	public const string OperatorForeignOwner = "CVL2203";
+
+	/// <summary>An operator overload declares its own type parameters, which is not supported.</summary>
+	public const string OperatorGenericNotSupported = "CVL2204";
+
+	/// <summary>No declared operator overload matches the operand types of an operator expression.</summary>
+	public const string OperatorNoMatch = "CVL2205";
+
+	/// <summary>An operator overload declares an instance receiver, which operators never have.</summary>
+	public const string OperatorWithReceiver = "CVL2206";
+
+	/// <summary>An operator body uses an implicit instance field; operators have no receiver.</summary>
+	public const string OperatorUsesInstanceField = "CVL2207";
 }

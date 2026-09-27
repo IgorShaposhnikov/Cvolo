@@ -1,0 +1,59 @@
+using System;
+
+struct Vec2 {
+    int X;
+    int Y;
+}
+
+public extension Vec2 {
+    public Vec2 operator +(Vec2 left, Vec2 right) {
+        val Vec2 result(X: left.X + right.X, Y: left.Y + right.Y);
+        return result;
+    }
+
+    public Vec2 operator -(Vec2 left, Vec2 right) {
+        val Vec2 result(X: left.X - right.X, Y: left.Y - right.Y);
+        return result;
+    }
+
+    public Vec2 operator *(Vec2 value, int scale) {
+        val Vec2 result(X: value.X * scale, Y: value.Y * scale);
+        return result;
+    }
+
+    public bool operator ==(Vec2 left, Vec2 right) {
+        return left.X == right.X && left.Y == right.Y;
+    }
+
+    public bool operator !=(Vec2 left, Vec2 right) {
+        return left.X != right.X || left.Y != right.Y;
+    }
+
+    public bool operator <(Vec2 left, Vec2 right) {
+        return left.X < right.X || (left.X == right.X && left.Y < right.Y);
+    }
+
+    public Vec2 operator -(Vec2 value) {
+        val Vec2 result(X: -value.X, Y: -value.Y);
+        return result;
+    }
+}
+
+int main() {
+    val Vec2 a(X: 1, Y: 2);
+    val Vec2 b(X: 3, Y: 5);
+
+    val Vec2 sum = a + b;
+    val Vec2 diff = b - a;
+    val Vec2 scaled = a * 10;
+    val Vec2 negated = -a;
+
+    Console.WriteLine($"sum={sum.X},{sum.Y}");
+    Console.WriteLine($"diff={diff.X},{diff.Y}");
+    Console.WriteLine($"scaled={scaled.X},{scaled.Y}");
+    Console.WriteLine($"negated={negated.X},{negated.Y}");
+    Console.WriteLine($"eq={a == b}");
+    Console.WriteLine($"neq={a != b}");
+    Console.WriteLine($"lt={a < b}");
+    return 0;
+}

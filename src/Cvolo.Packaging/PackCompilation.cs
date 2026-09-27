@@ -175,6 +175,8 @@ internal static class PackCompilation
 					asts.Add(packageUnit);
 					binder.Context.FileContexts[packageUnit] = packageUnit.Context;
 					binder.Context.ExternalPackageUnits.Add(packageUnit);
+					if (artifact.PackageId is { } referencePackageId && packageUnit.Context is { } apiContext)
+						binder.Context.UnitPackageIds[apiContext] = referencePackageId;
 				}
 
 				foreach (var templateUnit in artifact.TemplateUnits)
@@ -182,6 +184,8 @@ internal static class PackCompilation
 					asts.Add(templateUnit);
 					binder.Context.FileContexts[templateUnit] = templateUnit.Context;
 					binder.Context.PackageTemplateUnits.Add(templateUnit);
+					if (artifact.PackageId is { } templatePackageId && templateUnit.Context is { } templateContext)
+						binder.Context.UnitPackageIds[templateContext] = templatePackageId;
 				}
 			}
 		}
