@@ -121,6 +121,9 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 		// 3. Syntactic parsing pass
 		var binder = new Binder();
 		binder.Context.NativePointerBytes = IntPtr.Size;
+		// Layout is target-parameterized, so the layout results this run produces (sizeof, alignof,
+		// offsetof, emitted data layout) carry the target they were computed for.
+		binder.Context.NativeTargetDisplay = TargetTriple.HostTriple();
 		var asts = new List<CompilationUnitSyntax>();
 		ISyntaxParser parser = new AntlrSyntaxParser();
 		CompilationContext? firstContext = null;

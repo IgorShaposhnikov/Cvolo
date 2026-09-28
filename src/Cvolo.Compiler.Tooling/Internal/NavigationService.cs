@@ -49,6 +49,7 @@ internal sealed class NavigationIndex
 	private readonly Dictionary<Entry, Entry> _conformanceTargets = new();
 	private readonly Dictionary<int, List<PackageSourceDefinition>> _packageSourceDefinitions = new();
 	private readonly Dictionary<string, Entry> _builtinByName = new(StringComparer.Ordinal);
+	private readonly Dictionary<SyntaxNode, string?> _exports = new(ReferenceEqualityComparer.Instance);
 	private int _nextId;
 
 	private NavigationIndex(ProjectSnapshot snapshot)
@@ -195,6 +196,29 @@ internal sealed class NavigationIndex
 			throw new KeyNotFoundException($"Document {document} not found in this snapshot.");
 
 		return _outlines.TryGetValue(document, out var outline) ? outline : [];
+	}
+
+	/// <summary>
+	/// Every source declaration name in this snapshot, paired with the symbol it declares. Editor
+	/// features that must know which occurrences are declarations read this once instead of calling
+	/// <see cref="Definitions"/> per symbol.
+	/// </summary>
+	internal IEnumerable<(SymbolId Symbol, DocumentId DocumentId, TextSpan SelectionSpan)> AllDefinitions()
+	{
+		foreach (var entry in _byId.Values)
+		{
+			foreach (var definition in entry.Definitions)
+				yield return (entry.Id, definition.DocumentId, definition.SelectionSpan);
+		}
+	}
+
+	/// <summary>
+	/// The compiler-resolved native-interop metadata attached to a declaration, or null when the
+	/// declaration has no foreign linkage. Only already-bound facts are reported.
+	/// </summary>
+	internal NativeInteropMetadata? NativeInteropFor(SymbolId symbol)
+	{
+		return Declaration(symbol) is { } declaration ? NativeInteropFor(declaration) : null;
 	}
 
 	private void BuildDeclarations()
@@ -523,6 +547,19 @@ internal sealed class NavigationIndex
 				foreach (var global in externBlock.Globals)
 					Register(documentId, source, global, global.Name, ToolingSymbolKind.Global, null);
 				break;
+
+			case ExposeExternBlockSyntax exposeBlock:
+				// Each function of an `expose extern` block is an ordinary Cvolo function that also
+				// receives a synthesized exported symbol, so it is indexed as a normal function and
+				// the export direction is recorded alongside the block's calling convention.
+				foreach (var function in exposeBlock.Functions)
+				{
+					_exports[function] = exposeBlock.CallingConvention;
+					Register(documentId, source, function, function.Name, ToolingSymbolKind.Function, function.NameSpan);
+					IndexParameters(documentId, source, function.Parameters);
+					IndexLocals(documentId, source, function.Body);
+				}
+				break;
 		}
 	}
 
@@ -615,6 +652,9 @@ internal sealed class NavigationIndex
 
 	private NativeInteropMetadata? NativeInteropFor(SyntaxNode declaration)
 	{
+		if (_exports.TryGetValue(declaration, out var exportConvention))
+			return new NativeInteropMetadata(NativeInteropKind.Export, exportConvention ?? "C");
+
 		if (declaration is DelegateDeclarationSyntax { IsNative: true } nativeDelegate)
 		{
 			return new NativeInteropMetadata(
@@ -692,6 +732,16 @@ internal sealed class NavigationIndex
 					{
 						if (MakeOutline(source, child) is { } externItem)
 							roots.Add(externItem);
+					}
+					continue;
+				}
+
+				if (member is ExposeExternBlockSyntax exposeBlock)
+				{
+					foreach (var child in exposeBlock.Functions.Cast<SyntaxNode>())
+					{
+						if (MakeOutline(source, child) is { } exposedItem)
+							roots.Add(exposedItem);
 					}
 					continue;
 				}

@@ -176,4 +176,109 @@ public sealed class DocumentSnapshot
 
 		return SemanticTokenService.Compute(OwningSnapshot, this);
 	}
+
+	/// <summary>
+	/// Returns the editor inlay hints for the requested zero-based UTF-16
+	/// <paramref name="start"/>/<paramref name="length"/> range of this document, in ascending source
+	/// order. Work is restricted to the requested range, and every hint is derived from a resolved
+	/// compiler fact: a construct the compiler could not resolve contributes no hint rather than a
+	/// guess. A zero-length range is treated as the caret.
+	/// Throws <see cref="ArgumentOutOfRangeException"/> when the range falls outside the document text.
+	/// </summary>
+	public IReadOnlyList<ToolingInlayHint> GetInlayHints(int start, int length, ToolingInlayHintOptions? options = null)
+	{
+		ArgumentOutOfRangeException.ThrowIfNegative(start);
+		ArgumentOutOfRangeException.ThrowIfNegative(length);
+		ArgumentOutOfRangeException.ThrowIfGreaterThan(start, Text.Length);
+		ArgumentOutOfRangeException.ThrowIfGreaterThan(length, Text.Length - start);
+
+		if (OwningSnapshot is null)
+			return [];
+
+		return InlayHintService.GetInlayHints(OwningSnapshot, this, new TextSpan(start, length), options ?? ToolingInlayHintOptions.Default);
+	}
+
+	/// <summary>
+	/// Returns the semantic occurrences bound to the same declaration as the given zero-based UTF-16
+	/// <paramref name="position"/>, each classified as a read, a write, both, or a declaration.
+	/// Returns an empty list when the position binds to nothing, which is the common case: there is
+	/// no textual same-spelling fallback.
+	/// Throws <see cref="ArgumentOutOfRangeException"/> when <paramref name="position"/> falls
+	/// outside [0, <see cref="Text.Length"/>].
+	/// </summary>
+	public IReadOnlyList<ToolingDocumentHighlight> GetDocumentHighlights(int position)
+	{
+		ArgumentOutOfRangeException.ThrowIfNegative(position);
+		ArgumentOutOfRangeException.ThrowIfGreaterThan(position, Text.Length);
+
+		if (OwningSnapshot is null)
+			return [];
+
+		return DocumentHighlightService.GetDocumentHighlights(OwningSnapshot, this, position);
+	}
+
+	/// <summary>
+	/// Returns the editor CodeLens entries for this document: a semantic reference count per named
+	/// declaration (zero included), a compact layout summary per concrete type, and native-linkage
+	/// facts for declarations with resolved interop metadata. The whole document is answered from one
+	/// batched snapshot pass, so a document with N declarations never causes N project scans.
+	/// </summary>
+	public IReadOnlyList<ToolingCodeLensInfo> GetCodeLenses(ToolingCodeLensOptions? options = null)
+	{
+		if (OwningSnapshot is null)
+			return [];
+
+		return CodeLensService.GetCodeLenses(OwningSnapshot, this, options ?? ToolingCodeLensOptions.Default);
+	}
+
+	/// <summary>
+	/// Returns the type layout the caret at <paramref name="position"/> resolves to, or null when the
+	/// position is not on a concrete type with an authoritative layout.
+	/// Throws <see cref="ArgumentOutOfRangeException"/> when <paramref name="position"/> falls
+	/// outside [0, <see cref="Text.Length"/>].
+	/// </summary>
+	public TypeLayoutInspection? GetTypeLayoutAtPosition(int position)
+	{
+		ArgumentOutOfRangeException.ThrowIfNegative(position);
+		ArgumentOutOfRangeException.ThrowIfGreaterThan(position, Text.Length);
+
+		if (OwningSnapshot is null)
+			return null;
+
+		return CodeLensService.GetTypeLayoutAtPosition(OwningSnapshot, this, position);
+	}
+
+	/// <summary>
+	/// Returns the foldable regions of this document, ordered by start position and then by
+	/// decreasing length. Regions come from the parsed syntax and the comment tokens, so an
+	/// incomplete document still folds the parts the parser recovered confidently, and a region
+	/// never ends on the line it starts on.
+	/// </summary>
+	public IReadOnlyList<ToolingFoldingRange> GetFoldingRanges()
+	{
+		if (OwningSnapshot is null)
+			return [];
+
+		return FoldingRangeService.GetFoldingRanges(OwningSnapshot, this);
+	}
+
+	/// <summary>
+	/// Returns one smart-selection chain per requested zero-based UTF-16 <paramref name="positions"/>,
+	/// in request order. Each entry is the innermost range of that chain; its <see
+	/// cref="ToolingSelectionRange.Parent"/> chain grows outwards through the enclosing expressions,
+	/// block, declaration and unit. A position outside the document yields null at that index.
+	/// Throws <see cref="ArgumentOutOfRangeException"/> when any position is negative.
+	/// </summary>
+	public IReadOnlyList<ToolingSelectionRange?> GetSelectionRanges(IReadOnlyList<int> positions)
+	{
+		ArgumentNullException.ThrowIfNull(positions);
+
+		foreach (var position in positions)
+			ArgumentOutOfRangeException.ThrowIfNegative(position);
+
+		if (OwningSnapshot is null)
+			return new ToolingSelectionRange?[positions.Count];
+
+		return SelectionRangeService.GetSelectionRanges(OwningSnapshot, this, positions);
+	}
 }

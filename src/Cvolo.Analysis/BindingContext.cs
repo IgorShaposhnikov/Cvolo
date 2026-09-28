@@ -61,18 +61,29 @@ public sealed class BindingContext
 	/// </summary>
 	public Dictionary<ExpressionSyntax, long> ResolvedLayoutConstants { get; } = [];
 
+	/// <summary>
+	/// The identity of the compilation target the semantic layout is computed for. It travels with
+	/// every layout result so a consumer can tell which target a size or offset belongs to; the
+	/// compiler driver sets it from the resolved target triple.
+	/// </summary>
+	public string NativeTargetDisplay { get; set; } = "host";
+
 	private Cvolo.Analysis.Layout.TypeLayoutService? _layoutService;
 	private int _layoutServicePointerBytes = -1;
+	private string? _layoutServiceTarget;
 
 	/// <summary>The shared target-aware semantic layout service for the active pointer width.</summary>
 	public Cvolo.Analysis.Layout.TypeLayoutService LayoutService
 	{
 		get
 		{
-			if (_layoutService is null || _layoutServicePointerBytes != NativePointerBytes)
+			if (_layoutService is null
+				|| _layoutServicePointerBytes != NativePointerBytes
+				|| !string.Equals(_layoutServiceTarget, NativeTargetDisplay, StringComparison.Ordinal))
 			{
-				_layoutService = new Cvolo.Analysis.Layout.TypeLayoutService(NativePointerBytes);
+				_layoutService = new Cvolo.Analysis.Layout.TypeLayoutService(NativePointerBytes, NativeTargetDisplay);
 				_layoutServicePointerBytes = NativePointerBytes;
+				_layoutServiceTarget = NativeTargetDisplay;
 			}
 
 			return _layoutService;

@@ -14,6 +14,6 @@ public builtin nuint alignof<T>();
 /// <summary>
 /// Returns the byte offset of a stored member within `T`.
 ///
-/// Syntax: `offsetof&lt;T&gt;(Member)` or `offsetof&lt;T&gt;(Nested.Member)`.
+/// Syntax: `offsetof<T>(Member)` or `offsetof<T>(Nested.Member)`.
 /// </summary>
 public builtin nuint offsetof<T>();

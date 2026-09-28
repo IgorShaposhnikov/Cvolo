@@ -1,5 +1,6 @@
 using Cvolo.Compiler.Tooling.Completion;
 using Cvolo.Compiler.Tooling.Internal;
+using Cvolo.Core.AST.Base;
 using Cvolo.Projects;
 
 namespace Cvolo.Compiler.Tooling;
@@ -17,6 +18,8 @@ public sealed class ProjectSnapshot
 	private readonly Lazy<AnalyzedProject> _lazyAnalysis;
 	private readonly Lazy<NavigationIndex> _lazyNavigation;
 	private readonly Lazy<CodeFixIndex> _lazyCodeFixes;
+	private readonly Lazy<OccurrenceIndex> _lazyOccurrences;
+	private readonly Lazy<IReadOnlyDictionary<DocumentId, CompilationUnitSyntax?>> _lazyParsedUnits;
 
 	/// <summary>
 	/// The identifier of the project this snapshot belongs to.
@@ -47,6 +50,9 @@ public sealed class ProjectSnapshot
 		_lazyAnalysis = new Lazy<AnalyzedProject>(() => BinderAdapter.AnalyzeSnapshot(this));
 		_lazyNavigation = new Lazy<NavigationIndex>(() => NavigationIndex.Build(this));
 		_lazyCodeFixes = new Lazy<CodeFixIndex>(() => CodeFixIndex.Build(this));
+		_lazyOccurrences = new Lazy<OccurrenceIndex>(() => OccurrenceIndex.Build(this));
+		_lazyParsedUnits = new Lazy<IReadOnlyDictionary<DocumentId, CompilationUnitSyntax?>>(
+			() => ParserAdapter.ParseAll(_documents).UnitsByDocument);
 	}
 
 	internal static ProjectSnapshot CreateOwned(
@@ -77,6 +83,26 @@ public sealed class ProjectSnapshot
 	internal CodeFixIndex GetCodeFixIndex()
 	{
 		return _lazyCodeFixes.Value;
+	}
+
+	/// <summary>
+	/// The one project-wide semantic occurrence index for this snapshot. It is built on first use by
+	/// a feature that needs many symbols at once, so a document with a hundred declarations does not
+	/// trigger a hundred project scans.
+	/// </summary>
+	internal OccurrenceIndex GetOccurrenceIndex()
+	{
+		return _lazyOccurrences.Value;
+	}
+
+	/// <summary>
+	/// The parsed syntax of every document, keyed by <see cref="DocumentId"/>, where a document that
+	/// failed to parse maps to null. Purely syntactic features such as folding and smart selection
+	/// use this so they never force a full semantic analysis of the project.
+	/// </summary>
+	internal bool TryGetParsedUnit(DocumentId document, out CompilationUnitSyntax? unit)
+	{
+		return _lazyParsedUnits.Value.TryGetValue(document, out unit);
 	}
 
 	/// <summary>
@@ -183,6 +209,32 @@ public sealed class ProjectSnapshot
 	{
 		ArgumentNullException.ThrowIfNull(newName);
 		return ReferenceRenameService.Rename(this, symbol, newName);
+	}
+
+	/// <summary>
+	/// Returns the editor CodeLens entries for one document: a semantic reference count per named
+	/// declaration (zero included), a compact layout summary per concrete type, and native-linkage
+	/// facts for declarations with resolved interop metadata. The whole document is answered from one
+	/// batched snapshot pass.
+	/// </summary>
+	public IReadOnlyList<ToolingCodeLensInfo> GetCodeLenses(DocumentId document, ToolingCodeLensOptions? options = null)
+	{
+		if (!_documents.ContainsKey(document))
+			throw new KeyNotFoundException($"Document {document} not found in this snapshot.");
+
+		return CodeLensService.GetCodeLenses(this, document, options ?? ToolingCodeLensOptions.Default);
+	}
+
+	/// <summary>
+	/// Returns the type layout the caret at <paramref name="position"/> resolves to, or null when the
+	/// position is not on a concrete type with an authoritative layout.
+	/// </summary>
+	public TypeLayoutInspection? GetTypeLayoutAtPosition(DocumentId document, int position)
+	{
+		if (!_documents.ContainsKey(document))
+			return null;
+
+		return CodeLensService.GetTypeLayoutAtPosition(this, _documents[document], position);
 	}
 
 	/// <summary>

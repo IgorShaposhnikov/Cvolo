@@ -11,6 +11,11 @@ public enum NativeInteropKind
 	NativeDelegate,
 	RawUnion,
 	ForeignGlobal,
+	/// <summary>
+	/// The declaration is exported to foreign code from an <c>expose extern</c> block, together
+	/// with the calling convention the block applies to it.
+	/// </summary>
+	Export,
 }
 
 /// <summary>
