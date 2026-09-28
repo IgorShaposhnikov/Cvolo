@@ -58,6 +58,9 @@ internal static class SemanticTokenService
 	{
 		switch (node)
 		{
+			case BooleanLiteralExpressionSyntax booleanLiteral:
+				AddDirectToken(tokens, seen, booleanLiteral.Span, ToolingSymbolKind.Keyword);
+				return true;
 			case NullLiteralExpressionSyntax nullLiteral:
 				AddDirectToken(tokens, seen, nullLiteral.Span, ToolingSymbolKind.Keyword);
 				return true;

@@ -247,6 +247,31 @@ public sealed class SemanticTokenTests
 	}
 
 	[Fact]
+	public void BooleanLiterals_AreClassifiedAsKeyword()
+	{
+		const string s =
+			"int main() {\n" +
+			"    val bool yes = true;\n" +
+			"    val bool no = false;\n" +
+			"    if (yes) { return 1; }\n" +
+			"    return 0;\n" +
+			"}\n";
+		var x = Open(s);
+		using (x.Fixture)
+		{
+			var tokens = x.Document.GetSemanticTokens();
+
+			var trueTokens = WithText(x.Document, tokens, "true");
+			Assert.NotEmpty(trueTokens);
+			Assert.All(trueTokens, t => Assert.Equal(ToolingSymbolKind.Keyword, t.Kind));
+
+			var falseTokens = WithText(x.Document, tokens, "false");
+			Assert.NotEmpty(falseTokens);
+			Assert.All(falseTokens, t => Assert.Equal(ToolingSymbolKind.Keyword, t.Kind));
+		}
+	}
+
+	[Fact]
 	public void EqualityOperator_IsClassifiedAsOperator()
 	{
 		const string s =
