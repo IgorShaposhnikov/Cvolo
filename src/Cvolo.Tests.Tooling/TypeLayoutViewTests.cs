@@ -174,4 +174,49 @@ public sealed class TypeLayoutViewTests
 			Assert.Null(x.Snapshot.GetTypeLayoutAtPosition(x.Document.Id, At(Source, "return total;")));
 		}
 	}
+
+	[Fact]
+	public void ALayoutCarriesASubjectTheClientCanAskForAgain()
+	{
+		var x = Open(("Main.cvl", Source));
+		using (x.Fixture)
+		{
+			var atSource = x.Snapshot.GetTypeLayoutAtPosition(
+				x.Document.Id, At(Source, "public struct Header") + "public struct ".Length);
+
+			Assert.NotNull(atSource);
+			Assert.Equal("Header", atSource!.Subject);
+
+			// The subject is what a client stores. Asking again with it re-resolves against the
+			// current snapshot and yields the same compiler facts, including the navigation.
+			var bySubject = x.Snapshot.GetTypeLayoutBySubject(x.Document.Id, atSource.Subject!);
+
+			Assert.NotNull(bySubject);
+			Assert.Equal(atSource.TypeDisplay, bySubject!.TypeDisplay);
+			Assert.Equal(atSource.Size, bySubject.Size);
+			Assert.Equal(atSource.Alignment, bySubject.Alignment);
+			Assert.Equal(
+				atSource.Members.Select(member => member.Name),
+				bySubject.Members.Select(member => member.Name));
+			Assert.Equal("Header", bySubject.Subject);
+			Assert.Equal(
+				At(Source, "public struct Header") + "public struct ".Length,
+				bySubject.Definition!.SelectionSpan.Start);
+		}
+	}
+
+	[Fact]
+	public void ASubjectThatNoLongerNamesAType_IsUnavailableRatherThanStale()
+	{
+		var x = Open(("Main.cvl", Source));
+		using (x.Fixture)
+		{
+			// A type that was renamed or removed stops resolving, so the open view can say so
+			// instead of keeping the numbers it last saw.
+			Assert.Null(x.Snapshot.GetTypeLayoutBySubject(x.Document.Id, "Renamed"));
+
+			// A blank subject is the same kind of absence, not an error.
+			Assert.Null(x.Snapshot.GetTypeLayoutBySubject(x.Document.Id, "   "));
+		}
+	}
 }

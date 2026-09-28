@@ -88,6 +88,9 @@ internal static class CodeLensService
 	internal static TypeLayoutInspection? GetTypeLayoutAtPosition(ProjectSnapshot snapshot, DocumentSnapshot document, int position) =>
 		TypeLayoutView.At(snapshot, document, position);
 
+	internal static TypeLayoutInspection? GetTypeLayoutBySubject(ProjectSnapshot snapshot, DocumentSnapshot document, string subject) =>
+		TypeLayoutView.BySubject(snapshot, document, subject);
+
 	/// <summary>
 	/// Produces the compiler-computed storage facts for one field, or false when the field has no
 	/// reportable layout. A field is eligible when it is a struct or union field, its containing type

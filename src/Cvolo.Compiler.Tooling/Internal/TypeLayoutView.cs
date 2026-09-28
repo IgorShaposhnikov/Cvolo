@@ -88,6 +88,36 @@ internal static class TypeLayoutView
 	}
 
 	/// <summary>
+	/// The layout of the type a stored subject names, re-resolved against the current snapshot. This is
+	/// the refresh path: a client that once showed a type keeps only the canonical name and asks again
+	/// after the project changes, so the numbers it shows are always the compiler's latest. A type that
+	/// no longer resolves - renamed, removed, or no longer concrete - yields null, which the editor
+	/// presents as the unavailable state rather than leaving stale facts on screen.
+	/// </summary>
+	internal static TypeLayoutInspection? BySubject(ProjectSnapshot snapshot, DocumentSnapshot document, string typeName)
+	{
+		ArgumentNullException.ThrowIfNull(snapshot);
+		ArgumentNullException.ThrowIfNull(document);
+		if (string.IsNullOrWhiteSpace(typeName))
+			return null;
+
+		var context = snapshot.GetAnalysis().BinderContext;
+		if (context is null)
+			return null;
+
+		TypeSymbol? type;
+		lock (context)
+			type = context.ResolveType(typeName);
+
+		if (type is null || !TryInspect(type, context, out var inspection))
+			return null;
+
+		var navigation = snapshot.GetNavigationIndex();
+		var roots = navigation.DocumentSymbols(document.Id);
+		return Enrich(snapshot, navigation, document, FindType(roots, inspection.TypeDisplay), inspection, resolved: null);
+	}
+
+	/// <summary>
 	/// Produces the authoritative layout of the type declared by <paramref name="declaration"/>, or
 	/// false when there is no concrete storage type to describe. An unresolved generic template has
 	/// no numeric layout: reporting one would be a guess, so the layout lens is simply omitted.
@@ -232,13 +262,13 @@ internal static class TypeLayoutView
 		// A type declared in another document has no field entry here, so its rows carry no targets; the
 		// type name still navigates to the declaration the compiler indexed.
 		if (type is null)
-			return inspection with { Definition = definition };
+			return inspection with { Definition = definition, Subject = LeafType(inspection.TypeDisplay) };
 
 		var source = document.Text.ToString();
 		TypeLayoutMemberInspection[] members = [.. inspection.Members.Select(member =>
 			Member(snapshot, navigation, document.Id, source, inspection, Field(type, member.Name), member))];
 
-		return inspection with { Members = members, Definition = definition };
+		return inspection with { Members = members, Definition = definition, Subject = LeafType(inspection.TypeDisplay) };
 	}
 
 	/// <summary>

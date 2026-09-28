@@ -249,6 +249,21 @@ public sealed class DocumentSnapshot
 	}
 
 	/// <summary>
+	/// Returns the layout of the type named by a stored subject, re-resolved against this document's
+	/// owning snapshot, or null when the name no longer resolves to a concrete type. This is how a
+	/// viewer refreshes without ever holding a snapshot-scoped symbol.
+	/// </summary>
+	public TypeLayoutInspection? GetTypeLayoutBySubject(string subject)
+	{
+		ArgumentNullException.ThrowIfNull(subject);
+
+		if (OwningSnapshot is null)
+			return null;
+
+		return CodeLensService.GetTypeLayoutBySubject(OwningSnapshot, this, subject);
+	}
+
+	/// <summary>
 	/// Returns the foldable regions of this document, ordered by start position and then by
 	/// decreasing length. Regions come from the parsed syntax and the comment tokens, so an
 	/// incomplete document still folds the parts the parser recovered confidently, and a region

@@ -99,6 +99,12 @@ public sealed record ToolingFieldLayoutInfo(
 /// type name in the viewer is navigable because the compiler owns this target; it is null rather than
 /// guessed when the type has no source declaration.
 /// </param>
+/// <param name="Subject">
+/// The canonical identity a client stores so the same type's layout can be requested again after the
+/// project changes, without holding any snapshot-scoped symbol. The server resolves it against
+/// whatever snapshot is current when the next request arrives, so a renamed or removed type simply
+/// stops resolving rather than resurrecting a stale layout.
+/// </param>
 public sealed record TypeLayoutInspection(
 	string TypeDisplay,
 	string TargetDisplay,
@@ -112,4 +118,5 @@ public sealed record TypeLayoutInspection(
 	long? ElementAlignment,
 	IReadOnlyList<TypeLayoutMemberInspection> Members,
 	IReadOnlyList<TypeLayoutPaddingInspection> Padding,
-	SymbolDefinition? Definition = null);
+	SymbolDefinition? Definition = null,
+	string? Subject = null);

@@ -238,6 +238,20 @@ public sealed class ProjectSnapshot
 	}
 
 	/// <summary>
+	/// Returns the layout of the type named by a stored subject, re-resolved against this snapshot, or
+	/// null when the name no longer resolves to a concrete type. A viewer keeps only the subject it was
+	/// given and asks again through here after the project changes, so the facts it shows are never
+	/// carried across a snapshot.
+	/// </summary>
+	public TypeLayoutInspection? GetTypeLayoutBySubject(DocumentId document, string subject)
+	{
+		if (!_documents.ContainsKey(document))
+			return null;
+
+		return CodeLensService.GetTypeLayoutBySubject(this, _documents[document], subject);
+	}
+
+	/// <summary>
 	/// Returns the document with the given <paramref name="documentId"/>.
 	/// Throws <see cref="KeyNotFoundException"/> when the id is not in this snapshot.
 	/// </summary>
