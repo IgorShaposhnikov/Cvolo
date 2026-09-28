@@ -32,7 +32,7 @@ public abstract class AstRewriterBase
 			var rewrittenDestructors = extDecl.Destructors.Select(Rewrite).Cast<DestructorDeclarationSyntax>().ToList();
 			var rewrittenConstructors = extDecl.Constructors.Select(Rewrite).Cast<ConstructorDeclarationSyntax>().ToList();
 			var rewrittenOperators = extDecl.Operators.Select(Rewrite).Cast<OperatorDeclarationSyntax>().ToList();
-			return new ExtensionDeclarationSyntax(extDecl.Span, extDecl.ExtendedTypeName, rewrittenMethods, rewrittenDestructors, rewrittenConstructors, extDecl.GenericParameters, extDecl.ConformsTo, extDecl.Visibility, operators: rewrittenOperators);
+			return new ExtensionDeclarationSyntax(extDecl.Span, extDecl.ExtendedTypeName, rewrittenMethods, rewrittenDestructors, rewrittenConstructors, extDecl.GenericParameters, extDecl.ConformsTo, extDecl.Visibility, nameSpan: extDecl.NameSpan, conformsToSpan: extDecl.ConformsToSpan, operators: rewrittenOperators);
 		}
 
 		if (node is OperatorDeclarationSyntax op)

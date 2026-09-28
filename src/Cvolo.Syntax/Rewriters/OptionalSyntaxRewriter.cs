@@ -153,7 +153,7 @@ public sealed class OptionalSyntaxRewriter(bool strictOption, DiagnosticBag diag
 			var rewrittenOps = extDecl.Operators.Select(RewriteOperator).ToList();
 			return new ExtensionDeclarationSyntax(extDecl.Span, RewriteType(extDecl.ExtendedTypeName, extDecl.Span), rewrittenMethods,
 				rewrittenDtors, rewrittenCtors, extDecl.GenericParameters, extDecl.ConformsTo, extDecl.Visibility, extDecl.GenericParameterDefaults,
-				operators: rewrittenOps);
+				nameSpan: extDecl.NameSpan, conformsToSpan: extDecl.ConformsToSpan, operators: rewrittenOps);
 		}
 
 		if (node is InterfaceMethodDeclarationSyntax interfaceMember)

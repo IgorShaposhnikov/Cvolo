@@ -56,7 +56,7 @@ public sealed class ForeachLoweringRewriter : AstRewriterBase
 					var destructors = ext.Destructors.Select(Rewrite).Cast<DestructorDeclarationSyntax>().ToList();
 					var constructors = ext.Constructors.Select(Rewrite).Cast<ConstructorDeclarationSyntax>().ToList();
 					var operators = ext.Operators.Select(Rewrite).Cast<OperatorDeclarationSyntax>().ToList();
-					return new ExtensionDeclarationSyntax(ext.Span, ext.ExtendedTypeName, methods, destructors, constructors, ext.GenericParameters, ext.ConformsTo, ext.Visibility, operators: operators);
+					return new ExtensionDeclarationSyntax(ext.Span, ext.ExtendedTypeName, methods, destructors, constructors, ext.GenericParameters, ext.ConformsTo, ext.Visibility, nameSpan: ext.NameSpan, conformsToSpan: ext.ConformsToSpan, operators: operators);
 				}
 
 			case OperatorDeclarationSyntax op:
