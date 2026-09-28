@@ -495,7 +495,29 @@ internal sealed class ExtensionRegistrar(
 		if (interfaceType is not InterfaceTypeSymbol interfaceSymbol)
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.Report(currentFileContext, extDecl.Span, $"Unknown interface '{extDecl.ConformsTo}' in conformance declaration.");
+
+			// The conformance clause names the capability, not the whole block, so the diagnostic
+			// points at ConformsToSpan. A name that is not an interface gets an explanation of what
+			// the clause actually accepts instead of a bare "unknown".
+			switch (interfaceType)
+			{
+				case ProtocolTypeSymbol:
+					context.Diagnostics.Report(currentFileContext, extDecl.ConformsToSpan,
+						$"Extension block cannot implement protocol '{extDecl.ConformsTo}': protocols are satisfied structurally, so only an interface can be named in a conformance declaration.",
+						DiagnosticIds.ConformanceTargetNotInterface);
+					break;
+				case null:
+					context.Diagnostics.Report(currentFileContext, extDecl.ConformsToSpan,
+						$"Unknown interface '{extDecl.ConformsTo}' in conformance declaration. Only an interface can be named here.",
+						DiagnosticIds.ConformanceUnknownInterface);
+					break;
+				default:
+					context.Diagnostics.Report(currentFileContext, extDecl.ConformsToSpan,
+						$"'{extDecl.ConformsTo}' is not an interface; only an interface can be named in a conformance declaration.",
+						DiagnosticIds.ConformanceTargetNotInterface);
+					break;
+			}
+
 			return;
 		}
 
@@ -534,7 +556,8 @@ internal sealed class ExtensionRegistrar(
 			{
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
 				context.Diagnostics.Report(currentFileContext, extDecl.Span,
-					$"Type '{extDecl.ExtendedTypeName}' does not implement member '{RequiredSigText(member)}' required by interface '{extDecl.ConformsTo}'.");
+					$"Type '{extDecl.ExtendedTypeName}' does not implement member '{RequiredSigText(member)}' required by interface '{extDecl.ConformsTo}'.",
+					DiagnosticIds.ConformanceMissingMember);
 			}
 		}
 

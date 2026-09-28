@@ -44,7 +44,9 @@ public sealed class InterfacesTests : CompilerTestBase
 
 	[Theory]
 	[InlineData("ConformanceMissingMember", "Type 'Point' does not implement member 'int Value()' required by interface 'IWidget'.")]
-	[InlineData("ConformanceUnknownInterface", "Unknown interface 'IMissingInterface' in conformance declaration.")]
+	[InlineData("ConformanceUnknownInterface", "Unknown interface 'IMissingInterface' in conformance declaration. Only an interface can be named here.")]
+	[InlineData("ConformanceProtocolTarget", "Extension block cannot implement protocol 'IProtocolOnly': protocols are satisfied structurally, so only an interface can be named in a conformance declaration.")]
+	[InlineData("ConformanceNonInterfaceTarget", "'Widget' is not an interface; only an interface can be named in a conformance declaration.")]
 	[InlineData("ValueDispatchNotConforming", "Type 'Foo' does not conform to interface 'IWidget' for parameter 'w'")]
 	[InlineData("UnresolvedConcreteFail", "Interface parameter 'w' of function 'Draw' cannot be resolved to a concrete conforming type; argument is abstract interface type 'IWidget'")]
 	// P7: requires-clause rejection — enforced eagerly when Btn registers IButton

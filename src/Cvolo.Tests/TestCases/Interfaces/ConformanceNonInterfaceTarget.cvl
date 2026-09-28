@@ -1,0 +1,16 @@
+struct Widget {
+    int A;
+}
+
+struct Thing {
+    int B;
+}
+
+extension Thing : Widget {
+    void Print() {
+    }
+}
+
+int main() {
+    return 0;
+}

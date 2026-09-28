@@ -204,6 +204,17 @@ public static class DiagnosticIds
 	/// <summary>A type alias is used as a generic parameter constraint in a `where` clause.</summary>
 	public const string AliasAsConstraint = "CVL1202";
 
+	// ── Interfaces & Conformance (CVL15xx) ──
+
+	/// <summary>An extension's conformance clause names an interface that cannot be resolved.</summary>
+	public const string ConformanceUnknownInterface = "CVL1500";
+
+	/// <summary>An extension's conformance clause names something that is not an interface (a protocol, a struct, and so on).</summary>
+	public const string ConformanceTargetNotInterface = "CVL1501";
+
+	/// <summary>A conforming type does not provide a member the interface requires.</summary>
+	public const string ConformanceMissingMember = "CVL1502";
+
 	// ── Safe Delegates & Borrowed Closures (CVL13xx) ──
 
 	/// <summary>A lambda expression requires an expected delegate type target (no standalone lambda type).</summary>

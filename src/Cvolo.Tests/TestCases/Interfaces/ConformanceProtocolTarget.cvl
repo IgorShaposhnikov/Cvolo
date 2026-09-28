@@ -1,0 +1,20 @@
+protocol IProtocolOnly {
+    int Alloc(int layout);
+    void Dealloc(int ptr, int layout);
+}
+
+struct Thing {
+    int A;
+}
+
+extension Thing : IProtocolOnly {
+    int Alloc(int layout) {
+        return 0;
+    }
+    void Dealloc(int ptr, int layout) {
+    }
+}
+
+int main() {
+    return 0;
+}
