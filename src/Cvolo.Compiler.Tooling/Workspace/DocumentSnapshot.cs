@@ -281,6 +281,23 @@ public sealed class DocumentSnapshot
 	}
 
 	/// <summary>
+	/// Returns the contract declared at <paramref name="position"/> as a type-hierarchy item, or
+	/// <see langword="null"/> when the position is not on an interface or protocol.
+	/// Throws <see cref="ArgumentOutOfRangeException"/> when <paramref name="position"/> falls
+	/// outside [0, <see cref="Text.Length"/>].
+	/// </summary>
+	public ToolingHierarchyItem? PrepareTypeHierarchy(int position)
+	{
+		ArgumentOutOfRangeException.ThrowIfNegative(position);
+		ArgumentOutOfRangeException.ThrowIfGreaterThan(position, Text.Length);
+
+		if (OwningSnapshot is null)
+			return null;
+
+		return TypeHierarchyNavigation.At(OwningSnapshot, this, position);
+	}
+
+	/// <summary>
 	/// Returns the foldable regions of this document, ordered by start position and then by
 	/// decreasing length. Regions come from the parsed syntax and the comment tokens, so an
 	/// incomplete document still folds the parts the parser recovered confidently, and a region

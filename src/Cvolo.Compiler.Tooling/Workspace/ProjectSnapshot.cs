@@ -277,6 +277,43 @@ public sealed class ProjectSnapshot
 	}
 
 	/// <summary>
+	/// Returns the contract declared at <paramref name="position"/> as a type-hierarchy item, or
+	/// <see langword="null"/> when the position is not on an interface or protocol.
+	/// </summary>
+	public ToolingHierarchyItem? PrepareTypeHierarchy(DocumentId document, int position)
+	{
+		if (!_documents.ContainsKey(document))
+			return null;
+
+		return TypeHierarchyNavigation.At(this, _documents[document], position);
+	}
+
+	/// <summary>
+	/// Re-resolves a contract by name for a <c>typeHierarchy/supertypes|subtypes</c> follow-up. The
+	/// client carries the contract name rather than a snapshot-scoped symbol handle, so a follow-up
+	/// always resolves against whatever snapshot is current (§42).
+	/// </summary>
+	public ToolingHierarchyItem? GetTypeHierarchyByKey(DocumentId document, string name)
+	{
+		if (!_documents.ContainsKey(document))
+			return null;
+
+		return TypeHierarchyNavigation.ByName(this, _documents[document], name);
+	}
+
+	/// <summary>Returns the direct declared bases of the contract named by <paramref name="symbol"/>.</summary>
+	public IReadOnlyList<ToolingHierarchyItem> GetSupertypes(SymbolId symbol)
+	{
+		return TypeHierarchyNavigation.Supertypes(this, symbol);
+	}
+
+	/// <summary>Returns the contracts that directly declare the contract named by <paramref name="symbol"/> as a base.</summary>
+	public IReadOnlyList<ToolingHierarchyItem> GetSubtypes(SymbolId symbol)
+	{
+		return TypeHierarchyNavigation.Subtypes(this, symbol);
+	}
+
+	/// <summary>
 	/// Returns the document with the given <paramref name="documentId"/>.
 	/// Throws <see cref="KeyNotFoundException"/> when the id is not in this snapshot.
 	/// </summary>
