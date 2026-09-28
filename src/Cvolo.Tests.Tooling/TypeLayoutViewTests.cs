@@ -219,4 +219,43 @@ public sealed class TypeLayoutViewTests
 			Assert.Null(x.Snapshot.GetTypeLayoutBySubject(x.Document.Id, "   "));
 		}
 	}
+
+	private const string NamespacedSource =
+		"namespace App;\n" +
+		"\n" +
+		"public struct Header\n" +
+		"{\n" +
+		"    public byte Kind;\n" +
+		"    public int Length;\n" +
+		"}\n" +
+		"\n" +
+		"int main()\n" +
+		"{\n" +
+		"    return 0;\n" +
+		"}\n";
+
+	[Fact]
+	public void ATypeInANamespace_ResolvesLikeOneAtTheTopLevel()
+	{
+		var x = Open(("Main.cvl", NamespacedSource));
+		using (x.Fixture)
+		{
+			// A type declared in a namespace is registered under its mangled name, so resolving it
+			// has to happen inside the declaring unit rather than against whatever unit bound last.
+			var atSource = x.Snapshot.GetTypeLayoutAtPosition(
+				x.Document.Id, At(NamespacedSource, "public struct Header") + "public struct ".Length);
+
+			Assert.NotNull(atSource);
+			Assert.Equal("App.Header", atSource!.TypeDisplay);
+			Assert.Equal(8, atSource.Size);
+			Assert.Equal(4, atSource.Alignment);
+
+			var bySubject = x.Snapshot.GetTypeLayoutBySubject(x.Document.Id, "Header");
+
+			Assert.NotNull(bySubject);
+			Assert.Equal("App.Header", bySubject!.TypeDisplay);
+			Assert.Equal(8, bySubject.Size);
+			Assert.Equal(new[] { "Kind", "Length" }, bySubject.Members.Select(member => member.Name));
+		}
+	}
 }

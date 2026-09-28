@@ -47,7 +47,7 @@ internal static class CodeLensService
 					new ToolingReferenceCount(symbol.SymbolId, count)));
 			}
 
-			if (options.Layout && TypeLayoutView.TryInspect(declaration, context, out var inspection))
+			if (options.Layout && TypeLayoutView.TryInspect(snapshot, declaration, context, out var inspection))
 			{
 				result.Add(new ToolingCodeLensInfo(
 					symbol.SelectionSpan,
@@ -57,7 +57,7 @@ internal static class CodeLensService
 					inspection,
 					null));
 			}
-			else if (options.FieldLayout && TryFieldLayout(symbol, owner, navigation, context, out var fieldLayout))
+			else if (options.FieldLayout && TryFieldLayout(snapshot, symbol, owner, navigation, context, out var fieldLayout))
 			{
 				result.Add(new ToolingCodeLensInfo(
 					symbol.SelectionSpan,
@@ -100,6 +100,7 @@ internal static class CodeLensService
 	/// the compiler cannot describe numerically - simply produces no lens rather than a guess.
 	/// </summary>
 	private static bool TryFieldLayout(
+		ProjectSnapshot snapshot,
 		DocumentSymbolInfo symbol,
 		DocumentSymbolInfo? owner,
 		NavigationIndex navigation,
@@ -111,7 +112,7 @@ internal static class CodeLensService
 			|| owner is null
 			|| symbol.Kind is not ToolingSymbolKind.Field
 			|| navigation.Declaration(owner.SymbolId) is not (StructDeclarationSyntax or UnionDeclarationSyntax)
-			|| !TypeLayoutView.TryInspect(navigation.Declaration(owner.SymbolId), context, out var layout))
+			|| !TypeLayoutView.TryInspect(snapshot, navigation.Declaration(owner.SymbolId), context, out var layout))
 		{
 			return false;
 		}

@@ -47,14 +47,14 @@ internal static class TypeLayoutView
 			if (OwningSymbol(roots, position) is not { } owner)
 				return ValueLayout(snapshot, navigation, document, context, roots, position);
 			type = owner;
-			if (!TryInspect(navigation.Declaration(owner.SymbolId), context, out var ownerLayout))
+			if (!TryInspect(snapshot, navigation.Declaration(owner.SymbolId), context, out var ownerLayout))
 				return null;
 
 			return Enrich(snapshot, navigation, document, owner, ownerLayout, resolved: null);
 		}
 
 		// A type declaration or a type use names the type directly.
-		if (TryInspect(navigation.Declaration(resolved.SymbolId), context, out var inspection))
+		if (TryInspect(snapshot, navigation.Declaration(resolved.SymbolId), context, out var inspection))
 			return Enrich(snapshot, navigation, document, Find(roots, resolved.SymbolId), inspection, resolved);
 
 		// Otherwise the position names a value - a variable, parameter, global or field - whose
@@ -105,9 +105,18 @@ internal static class TypeLayoutView
 		if (context is null)
 			return null;
 
+		// The anchor document tells us which namespace the name belongs to; the stored subject is the
+		// simple name, so resolving it under the wrong namespace would lose a namespaced type.
+		CompilationUnitSyntax? anchor = snapshot.GetAnalysis().UnitsByDocument.TryGetValue(document.Id, out var anchorUnit)
+			? anchorUnit
+			: null;
+
 		TypeSymbol? type;
-		lock (context)
-			type = context.ResolveType(typeName);
+		if (anchor is not null)
+			type = UnderUnit(context, anchor, () => context.ResolveType(typeName));
+		else
+			lock (context)
+				type = context.ResolveType(typeName);
 
 		if (type is null || !TryInspect(type, context, out var inspection))
 			return null;
@@ -122,7 +131,7 @@ internal static class TypeLayoutView
 	/// false when there is no concrete storage type to describe. An unresolved generic template has
 	/// no numeric layout: reporting one would be a guess, so the layout lens is simply omitted.
 	/// </summary>
-	internal static bool TryInspect(SyntaxNode? declaration, BindingContext? context, out TypeLayoutInspection inspection)
+	internal static bool TryInspect(ProjectSnapshot snapshot, SyntaxNode? declaration, BindingContext? context, out TypeLayoutInspection inspection)
 	{
 		inspection = null!;
 		if (context is null || declaration is null)
@@ -140,11 +149,15 @@ internal static class TypeLayoutView
 		if (name is null)
 			return false;
 
+		// Resolve the name inside the declaration's own unit and namespace. The binding context keeps a
+		// single CurrentNamespace/CurrentUnit that by now points at whatever unit was bound last, so a
+		// namespaced type would otherwise be looked up under the wrong namespace and vanish.
 		TypeSymbol? type;
-		lock (context)
-		{
-			type = context.ResolveType(name);
-		}
+		if (FindUnit(snapshot.GetAnalysis(), declaration) is { } unit)
+			type = UnderUnit(context, unit, () => context.ResolveType(name));
+		else
+			lock (context)
+				type = context.ResolveType(name);
 
 		if (type is null)
 			return false;
@@ -472,5 +485,70 @@ internal static class TypeLayoutView
 		}
 
 		return new TextSpan(start, Math.Min(name.Length, end - start));
+	}
+
+	/// <summary>
+	/// The parsed unit that contains <paramref name="declaration"/>, so a type name can be resolved
+	/// inside the namespace its declaration actually lives in.
+	/// </summary>
+	private static CompilationUnitSyntax? FindUnit(AnalyzedProject analysis, SyntaxNode declaration)
+	{
+		foreach ((_, CompilationUnitSyntax? unit) in analysis.UnitsByDocument)
+		{
+			if (unit is not null && Contains(unit, declaration))
+				return unit;
+		}
+
+		return null;
+	}
+
+	private static bool Contains(SyntaxNode root, SyntaxNode node)
+	{
+		if (ReferenceEquals(root, node))
+			return true;
+
+		foreach (SyntaxNode child in Descendants(root))
+		{
+			if (ReferenceEquals(child, node))
+				return true;
+		}
+
+		return false;
+	}
+
+	private static IEnumerable<SyntaxNode> Descendants(SyntaxNode node)
+	{
+		foreach (SyntaxNode child in node.GetChildren())
+		{
+			yield return child;
+
+			foreach (SyntaxNode nested in Descendants(child))
+				yield return nested;
+		}
+	}
+
+	/// <summary>
+	/// Runs <paramref name="action"/> with the binding context pointed at <paramref name="unit"/>'s
+	/// namespace and unit, then restores whatever the context held before, so a name resolves the way
+	/// it would from inside that unit rather than from wherever the last bind left the context.
+	/// </summary>
+	private static T UnderUnit<T>(BindingContext context, CompilationUnitSyntax unit, Func<T> action)
+	{
+		lock (context)
+		{
+			CompilationUnitSyntax? previousUnit = context.CurrentUnit;
+			string? previousNamespace = context.CurrentNamespace;
+			context.CurrentUnit = unit;
+			context.CurrentNamespace = unit.NamespaceDeclaration?.Name;
+			try
+			{
+				return action();
+			}
+			finally
+			{
+				context.CurrentUnit = previousUnit;
+				context.CurrentNamespace = previousNamespace;
+			}
+		}
 	}
 }
