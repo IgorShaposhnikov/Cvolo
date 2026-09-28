@@ -30,7 +30,7 @@ internal static class CodeLensService
 		var occurrences = context is null ? null : snapshot.GetOccurrenceIndex();
 		var result = new List<ToolingCodeLensInfo>();
 
-		foreach (var (symbol, owner) in Flatten(navigation.DocumentSymbols(document.Id)))
+		foreach (var (symbol, owner) in TypeLayoutView.Flatten(navigation.DocumentSymbols(document.Id)))
 		{
 			var declaration = navigation.Declaration(symbol.SymbolId);
 
@@ -47,7 +47,7 @@ internal static class CodeLensService
 					new ToolingReferenceCount(symbol.SymbolId, count)));
 			}
 
-			if (options.Layout && TryInspect(declaration, context, out var inspection))
+			if (options.Layout && TypeLayoutView.TryInspect(declaration, context, out var inspection))
 			{
 				result.Add(new ToolingCodeLensInfo(
 					symbol.SelectionSpan,
@@ -85,69 +85,8 @@ internal static class CodeLensService
 		return [.. result.OrderBy(lens => lens.Range.Start).ThenBy(lens => lens.Kind)];
 	}
 
-	internal static TypeLayoutInspection? GetTypeLayoutAtPosition(ProjectSnapshot snapshot, DocumentSnapshot document, int position)
-	{
-		ArgumentNullException.ThrowIfNull(document);
-		ArgumentOutOfRangeException.ThrowIfNegative(position);
-		ArgumentOutOfRangeException.ThrowIfGreaterThan(position, document.Text.Length);
-
-		var navigation = snapshot.GetNavigationIndex();
-		if (navigation.Lookup(document.Id, position) is not { } resolved)
-			return null;
-
-		var context = snapshot.GetAnalysis().BinderContext;
-
-		// A field is not itself a type: the layout the editor shows for a field is the layout of the
-		// type that stores it, which is what a field lens click and "Show Type Layout" on a field
-		// both ask for. The owner comes from the outline rather than from a name match, so a field
-		// and a same-spelled type never cross over.
-		if (resolved.Kind is ToolingSymbolKind.Field or ToolingSymbolKind.EnumMember
-			&& TryOwningDeclaration(navigation, document.Id, position) is { } owner)
-		{
-			return TryInspect(owner, context, out var ownerLayout) ? ownerLayout : null;
-		}
-
-		return TryInspect(navigation.Declaration(resolved.SymbolId), context, out var inspection)
-			? inspection
-			: null;
-	}
-
-	/// <summary>
-	/// Finds the innermost aggregate declaration that contains <paramref name="position"/>, so a
-	/// field position resolves to the type that stores it.
-	/// </summary>
-	private static SyntaxNode? TryOwningDeclaration(NavigationIndex navigation, DocumentId document, int position)
-	{
-		foreach (var (symbol, owner) in Flatten(navigation.DocumentSymbols(document)))
-		{
-			if (symbol.Kind is not (ToolingSymbolKind.Field or ToolingSymbolKind.EnumMember))
-				continue;
-
-			if (position < symbol.Range.Start || position > symbol.Range.End)
-				continue;
-
-			return owner is null ? null : navigation.Declaration(owner.SymbolId);
-		}
-
-		return null;
-	}
-
-	/// <summary>
-	/// Flattens the document outline, keeping each declaration's immediate owner. The outline is the
-	/// compiler's own declaration tree for this document, so a CodeLens is never attached to a
-	/// declaration the compiler does not model, and a field is always attributed to the type the
-	/// compiler bound it to.
-	/// </summary>
-	private static IEnumerable<(DocumentSymbolInfo Symbol, DocumentSymbolInfo? Owner)> Flatten(IReadOnlyList<DocumentSymbolInfo> roots)
-	{
-		foreach (var root in roots)
-		{
-			yield return (root, null);
-
-			foreach (var nested in Flatten(root.Children))
-				yield return (nested.Symbol, nested.Owner ?? root);
-		}
-	}
+	internal static TypeLayoutInspection? GetTypeLayoutAtPosition(ProjectSnapshot snapshot, DocumentSnapshot document, int position) =>
+		TypeLayoutView.At(snapshot, document, position);
 
 	/// <summary>
 	/// Produces the compiler-computed storage facts for one field, or false when the field has no
@@ -169,7 +108,7 @@ internal static class CodeLensService
 			|| owner is null
 			|| symbol.Kind is not ToolingSymbolKind.Field
 			|| navigation.Declaration(owner.SymbolId) is not (StructDeclarationSyntax or UnionDeclarationSyntax)
-			|| !TryInspect(navigation.Declaration(owner.SymbolId), context, out var layout))
+			|| !TypeLayoutView.TryInspect(navigation.Declaration(owner.SymbolId), context, out var layout))
 		{
 			return false;
 		}
@@ -228,42 +167,6 @@ internal static class CodeLensService
 				or ToolingSymbolKind.Constant => true,
 			_ => false,
 		};
-	}
-
-	/// <summary>
-	/// Produces the authoritative layout of the type declared by <paramref name="declaration"/>, or
-	/// false when there is no concrete storage type to describe. An unresolved generic template has
-	/// no numeric layout: reporting one would be a guess, so the layout lens is simply omitted.
-	/// </summary>
-	private static bool TryInspect(SyntaxNode? declaration, BindingContext? context, out TypeLayoutInspection inspection)
-	{
-		inspection = null!;
-		if (context is null || declaration is null)
-			return false;
-
-		string? name = declaration switch
-		{
-			StructDeclarationSyntax { GenericParameters.Count: 0 } structDeclaration => structDeclaration.Name,
-			UnionDeclarationSyntax { GenericParameters.Count: 0 } unionDeclaration => unionDeclaration.Name,
-			EnumDeclarationSyntax enumDeclaration => enumDeclaration.Name,
-			DelegateDeclarationSyntax delegateDeclaration => delegateDeclaration.Name,
-			_ => null,
-		};
-
-		if (name is null)
-			return false;
-
-		TypeSymbol? type;
-		lock (context)
-		{
-			type = context.ResolveType(name);
-		}
-
-		if (type is null)
-			return false;
-
-		inspection = TypeLayoutAdapter.ToTooling(context.LayoutService.Inspect(type));
-		return true;
 	}
 
 	private static string LayoutTitle(TypeLayoutInspection layout) =>

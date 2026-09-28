@@ -11,15 +11,41 @@ public enum ToolingPaddingKind
 }
 
 /// <summary>
+/// What a layout viewer may do with one member row, resolved by the compiler so the client never has
+/// to: where the field name navigates, where the type name navigates, whether the field's type is an
+/// aggregate with a layout of its own, and the field's own documentation. Every target is a
+/// declaration the compiler already indexed; none of it is derived from the displayed text.
+/// </summary>
+/// <param name="Signature">The field as it was declared, qualified by the type that stores it.</param>
+/// <param name="Documentation">The field's <c>///</c> documentation, when it has any.</param>
+/// <param name="Definition">Where the field name is declared, or null when it is not source backed.</param>
+/// <param name="TypeDefinition">Where the field's type is declared, or null when it has no source declaration.</param>
+/// <param name="NestedLayout">
+/// Where a nested layout of the field's own type can be requested, or null when the field's type is
+/// not an aggregate the compiler can lay out as a type of its own.
+/// </param>
+public sealed record TypeLayoutMemberNavigation(
+	string Signature,
+	string? Documentation,
+	SymbolDefinition? Definition,
+	SymbolDefinition? TypeDefinition,
+	SymbolDefinition? NestedLayout);
+
+/// <summary>
 /// One stored member of a laid-out aggregate: the byte offset, the size in bytes and the storage
 /// alignment it requires. All three are compiler-produced.
 /// </summary>
+/// <param name="Navigation">
+/// The compiler-resolved navigation facts for this member, or null when the member's declaration was
+/// not reached from a source position that could be resolved.
+/// </param>
 public sealed record TypeLayoutMemberInspection(
 	string Name,
 	string TypeDisplay,
 	long Offset,
 	long Size,
-	long Alignment);
+	long Alignment,
+	TypeLayoutMemberNavigation? Navigation = null);
 
 /// <summary>
 /// One contiguous run of padding inside a laid-out aggregate.
@@ -68,6 +94,11 @@ public sealed record ToolingFieldLayoutInfo(
 /// <param name="ElementAlignment">Storage alignment of one array element in bytes, otherwise null.</param>
 /// <param name="Members">Stored members in declaration order; union variants all start at offset zero.</param>
 /// <param name="Padding">Padding regions in ascending offset order.</param>
+/// <param name="Definition">
+/// Where the inspected type is declared, when the inspection was reached from a source position. The
+/// type name in the viewer is navigable because the compiler owns this target; it is null rather than
+/// guessed when the type has no source declaration.
+/// </param>
 public sealed record TypeLayoutInspection(
 	string TypeDisplay,
 	string TargetDisplay,
@@ -80,4 +111,5 @@ public sealed record TypeLayoutInspection(
 	long? ElementSize,
 	long? ElementAlignment,
 	IReadOnlyList<TypeLayoutMemberInspection> Members,
-	IReadOnlyList<TypeLayoutPaddingInspection> Padding);
+	IReadOnlyList<TypeLayoutPaddingInspection> Padding,
+	SymbolDefinition? Definition = null);

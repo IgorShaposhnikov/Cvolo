@@ -587,4 +587,181 @@ public sealed class CodeLensServiceTests
 			Assert.DoesNotContain(lenses, lens => lens.FieldLayout is not null && lens.Title.Contains("pad", StringComparison.Ordinal));
 		}
 	}
+
+	[Fact]
+	public void LayoutAtATypeName_CarriesTheDeclarationTheTypeNameNavigatesTo()
+	{
+		var x = Open(("Main.cvl", Baseline));
+		using (x.Fixture)
+		{
+			var layout = x.Snapshot.GetTypeLayoutAtPosition(x.Document.Id, At(Baseline, "public struct Header") + "public struct ".Length);
+
+			// The type row of the viewer is a link to the declaration, and it is the declaration the
+			// compiler indexed, not one matched from the text the viewer prints.
+			var definition = Assert.IsType<SymbolDefinition>(layout?.Definition);
+			Assert.Equal(x.Document.Id, definition.DocumentId);
+			Assert.Equal("Header", TextAt(Baseline, definition.SelectionSpan));
+		}
+	}
+
+	[Fact]
+	public void LayoutMembers_CarryTheFieldTheTypeAndTheDocumentationTheyNavigateTo()
+	{
+		const string source =
+			"public struct Inner { public int A; }\n" +
+			"\n" +
+			"public struct Outer\n" +
+			"{\n" +
+			"    /// How many items the buffer holds.\n" +
+			"    public int Count;\n" +
+			"    public Inner Nested;\n" +
+			"}\n";
+		var x = Open(("Main.cvl", source));
+		using (x.Fixture)
+		{
+			var layout = x.Snapshot.GetTypeLayoutAtPosition(x.Document.Id, At(source, "public struct Outer") + "public struct ".Length);
+			Assert.NotNull(layout);
+			var count = layout!.Members.Single(member => member.Name == "Count");
+
+			var navigation = Assert.IsType<TypeLayoutMemberNavigation>(count.Navigation);
+			Assert.Equal("int Outer.Count", navigation.Signature);
+			Assert.Equal("How many items the buffer holds.", navigation.Documentation);
+			Assert.Equal("Count", TextAt(source, Assert.IsType<SymbolDefinition>(navigation.Definition).SelectionSpan));
+
+			// `int` is a primitive with no source declaration, so its row simply has no type target
+			// rather than a link the compiler cannot honour.
+			Assert.Null(navigation.TypeDefinition);
+			Assert.Null(navigation.NestedLayout);
+		}
+	}
+
+	[Fact]
+	public void ANestedAggregateField_CarriesItsTypeDeclarationAndANestedLayoutTarget()
+	{
+		const string source =
+			"public struct Inner { public int A; }\n" +
+			"\n" +
+			"public struct Outer\n" +
+			"{\n" +
+			"    public Inner Nested;\n" +
+			"}\n";
+		var x = Open(("Main.cvl", source));
+		using (x.Fixture)
+		{
+			var layout = x.Snapshot.GetTypeLayoutAtPosition(x.Document.Id, At(source, "public struct Outer") + "public struct ".Length);
+			var nested = layout!.Members.Single(member => member.Name == "Nested").Navigation;
+
+			// F12 on the field's type lands on the type, and Show Layout on the same row asks the
+			// compiler for that type's own layout. Both targets are compiler-owned, so the editor
+			// never has to recognize the name it printed.
+			Assert.Equal("Inner", TextAt(source, Assert.IsType<SymbolDefinition>(nested!.TypeDefinition).SelectionSpan));
+			Assert.Equal("Inner", TextAt(source, Assert.IsType<SymbolDefinition>(nested.NestedLayout).SelectionSpan));
+		}
+	}
+
+	[Fact]
+	public void AGenericField_OffersNoNestedLayoutBecauseTheCompilerCannotLayTheTemplateOut()
+	{
+		const string source =
+			"public struct Pair<T>\n" +
+			"{\n" +
+			"    public T First;\n" +
+			"}\n" +
+			"\n" +
+			"public struct Holder\n" +
+			"{\n" +
+			"    public Pair<int> Item;\n" +
+			"}\n";
+		var x = Open(("Main.cvl", source));
+		using (x.Fixture)
+		{
+			var layout = x.Snapshot.GetTypeLayoutAtPosition(x.Document.Id, At(source, "public struct Holder") + "public struct ".Length);
+			var navigation = layout!.Members.Single(member => member.Name == "Item").Navigation;
+
+			// The type name still navigates, but a template has no single layout, so there is nothing
+			// to ask for: a nested Show Layout would be a guess.
+			Assert.Equal("Pair", TextAt(source, Assert.IsType<SymbolDefinition>(navigation!.TypeDefinition).SelectionSpan));
+			Assert.Null(navigation.NestedLayout);
+		}
+	}
+
+	[Fact]
+	public void AFieldWhoseTypeIsNotANameTheCompilerResolves_ContributesNoTypeTarget()
+	{
+		const string source =
+			"public struct Buffers\n" +
+			"{\n" +
+			"    public int[4] Values;\n" +
+			"}\n";
+		var x = Open(("Main.cvl", source));
+		using (x.Fixture)
+		{
+			var layout = x.Snapshot.GetTypeLayoutAtPosition(x.Document.Id, At(source, "public struct Buffers") + "public struct ".Length);
+			var navigation = layout!.Members.Single(member => member.Name == "Values").Navigation;
+
+			// The field's own row is still a link; only the type token has no target, exactly as F12
+			// on that same source position contributes nothing.
+			Assert.Equal("Values", TextAt(source, Assert.IsType<SymbolDefinition>(navigation!.Definition).SelectionSpan));
+			Assert.Null(navigation.TypeDefinition);
+		}
+	}
+
+	[Fact]
+	public void ATypeDeclaredInAnotherDocument_LaysOutWithNoFieldTargets()
+	{
+		const string types =
+			"public struct Inner { public int A; }\n" +
+			"\n" +
+			"public struct Outer\n" +
+			"{\n" +
+			"    public Inner Nested;\n" +
+			"}\n";
+		const string uses = "public int Count(Outer value) { return value.Nested.A; }\n";
+		var x = Open(("Types.cvl", types), ("Uses.cvl", uses));
+		using (x.Fixture)
+		{
+			var uses_ = x.Snapshot.GetDocument(x.Project.GetDocumentId("Uses.cvl"));
+			var layout = x.Snapshot.GetTypeLayoutAtPosition(uses_.Id, At(uses, "Outer value") + "Outer".Length);
+
+			// The numbers are still the compiler's and the type name still navigates to the declaration
+			// in the file that declares it, but the rows carry no targets, because the fields are not
+			// in the document the request came from.
+			Assert.Equal("Outer", layout?.TypeDisplay);
+			Assert.Equal(4, layout!.Size);
+			Assert.Equal("Outer", TextAt(types, Assert.IsType<SymbolDefinition>(layout.Definition).SelectionSpan));
+			Assert.All(layout.Members, member => Assert.Null(member.Navigation));
+		}
+	}
+
+	[Fact]
+	public void LayoutAtAFieldPosition_CarriesTheNavigationOfTheTypeThatStoresIt()
+	{
+		const string source =
+			"public struct Inner { public int A; }\n" +
+			"\n" +
+			"public struct Outer\n" +
+			"{\n" +
+			"    public Inner Nested;\n" +
+			"}\n";
+		var x = Open(("Main.cvl", source));
+		using (x.Fixture)
+		{
+			var onField = x.Snapshot.GetTypeLayoutAtPosition(x.Document.Id, At(source, "public Inner Nested;") + "public Inner ".Length);
+			var onType = x.Snapshot.GetTypeLayoutAtPosition(x.Document.Id, At(source, "public struct Outer") + "public struct ".Length);
+
+			// A field lens click and a type lens click on the same declaration ask the same question
+			// and must get the same answer, navigation included.
+			Assert.Equal("Outer", onField?.TypeDisplay);
+			Assert.Equal(onType!.Definition, onField!.Definition);
+
+			var expected = onType.Members.Single(member => member.Name == "Nested").Navigation;
+			var actual = onField.Members.Single(member => member.Name == "Nested").Navigation;
+			Assert.Equal(expected!.Signature, actual!.Signature);
+			Assert.Equal(expected.Definition, actual.Definition);
+			Assert.Equal(expected.TypeDefinition, actual.TypeDefinition);
+			Assert.Equal(expected.NestedLayout, actual.NestedLayout);
+		}
+	}
+
+	private static string TextAt(string source, TextSpan span) => source.Substring(span.Start, span.Length);
 }
