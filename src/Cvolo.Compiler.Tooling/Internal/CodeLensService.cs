@@ -30,7 +30,7 @@ internal static class CodeLensService
 		var occurrences = context is null ? null : snapshot.GetOccurrenceIndex();
 		var result = new List<ToolingCodeLensInfo>();
 
-		foreach (var symbol in Flatten(navigation.DocumentSymbols(document.Id)))
+		foreach (var (symbol, owner) in Flatten(navigation.DocumentSymbols(document.Id)))
 		{
 			var declaration = navigation.Declaration(symbol.SymbolId);
 
@@ -56,6 +56,18 @@ internal static class CodeLensService
 					symbol.SymbolId,
 					inspection,
 					null));
+			}
+			else if (options.FieldLayout && TryFieldLayout(symbol, owner, navigation, context, out var fieldLayout))
+			{
+				result.Add(new ToolingCodeLensInfo(
+					symbol.SelectionSpan,
+					ToolingCodeLensKind.Layout,
+					FieldLayoutTitle(fieldLayout),
+					symbol.SymbolId,
+					null,
+					null,
+					null,
+					fieldLayout));
 			}
 
 			if (options.NativeInterop && TryLinkage(navigation, symbol, out var linkage))
@@ -83,24 +95,103 @@ internal static class CodeLensService
 		if (navigation.Lookup(document.Id, position) is not { } resolved)
 			return null;
 
-		return TryInspect(navigation.Declaration(resolved.SymbolId), snapshot.GetAnalysis().BinderContext, out var inspection)
+		var context = snapshot.GetAnalysis().BinderContext;
+
+		// A field is not itself a type: the layout the editor shows for a field is the layout of the
+		// type that stores it, which is what a field lens click and "Show Type Layout" on a field
+		// both ask for. The owner comes from the outline rather than from a name match, so a field
+		// and a same-spelled type never cross over.
+		if (resolved.Kind is ToolingSymbolKind.Field or ToolingSymbolKind.EnumMember
+			&& TryOwningDeclaration(navigation, document.Id, position) is { } owner)
+		{
+			return TryInspect(owner, context, out var ownerLayout) ? ownerLayout : null;
+		}
+
+		return TryInspect(navigation.Declaration(resolved.SymbolId), context, out var inspection)
 			? inspection
 			: null;
 	}
 
 	/// <summary>
-	/// Flattens the document outline. The outline is the compiler's own declaration tree for this
-	/// document, so a CodeLens is never attached to a declaration the compiler does not model.
+	/// Finds the innermost aggregate declaration that contains <paramref name="position"/>, so a
+	/// field position resolves to the type that stores it.
 	/// </summary>
-	private static IEnumerable<DocumentSymbolInfo> Flatten(IReadOnlyList<DocumentSymbolInfo> roots)
+	private static SyntaxNode? TryOwningDeclaration(NavigationIndex navigation, DocumentId document, int position)
+	{
+		foreach (var (symbol, owner) in Flatten(navigation.DocumentSymbols(document)))
+		{
+			if (symbol.Kind is not (ToolingSymbolKind.Field or ToolingSymbolKind.EnumMember))
+				continue;
+
+			if (position < symbol.Range.Start || position > symbol.Range.End)
+				continue;
+
+			return owner is null ? null : navigation.Declaration(owner.SymbolId);
+		}
+
+		return null;
+	}
+
+	/// <summary>
+	/// Flattens the document outline, keeping each declaration's immediate owner. The outline is the
+	/// compiler's own declaration tree for this document, so a CodeLens is never attached to a
+	/// declaration the compiler does not model, and a field is always attributed to the type the
+	/// compiler bound it to.
+	/// </summary>
+	private static IEnumerable<(DocumentSymbolInfo Symbol, DocumentSymbolInfo? Owner)> Flatten(IReadOnlyList<DocumentSymbolInfo> roots)
 	{
 		foreach (var root in roots)
 		{
-			yield return root;
+			yield return (root, null);
 
 			foreach (var nested in Flatten(root.Children))
-				yield return nested;
+				yield return (nested.Symbol, nested.Owner ?? root);
 		}
+	}
+
+	/// <summary>
+	/// Produces the compiler-computed storage facts for one field, or false when the field has no
+	/// reportable layout. A field is eligible when it is a struct or union field, its containing type
+	/// has an authoritative layout, and the field appears in that layout. Everything else - an
+	/// unresolved generic template, an enum variant (whose storage is its backing integer, not a
+	/// member list), a compiler-generated declaration with no source field, and a type whose layout
+	/// the compiler cannot describe numerically - simply produces no lens rather than a guess.
+	/// </summary>
+	private static bool TryFieldLayout(
+		DocumentSymbolInfo symbol,
+		DocumentSymbolInfo? owner,
+		NavigationIndex navigation,
+		BindingContext? context,
+		out ToolingFieldLayoutInfo fieldLayout)
+	{
+		fieldLayout = null!;
+		if (context is null
+			|| owner is null
+			|| symbol.Kind is not ToolingSymbolKind.Field
+			|| navigation.Declaration(owner.SymbolId) is not (StructDeclarationSyntax or UnionDeclarationSyntax)
+			|| !TryInspect(navigation.Declaration(owner.SymbolId), context, out var layout))
+		{
+			return false;
+		}
+
+		if (layout.Members.FirstOrDefault(member => string.Equals(member.Name, symbol.Name, StringComparison.Ordinal)) is not { } member)
+			return false;
+
+		var paddingBefore = layout.Padding.FirstOrDefault(region =>
+				region.Kind == ToolingPaddingKind.Internal
+				&& region.Offset + region.Size == member.Offset) is { } pad
+			? pad.Size
+			: 0L;
+
+		fieldLayout = new ToolingFieldLayoutInfo(
+			layout.TypeDisplay,
+			member.Name,
+			member.Offset,
+			member.Size,
+			member.Alignment,
+			paddingBefore);
+
+		return true;
 	}
 
 	/// <summary>
@@ -177,6 +268,15 @@ internal static class CodeLensService
 
 	private static string LayoutTitle(TypeLayoutInspection layout) =>
 		$"size {layout.Size}B {Separator} align {layout.Alignment}B {Separator} padding {layout.PaddingSize}B";
+
+	/// <summary>
+	/// Where one field is stored. The offset comes first because that is the question a field layout
+	/// lens answers; the padding that precedes the field is appended so a gap in the offsets is
+	/// explained where it appears, and tail padding stays with the type summary.
+	/// </summary>
+	private static string FieldLayoutTitle(ToolingFieldLayoutInfo field) =>
+		$"offset {field.Offset}B {Separator} size {field.Size}B {Separator} align {field.Alignment}B"
+		+ (field.PaddingBefore > 0 ? $" {Separator} pad {field.PaddingBefore}B before" : string.Empty);
 
 	private static string LinkageTitle(NativeLinkageInfo linkage)
 	{

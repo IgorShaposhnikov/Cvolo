@@ -411,4 +411,180 @@ public sealed class CodeLensServiceTests
 			Assert.Equal(ordered.Select(lens => (lens.Range, lens.Kind)), lenses.Select(lens => (lens.Range, lens.Kind)));
 		}
 	}
+
+	private static ToolingCodeLensInfo FieldLayoutLensFor(IReadOnlyList<ToolingCodeLensInfo> lenses, DocumentSnapshot document, string fieldName) =>
+		lenses.First(lens => lens.Kind == ToolingCodeLensKind.Layout
+			&& lens.FieldLayout is not null
+			&& document.Text.GetText(lens.Range) == fieldName);
+
+	[Fact]
+	public void FieldLayoutLenses_AreOffByDefaultAndAppearWhenEnabled()
+	{
+		var x = Open(("Main.cvl", Baseline));
+		using (x.Fixture)
+		{
+			var byDefault = x.Document.GetCodeLenses();
+			Assert.DoesNotContain(byDefault, lens => lens.FieldLayout is not null);
+
+			var enabled = x.Document.GetCodeLenses(ToolingCodeLensOptions.Default with { FieldLayout = true });
+			Assert.Equal("offset 0B | size 1B | align 1B", FieldLayoutLensFor(enabled, x.Document, "Kind").Title);
+		}
+	}
+
+	[Fact]
+	public void FieldLayoutLens_ReportsTheOffsetSizeAlignmentAndThePaddingBeforeTheField()
+	{
+		var x = Open(("Main.cvl", Baseline));
+		using (x.Fixture)
+		{
+			// Header is { byte Kind; int Length; }: the int is aligned up to offset 4, so three bytes
+			// of padding sit before it. Tail padding belongs to the type summary, so no field lens
+			// repeats it.
+			var length = FieldLayoutLensFor(x.Document.GetCodeLenses(ToolingCodeLensOptions.Default with { FieldLayout = true }), x.Document, "Length");
+
+			Assert.Equal("offset 4B | size 4B | align 4B | pad 3B before", length.Title);
+			Assert.Equal("Header", length.FieldLayout!.ContainingTypeDisplay);
+			Assert.Equal("Length", length.FieldLayout.FieldName);
+			Assert.Equal(4, length.FieldLayout.Offset);
+			Assert.Equal(4, length.FieldLayout.Size);
+			Assert.Equal(4, length.FieldLayout.Alignment);
+			Assert.Equal(3, length.FieldLayout.PaddingBefore);
+			Assert.NotNull(length.SymbolId);
+			Assert.Equal("Length", x.Document.Text.GetText(length.Range));
+		}
+	}
+
+	[Fact]
+	public void AFieldWithNoPrecedingPadding_SaysNothingAboutPadding()
+	{
+		const string source = "public struct Packed\n{\n    public int First;\n    public int Second;\n}\n";
+		var x = Open(("Main.cvl", source));
+		using (x.Fixture)
+		{
+			var lenses = x.Document.GetCodeLenses(ToolingCodeLensOptions.Default with { FieldLayout = true });
+			Assert.Equal("offset 0B | size 4B | align 4B", FieldLayoutLensFor(lenses, x.Document, "First").Title);
+			Assert.Equal("offset 4B | size 4B | align 4B", FieldLayoutLensFor(lenses, x.Document, "Second").Title);
+		}
+	}
+
+	[Fact]
+	public void FieldReferenceAndFieldLayoutLensesShareTheDeclarationLineInOrder()
+	{
+		var x = Open(("Main.cvl", Baseline));
+		using (x.Fixture)
+		{
+			var lenses = x.Document
+				.GetCodeLenses(ToolingCodeLensOptions.Default with { Members = true, FieldLayout = true })
+				.Where(lens => lens.Range.Start == At(Baseline, "public int Length;") + "public int ".Length)
+				.ToList();
+
+			Assert.Equal(2, lenses.Count);
+			Assert.Equal(ToolingCodeLensKind.References, lenses[0].Kind);
+			Assert.Equal("0 references", lenses[0].Title);
+			Assert.Equal(ToolingCodeLensKind.Layout, lenses[1].Kind);
+			Assert.Equal("offset 4B | size 4B | align 4B | pad 3B before", lenses[1].Title);
+		}
+	}
+
+	[Fact]
+	public void AFieldReferenceCountExcludesTheDeclaration()
+	{
+		const string source =
+			"public struct Header { public int Length; }\n" +
+			"int main()\n" +
+			"{\n" +
+			"    val Header header = Header { Length: 1 };\n" +
+			"    return header.Length + header.Length;\n" +
+			"}\n";
+		var x = Open(("Main.cvl", source));
+		using (x.Fixture)
+		{
+			var lens = ReferenceLensFor(x.Document.GetCodeLenses(ToolingCodeLensOptions.Default with { Members = true }), x.Document, "Length");
+			Assert.NotNull(lens);
+			Assert.Equal(2, lens!.ReferenceCount!.Count);
+			Assert.Equal("2 references", lens.Title);
+		}
+	}
+
+	[Fact]
+	public void GetTypeLayoutAtPosition_OnAField_ResolvesTheTypeThatStoresIt()
+	{
+		var x = Open(("Main.cvl", Baseline));
+		using (x.Fixture)
+		{
+			// A field is not a type, so the layout asked for at a field is the layout of the type
+			// that stores it. That is what a field layout lens click asks the server for.
+			var onField = x.Snapshot.GetTypeLayoutAtPosition(x.Document.Id, At(Baseline, "public int Length;") + "public int ".Length);
+			Assert.NotNull(onField);
+			Assert.Equal("Header", onField!.TypeDisplay);
+			Assert.Equal([(0L, 1L), (4L, 4L)], onField.Members.Select(member => (member.Offset, member.Size)));
+		}
+	}
+
+	[Fact]
+	public void FieldLayoutLenses_AreOmittedWhereTheContainingLayoutIsUnavailable()
+	{
+		const string generic = "public struct Pair<T>\n{\n    public T First;\n    public T Second;\n}\n";
+		const string variants = "public enum Color\n{\n    Red,\n    Green,\n}\n";
+		const string source = generic + "\n" + variants;
+		var x = Open(("Main.cvl", source));
+		using (x.Fixture)
+		{
+			// An unresolved generic template has no numeric layout, so its fields get no field lens,
+			// and an enum's storage is its backing integer rather than a member list, so its variants
+			// get neither a field lens nor a numeric member row.
+			var lenses = x.Document.GetCodeLenses(ToolingCodeLensOptions.Default with { Members = true, FieldLayout = true });
+			Assert.DoesNotContain(lenses, lens => lens.FieldLayout is not null);
+			Assert.Null(x.Snapshot.GetTypeLayoutAtPosition(x.Document.Id, At(source, "public T First;") + "public T ".Length));
+		}
+	}
+
+	[Fact]
+	public void RawUnionFields_AllStartAtOffsetZero()
+	{
+		const string source =
+			"public unsafe union Number\n" +
+			"{\n" +
+			"    public int I;\n" +
+			"    public double D;\n" +
+			"}\n";
+		var x = Open(("Main.cvl", source));
+		using (x.Fixture)
+		{
+			Assert.DoesNotContain(x.Document.GetDiagnostics(), diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
+			var lenses = x.Document.GetCodeLenses(ToolingCodeLensOptions.Default with { FieldLayout = true });
+
+			// Every variant overlaps the others: sequential struct offsets would be a lie here.
+			Assert.Equal("offset 0B | size 4B | align 4B", FieldLayoutLensFor(lenses, x.Document, "I").Title);
+			Assert.Equal("offset 0B | size 8B | align 8B", FieldLayoutLensFor(lenses, x.Document, "D").Title);
+		}
+	}
+
+	[Fact]
+	public void NestedAggregateAndFixedArrayFields_ReportTheirOwnLayout()
+	{
+		const string source =
+			"public struct Inner { public int A; }\n" +
+			"public struct Outer\n" +
+			"{\n" +
+			"    public Inner Nested;\n" +
+			"    public int[4] Values;\n" +
+			"    public byte Tag;\n" +
+			"}\n";
+		var x = Open(("Main.cvl", source));
+		using (x.Fixture)
+		{
+			Assert.DoesNotContain(x.Document.GetDiagnostics(), diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
+			var lenses = x.Document.GetCodeLenses(ToolingCodeLensOptions.Default with { FieldLayout = true });
+
+			Assert.Equal("offset 0B | size 4B | align 4B", FieldLayoutLensFor(lenses, x.Document, "Nested").Title);
+			Assert.Equal("offset 4B | size 16B | align 4B", FieldLayoutLensFor(lenses, x.Document, "Values").Title);
+			Assert.Equal("offset 20B | size 1B | align 1B", FieldLayoutLensFor(lenses, x.Document, "Tag").Title);
+
+			// The three bytes that round the 21-byte payload up to the struct's 4-byte alignment are
+			// tail padding: they are reported once, on the type summary, never as "before" a field.
+			Assert.Equal("size 24B | align 4B | padding 3B", LayoutLensFor(lenses, x.Document, "Outer").Title);
+			Assert.DoesNotContain(lenses, lens => lens.FieldLayout is not null && lens.Title.Contains("pad", StringComparison.Ordinal));
+		}
+	}
 }

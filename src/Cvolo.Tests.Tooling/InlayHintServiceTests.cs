@@ -277,13 +277,24 @@ public sealed class InlayHintServiceTests
 				.ToArray();
 
 			Assert.Equal(2, hints.Length);
-			Assert.Equal("offset 0 | size 1", hints[0].Label);
+			Assert.Equal("offset 0 | size 1 | align 1", hints[0].Label);
 			Assert.Equal(At(Source, "public byte Kind;") + "public byte Kind;".Length, hints[0].Position);
 
 			// The three padding bytes sit *before* `Length`; the trailing padding after the last
 			// field belongs to the layout lens, not to every field.
-			Assert.Equal("offset 4 | size 4 | pad 3 before", hints[1].Label);
+			Assert.Equal("offset 4 | size 4 | align 4 | pad 3 before", hints[1].Label);
 			Assert.Equal(At(Source, "public int Length;") + "public int Length;".Length, hints[1].Position);
+
+			// The label is text, but the numbers behind it are also carried structurally so a client
+			// can render them in another notation without parsing the label.
+			Assert.NotNull(hints[1].FieldLayout);
+			Assert.Equal("Header", hints[1].FieldLayout!.ContainingTypeDisplay);
+			Assert.Equal("Length", hints[1].FieldLayout.FieldName);
+			Assert.Equal((4L, 4L, 4L, 3L), (hints[1].FieldLayout.Offset, hints[1].FieldLayout.Size, hints[1].FieldLayout.Alignment, hints[1].FieldLayout.PaddingBefore));
+
+			// The first field starts the type, so it has no padding before it and its label says so
+			// by omission.
+			Assert.Equal(0, hints[0].FieldLayout!.PaddingBefore);
 		}
 	}
 

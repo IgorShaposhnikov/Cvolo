@@ -27,6 +27,29 @@ public sealed record TypeLayoutMemberInspection(
 public sealed record TypeLayoutPaddingInspection(long Offset, long Size, ToolingPaddingKind Kind);
 
 /// <summary>
+/// Where one stored field sits inside its containing type, as the compiler's layout service computed
+/// it. This is the fact a field layout annotation shows, whether it is rendered as a CodeLens beside
+/// the declaration or as an inlay hint after it; the two surfaces never compute it separately.
+/// </summary>
+/// <param name="ContainingTypeDisplay">The declared type whose layout contains this field.</param>
+/// <param name="FieldName">The field's declared name.</param>
+/// <param name="Offset">The field's byte offset inside the containing type.</param>
+/// <param name="Size">The field's storage size in bytes.</param>
+/// <param name="Alignment">The field's required alignment in bytes.</param>
+/// <param name="PaddingBefore">
+/// The alignment padding the compiler inserted immediately before this field, or zero when the
+/// field starts the type or follows storage that needed no padding. Tail padding is not repeated
+/// here: it belongs to the type summary and the detailed view, and is reported exactly once.
+/// </param>
+public sealed record ToolingFieldLayoutInfo(
+	string ContainingTypeDisplay,
+	string FieldName,
+	long Offset,
+	long Size,
+	long Alignment,
+	long PaddingBefore);
+
+/// <summary>
 /// The complete, target-aware natural object layout of a concrete type, as reported by the
 /// compiler's layout service. This describes object/storage layout only; it makes no claim about
 /// function-call ABI classification. Every number here is produced by the same computation that

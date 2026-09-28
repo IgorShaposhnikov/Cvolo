@@ -34,13 +34,19 @@ public enum ToolingInlayHintKind
 /// <param name="PaddingLeft">Whether the client should pad the label on its left.</param>
 /// <param name="PaddingRight">Whether the client should pad the label on its right.</param>
 /// <param name="RelatedSymbol">The symbol the label was derived from, when there is exactly one.</param>
+/// <param name="FieldLayout">
+/// The compiler-computed storage facts behind a <see cref="ToolingInlayHintKind.Layout"/> label, so a
+/// client can render the same numbers in a different notation instead of parsing the label text.
+/// Absent for every other kind.
+/// </param>
 public sealed record ToolingInlayHint(
 	int Position,
 	ToolingInlayHintKind Kind,
 	string Label,
 	bool PaddingLeft,
 	bool PaddingRight = false,
-	SymbolId? RelatedSymbol = null);
+	SymbolId? RelatedSymbol = null,
+	ToolingFieldLayoutInfo? FieldLayout = null);
 
 /// <summary>
 /// Which categories of inlay hint a caller wants. The defaults follow the increment's recommended

@@ -37,7 +37,8 @@ public sealed record ToolingCodeLensInfo(
 	SymbolId? SymbolId,
 	TypeLayoutInspection? Layout,
 	NativeLinkageInfo? NativeLinkage,
-	ToolingReferenceCount? ReferenceCount = null);
+	ToolingReferenceCount? ReferenceCount = null,
+	ToolingFieldLayoutInfo? FieldLayout = null);
 
 /// <summary>
 /// Which categories of CodeLens a caller wants. Defaults follow the increment's recommended
@@ -65,6 +66,13 @@ public sealed record ToolingCodeLensOptions
 	/// because a large struct or enum would otherwise get a lens on every member.
 	/// </summary>
 	public bool Members { get; init; }
+
+	/// <summary>
+	/// Emit per-field layout lenses (offset, size, alignment and the padding before the field) for
+	/// fields whose containing type has an authoritative layout. Off by default for the same reason
+	/// as <see cref="Members"/>: one line per field is a deliberate choice, not the default.
+	/// </summary>
+	public bool FieldLayout { get; init; }
 
 	/// <summary>
 	/// Emit native-linkage lenses for declarations with resolved interop metadata.

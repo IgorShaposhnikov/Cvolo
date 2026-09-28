@@ -190,17 +190,26 @@ internal static class InlayHintService
 		if (layout.Members.FirstOrDefault(candidate => candidate.Name == fieldName) is not { } member)
 			return;
 
-		var suffix = layout.Padding.FirstOrDefault(candidate =>
+		var paddingBefore = layout.Padding.FirstOrDefault(candidate =>
 				candidate.Kind == ToolingPaddingKind.Internal
 				&& candidate.Offset + candidate.Size == member.Offset) is { Size: > 0 } pad
-			? $" {Separator} pad {pad.Size} before"
-			: string.Empty;
+			? pad.Size
+			: 0L;
+
+		var suffix = paddingBefore > 0 ? $" {Separator} pad {paddingBefore} before" : string.Empty;
 
 		hints.Add(new ToolingInlayHint(
 			span.End,
 			ToolingInlayHintKind.Layout,
-			$"offset {member.Offset} {Separator} size {member.Size}{suffix}",
-			PaddingLeft: true));
+			$"offset {member.Offset} {Separator} size {member.Size} {Separator} align {member.Alignment}{suffix}",
+			PaddingLeft: true,
+			FieldLayout: new ToolingFieldLayoutInfo(
+				layout.TypeDisplay,
+				member.Name,
+				member.Offset,
+				member.Size,
+				member.Alignment,
+				paddingBefore)));
 	}
 
 	/// <summary>
