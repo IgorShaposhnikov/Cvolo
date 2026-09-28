@@ -192,7 +192,7 @@ internal sealed class NavigationIndex
 	/// document is sent to the type declared next to it rather than to a same-named type elsewhere.
 	/// Only source-owned declarations are considered: a primitive has no source to navigate to.
 	/// </summary>
-	internal SymbolId? FindTypeSymbol(string leafName, DocumentId preferred)
+	internal SymbolId? FindTypeSymbol(string leafName, DocumentId? preferred = null)
 	{
 		SymbolId? fallback = null;
 		foreach (var entry in _byId.Values)
@@ -203,10 +203,13 @@ internal sealed class NavigationIndex
 			if (fallback is null && entry.Definitions.Count > 0)
 				fallback = entry.Id;
 
-			foreach (var definition in entry.Definitions)
+			if (preferred is { } document)
 			{
-				if (definition.DocumentId == preferred)
-					return entry.Id;
+				foreach (var definition in entry.Definitions)
+				{
+					if (definition.DocumentId == document)
+						return entry.Id;
+				}
 			}
 		}
 

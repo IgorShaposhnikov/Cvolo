@@ -130,6 +130,17 @@ public sealed class ProjectSnapshot
 		return NavigationService.GetPackageSourceDefinitions(this, symbol);
 	}
 
+	/// <summary>
+	/// Returns the concrete places that satisfy the contract named by <paramref name="symbol"/>:
+	/// the extensions that implement an interface (or one of its members), and the concrete types
+	/// that conform to a protocol (or provide one of its members) by the compiler's own conformance
+	/// rules. A symbol that is not a contract yields an empty result.
+	/// </summary>
+	public IReadOnlyList<ToolingImplementation> GetImplementations(SymbolId symbol)
+	{
+		return ImplementationNavigation.GetImplementations(this, symbol);
+	}
+
 	public IReadOnlyList<CodeFixInfo> GetCodeFixes(DocumentId document, TextSpan range)
 	{
 		if (!_documents.ContainsKey(document))
