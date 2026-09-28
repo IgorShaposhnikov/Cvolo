@@ -13,7 +13,8 @@ namespace Cvolo.Compiler.Tooling.Internal;
 /// </summary>
 internal static class CodeLensService
 {
-	private const char MiddleDot = '·';
+	/// <summary>The separator between the facts of one lens title, e.g. the layout facts.</summary>
+	private const char Separator = '|';
 
 	internal static IReadOnlyList<ToolingCodeLensInfo> GetCodeLenses(ProjectSnapshot snapshot, DocumentId document, ToolingCodeLensOptions options)
 	{
@@ -175,13 +176,13 @@ internal static class CodeLensService
 	}
 
 	private static string LayoutTitle(TypeLayoutInspection layout) =>
-		$"size {layout.Size} B {MiddleDot} align {layout.Alignment} B {MiddleDot} padding {layout.PaddingSize} B";
+		$"size {layout.Size}B {Separator} align {layout.Alignment}B {Separator} padding {layout.PaddingSize}B";
 
 	private static string LinkageTitle(NativeLinkageInfo linkage)
 	{
 		var direction = linkage.Direction == NativeLinkageDirection.Import ? "import" : "export";
-		var convention = string.IsNullOrEmpty(linkage.CallingConvention) ? string.Empty : $"{linkage.CallingConvention} {MiddleDot} ";
-		var library = string.IsNullOrEmpty(linkage.Library) ? string.Empty : $"{linkage.Library} {MiddleDot} ";
+		var convention = string.IsNullOrEmpty(linkage.CallingConvention) ? string.Empty : $"{linkage.CallingConvention} {Separator} ";
+		var library = string.IsNullOrEmpty(linkage.Library) ? string.Empty : $"{linkage.Library} {Separator} ";
 		return $"{direction} {convention}{library}{linkage.ExternalName}";
 	}
 

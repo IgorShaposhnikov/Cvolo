@@ -117,7 +117,7 @@ public sealed class CodeLensServiceTests
 		using (x.Fixture)
 		{
 			var lens = LayoutLensFor(x.Document.GetCodeLenses(), x.Document, "Header");
-			Assert.Equal("size 8 B · align 4 B · padding 3 B", lens.Title);
+			Assert.Equal("size 8B | align 4B | padding 3B", lens.Title);
 			Assert.Equal(8, lens.Layout!.Size);
 			Assert.Equal(4, lens.Layout.Alignment);
 			Assert.Equal(3, lens.Layout.PaddingSize);

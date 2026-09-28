@@ -277,12 +277,12 @@ public sealed class InlayHintServiceTests
 				.ToArray();
 
 			Assert.Equal(2, hints.Length);
-			Assert.Equal("offset 0 · size 1", hints[0].Label);
+			Assert.Equal("offset 0 | size 1", hints[0].Label);
 			Assert.Equal(At(Source, "public byte Kind;") + "public byte Kind;".Length, hints[0].Position);
 
 			// The three padding bytes sit *before* `Length`; the trailing padding after the last
 			// field belongs to the layout lens, not to every field.
-			Assert.Equal("offset 4 · size 4 · pad 3 before", hints[1].Label);
+			Assert.Equal("offset 4 | size 4 | pad 3 before", hints[1].Label);
 			Assert.Equal(At(Source, "public int Length;") + "public int Length;".Length, hints[1].Position);
 		}
 	}

@@ -22,7 +22,7 @@ namespace Cvolo.Compiler.Tooling.Internal;
 /// </remarks>
 internal static class InlayHintService
 {
-	private const char MiddleDot = '·';
+	private const char Separator = '|';
 
 	internal static IReadOnlyList<ToolingInlayHint> GetInlayHints(
 		ProjectSnapshot snapshot,
@@ -193,13 +193,13 @@ internal static class InlayHintService
 		var suffix = layout.Padding.FirstOrDefault(candidate =>
 				candidate.Kind == ToolingPaddingKind.Internal
 				&& candidate.Offset + candidate.Size == member.Offset) is { Size: > 0 } pad
-			? $" {MiddleDot} pad {pad.Size} before"
+			? $" {Separator} pad {pad.Size} before"
 			: string.Empty;
 
 		hints.Add(new ToolingInlayHint(
 			span.End,
 			ToolingInlayHintKind.Layout,
-			$"offset {member.Offset} {MiddleDot} size {member.Size}{suffix}",
+			$"offset {member.Offset} {Separator} size {member.Size}{suffix}",
 			PaddingLeft: true));
 	}
 
