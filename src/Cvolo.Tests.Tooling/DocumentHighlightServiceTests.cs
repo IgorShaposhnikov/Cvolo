@@ -111,7 +111,7 @@ int main() { return Doubled(2) + Tripled(3); }
 	{
 		var (_, document) = Open(("Main.cvl", Counter));
 
-		var highlights = document.GetDocumentHighlights(At(Counter, "\n\nint main"));
+		var highlights = document.GetDocumentHighlights(At(Counter, "int main") - 1);
 
 		Assert.Empty(highlights);
 	}
