@@ -1,6 +1,7 @@
 using Cvolo.Analysis;
 using Cvolo.Analysis.Completion;
 using Cvolo.Analysis.Semantics;
+using Cvolo.Analysis.Symbols.Base;
 using Cvolo.Analysis.Symbols.Structs;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
@@ -104,6 +105,26 @@ internal sealed class NavigationIndex
 			resolved.DisplayText,
 			resolved.Documentation,
 			NativeInteropFor(resolved.Declaration));
+	}
+
+	/// <summary>
+	/// The compiler-resolved type of the symbol at <paramref name="position"/>, when the
+	/// compiler's own binding proves one. This is the single place the type crosses from the
+	/// analysis layer into Tooling; callers must treat a null as "unavailable" rather than
+	/// infer a type themselves (§25, §54).
+	/// </summary>
+	internal TypeSymbol? TypeAt(DocumentId document, int position)
+	{
+		if (!_snapshot.TryGetDocument(document, out _))
+			throw new KeyNotFoundException($"Document {document} not found in this snapshot.");
+
+		if (_binderContext is null || !_analysis.UnitsByDocument.TryGetValue(document, out var unit) || unit is null)
+			return null;
+
+		lock (_binderContext)
+		{
+			return CompletionQuery.ResolveSymbol(_binderContext, unit, position)?.ResolvedType;
+		}
 	}
 
 	private SymbolLookupResult? LookupBuiltinOperator(SyntaxNode unit, int position)

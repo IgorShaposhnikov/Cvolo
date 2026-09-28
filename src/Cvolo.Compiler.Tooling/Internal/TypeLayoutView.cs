@@ -42,10 +42,10 @@ internal static class TypeLayoutView
 		if (resolved.Kind is ToolingSymbolKind.Field or ToolingSymbolKind.EnumMember)
 		{
 			// The owner comes from the outline rather than from a name match, so a field and a
-			// same-spelled type never cross over.
+			// same-spelled type never cross over. Only a position inside the field's own declaration
+			// resolves to the storing type; a field *use* falls through to the value path below.
 			if (OwningSymbol(roots, position) is not { } owner)
-				return null;
-
+				return ValueLayout(snapshot, navigation, document, context, roots, position);
 			type = owner;
 			if (!TryInspect(navigation.Declaration(owner.SymbolId), context, out var ownerLayout))
 				return null;
@@ -53,10 +53,38 @@ internal static class TypeLayoutView
 			return Enrich(snapshot, navigation, document, owner, ownerLayout, resolved: null);
 		}
 
-		if (!TryInspect(navigation.Declaration(resolved.SymbolId), context, out var inspection))
+		// A type declaration or a type use names the type directly.
+		if (TryInspect(navigation.Declaration(resolved.SymbolId), context, out var inspection))
+			return Enrich(snapshot, navigation, document, Find(roots, resolved.SymbolId), inspection, resolved);
+
+		// Otherwise the position names a value - a variable, parameter, global or field - whose
+		// compiler-resolved type can be laid out (§25). A type the compiler cannot resolve yields
+		// nothing rather than a guessed layout (§54).
+		return ValueLayout(snapshot, navigation, document, context, roots, position);
+	}
+
+	/// <summary>
+	/// The layout of the compiler-resolved type of the value at <paramref name="position"/>, used when
+	/// the position names a variable, parameter, global or field rather than a type. The type's own
+	/// outline entry supplies the field facts and the declaration the layout's type name navigates to;
+	/// a type declared in another document has no outline entry here, so it lays out with no field
+	/// targets.
+	/// </summary>
+	private static TypeLayoutInspection? ValueLayout(
+		ProjectSnapshot snapshot,
+		NavigationIndex navigation,
+		DocumentSnapshot document,
+		BindingContext? context,
+		IReadOnlyList<DocumentSymbolInfo> roots,
+		int position)
+	{
+		if (navigation.TypeAt(document.Id, position) is not { } resolvedType)
 			return null;
 
-		return Enrich(snapshot, navigation, document, Find(roots, resolved.SymbolId), inspection, resolved);
+		if (!TryInspect(resolvedType, context, out var inspection))
+			return null;
+
+		return Enrich(snapshot, navigation, document, FindType(roots, inspection.TypeDisplay), inspection, resolved: null);
 	}
 
 	/// <summary>
@@ -92,6 +120,25 @@ internal static class TypeLayoutView
 			return false;
 
 		inspection = TypeLayoutAdapter.ToTooling(context.LayoutService.Inspect(type));
+		return true;
+	}
+
+	/// <summary>
+	/// Produces the authoritative layout of an already-resolved type, or false when there is no concrete
+	/// storage type to describe. The caller resolved the type through the compiler's own binding, so this
+	/// never guesses one.
+	/// </summary>
+	internal static bool TryInspect(TypeSymbol? type, BindingContext? context, out TypeLayoutInspection inspection)
+	{
+		inspection = null!;
+		if (context is null || type is null)
+			return false;
+
+		var layout = context.LayoutService.Inspect(type);
+		if (layout is null)
+			return false;
+
+		inspection = TypeLayoutAdapter.ToTooling(layout);
 		return true;
 	}
 
@@ -138,6 +185,27 @@ internal static class TypeLayoutView
 		{
 			if (candidate.SymbolId == symbol)
 				return candidate;
+		}
+
+		return null;
+	}
+
+	/// <summary>
+	/// The outline entry of the aggregate type named by <paramref name="display"/>, used when the
+	/// position named a value rather than the type itself and only the compiler-resolved type name is
+	/// available. The join is by kind and leaf name inside this document, mirroring how a member's own
+	/// field is joined by name.
+	/// </summary>
+	private static DocumentSymbolInfo? FindType(IReadOnlyList<DocumentSymbolInfo> roots, string display)
+	{
+		var leaf = LeafType(display);
+		foreach (var (candidate, _) in Flatten(roots))
+		{
+			if (candidate.Kind is ToolingSymbolKind.Struct or ToolingSymbolKind.Union or ToolingSymbolKind.Enum
+				&& string.Equals(candidate.Name, leaf, StringComparison.Ordinal))
+			{
+				return candidate;
+			}
 		}
 
 		return null;
@@ -351,8 +419,9 @@ internal static class TypeLayoutView
 	}
 
 	/// <summary>
-	/// The span of the first occurrence of <paramref name="name"/> inside a declaration, matching the
-	/// rule the compiler's own symbol resolver uses to decide which name a source position names.
+	/// The span of the first whole-word occurrence of <paramref name="name"/> inside a declaration,
+	/// matching the rule the compiler's own symbol resolver uses to decide which name a source position
+	/// names. An occurrence that is only part of a longer identifier does not name anything.
 	/// </summary>
 	private static TextSpan NameSpan(string source, CoreTextSpan range, string name)
 	{
@@ -361,9 +430,17 @@ internal static class TypeLayoutView
 		if (end <= start || name.Length == 0)
 			return new TextSpan(start, 0);
 
-		var index = source[start..end].IndexOf(name, StringComparison.Ordinal);
-		return index < 0
-			? new TextSpan(start, Math.Min(name.Length, end - start))
-			: new TextSpan(start + index, name.Length);
+		var limit = Math.Min(end, source.Length);
+		for (var index = source.IndexOf(name, start, StringComparison.Ordinal);
+			index >= start && index + name.Length <= limit;
+			index = source.IndexOf(name, index + 1, StringComparison.Ordinal))
+		{
+			var before = index > 0 ? source[index - 1] : ' ';
+			var after = index + name.Length < source.Length ? source[index + name.Length] : ' ';
+			if (!char.IsLetterOrDigit(before) && before != '_' && !char.IsLetterOrDigit(after) && after != '_')
+				return new TextSpan(index, name.Length);
+		}
+
+		return new TextSpan(start, Math.Min(name.Length, end - start));
 	}
 }

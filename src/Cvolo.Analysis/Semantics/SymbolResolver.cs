@@ -54,7 +54,42 @@ internal static class SymbolResolver
 
 		return result is null
 			? null
-			: result with { Documentation = ExtractDocumentation(DeclaringSource(context, result.Declaration, source), result.Declaration.Span.Start) };
+			: result with
+			{
+				Documentation = ExtractDocumentation(DeclaringSource(context, result.Declaration, source), result.Declaration.Span.Start),
+				ResolvedType = TypeOf(context, visible, result.Declaration),
+			};
+	}
+
+	/// <summary>
+	/// The compiler-resolved type of the symbol's declaration, when it has one. Exposed through
+	/// <see cref="ResolvedSymbol.ResolvedType"/> so a caller can lay a value out without ever
+	/// re-deriving a type from a display string. Inference stays the compiler's: a <c>var</c>
+	/// declaration is typed from its initializer by <see cref="ExpressionTypeResolver"/>, and a
+	/// declaration whose type the compiler cannot resolve yields null rather than a guess.
+	/// </summary>
+	private static TypeSymbol? TypeOf(
+		BindingContext context,
+		Dictionary<string, ScopedVariable> visible,
+		SyntaxNode declaration)
+	{
+		switch (declaration)
+		{
+			case VariableDeclarationSyntax variable:
+				return variable.Type is { Length: > 0 } declared && declared != "var"
+					? context.ResolveType(context.NormalizeGenericName(declared))
+					: ExpressionTypeResolver.Resolve(context, visible, variable.Initializer);
+			case ParameterSyntax parameter:
+				return context.ResolveType(context.NormalizeGenericName(parameter.Type));
+			case GlobalVariableDeclarationSyntax global:
+				return context.ResolveType(context.NormalizeGenericName(global.Type));
+			case StructFieldSyntax field:
+				return context.ResolveType(context.NormalizeGenericName(field.Type));
+			case UnionFieldSyntax unionField:
+				return context.ResolveType(context.NormalizeGenericName(unionField.Type));
+			default:
+				return null;
+		}
 	}
 
 	/// <summary>
@@ -688,10 +723,37 @@ internal static class SymbolResolver
 		if (end <= start || name.Length == 0)
 			return new TextSpan(start, 0);
 
-		var slice = source[start..end];
-		var index = fromEnd ? slice.LastIndexOf(name, StringComparison.Ordinal) : slice.IndexOf(name, StringComparison.Ordinal);
-		return index < 0 ? new TextSpan(start, Math.Min(name.Length, end - start)) : new TextSpan(start + index, name.Length);
+		var index = FindName(source, start, end, name, fromEnd);
+		return index < 0 ? new TextSpan(start, Math.Min(name.Length, end - start)) : new TextSpan(index, name.Length);
 	}
+
+	/// <summary>
+	/// Locates a whole-word occurrence of <paramref name="name"/> inside <c>[start, end)</c>. A name that
+	/// only appears as part of a longer identifier - the <c>v</c> in the keyword <c>val</c>, the
+	/// <c>Count</c> in <c>Counter</c> - does not name the symbol, so those occurrences are skipped.
+	/// </summary>
+	private static int FindName(string source, int start, int end, string name, bool fromEnd)
+	{
+		var limit = Math.Min(end, source.Length);
+		var index = fromEnd
+			? (limit > 0 ? source.LastIndexOf(name, limit - 1, StringComparison.Ordinal) : -1)
+			: source.IndexOf(name, start, StringComparison.Ordinal);
+		while (index >= start && index + name.Length <= limit)
+		{
+			var before = index > 0 ? source[index - 1] : ' ';
+			var after = index + name.Length < source.Length ? source[index + name.Length] : ' ';
+			if (!IsWordChar(before) && !IsWordChar(after))
+				return index;
+
+			index = fromEnd
+				? (index > start ? source.LastIndexOf(name, index - 1, StringComparison.Ordinal) : -1)
+				: source.IndexOf(name, index + 1, StringComparison.Ordinal);
+		}
+
+		return -1;
+	}
+
+	private static bool IsWordChar(char value) => char.IsLetterOrDigit(value) || value == '_';
 
 	private static string Leaf(string name)
 	{

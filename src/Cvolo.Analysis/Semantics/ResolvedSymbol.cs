@@ -1,3 +1,4 @@
+using Cvolo.Analysis.Symbols.Base;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.Diagnostics;
 
@@ -47,4 +48,5 @@ public sealed record ResolvedSymbol(
 	TextSpan SubjectSpan,
 	SyntaxNode Declaration,
 	string DisplayText,
-	string? Documentation = null);
+	string? Documentation = null,
+	TypeSymbol? ResolvedType = null);
