@@ -432,7 +432,7 @@ internal static class TypeLayoutView
 	/// The type leaf of a type reference as the compiler's own resolver reads it: the last segment
 	/// before any generic arguments, which is the name a type reference contributes to navigation.
 	/// </summary>
-	private static string LeafType(string typeName)
+	internal static string LeafType(string typeName)
 	{
 		var text = typeName.Trim();
 		if (text.StartsWith("refvar ", StringComparison.Ordinal))

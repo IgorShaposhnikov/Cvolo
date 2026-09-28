@@ -77,19 +77,36 @@ internal static class SymbolResolver
 		{
 			case VariableDeclarationSyntax variable:
 				return variable.Type is { Length: > 0 } declared && declared != "var"
-					? context.ResolveType(context.NormalizeGenericName(declared))
+					? ResolveDeclaredType(context, declared)
 					: ExpressionTypeResolver.Resolve(context, visible, variable.Initializer);
 			case ParameterSyntax parameter:
-				return context.ResolveType(context.NormalizeGenericName(parameter.Type));
+				return ResolveDeclaredType(context, parameter.Type);
 			case GlobalVariableDeclarationSyntax global:
-				return context.ResolveType(context.NormalizeGenericName(global.Type));
+				return ResolveDeclaredType(context, global.Type);
 			case StructFieldSyntax field:
-				return context.ResolveType(context.NormalizeGenericName(field.Type));
+				return ResolveDeclaredType(context, field.Type);
 			case UnionFieldSyntax unionField:
-				return context.ResolveType(context.NormalizeGenericName(unionField.Type));
+				return ResolveDeclaredType(context, unionField.Type);
 			default:
 				return null;
 		}
+	}
+
+	/// <summary>
+	/// Resolves a type spelled in source. A reference type keeps its <c>ref </c>/<c>refvar </c>
+	/// prefix because <see cref="BindingContext.ResolveType"/> reads that prefix to build the
+	/// pointer symbol; collapsing the space would leave an unknown name instead.
+	/// </summary>
+	private static TypeSymbol? ResolveDeclaredType(BindingContext context, string? typeText)
+	{
+		if (string.IsNullOrWhiteSpace(typeText))
+			return null;
+
+		var text = typeText.Trim();
+		if (text.StartsWith("refvar ", StringComparison.Ordinal) || text.StartsWith("ref ", StringComparison.Ordinal))
+			return context.ResolveType(text);
+
+		return context.ResolveType(context.NormalizeGenericName(text));
 	}
 
 	/// <summary>

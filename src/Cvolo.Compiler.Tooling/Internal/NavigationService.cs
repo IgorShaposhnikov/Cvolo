@@ -185,6 +185,39 @@ internal sealed class NavigationIndex
 		return _packageSourceDefinitions.TryGetValue(symbol.Value, out var definitions) ? definitions : [];
 	}
 
+	/// <summary>
+	/// The declaration symbol that names a type with the given leaf name, used when a value's
+	/// compiler-resolved type must be mapped back to the declaration it was named after. The type
+	/// declared in <paramref name="preferred"/> wins, so a reader who asks about a value in one
+	/// document is sent to the type declared next to it rather than to a same-named type elsewhere.
+	/// Only source-owned declarations are considered: a primitive has no source to navigate to.
+	/// </summary>
+	internal SymbolId? FindTypeSymbol(string leafName, DocumentId preferred)
+	{
+		SymbolId? fallback = null;
+		foreach (var entry in _byId.Values)
+		{
+			if (!IsTypeKind(entry.Kind) || !string.Equals(entry.Name, leafName, StringComparison.Ordinal))
+				continue;
+
+			if (fallback is null && entry.Definitions.Count > 0)
+				fallback = entry.Id;
+
+			foreach (var definition in entry.Definitions)
+			{
+				if (definition.DocumentId == preferred)
+					return entry.Id;
+			}
+		}
+
+		return fallback;
+	}
+
+	private static bool IsTypeKind(ToolingSymbolKind kind) => kind is
+		ToolingSymbolKind.Struct or ToolingSymbolKind.Union or ToolingSymbolKind.Enum
+		or ToolingSymbolKind.Interface or ToolingSymbolKind.Protocol or ToolingSymbolKind.Delegate
+		or ToolingSymbolKind.TypeAlias or ToolingSymbolKind.OtherType;
+
 	internal bool Owns(SymbolId symbol)
 		=> symbol.SnapshotToken == _token && _byId.ContainsKey(symbol.Value);
 

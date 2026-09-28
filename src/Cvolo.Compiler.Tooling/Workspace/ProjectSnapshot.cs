@@ -252,6 +252,20 @@ public sealed class ProjectSnapshot
 	}
 
 	/// <summary>
+	/// Returns the declarations that define the semantic type the caret at <paramref name="position"/>
+	/// resolves to, or an empty list when the position binds to no type that has a source declaration.
+	/// This is Go to Type Definition: a local <c>layout</c> still has its own declaration as its ordinary
+	/// definition, but its type definition is <c>struct Layout</c>.
+	/// </summary>
+	public IReadOnlyList<SymbolDefinition> GetTypeDefinitions(DocumentId document, int position)
+	{
+		if (!_documents.ContainsKey(document))
+			return [];
+
+		return TypeNavigation.GetTypeDefinitions(this, _documents[document], position);
+	}
+
+	/// <summary>
 	/// Returns the document with the given <paramref name="documentId"/>.
 	/// Throws <see cref="KeyNotFoundException"/> when the id is not in this snapshot.
 	/// </summary>

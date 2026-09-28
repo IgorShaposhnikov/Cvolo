@@ -264,6 +264,23 @@ public sealed class DocumentSnapshot
 	}
 
 	/// <summary>
+	/// Returns the declarations that define the semantic type the caret at <paramref name="position"/>
+	/// resolves to, or an empty list when the position binds to no type that has a source declaration.
+	/// Throws <see cref="ArgumentOutOfRangeException"/> when <paramref name="position"/> falls outside
+	/// [0, <see cref="Text.Length"/>].
+	/// </summary>
+	public IReadOnlyList<SymbolDefinition> GetTypeDefinitions(int position)
+	{
+		ArgumentOutOfRangeException.ThrowIfNegative(position);
+		ArgumentOutOfRangeException.ThrowIfGreaterThan(position, Text.Length);
+
+		if (OwningSnapshot is null)
+			return [];
+
+		return TypeNavigation.GetTypeDefinitions(OwningSnapshot, this, position);
+	}
+
+	/// <summary>
 	/// Returns the foldable regions of this document, ordered by start position and then by
 	/// decreasing length. Regions come from the parsed syntax and the comment tokens, so an
 	/// incomplete document still folds the parts the parser recovered confidently, and a region
