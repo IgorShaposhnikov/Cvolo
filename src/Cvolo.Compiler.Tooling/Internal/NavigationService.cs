@@ -780,6 +780,12 @@ internal sealed class NavigationIndex
 		if (!_byDeclaration.TryGetValue(node, out var entry))
 			return null;
 
+		// A declaration that is still being typed can be missing its name. It is not a usable
+		// outline entry, and LSP forbids a symbol with a falsy name, so the whole node is left out
+		// rather than reported with a blank name (or repaired into a guessed one).
+		if (string.IsNullOrWhiteSpace(entry.Name))
+			return null;
+
 		var children = new List<DocumentSymbolInfo>();
 		foreach (var child in OutlineChildren(node))
 		{

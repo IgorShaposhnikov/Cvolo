@@ -520,6 +520,22 @@ public sealed class NavigationTests
 	}
 
 	[Fact]
+	public void DocumentSymbols_OmitDeclarationsThatHaveNoNameYet()
+	{
+		// A half-typed declaration has no name. It must not become an outline entry with a blank
+		// name, because a client rejects the whole outline over one; its named neighbours survive.
+		const string s = "int () { return 0; }\nstruct Node { public int value; }\nint main() { return 0; }\n";
+		var x = Open(("Main.cvl", s));
+		using (x.Fixture)
+		{
+			var symbols = x.Document.GetDocumentSymbols();
+			Assert.DoesNotContain(symbols.SelectMany(Flatten), z => string.IsNullOrWhiteSpace(z.Name));
+			Assert.Contains(symbols, z => z.Name == "Node");
+			Assert.Contains(symbols.SelectMany(Flatten), z => z.Name == "value");
+		}
+	}
+
+	[Fact]
 	public void TryCatchFinallyBodies_ResolveCallsAndLocals()
 	{
 		const string s =
