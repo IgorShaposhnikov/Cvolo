@@ -184,3 +184,124 @@ int main() {
     return 0;
 }
 ```
+
+---
+
+## 7. SDK Layers: Base & System
+
+Cvolo ships two SDK source layers under `libraries/`.
+
+### Base (implicit)
+
+`libraries/Base` is a global, always-present layer. Its declarations are visible in every file
+**without any `using` directive**, and remain available even under `--freestanding`. Base
+provides only the smallest language-required surface:
+
+* `Option<T>` — the safe nullable union; `T?` lowers to `Option<T>`.
+* `Result<T, E>` — the canonical `[Result]` union used by `try`/`catch`.
+* `Type` — the descriptor produced by `typeof`.
+* `*Attribute` marker structs — compiler-recognized attributes.
+
+```csharp
+int? maybe = 42;               // Option<int>, no using required
+val int value = maybe catch 0; // try/catch over Option/Result
+```
+
+### System (explicit, import-driven)
+
+`libraries/System` is loaded only when source requires it, via `using System...;` or a
+fully-qualified `System.*` reference. `using System;` loads only the root System units (such as
+`System.Console`); it does **not** pull in `System.Math`, `System.IO`, or other sub-namespaces.
+A fully-qualified `System.Math.Int.Abs(-10)` selects `System.Math.Int` with no `using` needed.
+
+`--freestanding` (or `<Freestanding>true</Freestanding>`) compiles with Base only and rejects
+any System dependency (`CVL1097`). It removes System, never Base, and is not a CRT-free
+guarantee.
+
+---
+
+## 8. Builtin Declarations
+
+The `builtin` modifier marks a source declaration whose public contract is written in Base but
+whose implementation is owned by the compiler. It is legal only in Base SDK source; project,
+System, loose-workspace, and package source cannot declare builtins (`CVL2112`).
+
+```csharp
+/// Returns the required storage alignment of T.
+public builtin nuint alignof<T>();
+
+/// Requires explicit receiver mutability on methods of the annotated struct.
+public builtin struct StrictMutabilityAttribute
+{
+}
+```
+
+A builtin callable is declaration-only and must end in `;`. Builtin constructors and
+destructors may also be bodyless; ordinary constructors and destructors must keep a body.
+
+`builtin` preserves the declaration's identity, source location, and `///` documentation — it
+does not erase the declaration. Compiler-owned entities such as `Type` keep a real runtime
+representation supplied by the compiler, while compile-time-only entities (attribute markers,
+operators) emit no runtime artifact.
+
+---
+
+## 9. Compile-Time Type & Layout Operators
+
+`sizeof`, `alignof`, and `offsetof` are dedicated language expressions (not ordinary calls) that
+all produce a `nuint`.
+
+```csharp
+nuint size = sizeof<Point>();                  // storage size, including padding
+nuint align = alignof<Point>();                // required alignment
+nuint offsetY = offsetof<Point>(Y);            // byte offset of a stored member
+nuint nested = offsetof<Header>(Inner.Length); // nested member path
+```
+
+`offsetof` walks stored struct fields and raw `unsafe union` fields (which share offset `0`).
+A safe union has no stable storage offset, so `offsetof` on a safe-union variant is rejected.
+The operators are usable in constant contexts, including global initializers and fixed-array
+dimensions, and they work under `--freestanding`:
+
+```csharp
+global nuint PointSize = sizeof<Point>();
+
+byte[sizeof<Point>()] raw = {};
+```
+
+---
+
+## 10. Error Handling with Result Shapes
+
+`try`/`catch` is defined by a semantic shape, not by a type named `Result`. Any union annotated
+with `[Result]` and declaring exactly one `Ok` and one `Err` variant is a result shape. `Ok` may
+be `void`; `Err` must carry a payload.
+
+```csharp
+[Error]
+public enum ParseError : int
+{
+    Bad = 1
+}
+
+[Result]
+public union Outcome<T, E>
+{
+    T Ok;
+    E Err;
+}
+
+Outcome<int, ParseError> Pick(int value)
+{
+    return Outcome<int, ParseError> { Ok: value };
+}
+
+int main()
+{
+    var int result = Pick(3) catch 0;
+    return result;
+}
+```
+
+`[Error]` marks a catchable error payload type. `[Error]` and `[ErrorAttribute]` resolve to the
+same marker declaration.

@@ -54,31 +54,39 @@ Flags can be combined (e.g. `--llvm --emit-ir`).
 
 The compiler uses ANTLR 4.13.1 for lexing and parsing.
 
-- **Grammar files:** `src/Cvolo.Syntax/Grammar/*.g4`
-- **Pre-generated C#:** `src/Cvolo.Syntax/Generated/*.cs`
+- **Grammar files:** `src/Cvolo.Syntax.Antlr/Grammar/*.g4`
+- **Generated C#:** produced at build time by `Antlr4BuildTasks` under `src/Cvolo.Syntax.Antlr/obj/`; nothing is checked in.
 
-The generated C# files are checked into the repository so **Java is NOT required for normal builds**.
+Modify the `.g4` grammar files and rebuild with `dotnet build`; the generated parser and lexer are regenerated automatically (no separate Java step required).
 
-### Regenerating After Grammar Changes
+## SDK Layers (Base and System)
 
-If you modify the `.g4` grammar files, regenerate the parser with:
+The SDK source lives in `libraries/`:
 
-```bash
-cd src/Cvolo.Syntax/Generated
-java -jar /tmp/antlr-4.13.1-complete.jar -Dlanguage=CSharp -o . -visitor -listener ../Grammar/CvoloLexer.g4
-java -jar /tmp/antlr-4.13.1-complete.jar -Dlanguage=CSharp -o . -visitor -listener -lib . ../Grammar/CvoloParser.g4
-```
+| Layer | Path | Loading | Contents |
+|---|---|---|---|
+| **Base** | `libraries/Base/` | implicit, always present | `Option<T>`, `Result<T,E>`, `Type`, compiler-recognized `*Attribute` markers, and the `builtin` declaration anchors for compile-time operators |
+| **System** | `libraries/System/` | import-driven (`using System...;` or qualified `System.*`) | `System.Console`, `System.Math`, and other hosted namespaces |
 
-Requires Java. Verify the new files compile with `dotnet build`.
+The loader walks up from the input to find a `libraries/` directory containing `Base/` and
+`System/`. A local tree that contains the input is authoritative over the compiler's bundled
+copy, and the two are never merged (so editing an authoritative `Base`/`System` source never
+yields duplicate declarations). `--freestanding` (or `<Freestanding>true</Freestanding>`)
+compiles with Base only and rejects any System dependency (`CVL1097`).
 
 ## Project Structure
 
 | Project | Path | Role |
 |---|---|---|
 | **Cvolo.Core** | `src/Cvolo.Core/` | AST node types, diagnostic bag |
-| **Cvolo.Syntax** | `src/Cvolo.Syntax/` | ANTLR-based lexer/parser |
-| **Cvolo.Analysis** | `src/Cvolo.Analysis/` | Type checking, symbol table, borrow checker |
+| **Cvolo.Core.Packages** | `src/Cvolo.Core.Packages/` | `.cvlib` container format |
+| **Cvolo.Syntax** | `src/Cvolo.Syntax/` | AST rewriters and shared syntax services |
+| **Cvolo.Syntax.Antlr** | `src/Cvolo.Syntax.Antlr/` | ANTLR-based lexer/parser and SDK library resolver |
+| **Cvolo.Analysis** | `src/Cvolo.Analysis/` | Type checking, symbol table, borrow checker, builtins |
+| **Cvolo.Projects** | `src/Cvolo.Projects/` | Project/universe loading, project references, explicit libraries |
+| **Cvolo.Packaging** | `src/Cvolo.Packaging/` | Package build/restore, `.cvlib` packing |
 | **Cvolo.Emitter.LLVM** | `src/Cvolo.Emitter.LLVM/` | LLVM IR code generation (text + native) |
+| **Cvolo.Compiler.Tooling** | `src/Cvolo.Compiler.Tooling/` | Editor-facing workspace/navigation/completion API |
 | **Cvolo** | `src/Cvolo/` | CLI entry point |
 
 ## Troubleshooting
