@@ -5,10 +5,10 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$tagPattern = '^v(?<version>(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:alpha|beta)\.(?:0|[1-9]\d*))?)$'
+$tagPattern = '^v(?<version>(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:alpha|beta)(?:\.(?:0|[1-9]\d*))?)?)$'
 $match = [regex]::Match($Tag, $tagPattern)
 if (-not $match.Success) {
-    throw "Release tag '$Tag' is invalid. Expected vX.Y.Z, vX.Y.Z-alpha.N, or vX.Y.Z-beta.N."
+    throw "Release tag '$Tag' is invalid. Expected vX.Y.Z, vX.Y.Z-alpha, vX.Y.Z-alpha.N, vX.Y.Z-beta, or vX.Y.Z-beta.N."
 }
 
 [xml]$props = Get-Content -LiteralPath $PropsPath
@@ -29,7 +29,7 @@ if ($null -eq $compatNode -or [string]::IsNullOrWhiteSpace($compatNode.InnerText
 }
 
 $compatibilityLine = $compatNode.InnerText.Trim()
-$isPrerelease = $version -match '-(?:alpha|beta)\.(?:0|[1-9]\d*)$'
+$isPrerelease = $version -match '-(?:alpha|beta)(?:\.(?:0|[1-9]\d*))?$'
 
 if (-not [string]::IsNullOrWhiteSpace($env:GITHUB_OUTPUT)) {
     "version=$version" >> $env:GITHUB_OUTPUT
