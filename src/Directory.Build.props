@@ -3,7 +3,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <Version>0.0.5-alpha.1</Version>
+    <Version>0.0.21-alpha</Version>
   </PropertyGroup>
 
   <PropertyGroup>
@@ -13,8 +13,8 @@
       then 0.0.5.2) while the compiler itself can remain on its own prerelease/version line.
       All values are overridable via -p:Name=...
     -->
-    <ToolingVersion Condition="'$(ToolingVersion)' == ''">0.0.5.9</ToolingVersion>
-    <CompilerCompatibilityLine Condition="'$(CompilerCompatibilityLine)' == ''">0.0</CompilerCompatibilityLine>
+    <ToolingVersion Condition="'$(ToolingVersion)' == ''">0.0.21.0</ToolingVersion>
+    <CompilerCompatibilityLine Condition="'$(CompilerCompatibilityLine)' == ''">0.0.21</CompilerCompatibilityLine>
     <CvoloCompilerVersion Condition="'$(CvoloCompilerVersion)' == ''">$(Version)</CvoloCompilerVersion>
   </PropertyGroup>
 </Project>
