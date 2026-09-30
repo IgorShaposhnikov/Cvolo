@@ -8,12 +8,12 @@ public class DiagnosticBag
 	public bool HasErrors => _diagnostics.Any(d => d.Severity == DiagnosticSeverity.Error);
 	public bool HasWarnings => _diagnostics.Any(d => d.Severity == DiagnosticSeverity.Warning);
 
-	public void Report(CompilationContext context, TextSpan span, string message, string? diagnosticId = null)
+	public void Report(CompilationContext context, TextSpan span, string message, string diagnosticId)
 	{
 		_diagnostics.Add(new Diagnostic(context, span, message, DiagnosticSeverity.Error, diagnosticId));
 	}
 
-	public void ReportWarning(CompilationContext context, TextSpan span, string message, string? id = null)
+	public void ReportWarning(CompilationContext context, TextSpan span, string message, string id)
 	{
 		_diagnostics.Add(new Diagnostic(context, span, message, DiagnosticSeverity.Warning, id));
 	}

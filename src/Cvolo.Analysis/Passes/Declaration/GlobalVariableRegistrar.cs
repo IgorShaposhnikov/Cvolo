@@ -28,7 +28,7 @@ internal sealed class GlobalVariableRegistrar(BindingContext context)
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
 			context.Diagnostics.Report(currentFileContext, globalDecl.Span,
-				$"Cannot use 'var' with reference type in global declaration. Use 'global ref' or 'global refvar' instead.");
+				$"Cannot use 'var' with reference type in global declaration. Use 'global ref' or 'global refvar' instead.", DiagnosticIds.CannotUseVarWithReferenceTypeInGlobalDeclarationUseGlobalRef);
 			return;
 		}
 
@@ -36,7 +36,7 @@ internal sealed class GlobalVariableRegistrar(BindingContext context)
 		if (type is null)
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.Report(currentFileContext, globalDecl.Span, $"Unknown type '{globalDecl.Type}' in global variable '{globalDecl.Name}'.");
+			context.Diagnostics.Report(currentFileContext, globalDecl.Span, $"Unknown type '{globalDecl.Type}' in global variable '{globalDecl.Name}'.", DiagnosticIds.UnknownTypeInGlobalVariable);
 			return;
 		}
 
@@ -44,7 +44,7 @@ internal sealed class GlobalVariableRegistrar(BindingContext context)
 		if (context.GlobalsByQualifiedName.ContainsKey(qualifiedName))
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.Report(currentFileContext, globalDecl.Span, $"Duplicate definition of global variable '{globalDecl.Name}'.");
+			context.Diagnostics.Report(currentFileContext, globalDecl.Span, $"Duplicate definition of global variable '{globalDecl.Name}'.", DiagnosticIds.DuplicateDefinitionOfGlobalVariable);
 			return;
 		}
 
@@ -82,7 +82,7 @@ internal sealed class GlobalVariableRegistrar(BindingContext context)
 			{
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
 				context.Diagnostics.Report(currentFileContext, globalDecl.Span,
-					$"Global delegate '{globalDecl.Name}' requires an initializer; delegates are non-null and cannot be default-initialized.");
+					$"Global delegate '{globalDecl.Name}' requires an initializer; delegates are non-null and cannot be default-initialized.", DiagnosticIds.GlobalDelegateRequiresAnInitializerDelegatesAreNonNullAndCan);
 				return;
 			}
 
@@ -201,7 +201,7 @@ internal sealed class GlobalVariableRegistrar(BindingContext context)
 				case "LibraryImport":
 					if (sawLibraryImport)
 					{
-						ReportDiagnostic(attr, "Duplicate attribute '[LibraryImport]'.");
+						ReportDiagnostic(attr, "Duplicate attribute '[LibraryImport]'.", DiagnosticIds.DuplicateAttributeLibraryImport);
 						continue;
 					}
 					sawLibraryImport = true;
@@ -212,7 +212,7 @@ internal sealed class GlobalVariableRegistrar(BindingContext context)
 				case "ImportName":
 					if (sawImportName)
 					{
-						ReportDiagnostic(attr, "Duplicate attribute '[ImportName]'.");
+						ReportDiagnostic(attr, "Duplicate attribute '[ImportName]'.", DiagnosticIds.DuplicateAttributeImportName);
 						continue;
 					}
 					sawImportName = true;
@@ -222,7 +222,7 @@ internal sealed class GlobalVariableRegistrar(BindingContext context)
 					ReportWarning(attr, $"Unknown attribute '{attr.Name}'; it will be ignored.", DiagnosticIds.UnknownAttribute);
 					break;
 				default:
-					ReportDiagnostic(attr, $"Attribute '[{key}]' cannot be applied to foreign global declarations.");
+					ReportDiagnostic(attr, $"Attribute '[{key}]' cannot be applied to foreign global declarations.", DiagnosticIds.AttributeCannotBeAppliedToForeignGlobalDeclarations);
 					break;
 			}
 		}
@@ -272,7 +272,7 @@ internal sealed class GlobalVariableRegistrar(BindingContext context)
 		var type = context.ResolveType(globalDecl.Type);
 		if (type is null)
 		{
-			ReportDiagnostic(globalDecl.Span, $"Unknown type '{globalDecl.Type}' in foreign global '{globalDecl.Name}'.");
+			ReportDiagnostic(globalDecl.Span, $"Unknown type '{globalDecl.Type}' in foreign global '{globalDecl.Name}'.", DiagnosticIds.UnknownTypeInForeignGlobal);
 			return;
 		}
 
@@ -280,7 +280,7 @@ internal sealed class GlobalVariableRegistrar(BindingContext context)
 		if (context.GlobalsByQualifiedName.ContainsKey(qualifiedName))
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.Report(currentFileContext, globalDecl.Span, $"Duplicate definition of global variable '{globalDecl.Name}'.");
+			context.Diagnostics.Report(currentFileContext, globalDecl.Span, $"Duplicate definition of global variable '{globalDecl.Name}'.", DiagnosticIds.DuplicateDefinitionOfGlobalVariable);
 			return;
 		}
 
@@ -316,7 +316,7 @@ internal sealed class GlobalVariableRegistrar(BindingContext context)
 				case "ImportName":
 					if (sawImportName)
 					{
-						ReportDiagnostic(attr, "Duplicate attribute '[ImportName]'.");
+						ReportDiagnostic(attr, "Duplicate attribute '[ImportName]'.", DiagnosticIds.DuplicateAttributeImportName);
 						continue;
 					}
 					sawImportName = true;
@@ -331,7 +331,7 @@ internal sealed class GlobalVariableRegistrar(BindingContext context)
 					ReportWarning(attr, $"Unknown attribute '{attr.Name}'; it will be ignored.", DiagnosticIds.UnknownAttribute);
 					break;
 				default:
-					ReportDiagnostic(attr, $"Attribute '[{key}]' cannot be applied to extern block global declarations.");
+					ReportDiagnostic(attr, $"Attribute '[{key}]' cannot be applied to extern block global declarations.", DiagnosticIds.AttributeCannotBeAppliedToExternBlockGlobalDeclarations);
 					break;
 			}
 		}
@@ -374,13 +374,13 @@ internal sealed class GlobalVariableRegistrar(BindingContext context)
 			context.NativeLibraries[libraryName] = new NativeLibraryInfo(libraryName, winPath, linuxPath, macPath);
 	}
 
-	private void ReportDiagnostic(SyntaxNode node, string message, string? diagnosticId = null)
+	private void ReportDiagnostic(SyntaxNode node, string message, string diagnosticId)
 	{
 		var currentFileContext = context.FileContexts[context.CurrentUnit!];
 		context.Diagnostics.Report(currentFileContext, node.Span, message, diagnosticId);
 	}
 
-	private void ReportDiagnostic(TextSpan span, string message, string? diagnosticId = null)
+	private void ReportDiagnostic(TextSpan span, string message, string diagnosticId)
 	{
 		var currentFileContext = context.FileContexts[context.CurrentUnit!];
 		context.Diagnostics.Report(currentFileContext, span, message, diagnosticId);

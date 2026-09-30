@@ -6,7 +6,7 @@ public enum DiagnosticSeverity
 	Warning
 }
 
-public sealed class Diagnostic(CompilationContext context, TextSpan span, string message, DiagnosticSeverity severity = DiagnosticSeverity.Error, string? id = null)
+public sealed class Diagnostic(CompilationContext context, TextSpan span, string message, DiagnosticSeverity severity, string id)
 {
 	public CompilationContext Context { get; } = context;
 	public TextSpan Span { get; } = span;
@@ -14,7 +14,7 @@ public sealed class Diagnostic(CompilationContext context, TextSpan span, string
 	public DiagnosticSeverity Severity { get; } = severity;
 
 	/// <summary>Stable family id (e.g. CVL1001) used by --nowarn and [SuppressWarning].</summary>
-	public string? Id { get; } = id;
+	public string Id { get; } = id;
 
 	public override string ToString() => $"[{Context.FilePath}]: ({Span.Start}-{Span.End}): {Message}";
 }

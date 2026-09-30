@@ -73,7 +73,7 @@ internal sealed class ExpressionValidator(
 						else if (resolvedGlobal is null)
 						{
 							var currentFileContext = context.FileContexts[context.CurrentUnit!];
-							context.Diagnostics.Report(currentFileContext, id.Span, $"Undefined variable '{id.Name}'");
+							context.Diagnostics.Report(currentFileContext, id.Span, $"Undefined variable '{id.Name}'", DiagnosticIds.UndefinedVariable);
 						}
 					}
 
@@ -97,7 +97,7 @@ internal sealed class ExpressionValidator(
 				Check(heapArr.CountExpression, scope);
 				if (GetType(heapArr.CountExpression, scope) is { } heapCountTy && !heapCountTy.Equals(TypeSymbol.Int))
 				{
-					context.Diagnostics.Report(context.FileContexts[context.CurrentUnit!], heapArr.CountExpression.Span, "Heap array allocation size must be an integer.");
+					context.Diagnostics.Report(context.FileContexts[context.CurrentUnit!], heapArr.CountExpression.Span, "Heap array allocation size must be an integer.", DiagnosticIds.HeapArrayAllocationSizeMustBeAnInteger);
 				}
 
 				break;
@@ -111,7 +111,7 @@ internal sealed class ExpressionValidator(
 				if (GetType(arrRepl.Count, scope) is { } countTy && !countTy.Equals(TypeSymbol.Int))
 				{
 					var currentFileContext = context.FileContexts[context.CurrentUnit!];
-					context.Diagnostics.Report(currentFileContext, arrRepl.Count.Span, "Array replication count must be an integer.");
+					context.Diagnostics.Report(currentFileContext, arrRepl.Count.Span, "Array replication count must be an integer.", DiagnosticIds.ArrayReplicationCountMustBeAnInteger);
 				}
 
 				break;
@@ -249,9 +249,9 @@ internal sealed class ExpressionValidator(
 						var currentFileContext = context.FileContexts[context.CurrentUnit!];
 						var sigString = string.Join(", ", argTypes.Select(t => t.Name));
 						var diagnosticId = call.FunctionName.Contains('.', StringComparison.Ordinal)
-							? null
+							? DiagnosticIds.NoOverloadOfFunctionMatchesArgumentTypes
 							: DiagnosticIds.UnresolvedFunctionCall;
-						context.Diagnostics.Report(currentFileContext, call.ArgumentListSpan, $"No overload of function '{call.FunctionName}' matches argument types ({sigString})", diagnosticId);
+						context.Diagnostics.Report(currentFileContext, call.ArgumentListSpan, $"No overload of function '{call.FunctionName}' matches argument types ({sigString})", 						diagnosticId);
 						return;
 					}
 
@@ -318,14 +318,14 @@ internal sealed class ExpressionValidator(
 					if (!isVariadic && argCount != expectedParamCount)
 					{
 						var currentFileContext = context.FileContexts[context.CurrentUnit!];
-						context.Diagnostics.Report(currentFileContext, call.ArgumentListSpan, $"Function '{call.FunctionName}' expects {expectedParamCount} arguments but received {argCount}");
+						context.Diagnostics.Report(currentFileContext, call.ArgumentListSpan, $"Function '{call.FunctionName}' expects {expectedParamCount} arguments but received {argCount}", DiagnosticIds.FunctionExpectsArgumentsButReceived);
 						return;
 					}
 
 					if (isVariadic && argCount < paramCount)
 					{
 						var currentFileContext = context.FileContexts[context.CurrentUnit!];
-						context.Diagnostics.Report(currentFileContext, call.ArgumentListSpan, $"Function '{call.FunctionName}' expects at least {paramCount} arguments but received {argCount}");
+						context.Diagnostics.Report(currentFileContext, call.ArgumentListSpan, $"Function '{call.FunctionName}' expects at least {paramCount} arguments but received {argCount}", DiagnosticIds.FunctionExpectsAtLeastArgumentsButReceived);
 						return;
 					}
 
@@ -416,7 +416,7 @@ internal sealed class ExpressionValidator(
 									}
 									else
 									{
-										context.Diagnostics.Report(currentFileContext, id.Span, $"Cannot assign to immutable variable '{id.Name}'");
+										context.Diagnostics.Report(currentFileContext, id.Span, $"Cannot assign to immutable variable '{id.Name}'", DiagnosticIds.CannotAssignToImmutableVariable);
 									}
 								}
 
@@ -425,7 +425,7 @@ internal sealed class ExpressionValidator(
 							else
 							{
 								var currentFileContext = context.FileContexts[context.CurrentUnit!];
-								context.Diagnostics.Report(currentFileContext, id.Span, $"Undefined variable '{id.Name}'");
+								context.Diagnostics.Report(currentFileContext, id.Span, $"Undefined variable '{id.Name}'", DiagnosticIds.UndefinedVariable);
 							}
 						}
 						else
@@ -527,7 +527,7 @@ internal sealed class ExpressionValidator(
 						// inside a typed declaration; anywhere else there is no type to infer.
 						var currentFileContext = context.FileContexts[context.CurrentUnit!];
 						context.Diagnostics.Report(currentFileContext, defaultExpr.Span,
-							"Cannot infer the type of a bare 'default' expression. Use default(T) or declare the variable with an explicit type.");
+							"Cannot infer the type of a bare 'default' expression. Use default(T) or declare the variable with an explicit type.", DiagnosticIds.CannotInferTheTypeOfABareDefaultExpressionUseDefaultTOrDecla);
 						break;
 					}
 
@@ -535,7 +535,7 @@ internal sealed class ExpressionValidator(
 					if (defaultTy is null)
 					{
 						var currentFileContext = context.FileContexts[context.CurrentUnit!];
-						context.Diagnostics.Report(currentFileContext, defaultExpr.Span, $"Unknown type '{defaultExpr.TypeName}' in default expression");
+						context.Diagnostics.Report(currentFileContext, defaultExpr.Span, $"Unknown type '{defaultExpr.TypeName}' in default expression", DiagnosticIds.UnknownTypeInDefaultExpression);
 					}
 					else if (defaultTy is TypeParameterSymbol)
 					{
@@ -548,7 +548,7 @@ internal sealed class ExpressionValidator(
 						if (defaultKind != CopyKind.TrivialCopy)
 						{
 							var currentFileContext = context.FileContexts[context.CurrentUnit!];
-							context.Diagnostics.Report(currentFileContext, defaultExpr.Span, $"Type '{defaultExpr.TypeName}' cannot be used with default because it is not a Trivial Copy Type");
+							context.Diagnostics.Report(currentFileContext, defaultExpr.Span, $"Type '{defaultExpr.TypeName}' cannot be used with default because it is not a Trivial Copy Type", DiagnosticIds.TypeCannotBeUsedWithDefaultBecauseItIsNotATrivialCopyType);
 						}
 					}
 					else if (defaultTy is DelegateTypeSymbol { IsNative: true })
@@ -709,7 +709,7 @@ internal sealed class ExpressionValidator(
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
 			var actual = string.Join(", ", argumentTypes.Select(type => type.Name));
 			context.Diagnostics.Report(currentFileContext, call.ArgumentListSpan,
-				$"Delegate '{delegateType.Name}' cannot be invoked with argument types ({actual}).");
+				$"Delegate '{delegateType.Name}' cannot be invoked with argument types ({actual}).", DiagnosticIds.DelegateCannotBeInvokedWithArgumentTypes);
 		}
 		if (delegateType.IsNative && _validation.UnsafeDepth == 0)
 		{
@@ -859,7 +859,7 @@ internal sealed class ExpressionValidator(
 			var expected = templates.Min(t => t.Method.GenericParameters.Count);
 			var expectedArgs = expected == 1 ? "argument" : "arguments";
 			context.Diagnostics.Report(currentFileContext, call.Span,
-				$"Function '{call.FunctionName}' expects {expected} type {expectedArgs} but received {call.TypeArguments.Count}");
+				$"Function '{call.FunctionName}' expects {expected} type {expectedArgs} but received {call.TypeArguments.Count}", DiagnosticIds.FunctionExpectsTypeButReceived);
 			return false;
 		}
 
@@ -869,7 +869,7 @@ internal sealed class ExpressionValidator(
 			if (context.ResolveType(writtenTypeArg) is not TypeSymbol resolvedTypeArg)
 			{
 				context.Diagnostics.Report(currentFileContext, call.Span,
-					$"Unknown type '{writtenTypeArg}' in type argument list of '{call.FunctionName}'");
+					$"Unknown type '{writtenTypeArg}' in type argument list of '{call.FunctionName}'", DiagnosticIds.UnknownTypeInTypeArgumentListOf);
 				return false;
 			}
 
@@ -879,7 +879,7 @@ internal sealed class ExpressionValidator(
 		if (Generics.InstantiateGenericExtensionMethod(template, typeArgs) is null)
 		{
 			context.Diagnostics.Report(currentFileContext, call.Span,
-				$"Cannot resolve the signature of '{call.FunctionName}' for the given type arguments");
+				$"Cannot resolve the signature of '{call.FunctionName}' for the given type arguments", DiagnosticIds.CannotResolveTheSignatureOfForTheGivenTypeArguments);
 			return false;
 		}
 
@@ -928,7 +928,7 @@ internal sealed class ExpressionValidator(
 
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
 				context.Diagnostics.Report(currentFileContext, expr.Span,
-					$"Enum '{enumType.Name}' does not contain variant '{expr.MemberName}'");
+					$"Enum '{enumType.Name}' does not contain variant '{expr.MemberName}'", DiagnosticIds.EnumDoesNotContainVariant);
 				return null;
 			}
 
@@ -954,7 +954,7 @@ internal sealed class ExpressionValidator(
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
 			context.Diagnostics.Report(currentFileContext, expr.Span,
-				$"Type '{leftType.Name}' is an enum; only scoped variant access ('{leftType.Name}.VariantName') is allowed.");
+				$"Type '{leftType.Name}' is an enum; only scoped variant access ('{leftType.Name}.VariantName') is allowed.", DiagnosticIds.TypeIsAnEnumOnlyScopedVariantAccessVariantNameIsAllowed);
 			return null;
 		}
 
@@ -979,7 +979,7 @@ internal sealed class ExpressionValidator(
 			if (variantField is null)
 			{
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
-				context.Diagnostics.Report(currentFileContext, expr.Span, $"Union '{unionType.Name}' does not contain variant '{expr.MemberName}'");
+				context.Diagnostics.Report(currentFileContext, expr.Span, $"Union '{unionType.Name}' does not contain variant '{expr.MemberName}'", DiagnosticIds.UnionDoesNotContainVariant);
 				return null;
 			}
 
@@ -998,7 +998,7 @@ internal sealed class ExpressionValidator(
 		if (leftType is not StructTypeSymbol structType)
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.Report(currentFileContext, expr.Span, $"Type '{leftType.Name}' is not a struct or union; cannot access member '{expr.MemberName}'");
+			context.Diagnostics.Report(currentFileContext, expr.Span, $"Type '{leftType.Name}' is not a struct or union; cannot access member '{expr.MemberName}'", DiagnosticIds.TypeIsNotAStructOrUnionCannotAccessMember);
 			return null;
 		}
 
@@ -1006,7 +1006,7 @@ internal sealed class ExpressionValidator(
 		if (field is null)
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.Report(currentFileContext, expr.Span, $"Struct '{structType.Name}' does not contain field '{expr.MemberName}'");
+			context.Diagnostics.Report(currentFileContext, expr.Span, $"Struct '{structType.Name}' does not contain field '{expr.MemberName}'", DiagnosticIds.StructDoesNotContainField);
 			return null;
 		}
 
@@ -1130,7 +1130,7 @@ internal sealed class ExpressionValidator(
 		if (type is null)
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.Report(currentFileContext, expr.Span, $"Unknown type '{expr.StructTypeName}'");
+			context.Diagnostics.Report(currentFileContext, expr.Span, $"Unknown type '{expr.StructTypeName}'", DiagnosticIds.UnknownType);
 			return null;
 		}
 
@@ -1139,7 +1139,7 @@ internal sealed class ExpressionValidator(
 			if (expr.Initializers.Count != 1)
 			{
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
-				context.Diagnostics.Report(currentFileContext, expr.Span, $"Union initialization of '{unionType.Name}' must specify exactly one variant.");
+				context.Diagnostics.Report(currentFileContext, expr.Span, $"Union initialization of '{unionType.Name}' must specify exactly one variant.", DiagnosticIds.UnionInitializationOfMustSpecifyExactlyOneVariant);
 				return unionType;
 			}
 
@@ -1148,7 +1148,7 @@ internal sealed class ExpressionValidator(
 			if (field is null)
 			{
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
-				context.Diagnostics.Report(currentFileContext, init.Span, $"Union '{unionType.Name}' does not contain variant '{init.MemberName}'");
+				context.Diagnostics.Report(currentFileContext, init.Span, $"Union '{unionType.Name}' does not contain variant '{init.MemberName}'", DiagnosticIds.UnionDoesNotContainVariant);
 				return unionType;
 			}
 
@@ -1185,11 +1185,11 @@ internal sealed class ExpressionValidator(
 					var currentFileContext = context.FileContexts[context.CurrentUnit!];
 					if (_validation.UnsafeDepth > 0 && initType.Equals(TypeSymbol.Null))
 					{
-						context.Diagnostics.Report(currentFileContext, init.Span, "The 'null' literal requires a pointer type (Option or raw pointer).");
+						context.Diagnostics.Report(currentFileContext, init.Span, "The 'null' literal requires a pointer type (Option or raw pointer).", DiagnosticIds.TheNullLiteralRequiresAPointerTypeOptionOrRawPointer);
 					}
 					else
 					{
-						context.Diagnostics.Report(currentFileContext, init.Span, $"Cannot initialize field '{init.MemberName}' of type '{field.Type.Name}' with value of type '{initType.Name}'");
+						context.Diagnostics.Report(currentFileContext, init.Span, $"Cannot initialize field '{init.MemberName}' of type '{field.Type.Name}' with value of type '{initType.Name}'", DiagnosticIds.CannotInitializeFieldOfTypeWithValueOfType);
 					}
 				}
 			}
@@ -1200,7 +1200,7 @@ internal sealed class ExpressionValidator(
 		if (type is not StructTypeSymbol structType)
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.Report(currentFileContext, expr.Span, $"Type '{expr.StructTypeName}' is not a struct type");
+			context.Diagnostics.Report(currentFileContext, expr.Span, $"Type '{expr.StructTypeName}' is not a struct type", DiagnosticIds.TypeIsNotAStructType);
 			return null;
 		}
 
@@ -1210,7 +1210,7 @@ internal sealed class ExpressionValidator(
 			if (!initializedFields.Add(init.MemberName))
 			{
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
-				context.Diagnostics.Report(currentFileContext, init.Span, $"Duplicate initializer for field '{init.MemberName}'");
+				context.Diagnostics.Report(currentFileContext, init.Span, $"Duplicate initializer for field '{init.MemberName}'", DiagnosticIds.DuplicateInitializerForField);
 				continue;
 			}
 
@@ -1218,7 +1218,7 @@ internal sealed class ExpressionValidator(
 			if (field is null)
 			{
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
-				context.Diagnostics.Report(currentFileContext, init.Span, $"Struct '{structType.Name}' does not contain field '{init.MemberName}'");
+				context.Diagnostics.Report(currentFileContext, init.Span, $"Struct '{structType.Name}' does not contain field '{init.MemberName}'", DiagnosticIds.StructDoesNotContainField);
 				continue;
 			}
 
@@ -1249,7 +1249,7 @@ internal sealed class ExpressionValidator(
 			if (initType is not null && !TypesAssignable(field.Type, initType))
 			{
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
-				context.Diagnostics.Report(currentFileContext, init.Span, $"Cannot initialize field '{init.MemberName}' of type '{field.Type.Name}' with value of type '{initType.Name}'");
+				context.Diagnostics.Report(currentFileContext, init.Span, $"Cannot initialize field '{init.MemberName}' of type '{field.Type.Name}' with value of type '{initType.Name}'", DiagnosticIds.CannotInitializeFieldOfTypeWithValueOfType);
 			}
 		}
 
@@ -1264,7 +1264,7 @@ internal sealed class ExpressionValidator(
 					continue;
 
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
-				context.Diagnostics.Report(currentFileContext, expr.Span, $"Missing initializer for field '{field.Name}' of struct '{structType.Name}'");
+				context.Diagnostics.Report(currentFileContext, expr.Span, $"Missing initializer for field '{field.Name}' of struct '{structType.Name}'", DiagnosticIds.MissingInitializerForFieldOfStruct);
 			}
 		}
 
@@ -1287,7 +1287,7 @@ internal sealed class ExpressionValidator(
 			if (elType is not null && !elType.Equals(elementType))
 			{
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
-				context.Diagnostics.Report(currentFileContext, expr.Elements[i].Span, $"Array elements must have the same type. Expected '{elementType.Name}', found '{elType.Name}'");
+				context.Diagnostics.Report(currentFileContext, expr.Elements[i].Span, $"Array elements must have the same type. Expected '{elementType.Name}', found '{elType.Name}'", DiagnosticIds.ArrayElementsMustHaveTheSameTypeExpectedFound);
 			}
 		}
 
@@ -1309,7 +1309,7 @@ internal sealed class ExpressionValidator(
 		if (expr.IsMutable && !isVariableMutable)
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.Report(currentFileContext, expr.Span, "Cannot take a mutable reference (refvar) of a read-only variable.");
+			context.Diagnostics.Report(currentFileContext, expr.Span, "Cannot take a mutable reference (refvar) of a read-only variable.", DiagnosticIds.CannotTakeAMutableReferenceRefvarOfAReadOnlyVariable);
 		}
 
 		return new PointerTypeSymbol(innerType, expr.IsMutable);
@@ -1378,7 +1378,7 @@ internal sealed class ExpressionValidator(
 		if (condType is not null && !condType.Equals(TypeSymbol.Bool))
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.Report(currentFileContext, expr.Condition.Span, $"Ternary condition must be 'bool', found '{condType.Name}'");
+			context.Diagnostics.Report(currentFileContext, expr.Condition.Span, $"Ternary condition must be 'bool', found '{condType.Name}'", DiagnosticIds.TernaryConditionMustBeBoolFound);
 		}
 
 		Check(expr.ThenExpression, scope);
@@ -1390,7 +1390,7 @@ internal sealed class ExpressionValidator(
 		if (thenType is not null && elseType is not null && !thenType.Equals(elseType))
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.Report(currentFileContext, expr.Span, $"Ternary branches must have the same type. Found '{thenType.Name}' and '{elseType.Name}'");
+			context.Diagnostics.Report(currentFileContext, expr.Span, $"Ternary branches must have the same type. Found '{thenType.Name}' and '{elseType.Name}'", DiagnosticIds.TernaryBranchesMustHaveTheSameTypeFoundAnd);
 		}
 
 		return thenType;
@@ -1487,7 +1487,7 @@ internal sealed class ExpressionValidator(
 				if (annotatedType is null)
 				{
 					context.Diagnostics.Report(currentFileContext, lambdaParam.Span,
-						$"Unknown type '{lambdaParam.ExplicitType}' in lambda parameter.");
+						$"Unknown type '{lambdaParam.ExplicitType}' in lambda parameter.", DiagnosticIds.UnknownTypeInLambdaParameter);
 				}
 				else if (!annotatedType.Equals(delegateParam.Type))
 				{
@@ -2001,7 +2001,7 @@ internal sealed class ExpressionValidator(
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
 			context.Diagnostics.Report(currentFileContext, arg.Span,
-				$"Union '{unionType.Name}' is {size} bytes. Passing by value is forbidden for unions larger than 16 bytes; pass by 'ref'/'refvar' instead.");
+				$"Union '{unionType.Name}' is {size} bytes. Passing by value is forbidden for unions larger than 16 bytes; pass by 'ref'/'refvar' instead.", DiagnosticIds.UnionIsBytesPassingByValueIsForbiddenForUnionsLargerThan16By);
 		}
 	}
 
@@ -2025,7 +2025,7 @@ internal sealed class ExpressionValidator(
 
 		var currentFileContext = context.FileContexts[context.CurrentUnit!];
 		context.Diagnostics.Report(currentFileContext, span,
-			$"Implicit conversion between enum '{enumType.Name}' and '{otherType.Name}' is forbidden; use an explicit cast.");
+			$"Implicit conversion between enum '{enumType.Name}' and '{otherType.Name}' is forbidden; use an explicit cast.", DiagnosticIds.ImplicitConversionBetweenEnumAndIsForbiddenUseAnExplicitCast);
 	}
 
 	/// <summary>
@@ -2098,7 +2098,7 @@ internal sealed class ExpressionValidator(
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
 			context.Diagnostics.Report(currentFileContext, unary.Span,
-				$"Cannot cast nullable reference option '{optionUnion.Name}' directly to a raw pointer; pattern-match it (switch on 'ref'/'refvar') to extract a non-null reference first.");
+				$"Cannot cast nullable reference option '{optionUnion.Name}' directly to a raw pointer; pattern-match it (switch on 'ref'/'refvar') to extract a non-null reference first.", DiagnosticIds.CannotCastNullableReferenceOptionDirectlyToARawPointerPatter);
 			return;
 		}
 
@@ -2111,7 +2111,7 @@ internal sealed class ExpressionValidator(
 			{
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
 				context.Diagnostics.Report(currentFileContext, unary.Span,
-					$"Destructive cast '({targetTypeName})' requires an owning heap handle; '{id.Name}' is a stack value. Allocate it with 'heap {operandType.Name} {{ ... }}' or 'heap {operandType.Name}(...)', or cast its address with '&{id.Name}'.");
+					$"Destructive cast '({targetTypeName})' requires an owning heap handle; '{id.Name}' is a stack value. Allocate it with 'heap {operandType.Name} {{ ... }}' or 'heap {operandType.Name}(...)', or cast its address with '&{id.Name}'.", DiagnosticIds.DestructiveCastRequiresAnOwningHeapHandleIsAStackValueAlloca);
 			}
 		}
 
@@ -2142,7 +2142,7 @@ internal sealed class ExpressionValidator(
 		if (operandType is not UnionTypeSymbol unionType)
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.Report(currentFileContext, isPat.Span, $"The 'is' pattern can only be applied to a union type, got '{operandType.Name}'.");
+			context.Diagnostics.Report(currentFileContext, isPat.Span, $"The 'is' pattern can only be applied to a union type, got '{operandType.Name}'.", DiagnosticIds.TheIsPatternCanOnlyBeAppliedToAUnionTypeGot);
 			return;
 		}
 
@@ -2161,7 +2161,7 @@ internal sealed class ExpressionValidator(
 		if (variant is null)
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.Report(currentFileContext, isPat.Span, $"Union '{unionType.Name}' does not contain variant '{isPat.VariantName}'");
+			context.Diagnostics.Report(currentFileContext, isPat.Span, $"Union '{unionType.Name}' does not contain variant '{isPat.VariantName}'", DiagnosticIds.UnionDoesNotContainVariant);
 			return;
 		}
 
@@ -2174,7 +2174,7 @@ internal sealed class ExpressionValidator(
 			if (variant.IsVoidVariant)
 			{
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
-				context.Diagnostics.Report(currentFileContext, isPat.Span, $"Void variant '{isPat.VariantName}' cannot carry a bound variable.");
+				context.Diagnostics.Report(currentFileContext, isPat.Span, $"Void variant '{isPat.VariantName}' cannot carry a bound variable.", DiagnosticIds.VoidVariantCannotCarryABoundVariable);
 				return;
 			}
 
@@ -2210,7 +2210,7 @@ internal sealed class ExpressionValidator(
 
 		var currentFileContext = context.FileContexts[context.CurrentUnit!];
 		context.Diagnostics.Report(currentFileContext, unary.Span,
-			$"Operator '~' cannot be applied to non-[Flags] enum '{enumType.Name}'.");
+			$"Operator '~' cannot be applied to non-[Flags] enum '{enumType.Name}'.", DiagnosticIds.OperatorCannotBeAppliedToNonFlagsEnum);
 	}
 
 	/// <summary>

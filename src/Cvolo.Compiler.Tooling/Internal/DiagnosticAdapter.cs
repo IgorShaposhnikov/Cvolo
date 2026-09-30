@@ -34,7 +34,7 @@ internal static class DiagnosticAdapter
 		var severity = MapSeverity(coreDiag.Severity);
 		var span = new TextSpan(coreDiag.Span.Start, coreDiag.Span.Length);
 		var location = new DiagnosticLocation(docId, span);
-		var id = coreDiag.Id ?? "CVL0000";
+		var id = coreDiag.Id;
 
 		return new Diagnostic(
 			severity,

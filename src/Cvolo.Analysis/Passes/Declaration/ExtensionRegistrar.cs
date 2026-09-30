@@ -44,15 +44,6 @@ internal sealed class ExtensionRegistrar(
 
 
 	/// <summary>
-	/// Reports an extension-declaration diagnostic without a stable diagnostic identifier in the current unit.
-	/// </summary>
-	private void ReportDeclarationDiagnostic(SyntaxNode node, string message)
-	{
-		var currentFileContext = context.FileContexts[context.CurrentUnit!];
-		context.Diagnostics.Report(currentFileContext, node.Span, message);
-	}
-
-	/// <summary>
 	/// Registers one extension declaration, including methods, constructors, destructors,
 	/// protocol defaults, generic-extension templates, and explicit nominal conformance.
 	/// </summary>
@@ -66,7 +57,7 @@ internal sealed class ExtensionRegistrar(
 		if (extendedType is null)
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.Report(currentFileContext, extDecl.NameSpan, $"Unknown type '{extDecl.ExtendedTypeName}' inside extension block.");
+			context.Diagnostics.Report(currentFileContext, extDecl.NameSpan, $"Unknown type '{extDecl.ExtendedTypeName}' inside extension block.", DiagnosticIds.UnknownTypeInsideExtensionBlock);
 			return;
 		}
 
@@ -188,7 +179,7 @@ internal sealed class ExtensionRegistrar(
 				var paramSymbol = functions.CreateParameter(param);
 				if (paramSymbol is null)
 				{
-					ReportDeclarationDiagnostic(param, $"Unknown parameter type '{param.Type}'");
+					ReportDeclarationDiagnostic(param, $"Unknown parameter type '{param.Type}'", DiagnosticIds.UnknownParameterType);
 					continue;
 				}
 
@@ -199,7 +190,7 @@ internal sealed class ExtensionRegistrar(
 			if (returnType is null)
 			{
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
-				context.Diagnostics.Report(currentFileContext, method.ReturnTypeSpan, $"Unknown return type '{method.ReturnType}'");
+				context.Diagnostics.Report(currentFileContext, method.ReturnTypeSpan, $"Unknown return type '{method.ReturnType}'", DiagnosticIds.UnknownReturnType);
 				return;
 			}
 
@@ -238,7 +229,7 @@ internal sealed class ExtensionRegistrar(
 			{
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
 				context.Diagnostics.Report(currentFileContext, method.NameSpan,
-					$"Duplicate symbol '{method.Name}' on type '{extDecl.ExtendedTypeName}' in extension blocks.");
+					$"Duplicate symbol '{method.Name}' on type '{extDecl.ExtendedTypeName}' in extension blocks.", DiagnosticIds.DuplicateSymbolOnTypeInExtensionBlocks);
 				continue;
 			}
 
@@ -266,14 +257,14 @@ internal sealed class ExtensionRegistrar(
 			if (ctorDecl.StructName != extDecl.ExtendedTypeName)
 			{
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
-				context.Diagnostics.Report(currentFileContext, ctorDecl.NameSpan, $"Constructor name '{ctorDecl.StructName}' must match the extended type '{extDecl.ExtendedTypeName}'.");
+				context.Diagnostics.Report(currentFileContext, ctorDecl.NameSpan, $"Constructor name '{ctorDecl.StructName}' must match the extended type '{extDecl.ExtendedTypeName}'.", DiagnosticIds.ConstructorNameMustMatchTheExtendedType);
 				continue;
 			}
 
 			if (extendedType is not StructTypeSymbol ctorStructType)
 			{
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
-				context.Diagnostics.Report(currentFileContext, ctorDecl.NameSpan, $"Cannot define a constructor for non-struct type '{extDecl.ExtendedTypeName}'.");
+				context.Diagnostics.Report(currentFileContext, ctorDecl.NameSpan, $"Cannot define a constructor for non-struct type '{extDecl.ExtendedTypeName}'.", DiagnosticIds.CannotDefineAConstructorForNonStructType);
 				continue;
 			}
 
@@ -290,7 +281,7 @@ internal sealed class ExtensionRegistrar(
 				var paramSymbol = functions.CreateParameter(param);
 				if (paramSymbol is null)
 				{
-					ReportDeclarationDiagnostic(param, $"Unknown parameter type '{param.Type}'");
+					ReportDeclarationDiagnostic(param, $"Unknown parameter type '{param.Type}'", DiagnosticIds.UnknownParameterType);
 					hasBadParam = true;
 					continue;
 				}
@@ -326,7 +317,7 @@ internal sealed class ExtensionRegistrar(
 			{
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
 				context.Diagnostics.Report(currentFileContext, ctorDecl.NameSpan,
-					$"Duplicate constructor signature for type '{extDecl.ExtendedTypeName}'.");
+					$"Duplicate constructor signature for type '{extDecl.ExtendedTypeName}'.", DiagnosticIds.DuplicateConstructorSignatureForType);
 				continue;
 			}
 
@@ -645,7 +636,7 @@ internal sealed class ExtensionRegistrar(
 				{
 					if (!context.Conformance.TryGetValue(extDecl.ExtendedTypeName, out var ifaces) || !ifaces.Contains(consIface.Name))
 						context.Diagnostics.Report(currentFileContext, extDecl.Span,
-							$"Type '{extDecl.ExtendedTypeName}' does not satisfy the requires-clause '{interfaceDecl.Constraint}' of interface '{extDecl.ConformsTo}': it does not conform to interface '{consIface.Name}'.");
+							$"Type '{extDecl.ExtendedTypeName}' does not satisfy the requires-clause '{interfaceDecl.Constraint}' of interface '{extDecl.ConformsTo}': it does not conform to interface '{consIface.Name}'.", DiagnosticIds.TypeDoesNotSatisfyTheRequiresClauseOfInterfaceItDoesNotConfo);
 					break;
 				}
 			case ProtocolTypeSymbol consProto:
@@ -658,14 +649,14 @@ internal sealed class ExtensionRegistrar(
 					{
 						if (!providedNames.Contains(required))
 							context.Diagnostics.Report(currentFileContext, extDecl.Span,
-								$"Type '{extDecl.ExtendedTypeName}' does not satisfy the requires-clause '{interfaceDecl.Constraint}' of interface '{extDecl.ConformsTo}': missing protocol member '{required}'.");
+								$"Type '{extDecl.ExtendedTypeName}' does not satisfy the requires-clause '{interfaceDecl.Constraint}' of interface '{extDecl.ConformsTo}': missing protocol member '{required}'.", DiagnosticIds.TypeDoesNotSatisfyTheRequiresClauseOfInterfaceMissingProtoco);
 					}
 
 					break;
 				}
 			default:
 				context.Diagnostics.Report(currentFileContext, extDecl.Span,
-					$"Unknown contract '{interfaceDecl.Constraint}' in requires-clause of interface '{extDecl.ConformsTo}'.");
+					$"Unknown contract '{interfaceDecl.Constraint}' in requires-clause of interface '{extDecl.ConformsTo}'.", DiagnosticIds.UnknownContractInRequiresClauseOfInterface);
 				break;
 		}
 	}

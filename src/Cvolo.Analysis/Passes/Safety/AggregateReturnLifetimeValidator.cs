@@ -52,7 +52,7 @@ internal sealed class AggregateReturnLifetimeValidator(
 			if (_isDanglingTarget(target, scope))
 			{
 				context.Diagnostics.Report(context.CurrentUnit!.Context, span,
-					$"Cannot return value: reference '{target}' targets local variable '{_resolveUltimateTarget(target, scope)}' (dangling reference)");
+					$"Cannot return value: reference '{target}' targets local variable '{_resolveUltimateTarget(target, scope)}' (dangling reference)", DiagnosticIds.CannotReturnValueReferenceTargetsLocalVariableDanglingRefere);
 				return;
 			}
 		}

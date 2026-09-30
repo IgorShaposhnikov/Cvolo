@@ -111,20 +111,20 @@ internal sealed class AttributeValidator(BindingContext context)
 
 			if (!seen.Add(key))
 			{
-				ReportDiagnostic(attr, $"Duplicate attribute '[{key}]'.");
+				ReportDiagnostic(attr, $"Duplicate attribute '[{key}]'.", DiagnosticIds.DuplicateAttribute);
 				continue;
 			}
 
 			var (targets, contexts) = IntrinsicAttributes[key];
 			if (!targets.Contains(syntacticTarget))
 			{
-				ReportDiagnostic(attr, $"Attribute '[{key}]' cannot be applied to {syntacticTarget.ToLowerInvariant()} declarations.");
+				ReportDiagnostic(attr, $"Attribute '[{key}]' cannot be applied to {syntacticTarget.ToLowerInvariant()} declarations.", DiagnosticIds.AttributeCannotBeAppliedToDeclarations);
 				continue;
 			}
 
 			if (!contexts.Contains(safetyTier))
 			{
-				ReportDiagnostic(attr, $"Attribute '[{key}]' cannot be applied in {safetyTier} context.");
+				ReportDiagnostic(attr, $"Attribute '[{key}]' cannot be applied in {safetyTier} context.", DiagnosticIds.AttributeCannotBeAppliedInContext);
 				continue;
 			}
 
@@ -260,7 +260,7 @@ internal sealed class AttributeValidator(BindingContext context)
 		if (attr.Arguments.Count == 1 && attr.Arguments[0] is StringLiteralExpressionSyntax literal)
 			return literal.Value;
 
-		ReportDiagnostic(attr, "Attribute '[ExposeName]' requires exactly one string literal argument naming the exported symbol.");
+		ReportDiagnostic(attr, "Attribute '[ExposeName]' requires exactly one string literal argument naming the exported symbol.", DiagnosticIds.AttributeExposeNameRequiresExactlyOneStringLiteralArgumentNa);
 		return null;
 	}
 
@@ -281,7 +281,7 @@ internal sealed class AttributeValidator(BindingContext context)
 			var expr = attr.Arguments[i];
 			if (expr is not StringLiteralExpressionSyntax lit)
 			{
-				ReportDiagnostic(attr, "Attribute '[LibraryImport]' arguments must be string literals (the library name, then optional 'win'/'linux'/'mac' native paths).");
+				ReportDiagnostic(attr, "Attribute '[LibraryImport]' arguments must be string literals (the library name, then optional 'win'/'linux'/'mac' native paths).", DiagnosticIds.AttributeLibraryImportArgumentsMustBeStringLiteralsTheLibrar);
 				continue;
 			}
 
@@ -289,7 +289,7 @@ internal sealed class AttributeValidator(BindingContext context)
 			{
 				if (libraryName is not null)
 				{
-					ReportDiagnostic(attr, "Attribute '[LibraryImport]' accepts at most one positional argument: the library name.");
+					ReportDiagnostic(attr, "Attribute '[LibraryImport]' accepts at most one positional argument: the library name.", DiagnosticIds.AttributeLibraryImportAcceptsAtMostOnePositionalArgumentTheL);
 					continue;
 				}
 
@@ -309,7 +309,7 @@ internal sealed class AttributeValidator(BindingContext context)
 						macPath = lit.Value;
 						break;
 					default:
-						ReportDiagnostic(attr, $"Unknown [LibraryImport] named argument '{argName}'. Supported names are 'win', 'linux' and 'mac'.");
+						ReportDiagnostic(attr, $"Unknown [LibraryImport] named argument '{argName}'. Supported names are 'win', 'linux' and 'mac'.", DiagnosticIds.UnknownLibraryImportNamedArgumentSupportedNamesAreWinLinuxAn);
 						break;
 				}
 			}
@@ -325,7 +325,7 @@ internal sealed class AttributeValidator(BindingContext context)
 	{
 		if (attr.Arguments.Count != 1 || attr.Arguments[0] is not StringLiteralExpressionSyntax literal)
 		{
-			ReportDiagnostic(attr, "Attribute '[ImportName]' requires exactly one string literal argument naming the native symbol.");
+			ReportDiagnostic(attr, "Attribute '[ImportName]' requires exactly one string literal argument naming the native symbol.", DiagnosticIds.AttributeImportNameRequiresExactlyOneStringLiteralArgumentNa);
 			return null;
 		}
 
@@ -348,7 +348,7 @@ internal sealed class AttributeValidator(BindingContext context)
 			if (attr.Arguments.Count == 1 && attr.Arguments[0] is StringLiteralExpressionSyntax strLit)
 				return (true, strLit.Value);
 
-			ReportDiagnostic(attr, "Attribute '[MustUse]' expects at most one string literal argument.");
+			ReportDiagnostic(attr, "Attribute '[MustUse]' expects at most one string literal argument.", DiagnosticIds.AttributeMustUseExpectsAtMostOneStringLiteralArgument);
 			return (true, null);
 		}
 
@@ -362,14 +362,14 @@ internal sealed class AttributeValidator(BindingContext context)
 	{
 		if (attr.Arguments.Count != 1 || attr.Arguments[0] is not StringLiteralExpressionSyntax literal)
 		{
-			ReportDiagnostic(attr, "Attribute '[SuppressWarning]' requires exactly one string literal argument.");
+			ReportDiagnostic(attr, "Attribute '[SuppressWarning]' requires exactly one string literal argument.", DiagnosticIds.AttributeSuppressWarningRequiresExactlyOneStringLiteralArgum);
 			return;
 		}
 
 		var warningId = literal.Value;
 		if (!KnownWarningIds.Contains(warningId))
 		{
-			ReportDiagnostic(attr, $"Unknown warning id '{warningId}'.");
+			ReportDiagnostic(attr, $"Unknown warning id '{warningId}'.", DiagnosticIds.UnknownWarningId);
 			return;
 		}
 
@@ -392,15 +392,6 @@ internal sealed class AttributeValidator(BindingContext context)
 		}
 
 		return false;
-	}
-
-	/// <summary>
-	/// Reports an attribute diagnostic without a dedicated diagnostic id in the current source file.
-	/// </summary>
-	private void ReportDiagnostic(SyntaxNode node, string message)
-	{
-		var currentFileContext = context.FileContexts[context.CurrentUnit!];
-		context.Diagnostics.Report(currentFileContext, node.Span, message);
 	}
 
 	/// <summary>

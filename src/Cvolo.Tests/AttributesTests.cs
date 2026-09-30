@@ -192,7 +192,7 @@ public sealed class AttributesTests : CompilerTestBase
 		var fileName = "Attributes/Tbaa/TbaaUnsafeSuppressed.cvl";
 		var (exitCode, stdout, stderr) = RunCompiler(fileName, "--llvm", "--emit-ir", "-O0");
 		AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
-		Assert.DoesNotContain("!tbaa", stdout.Replace("\r\n", "\n"));
+		AssertNoTbaaInFunction(stdout, "Poke");
 
 		(exitCode, stdout, stderr) = RunCompiler(fileName);
 		AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
@@ -207,13 +207,45 @@ public sealed class AttributesTests : CompilerTestBase
 		var fileName = "Attributes/Tbaa/TbaaRefFieldSuppressed.cvl";
 		var (exitCode, stdout, stderr) = RunCompiler(fileName, "--llvm", "--emit-ir", "-O0");
 		AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
-		Assert.DoesNotContain("!tbaa", stdout.Replace("\r\n", "\n"));
+		AssertNoTbaaInFunction(stdout, "ReadId");
 
 		(exitCode, stdout, stderr) = RunCompiler(fileName);
 		AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
 		var (runCode, runStdout) = ExecuteBinary("TbaaRefFieldSuppressed", "Attributes/Tbaa");
 		Assert.Equal(0, runCode);
 		Assert.Contains("Answer: 3", runStdout);
+	}
+
+	/// <summary>
+	/// Asserts that no emitted LLVM function whose mangled symbol begins with
+	/// <paramref name="symbolPrefix"/> carries '!tbaa' metadata. The module always
+	/// contains standard-library code (for example the scalar 'Layout' constructor
+	/// and allocator helpers), which legitimately tags its own scalar fields, so the
+	/// suppression rules must be checked against the fixture's own functions rather
+	/// than the whole module.
+	/// </summary>
+	private static void AssertNoTbaaInFunction(string ir, string symbolPrefix)
+	{
+		var prefix = "@" + symbolPrefix;
+		string? current = null;
+		var sawFunction = false;
+
+		foreach (var line in ir.Replace("\r\n", "\n").Split('\n'))
+		{
+			if (line.TrimStart().StartsWith("define", StringComparison.Ordinal))
+			{
+				var at = line.IndexOf('@', StringComparison.Ordinal);
+				current = at >= 0 ? line[at..] : null;
+			}
+
+			if (current is null || !current.StartsWith(prefix, StringComparison.Ordinal))
+				continue;
+
+			sawFunction = true;
+			Assert.DoesNotContain("!tbaa", line);
+		}
+
+		Assert.True(sawFunction, $"Expected the emitted IR to define a function beginning with '{prefix}'.");
 	}
 
 	[Fact]

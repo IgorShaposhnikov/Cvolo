@@ -60,7 +60,7 @@ internal sealed class UnboundValidator(
 			return;
 
 		context.Diagnostics.Report(context.CurrentUnit!.Context, assignment.Span,
-			$"Reference cannot escape unbound scope: cannot assign local reference to global variable '{_getBaseIdentifierName(assignment.Left) ?? destination.Name}'");
+			$"Reference cannot escape unbound scope: cannot assign local reference to global variable '{_getBaseIdentifierName(assignment.Left) ?? destination.Name}'", DiagnosticIds.ReferenceCannotEscapeUnboundScopeCannotAssignLocalReferenceT);
 	}
 
 	/// <summary>
@@ -80,7 +80,7 @@ internal sealed class UnboundValidator(
 		{
 			var baseName = _getBaseIdentifierName(member.Expression) ?? "?";
 			context.Diagnostics.Report(context.CurrentUnit!.Context, assignment.Span,
-				$"Cannot assign to reference field '{mutableReferenceField}' of variable '{baseName}' in safe code. Use an 'unbound' block or function to modify structural reference fields.");
+				$"Cannot assign to reference field '{mutableReferenceField}' of variable '{baseName}' in safe code. Use an 'unbound' block or function to modify structural reference fields.", DiagnosticIds.CannotAssignToReferenceFieldOfVariableInSafeCodeUseAnUnbound);
 		}
 
 		// CVL1035 is intentionally checked here as well as during member traversal, preserving
@@ -97,7 +97,7 @@ internal sealed class UnboundValidator(
 		{
 			var baseName = _getBaseIdentifierName(member.Expression) ?? "?";
 			context.Diagnostics.Report(context.CurrentUnit!.Context, assignment.Span,
-				$"Reference cannot escape unbound scope: cannot assign local reference to reference field '{referenceField}' of non-local variable '{baseName}'");
+				$"Reference cannot escape unbound scope: cannot assign local reference to reference field '{referenceField}' of non-local variable '{baseName}'", DiagnosticIds.ReferenceCannotEscapeUnboundScopeCannotAssignLocalReferenceT2);
 		}
 	}
 

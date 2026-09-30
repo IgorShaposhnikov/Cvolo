@@ -132,7 +132,7 @@ internal sealed class ReferenceLifetimeAnalyzer(
 		if (leftSymbol.IsGlobal && rightSymbol.Origin != OriginKind.Global)
 		{
 			context.Diagnostics.Report(context.CurrentUnit!.Context, span,
-				$"Cannot assign {rightSymbol.Origin.ToString().ToLower()}-origin reference to global variable '{left.Name}': only global-origin references may be stored in globals");
+				$"Cannot assign {rightSymbol.Origin.ToString().ToLower()}-origin reference to global variable '{left.Name}': only global-origin references may be stored in globals", DiagnosticIds.CannotAssignOriginReferenceToGlobalVariableOnlyGlobalOriginR);
 		}
 	}
 

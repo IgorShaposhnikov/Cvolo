@@ -5,6 +5,7 @@ using Cvolo.Core.AST.Declarations;
 using Cvolo.Core.AST.Expressions;
 using Cvolo.Core.AST.Statements;
 
+using Cvolo.Core.Diagnostics;
 namespace Cvolo.Analysis.Passes;
 
 /// <summary>
@@ -117,7 +118,7 @@ internal sealed class DefiniteAssignmentAnalyzer(BindingContext context)
 				if (symbol != null && !symbol.IsInitialized)
 				{
 					var currentFileContext = context.FileContexts[context.CurrentUnit!];
-					context.Diagnostics.Report(currentFileContext, id.Span, $"Use of possibly-uninitialized variable '{id.Name}'");
+					context.Diagnostics.Report(currentFileContext, id.Span, $"Use of possibly-uninitialized variable '{id.Name}'", DiagnosticIds.UseOfPossiblyUninitializedVariable);
 				}
 				break;
 

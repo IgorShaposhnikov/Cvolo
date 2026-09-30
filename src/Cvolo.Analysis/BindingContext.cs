@@ -525,7 +525,7 @@ public sealed class BindingContext
 						else
 						{
 							var currentFileContext = FileContexts[CurrentUnit!];
-							Diagnostics.Report(currentFileContext, new TextSpan(0, 0), $"Generic parameter '{paramName}' does not have a default value and must be specified");
+							Diagnostics.Report(currentFileContext, new TextSpan(0, 0), $"Generic parameter '{paramName}' does not have a default value and must be specified", DiagnosticIds.GenericParameterDoesNotHaveADefaultValueAndMustBeSpecified);
 							return null;
 						}
 					}
@@ -571,7 +571,7 @@ public sealed class BindingContext
 						else
 						{
 							var currentFileContext = FileContexts[CurrentUnit!];
-							Diagnostics.Report(currentFileContext, new TextSpan(0, 0), $"Generic parameter '{paramName}' does not have a default value and must be specified");
+							Diagnostics.Report(currentFileContext, new TextSpan(0, 0), $"Generic parameter '{paramName}' does not have a default value and must be specified", DiagnosticIds.GenericParameterDoesNotHaveADefaultValueAndMustBeSpecified);
 							return null;
 						}
 					}
@@ -880,7 +880,7 @@ public sealed class BindingContext
 				if (!IsAliasReference(rawArg.Trim()))
 				{
 					var currentFileContext = FileContexts[CurrentUnit!];
-					Diagnostics.Report(currentFileContext, new TextSpan(0, 0), $"Unknown type argument '{rawArg.Trim()}'");
+					Diagnostics.Report(currentFileContext, new TextSpan(0, 0), $"Unknown type argument '{rawArg.Trim()}'", DiagnosticIds.UnknownTypeArgument);
 				}
 
 				return false;
@@ -1201,7 +1201,7 @@ public sealed class BindingContext
 			{
 				Diagnostics.Report(fileContext, decl.Span,
 					$"Type alias '{decl.Name}' expects {decl.GenericParameters.Count} type argument(s), but {typeArgs.Count} was given.",
-					diagnosticId: null);
+					DiagnosticIds.TypeAliasExpectsTypeArgumentSButWasGiven);
 			}
 
 			return null;
@@ -1271,7 +1271,7 @@ public sealed class BindingContext
 					if (contractType is null)
 					{
 						var currentFileContext = FileContexts[CurrentUnit!];
-						Diagnostics.Report(currentFileContext, templateDecl.Span, $"Unknown contract '{contractText}' in constraint for parameter '{paramName}'.");
+						Diagnostics.Report(currentFileContext, templateDecl.Span, $"Unknown contract '{contractText}' in constraint for parameter '{paramName}'.", DiagnosticIds.UnknownContractInConstraintForParameter);
 						continue;
 					}
 
@@ -1279,7 +1279,7 @@ public sealed class BindingContext
 					{
 						var currentFileContext = FileContexts[CurrentUnit!];
 						Diagnostics.Report(currentFileContext, templateDecl.Span,
-							$"Type '{concreteType.Name}' does not satisfy constraint '{contractText}' of generic parameter '{paramName}'.");
+							$"Type '{concreteType.Name}' does not satisfy constraint '{contractText}' of generic parameter '{paramName}'.", DiagnosticIds.TypeDoesNotSatisfyConstraintOfGenericParameter);
 					}
 				}
 			}
@@ -1347,7 +1347,7 @@ public sealed class BindingContext
 			if (fieldType is null)
 			{
 				var currentFileContext = FileContexts[CurrentUnit!];
-				Diagnostics.Report(currentFileContext, field.Span, $"Could not resolve field type '{substitutedTypeName}' during generic instantiation of '{instName}'");
+				Diagnostics.Report(currentFileContext, field.Span, $"Could not resolve field type '{substitutedTypeName}' during generic instantiation of '{instName}'", DiagnosticIds.CouldNotResolveFieldTypeDuringGenericInstantiationOf);
 				continue;
 			}
 
@@ -1910,7 +1910,7 @@ public sealed class BindingContext
 				if (fieldType is null)
 				{
 					var currentFileContext = FileContexts[CurrentUnit!];
-					Diagnostics.Report(currentFileContext, field.Span, $"Could not resolve field type '{substitutedTypeName}' during generic instantiation of '{instName}'");
+					Diagnostics.Report(currentFileContext, field.Span, $"Could not resolve field type '{substitutedTypeName}' during generic instantiation of '{instName}'", DiagnosticIds.CouldNotResolveFieldTypeDuringGenericInstantiationOf);
 					continue;
 				}
 			}

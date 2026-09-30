@@ -391,7 +391,7 @@ internal sealed class StatementValidator(
 		if (existing is not null)
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.Report(currentFileContext, forEach.Collection.Span, $"Variable '{forEach.ItemName}' is already declared in this scope");
+			context.Diagnostics.Report(currentFileContext, forEach.Collection.Span, $"Variable '{forEach.ItemName}' is already declared in this scope", DiagnosticIds.VariableIsAlreadyDeclaredInThisScope);
 		}
 
 		bool isMutable = forEach.BindingKind == ForEachVariableKind.Var || forEach.BindingKind == ForEachVariableKind.RefVar;
@@ -544,7 +544,7 @@ internal sealed class StatementValidator(
 		if (existing is not null)
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.Report(currentFileContext, varDecl.Span, $"Variable '{varDecl.Name}' is already declared in this scope");
+			context.Diagnostics.Report(currentFileContext, varDecl.Span, $"Variable '{varDecl.Name}' is already declared in this scope", DiagnosticIds.VariableIsAlreadyDeclaredInThisScope);
 		}
 
 		TypeSymbol? resolvedType = null;
@@ -599,7 +599,7 @@ internal sealed class StatementValidator(
 			if (resolvedType is null)
 			{
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
-				context.Diagnostics.Report(currentFileContext, varDecl.Span, "Reference type inference requires an initializer");
+				context.Diagnostics.Report(currentFileContext, varDecl.Span, "Reference type inference requires an initializer", DiagnosticIds.ReferenceTypeInferenceRequiresAnInitializer);
 				return;
 			}
 
@@ -617,7 +617,7 @@ internal sealed class StatementValidator(
 			if (resolvedType is null && varDecl.Type.Contains('[') && !varDecl.Type.Contains("[]"))
 			{
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
-				context.Diagnostics.Report(currentFileContext, varDecl.Span, $"Cannot resolve type '{varDecl.Type}'.");
+				context.Diagnostics.Report(currentFileContext, varDecl.Span, $"Cannot resolve type '{varDecl.Type}'.", DiagnosticIds.CannotResolveType);
 			}
 
 			var initializerType = declaredDelegateType is null && varDecl.Initializer != null ? GetExpressionType(varDecl.Initializer, scope) : null;
@@ -669,7 +669,7 @@ internal sealed class StatementValidator(
 					}
 					else
 					{
-						context.Diagnostics.Report(currentFileContext, varDecl.Span, $"Cannot initialize variable of type '{resolvedType.Name}' with value of type '{initializerType.Name}'");
+						context.Diagnostics.Report(currentFileContext, varDecl.Span, $"Cannot initialize variable of type '{resolvedType.Name}' with value of type '{initializerType.Name}'", DiagnosticIds.CannotInitializeVariableOfTypeWithValueOfType);
 					}
 				}
 			}
@@ -701,7 +701,7 @@ internal sealed class StatementValidator(
 		if (resolvedType is ArrayTypeSymbol stackArray && StackByteSize(stackArray) > 1_048_576)
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.Report(currentFileContext, varDecl.Span, "Array size exceeds stack allocation safety threshold");
+			context.Diagnostics.Report(currentFileContext, varDecl.Span, "Array size exceeds stack allocation safety threshold", DiagnosticIds.ArraySizeExceedsStackAllocationSafetyThreshold);
 		}
 
 		var varSymbol = new VariableSymbol(varDecl.Name, resolvedType, varDecl.IsMutable)
@@ -775,7 +775,7 @@ internal sealed class StatementValidator(
 			{
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
 				context.Diagnostics.Report(currentFileContext, ret.Expression.Span,
-					$"Union '{retUnion.Name}' is {Classification.CalculateByteSize(retUnion)} bytes. Returning by value is forbidden for unions larger than 16 bytes; return a 'ref'/'refvar' instead.");
+					$"Union '{retUnion.Name}' is {Classification.CalculateByteSize(retUnion)} bytes. Returning by value is forbidden for unions larger than 16 bytes; return a 'ref'/'refvar' instead.", DiagnosticIds.UnionIsBytesReturningByValueIsForbiddenForUnionsLargerThan16);
 				return;
 			}
 
@@ -790,11 +790,11 @@ internal sealed class StatementValidator(
 					var currentFileContext = context.FileContexts[context.CurrentUnit!];
 					if (_validation.UnsafeDepth > 0 && actualType.Equals(TypeSymbol.Null))
 					{
-						context.Diagnostics.Report(currentFileContext, ret.Expression.Span, "The 'null' literal requires a pointer type (Option or raw pointer).");
+						context.Diagnostics.Report(currentFileContext, ret.Expression.Span, "The 'null' literal requires a pointer type (Option or raw pointer).", DiagnosticIds.TheNullLiteralRequiresAPointerTypeOptionOrRawPointer);
 					}
 					else
 					{
-						context.Diagnostics.Report(currentFileContext, ret.Expression.Span, $"Function '{currentFunc.Name}' expects return type '{expectedType.Name}' but found '{actualType.Name}'");
+						context.Diagnostics.Report(currentFileContext, ret.Expression.Span, $"Function '{currentFunc.Name}' expects return type '{expectedType.Name}' but found '{actualType.Name}'", DiagnosticIds.FunctionExpectsReturnTypeButFound);
 					}
 				}
 			}

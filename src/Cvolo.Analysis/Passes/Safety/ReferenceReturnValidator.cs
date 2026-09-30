@@ -6,6 +6,7 @@ using Cvolo.Core.AST.Declarations;
 using Cvolo.Core.AST.Expressions;
 using Cvolo.Core.AST.Statements;
 
+using Cvolo.Core.Diagnostics;
 namespace Cvolo.Analysis.Passes.Safety;
 
 /// <summary>
@@ -67,7 +68,7 @@ internal sealed class ReferenceReturnValidator(
 		{
 			if (IsDanglingTarget(bid.Name, scope))
 			{
-				context.Diagnostics.Report(context.CurrentUnit!.Context, ret.Expression.Span, $"Cannot return reference to local variable '{bid.Name}' (dangling reference)");
+				context.Diagnostics.Report(context.CurrentUnit!.Context, ret.Expression.Span, $"Cannot return reference to local variable '{bid.Name}' (dangling reference)", DiagnosticIds.CannotReturnReferenceToLocalVariableDanglingReference);
 			}
 
 			return;
@@ -78,14 +79,14 @@ internal sealed class ReferenceReturnValidator(
 		{
 			if (scope.Lookup(id.Name) is VariableSymbol idSym && idSym.Type is PointerTypeSymbol && IsDanglingTarget(id.Name, scope))
 			{
-				context.Diagnostics.Report(context.CurrentUnit!.Context, ret.Expression.Span, $"Cannot return reference to local variable '{id.Name}' (dangling reference)");
+				context.Diagnostics.Report(context.CurrentUnit!.Context, ret.Expression.Span, $"Cannot return reference to local variable '{id.Name}' (dangling reference)", DiagnosticIds.CannotReturnReferenceToLocalVariableDanglingReference);
 			}
 
 			// Case 3: return by value of a variable whose fields are currently borrowed
 			if (_hasParentLock(id.Name))
 			{
 				context.Diagnostics.Report(context.CurrentUnit!.Context, ret.Expression.Span,
-					$"Cannot return '{id.Name}' by value while a field borrow is still active");
+					$"Cannot return '{id.Name}' by value while a field borrow is still active", DiagnosticIds.CannotReturnByValueWhileAFieldBorrowIsStillActive);
 			}
 
 			// Case 4: return by value of a struct whose ref fields point to locals (§3C)

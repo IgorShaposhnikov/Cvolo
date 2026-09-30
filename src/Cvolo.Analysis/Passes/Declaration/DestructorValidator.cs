@@ -5,6 +5,7 @@ using Cvolo.Analysis.Symbols.Structs;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
 
+using Cvolo.Core.Diagnostics;
 namespace Cvolo.Analysis.Passes.Declaration;
 
 /// <summary>
@@ -32,7 +33,7 @@ internal sealed class DestructorValidator(BindingContext context)
 			context.Diagnostics.Report(
 				currentFileContext,
 				method.NameSpan,
-				$"Destructor name '{method.Name}' does not match extended type '{extendedTypeName}'.");
+				$"Destructor name '{method.Name}' does not match extended type '{extendedTypeName}'.", DiagnosticIds.DestructorNameDoesNotMatchExtendedType);
 			return false;
 		}
 
@@ -42,7 +43,7 @@ internal sealed class DestructorValidator(BindingContext context)
 			context.Diagnostics.Report(
 				currentFileContext,
 				method.NameSpan,
-				$"Duplicate destructor definition for type '{extendedTypeName}'.");
+				$"Duplicate destructor definition for type '{extendedTypeName}'.", DiagnosticIds.DuplicateDestructorDefinitionForType);
 			return false;
 		}
 
@@ -92,7 +93,7 @@ internal sealed class DestructorValidator(BindingContext context)
 				if (DestructorDepth(structType, new HashSet<string>()) > MaxDestructorNestingDepth)
 				{
 					var currentFileContext = context.FileContexts[context.CurrentUnit!];
-					context.Diagnostics.Report(currentFileContext, structDecl.Span, CyclicDestructorDepthError);
+					context.Diagnostics.Report(currentFileContext, structDecl.Span, CyclicDestructorDepthError, DiagnosticIds.CyclicDestructorDepthError);
 				}
 			}
 		}

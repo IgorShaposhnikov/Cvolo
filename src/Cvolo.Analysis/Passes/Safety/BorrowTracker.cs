@@ -97,7 +97,7 @@ internal sealed class BorrowTracker(BindingContext context, Func<ExpressionSynta
 				if (isIndexBorrow && _parentLocks.ContainsKey(borrowedName))
 				{
 					context.Diagnostics.Report(context.CurrentUnit!.Context, varDecl.Span,
-						$"'{borrowedName}' is already borrowed; cannot borrow multiple elements of the same array");
+						$"'{borrowedName}' is already borrowed; cannot borrow multiple elements of the same array", DiagnosticIds.IsAlreadyBorrowedCannotBorrowMultipleElementsOfTheSameArray);
 				}
 
 				// Exclusive Mutability: check parent-level conflicts.
@@ -105,7 +105,7 @@ internal sealed class BorrowTracker(BindingContext context, Func<ExpressionSynta
 				if (conflicts.Count > 0 && (isMutable || conflicts.Any(c => c.IsMutable)))
 				{
 					context.Diagnostics.Report(context.CurrentUnit!.Context, varDecl.Span,
-						$"Cannot borrow '{borrowedName}' because an incompatible borrow is already active");
+						$"Cannot borrow '{borrowedName}' because an incompatible borrow is already active", DiagnosticIds.CannotBorrowBecauseAnIncompatibleBorrowIsAlreadyActive);
 				}
 
 				RegisterBorrow(varDecl.Name, borrowedName, isMutable, varDecl.Span);
@@ -143,7 +143,7 @@ internal sealed class BorrowTracker(BindingContext context, Func<ExpressionSynta
 		if (name != null && _parentLocks.ContainsKey(name))
 		{
 			context.Diagnostics.Report(context.CurrentUnit!.Context, expression.Span,
-				$"Cannot {verb} '{name}' while a field borrow is still active");
+				$"Cannot {verb} '{name}' while a field borrow is still active", DiagnosticIds.CannotWhileAFieldBorrowIsStillActive);
 		}
 	}
 

@@ -3,6 +3,7 @@ using Cvolo.Analysis.Symbols.Base;
 using Cvolo.Analysis.Symbols.Structs;
 using Cvolo.Core.AST.Expressions;
 
+using Cvolo.Core.Diagnostics;
 namespace Cvolo.Analysis.Resolution;
 
 /// <summary>
@@ -120,7 +121,7 @@ internal sealed class CallResolver(BindingContext context, OverloadResolver over
 			context.Diagnostics.Report(
 				currentFileContext,
 				call.ArgumentListSpan,
-				$"Delegate '{callableDelegate.Name}' expects {callableDelegate.Parameters.Count} argument(s) but received {call.Arguments.Count}");
+				$"Delegate '{callableDelegate.Name}' expects {callableDelegate.Parameters.Count} argument(s) but received {call.Arguments.Count}", DiagnosticIds.DelegateExpectsArgumentSButReceived);
 		}
 
 		return true;
@@ -147,7 +148,7 @@ internal sealed class CallResolver(BindingContext context, OverloadResolver over
 		if (argumentTypes.Count != 0)
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.Report(currentFileContext, call.Span, "Name expects no arguments.");
+			context.Diagnostics.Report(currentFileContext, call.Span, "Name expects no arguments.", DiagnosticIds.NameExpectsNoArguments);
 		}
 
 		return new FunctionSymbol(
@@ -180,7 +181,7 @@ internal sealed class CallResolver(BindingContext context, OverloadResolver over
 			context.Diagnostics.Report(
 				currentFileContext,
 				call.Span,
-				$"HasFlag expects exactly one argument of the same [Flags] enum type '{flagsEnum.Name}'.");
+				$"HasFlag expects exactly one argument of the same [Flags] enum type '{flagsEnum.Name}'.", DiagnosticIds.HasFlagExpectsExactlyOneArgumentOfTheSameFlagsEnumType);
 		}
 
 		var receiverParameter = new ParameterSymbol("this", new PointerTypeSymbol(flagsEnum, isMutable: false));

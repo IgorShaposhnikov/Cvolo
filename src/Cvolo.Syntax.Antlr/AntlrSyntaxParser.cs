@@ -602,13 +602,13 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 
 					if (parameters.Count > 0)
 					{
-						ReportParseError(param, "Receiver parameter ('refvar this' / 'ref this') must be the first parameter of the method.");
+						ReportParseError(param, "Receiver parameter ('refvar this' / 'ref this') must be the first parameter of the method.", DiagnosticIds.ReceiverParameterRefvarThisRefThisMustBeTheFirstParameterOfT);
 						continue;
 					}
 
 					if (receiverName != "this")
 					{
-						ReportParseError(param, $"Receiver parameter must be named 'this' (found '{receiverName}').");
+						ReportParseError(param, $"Receiver parameter must be named 'this' (found '{receiverName}').", DiagnosticIds.ReceiverParameterMustBeNamedThisFound);
 						continue;
 					}
 
@@ -674,12 +674,6 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		contract = ReceiverContract.None;
 		receiverName = "";
 		return false;
-	}
-
-	private void ReportParseError(Antlr4.Runtime.ParserRuleContext context, string message)
-	{
-		if (_compilationContext is not null)
-			_diagnostics.Report(_compilationContext, SpanOf(context), message);
 	}
 
 	private void ReportParseError(Antlr4.Runtime.ParserRuleContext context, string message, string diagnosticId)
@@ -1686,7 +1680,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		{
 			var refTarget = GetTypeName(refVarTypeCtx.type());
 			_diagnostics.Report(_compilationContext, SpanOf(context),
-				$"The mutable reference binding form 'refvar' cannot be combined with an explicit item type: 'foreach (refvar {refTarget} {itemName} ...)' is not allowed.");
+				$"The mutable reference binding form 'refvar' cannot be combined with an explicit item type: 'foreach (refvar {refTarget} {itemName} ...)' is not allowed.", DiagnosticIds.TheMutableReferenceBindingFormRefvarCannotBeCombinedWithAnEx);
 			return new ForEachStatementSyntax(SpanOf(context), ForEachVariableKind.RefVar, null, itemName,
 				BuildExpression(context.expression()), BuildBlockStatement(context.blockStatement()), label);
 		}
@@ -1695,7 +1689,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		{
 			var refTarget = GetTypeName(readOnlyRefCtx.type());
 			_diagnostics.Report(_compilationContext, SpanOf(context),
-				$"The mutable reference binding form 'refvar' cannot be combined with an explicit item type: 'foreach (refvar {refTarget} {itemName} ...)' is not allowed.");
+				$"The mutable reference binding form 'refvar' cannot be combined with an explicit item type: 'foreach (refvar {refTarget} {itemName} ...)' is not allowed.", DiagnosticIds.TheMutableReferenceBindingFormRefvarCannotBeCombinedWithAnEx);
 			return new ForEachStatementSyntax(SpanOf(context), ForEachVariableKind.RefVar, null, itemName,
 				BuildExpression(context.expression()), BuildBlockStatement(context.blockStatement()), label);
 		}
@@ -1854,7 +1848,15 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				return;
 			}
 
-			diagnostics.Report(context, span, $"({line},{charPositionInLine}): {SimplifyMessage(offendingSymbol, msg)}");
+			var simplified = SimplifyMessage(offendingSymbol, msg);
+			var diagnosticId = offendingSymbol is { Type: TokenConstants.EOF }
+				? DiagnosticIds.UnexpectedEndOfFile
+				: simplified.StartsWith("unexpected token", StringComparison.Ordinal)
+					? DiagnosticIds.UnexpectedToken
+					: simplified.StartsWith("missing ", StringComparison.Ordinal)
+						? DiagnosticIds.ExpectedToken
+						: DiagnosticIds.Diagnostic;
+			diagnostics.Report(context, span, $"({line},{charPositionInLine}): {simplified}", diagnosticId);
 		}
 
 		private static string SimplifyMessage(IToken? offendingSymbol, string message)
@@ -1977,7 +1979,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				{
 					if (TryGetReceiverContract(param, out _, out _))
 					{
-						ReportParseError(param, "Receiver parameter ('refvar this' / 'ref this') is only allowed on extension methods.");
+						ReportParseError(param, "Receiver parameter ('refvar this' / 'ref this') is only allowed on extension methods.", DiagnosticIds.ReceiverParameterRefvarThisRefThisIsOnlyAllowedOnExtensionMe);
 						continue;
 					}
 
@@ -2117,7 +2119,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				{
 					if (TryGetReceiverContract(param, out _, out _))
 					{
-						ReportParseError(param, "Receiver parameter ('refvar this' / 'ref this') is only allowed on extension methods.");
+						ReportParseError(param, "Receiver parameter ('refvar this' / 'ref this') is only allowed on extension methods.", DiagnosticIds.ReceiverParameterRefvarThisRefThisIsOnlyAllowedOnExtensionMe);
 						continue;
 					}
 
@@ -2158,7 +2160,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				{
 					if (TryGetReceiverContract(param, out _, out _))
 					{
-						ReportParseError(param, "Receiver parameter ('refvar this' / 'ref this') is only allowed on extension methods.");
+						ReportParseError(param, "Receiver parameter ('refvar this' / 'ref this') is only allowed on extension methods.", DiagnosticIds.ReceiverParameterRefvarThisRefThisIsOnlyAllowedOnExtensionMe);
 						continue;
 					}
 

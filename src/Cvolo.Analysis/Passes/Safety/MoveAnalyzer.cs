@@ -26,7 +26,7 @@ internal sealed class MoveAnalyzer(
 	public void VerifyReadable(IdentifierExpressionSyntax identifier, SymbolTable scope)
 	{
 		if ((scope.Lookup(identifier.Name) as VariableSymbol ?? context.ResolveGlobalReference(identifier.Name, out _)) is { IsMoved: true })
-			context.Diagnostics.Report(context.CurrentUnit!.Context, identifier.Span, $"Use of moved variable '{identifier.Name}'");
+			context.Diagnostics.Report(context.CurrentUnit!.Context, identifier.Span, $"Use of moved variable '{identifier.Name}'", DiagnosticIds.UseOfMovedVariable);
 	}
 
 	/// <summary>Returns whether the type uses move-only resource semantics.</summary>

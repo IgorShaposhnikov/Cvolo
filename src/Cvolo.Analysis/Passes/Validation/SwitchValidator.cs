@@ -60,7 +60,7 @@ internal sealed class SwitchValidator(
 		if (expressionType is not UnionTypeSymbol unionType)
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.Report(currentFileContext, statement.Expression.Span, "Switch statement target must be a union type.");
+			context.Diagnostics.Report(currentFileContext, statement.Expression.Span, "Switch statement target must be a union type.", DiagnosticIds.SwitchStatementTargetMustBeAUnionType);
 			return;
 		}
 
@@ -104,7 +104,7 @@ internal sealed class SwitchValidator(
 				if (variant is null)
 				{
 					var currentFileContext = context.FileContexts[context.CurrentUnit!];
-					context.Diagnostics.Report(currentFileContext, @case.Span, $"Union '{unionType.Name}' does not contain variant '{@case.VariantName}'");
+					context.Diagnostics.Report(currentFileContext, @case.Span, $"Union '{unionType.Name}' does not contain variant '{@case.VariantName}'", DiagnosticIds.UnionDoesNotContainVariant);
 					continue;
 				}
 
@@ -126,7 +126,7 @@ internal sealed class SwitchValidator(
 					if (variant.IsVoidVariant)
 					{
 						var currentFileContext = context.FileContexts[context.CurrentUnit!];
-						context.Diagnostics.Report(currentFileContext, @case.Span, $"Void variant '{@case.VariantName}' cannot carry a promoted variable.");
+						context.Diagnostics.Report(currentFileContext, @case.Span, $"Void variant '{@case.VariantName}' cannot carry a promoted variable.", DiagnosticIds.VoidVariantCannotCarryAPromotedVariable);
 						continue;
 					}
 
@@ -143,7 +143,7 @@ internal sealed class SwitchValidator(
 							context.Diagnostics.Report(
 								currentFileContext,
 								@case.Span,
-								$"Cannot pattern-match '{@case.VariantName} {@case.VariableName}' by value on a nullable reference option; switch on 'ref'/'refvar' to extract the reference safely.");
+								$"Cannot pattern-match '{@case.VariantName} {@case.VariableName}' by value on a nullable reference option; switch on 'ref'/'refvar' to extract the reference safely.", DiagnosticIds.CannotPatternMatchByValueOnANullableReferenceOptionSwitchOnR);
 							continue;
 						}
 						else
@@ -178,7 +178,7 @@ internal sealed class SwitchValidator(
 				if (!matchedVariants.Contains(variant.Name))
 				{
 					var currentFileContext = context.FileContexts[context.CurrentUnit!];
-					context.Diagnostics.Report(currentFileContext, statement.Span, $"Switch statement is not exhaustive. Missing case for variant '{variant.Name}'.");
+					context.Diagnostics.Report(currentFileContext, statement.Span, $"Switch statement is not exhaustive. Missing case for variant '{variant.Name}'.", DiagnosticIds.SwitchStatementIsNotExhaustiveMissingCaseForVariant);
 				}
 			}
 		}
@@ -207,7 +207,7 @@ internal sealed class SwitchValidator(
 				if (@case.VariableName is not null)
 				{
 					var currentFileContext = context.FileContexts[context.CurrentUnit!];
-					context.Diagnostics.Report(currentFileContext, @case.Span, "Enum variants cannot carry a promoted variable.");
+					context.Diagnostics.Report(currentFileContext, @case.Span, "Enum variants cannot carry a promoted variable.", DiagnosticIds.EnumVariantsCannotCarryAPromotedVariable);
 					continue;
 				}
 
@@ -216,7 +216,7 @@ internal sealed class SwitchValidator(
 				if (variant is null)
 				{
 					var currentFileContext = context.FileContexts[context.CurrentUnit!];
-					context.Diagnostics.Report(currentFileContext, @case.Span, $"Enum '{enumType.Name}' does not contain variant '{@case.VariantName}'");
+					context.Diagnostics.Report(currentFileContext, @case.Span, $"Enum '{enumType.Name}' does not contain variant '{@case.VariantName}'", DiagnosticIds.EnumDoesNotContainVariant);
 					continue;
 				}
 
@@ -239,7 +239,7 @@ internal sealed class SwitchValidator(
 				if (!matchedVariants.Contains(variant.Name))
 				{
 					var currentFileContext = context.FileContexts[context.CurrentUnit!];
-					context.Diagnostics.Report(currentFileContext, statement.Span, $"Switch statement is not exhaustive. Missing case for variant '{variant.Name}'.");
+					context.Diagnostics.Report(currentFileContext, statement.Span, $"Switch statement is not exhaustive. Missing case for variant '{variant.Name}'.", DiagnosticIds.SwitchStatementIsNotExhaustiveMissingCaseForVariant);
 				}
 			}
 		}
@@ -250,7 +250,7 @@ internal sealed class SwitchValidator(
 			context.Diagnostics.Report(
 				currentFileContext,
 				statement.Span,
-				$"[NonExhaustive] enum '{enumType.Name}' is consumed from another unit and requires an explicit 'default' or 'case _' branch.");
+				$"[NonExhaustive] enum '{enumType.Name}' is consumed from another unit and requires an explicit 'default' or 'case _' branch.", DiagnosticIds.NonExhaustiveEnumIsConsumedFromAnotherUnitAndRequiresAnExpli);
 		}
 
 		if (enumType.IsNonExhaustive
@@ -267,7 +267,7 @@ internal sealed class SwitchValidator(
 				context.Diagnostics.Report(
 					currentFileContext,
 					defaultCase.Span,
-					$"The 'default' branch of a switch over [NonExhaustive] enum '{enumType.Name}' must terminate with a 'return' but ends in non-terminating statement(s).");
+					$"The 'default' branch of a switch over [NonExhaustive] enum '{enumType.Name}' must terminate with a 'return' but ends in non-terminating statement(s).", DiagnosticIds.TheDefaultBranchOfASwitchOverNonExhaustiveEnumMustTerminateW);
 			}
 		}
 	}

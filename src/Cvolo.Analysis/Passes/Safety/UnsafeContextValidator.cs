@@ -50,7 +50,7 @@ internal sealed class UnsafeContextValidator(BindingContext context)
 			return;
 
 		context.Diagnostics.Report(context.CurrentUnit!.Context, span,
-			"Raw pointer variables cannot be declared outside unsafe context.");
+			"Raw pointer variables cannot be declared outside unsafe context.", DiagnosticIds.RawPointerVariablesCannotBeDeclaredOutsideUnsafeContext);
 	}
 
 	/// <summary>Rejects the null literal outside unsafe code, preserving CVL1104 behavior.</summary>
@@ -76,12 +76,12 @@ internal sealed class UnsafeContextValidator(BindingContext context)
 		if (unary.Operator == "*")
 		{
 			context.Diagnostics.Report(context.CurrentUnit!.Context, unary.Span,
-				"Cannot dereference outside unsafe context.");
+				"Cannot dereference outside unsafe context.", DiagnosticIds.CannotDereferenceOutsideUnsafeContext);
 		}
 		else if (unary.Operator == "&")
 		{
 			context.Diagnostics.Report(context.CurrentUnit!.Context, unary.Span,
-				"Cannot take address outside unsafe context.");
+				"Cannot take address outside unsafe context.", DiagnosticIds.CannotTakeAddressOutsideUnsafeContext);
 		}
 	}
 }

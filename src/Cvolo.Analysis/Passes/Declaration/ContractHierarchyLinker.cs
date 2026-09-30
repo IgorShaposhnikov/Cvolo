@@ -52,7 +52,7 @@ internal sealed class ContractHierarchyLinker(BindingContext context)
 			if (context.ResolveType(baseName) is not ProtocolTypeSymbol)
 			{
 				context.Diagnostics.Report(currentFileContext, protocolDecl.Span,
-					$"Unknown protocol '{baseName}' in base clause of protocol '{protocolDecl.Name}'.");
+					$"Unknown protocol '{baseName}' in base clause of protocol '{protocolDecl.Name}'.", DiagnosticIds.UnknownProtocolInBaseClauseOfProtocol);
 			}
 		}
 
@@ -108,7 +108,7 @@ internal sealed class ContractHierarchyLinker(BindingContext context)
 		if (!stack.Add(protoBase.Name))
 		{
 			context.Diagnostics.Report(context.FileContexts[context.CurrentUnit!], span,
-				$"Circular protocol inheritance involving '{baseName}'.");
+				$"Circular protocol inheritance involving '{baseName}'.", DiagnosticIds.CircularProtocolInheritanceInvolving);
 			return;
 		}
 
@@ -145,7 +145,7 @@ internal sealed class ContractHierarchyLinker(BindingContext context)
 			if (baseType is not (InterfaceTypeSymbol or ProtocolTypeSymbol))
 			{
 				context.Diagnostics.Report(currentFileContext, interfaceDecl.Span,
-					$"Unknown contract '{baseName}' in base clause of interface '{interfaceDecl.Name}'.");
+					$"Unknown contract '{baseName}' in base clause of interface '{interfaceDecl.Name}'.", DiagnosticIds.UnknownContractInBaseClauseOfInterface);
 			}
 		}
 	}

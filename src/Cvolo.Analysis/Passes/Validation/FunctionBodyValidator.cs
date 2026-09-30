@@ -52,7 +52,7 @@ internal sealed class FunctionBodyValidator(
 			if (!intrinsics.IsIntrinsicDeclaration(func))
 			{
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
-				context.Diagnostics.Report(currentFileContext, func.NameSpan, $"Function '{func.Name}' must declare a body unless decorated with '[Intrinsic]'.");
+				context.Diagnostics.Report(currentFileContext, func.NameSpan, $"Function '{func.Name}' must declare a body unless decorated with '[Intrinsic]'.", DiagnosticIds.FunctionMustDeclareABodyUnlessDecoratedWithIntrinsic);
 			}
 
 			return;
@@ -90,7 +90,7 @@ internal sealed class FunctionBodyValidator(
 				currentFileContext,
 				func.NameSpan,
 				$"Function '{func.Name}' is declared to return '{func.ReturnType}' but is missing a return statement."
-			);
+			, DiagnosticIds.FunctionIsDeclaredToReturnButIsMissingAReturnStatement);
 		}
 
 		validation.UnsafeDepth = baseUnsafeDepth;
@@ -164,7 +164,7 @@ internal sealed class FunctionBodyValidator(
 			if (!intrinsics.IsIntrinsicDeclaration(method))
 			{
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
-				context.Diagnostics.Report(currentFileContext, method.NameSpan, $"Method '{method.Name}' must declare a body unless decorated with '[Intrinsic]'.");
+				context.Diagnostics.Report(currentFileContext, method.NameSpan, $"Method '{method.Name}' must declare a body unless decorated with '[Intrinsic]'.", DiagnosticIds.MethodMustDeclareABodyUnlessDecoratedWithIntrinsic);
 			}
 
 			return;
@@ -188,7 +188,7 @@ internal sealed class FunctionBodyValidator(
 			{
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
 				context.Diagnostics.Report(currentFileContext, method.NameSpan,
-					$"Method '{method.Name}' must declare 'ref this' or 'refvar this' receiver in [StrictMutability] struct '{extendedTypeName}'.");
+					$"Method '{method.Name}' must declare 'ref this' or 'refvar this' receiver in [StrictMutability] struct '{extendedTypeName}'.", DiagnosticIds.MethodMustDeclareRefThisOrRefvarThisReceiverInStrictMutabili);
 			}
 		}
 
@@ -205,7 +205,7 @@ internal sealed class FunctionBodyValidator(
 			{
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
 				context.Diagnostics.Report(currentFileContext, method.NameSpan,
-					$"Extension method '{method.Name}' declares read-only 'ref this' receiver but mutates field(s) of '{extendedTypeName}'.");
+					$"Extension method '{method.Name}' declares read-only 'ref this' receiver but mutates field(s) of '{extendedTypeName}'.", DiagnosticIds.ExtensionMethodDeclaresReadOnlyRefThisReceiverButMutatesFiel);
 			}
 		}
 		else
@@ -304,7 +304,7 @@ internal sealed class FunctionBodyValidator(
 				currentFileContext,
 				method.NameSpan,
 				$"Method '{method.Name}' is declared to return '{method.ReturnType}' but is missing a return statement."
-			);
+			, DiagnosticIds.MethodIsDeclaredToReturnButIsMissingAReturnStatement);
 		}
 
 		// Restore original depth context
@@ -335,7 +335,7 @@ internal sealed class FunctionBodyValidator(
 			if (!intrinsics.IsIntrinsicDeclaration(method))
 			{
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
-				context.Diagnostics.Report(currentFileContext, method.NameSpan, $"Function '{method.Name}' must declare a body unless decorated with '[Intrinsic]'.");
+				context.Diagnostics.Report(currentFileContext, method.NameSpan, $"Function '{method.Name}' must declare a body unless decorated with '[Intrinsic]'.", DiagnosticIds.FunctionMustDeclareABodyUnlessDecoratedWithIntrinsic);
 			}
 
 			return;
@@ -363,7 +363,7 @@ internal sealed class FunctionBodyValidator(
 				currentFileContext,
 				method.NameSpan,
 				$"Function '{method.Name}' is declared to return '{method.ReturnType}' but is missing a return statement."
-			);
+			, DiagnosticIds.FunctionIsDeclaredToReturnButIsMissingAReturnStatement);
 		}
 
 		validation.UnsafeDepth = baseUnsafeDepth;

@@ -2,6 +2,7 @@ using Cvolo.Analysis.Symbols.Structs;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
 
+using Cvolo.Core.Diagnostics;
 namespace Cvolo.Analysis.Passes.Declaration;
 
 /// <summary>
@@ -67,7 +68,7 @@ internal sealed class EmbedLinker(BindingContext context)
 
 		if (context.GenericStructTemplates.ContainsKey(mangledName))
 		{
-			context.Diagnostics.Report(currentFileContext, decl.Span, $"Cannot use embed in generic struct template '{decl.Name}'.");
+			context.Diagnostics.Report(currentFileContext, decl.Span, $"Cannot use embed in generic struct template '{decl.Name}'.", DiagnosticIds.CannotUseEmbedInGenericStructTemplate);
 			flattened[mangledName] = ownFields;
 			return ownFields;
 		}
@@ -76,21 +77,21 @@ internal sealed class EmbedLinker(BindingContext context)
 		var baseType = context.ResolveType(embeddedName) as StructTypeSymbol;
 		if (baseType is null || !structDecls.ContainsKey(baseType.Name))
 		{
-			context.Diagnostics.Report(currentFileContext, decl.Span, $"Unknown struct '{embeddedName}' in embed clause of struct '{decl.Name}'.");
+			context.Diagnostics.Report(currentFileContext, decl.Span, $"Unknown struct '{embeddedName}' in embed clause of struct '{decl.Name}'.", DiagnosticIds.UnknownStructInEmbedClauseOfStruct);
 			flattened[mangledName] = ownFields;
 			return ownFields;
 		}
 
 		if (context.GenericStructTemplates.ContainsKey(baseType.Name))
 		{
-			context.Diagnostics.Report(currentFileContext, decl.Span, $"Cannot embed generic struct template '{embeddedName}' in struct '{decl.Name}'.");
+			context.Diagnostics.Report(currentFileContext, decl.Span, $"Cannot embed generic struct template '{embeddedName}' in struct '{decl.Name}'.", DiagnosticIds.CannotEmbedGenericStructTemplateInStruct);
 			flattened[mangledName] = ownFields;
 			return ownFields;
 		}
 
 		if (!stack.Add(baseType.Name))
 		{
-			context.Diagnostics.Report(currentFileContext, decl.Span, $"Circular embed clause involving struct '{decl.Name}'.");
+			context.Diagnostics.Report(currentFileContext, decl.Span, $"Circular embed clause involving struct '{decl.Name}'.", DiagnosticIds.CircularEmbedClauseInvolvingStruct);
 			flattened[mangledName] = ownFields;
 			return ownFields;
 		}
@@ -103,7 +104,7 @@ internal sealed class EmbedLinker(BindingContext context)
 		if (conflict is not null)
 		{
 			context.Diagnostics.Report(currentFileContext, decl.Span,
-				$"Field '{conflict.Name}' of struct '{decl.Name}' conflicts with embedded field from '{embeddedName}'.");
+				$"Field '{conflict.Name}' of struct '{decl.Name}' conflicts with embedded field from '{embeddedName}'.", DiagnosticIds.FieldOfStructConflictsWithEmbeddedFieldFrom);
 			flattened[mangledName] = ownFields;
 			return ownFields;
 		}

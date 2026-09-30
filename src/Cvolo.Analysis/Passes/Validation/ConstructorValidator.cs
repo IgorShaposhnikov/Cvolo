@@ -68,7 +68,7 @@ internal sealed class ConstructorValidator(
 					currentFileContext,
 					ctor.NameSpan,
 					$"Defensive initialization: constructor '{extendedTypeName}' does not initialize field '{field.Name}'."
-				);
+				, DiagnosticIds.DefensiveInitializationConstructorDoesNotInitializeField);
 			}
 		}
 	}
@@ -132,7 +132,7 @@ internal sealed class ConstructorValidator(
 				context.Diagnostics.Report(
 					currentFileContext,
 					ctor.ConstructorInitializerSpan ?? ctor.NameSpan,
-					$"Constructor '{ctor.StructName}' is not accessible from the current constructor.");
+					$"Constructor '{ctor.StructName}' is not accessible from the current constructor.", DiagnosticIds.ConstructorIsNotAccessibleFromTheCurrentConstructor);
 			}
 
 			// 5. Cycle detection: follow the delegation chain; if it loops back onto
@@ -155,7 +155,7 @@ internal sealed class ConstructorValidator(
 			context.Diagnostics.Report(
 				currentFileContext,
 				ctor.ConstructorInitializerSpan ?? ctor.NameSpan,
-				$"No constructor of '{extendedType.Name}' matches initializer argument types ({sigString}).");
+				$"No constructor of '{extendedType.Name}' matches initializer argument types ({sigString}).", DiagnosticIds.NoConstructorOfMatchesInitializerArgumentTypes);
 			return;
 		}
 

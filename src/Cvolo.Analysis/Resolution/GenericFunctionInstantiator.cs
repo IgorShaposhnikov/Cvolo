@@ -7,6 +7,7 @@ using Cvolo.Core.AST.Declarations;
 using Cvolo.Core.AST.Expressions;
 using Cvolo.Core.AST.Statements;
 
+using Cvolo.Core.Diagnostics;
 namespace Cvolo.Analysis.Resolution;
 
 /// <summary>
@@ -332,7 +333,7 @@ internal sealed class GenericFunctionInstantiator(
 		if (argTypes.Count != templateDecl.Parameters.Count)
 		{
 			context.Diagnostics.Report(currentFileContext, call.Span,
-				$"Function '{call.FunctionName}' expects {templateDecl.Parameters.Count} argument(s) but received {argTypes.Count}");
+				$"Function '{call.FunctionName}' expects {templateDecl.Parameters.Count} argument(s) but received {argTypes.Count}", DiagnosticIds.FunctionExpectsArgumentSButReceived);
 			return null;
 		}
 
@@ -365,21 +366,21 @@ internal sealed class GenericFunctionInstantiator(
 			if (concrete is InterfaceTypeSymbol)
 			{
 				context.Diagnostics.Report(currentFileContext, call.Span,
-					$"Interface parameter '{param.Name}' of function '{call.FunctionName}' cannot be resolved to a concrete conforming type; argument is abstract interface type '{concrete.Name}'");
+					$"Interface parameter '{param.Name}' of function '{call.FunctionName}' cannot be resolved to a concrete conforming type; argument is abstract interface type '{concrete.Name}'", DiagnosticIds.InterfaceParameterOfFunctionCannotBeResolvedToAConcreteConfo);
 				return null;
 			}
 
 			if (!interfaces.Conforms(concrete, iface))
 			{
 				context.Diagnostics.Report(currentFileContext, call.Span,
-					$"Type '{concrete.Name}' does not conform to interface '{iface.Name}' for parameter '{param.Name}'");
+					$"Type '{concrete.Name}' does not conform to interface '{iface.Name}' for parameter '{param.Name}'", DiagnosticIds.TypeDoesNotConformToInterfaceForParameter);
 				return null;
 			}
 
 			if (substitutionMap.TryGetValue(interfaceTypeName, out var existing) && existing.Name != concrete.Name)
 			{
 				context.Diagnostics.Report(currentFileContext, call.Span,
-					$"Interface parameter '{param.Name}' requires a single concrete type, but both '{existing.Name}' and '{concrete.Name}' were passed");
+					$"Interface parameter '{param.Name}' requires a single concrete type, but both '{existing.Name}' and '{concrete.Name}' were passed", DiagnosticIds.InterfaceParameterRequiresASingleConcreteTypeButBothAndWereP);
 				return null;
 			}
 
@@ -566,7 +567,7 @@ internal sealed class GenericFunctionInstantiator(
 		if (argTypes.Count != templateDecl.Parameters.Count)
 		{
 			context.Diagnostics.Report(currentFileContext, call.Span,
-				$"Function '{call.FunctionName}' expects {templateDecl.Parameters.Count} argument(s) but received {argTypes.Count}");
+				$"Function '{call.FunctionName}' expects {templateDecl.Parameters.Count} argument(s) but received {argTypes.Count}", DiagnosticIds.FunctionExpectsArgumentSButReceived);
 			return null;
 		}
 
@@ -599,14 +600,14 @@ internal sealed class GenericFunctionInstantiator(
 			if (concrete is ProtocolTypeSymbol or InterfaceTypeSymbol)
 			{
 				context.Diagnostics.Report(currentFileContext, call.Span,
-					$"Protocol parameter '{param.Name}' of function '{call.FunctionName}' cannot be resolved to a concrete conforming type; argument is abstract protocol type '{concrete.Name}'");
+					$"Protocol parameter '{param.Name}' of function '{call.FunctionName}' cannot be resolved to a concrete conforming type; argument is abstract protocol type '{concrete.Name}'", DiagnosticIds.ProtocolParameterOfFunctionCannotBeResolvedToAConcreteConfor);
 				return null;
 			}
 
 			if (!protocols.Conforms(concrete, proto))
 			{
 				context.Diagnostics.Report(currentFileContext, call.Span,
-					$"Type '{concrete.Name}' does not structurally conform to protocol '{proto.Name}' for parameter '{param.Name}'");
+					$"Type '{concrete.Name}' does not structurally conform to protocol '{proto.Name}' for parameter '{param.Name}'", DiagnosticIds.TypeDoesNotStructurallyConformToProtocolForParameter);
 				return null;
 			}
 
@@ -616,7 +617,7 @@ internal sealed class GenericFunctionInstantiator(
 			if (proto.Constraint is not null && !protocols.SatisfiesConstraint(concrete, proto.Constraint))
 			{
 				context.Diagnostics.Report(currentFileContext, call.Span,
-					$"Type '{concrete.Name}' does not satisfy the requires-clause '{proto.Constraint}' of protocol '{proto.Name}'.");
+					$"Type '{concrete.Name}' does not satisfy the requires-clause '{proto.Constraint}' of protocol '{proto.Name}'.", DiagnosticIds.TypeDoesNotSatisfyTheRequiresClauseOfProtocol);
 				return null;
 			}
 
@@ -628,14 +629,14 @@ internal sealed class GenericFunctionInstantiator(
 			if (protocols.TryFindAmbiguousMember(concrete, proto, out var ambiguousMember))
 			{
 				context.Diagnostics.Report(currentFileContext, call.Span,
-					$"Ambiguous implementation of '{ambiguousMember}' for protocol '{proto.Name}' on type '{concrete.Name}': multiple extension methods match the required signature.");
+					$"Ambiguous implementation of '{ambiguousMember}' for protocol '{proto.Name}' on type '{concrete.Name}': multiple extension methods match the required signature.", DiagnosticIds.AmbiguousImplementationOfForProtocolOnTypeMultipleExtensionM);
 				return null;
 			}
 
 			if (substitutionMap.TryGetValue(protocolTypeName, out var existing) && existing.Name != concrete.Name)
 			{
 				context.Diagnostics.Report(currentFileContext, call.Span,
-					$"Protocol parameter '{param.Name}' requires a single concrete type, but both '{existing.Name}' and '{concrete.Name}' were passed");
+					$"Protocol parameter '{param.Name}' requires a single concrete type, but both '{existing.Name}' and '{concrete.Name}' were passed", DiagnosticIds.ProtocolParameterRequiresASingleConcreteTypeButBothAndWerePa);
 				return null;
 			}
 

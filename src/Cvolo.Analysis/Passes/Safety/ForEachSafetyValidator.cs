@@ -112,7 +112,7 @@ internal sealed class ForEachSafetyValidator(
 			if (assign.Operator == "=" && getBaseIdentifierName(assign.Left) == collectionBase)
 			{
 				context.Diagnostics.Report(context.CurrentUnit!.Context, assign.Span,
-					$"'{collectionBase}' is under an immutable borrow contract while it is being iterated: structural mutation is not allowed inside the 'foreach' body.");
+					$"'{collectionBase}' is under an immutable borrow contract while it is being iterated: structural mutation is not allowed inside the 'foreach' body.", DiagnosticIds.IsUnderAnImmutableBorrowContractWhileItIsBeingIteratedStruct);
 			}
 		}
 
@@ -122,7 +122,7 @@ internal sealed class ForEachSafetyValidator(
 			if (dot > 0 && call.FunctionName.AsSpan(0, dot).SequenceEqual(collectionBase))
 			{
 				context.Diagnostics.Report(context.CurrentUnit!.Context, call.Span,
-					$"'{collectionBase}' is under an immutable borrow contract while it is being iterated: mutating method calls are not allowed inside the 'foreach' body.");
+					$"'{collectionBase}' is under an immutable borrow contract while it is being iterated: mutating method calls are not allowed inside the 'foreach' body.", DiagnosticIds.IsUnderAnImmutableBorrowContractWhileItIsBeingIteratedMutati);
 			}
 		}
 	}

@@ -28,7 +28,7 @@ internal sealed class TypeAliasValidator(BindingContext context)
 
 		if (!context.TypeAliases.TryAdd(mangledName, aliasDeclaration))
 		{
-			Report(aliasDeclaration, $"Duplicate type alias '{aliasDeclaration.Name}'");
+			Report(aliasDeclaration, $"Duplicate type alias '{aliasDeclaration.Name}'", DiagnosticIds.DuplicateTypeAlias);
 			return;
 		}
 
@@ -63,7 +63,7 @@ internal sealed class TypeAliasValidator(BindingContext context)
 
 				if (ResolvesToRealType(aliasDeclaration.Name))
 				{
-					Report(aliasDeclaration, $"Type alias '{aliasDeclaration.Name}' conflicts with an existing type name.");
+					Report(aliasDeclaration, $"Type alias '{aliasDeclaration.Name}' conflicts with an existing type name.", DiagnosticIds.TypeAliasConflictsWithAnExistingTypeName);
 					continue;
 				}
 
@@ -149,15 +149,6 @@ internal sealed class TypeAliasValidator(BindingContext context)
 		|| context.InterfaceTypes.ContainsKey(name)
 		|| context.ProtocolTypes.ContainsKey(name)
 		|| context.DelegateTypes.ContainsKey(name);
-
-	/// <summary>
-	/// Reports an alias diagnostic without a dedicated diagnostic identifier.
-	/// </summary>
-	private void Report(SyntaxNode node, string message)
-	{
-		var currentFileContext = context.FileContexts[context.CurrentUnit!];
-		context.Diagnostics.Report(currentFileContext, node.Span, message);
-	}
 
 	/// <summary>
 	/// Reports an alias diagnostic with its stable diagnostic identifier.

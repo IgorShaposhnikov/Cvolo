@@ -48,7 +48,7 @@ internal sealed class TypeDeclarationRegistrar(BindingContext context)
 			|| TypeSymbol.FromName(delegateDecl.Name) is not null)
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.Report(currentFileContext, delegateDecl.Span, $"Duplicate type definition '{delegateDecl.Name}'");
+			context.Diagnostics.Report(currentFileContext, delegateDecl.Span, $"Duplicate type definition '{delegateDecl.Name}'", DiagnosticIds.DuplicateTypeDefinition);
 			return;
 		}
 
@@ -113,7 +113,7 @@ internal sealed class TypeDeclarationRegistrar(BindingContext context)
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
 			context.Diagnostics.Report(currentFileContext, delegateDecl.ReturnTypeSpan,
-				$"Unknown return type '{delegateDecl.ReturnType}' in delegate declaration '{delegateDecl.Name}'");
+				$"Unknown return type '{delegateDecl.ReturnType}' in delegate declaration '{delegateDecl.Name}'", DiagnosticIds.UnknownReturnTypeInDelegateDeclaration);
 			return;
 		}
 
@@ -180,7 +180,7 @@ internal sealed class TypeDeclarationRegistrar(BindingContext context)
 			{
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
 				context.Diagnostics.Report(currentFileContext, p.Span,
-					$"Unknown parameter type '{p.Type}' in delegate declaration '{delegateDecl.Name}'");
+					$"Unknown parameter type '{p.Type}' in delegate declaration '{delegateDecl.Name}'", DiagnosticIds.UnknownParameterTypeInDelegateDeclaration);
 				continue;
 			}
 
@@ -242,7 +242,7 @@ internal sealed class TypeDeclarationRegistrar(BindingContext context)
 		if (context.StructTypes.ContainsKey(mangledName) || TypeSymbol.FromName(structDecl.Name) is not null)
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.Report(currentFileContext, structDecl.Span, $"Duplicate type definition '{structDecl.Name}'");
+			context.Diagnostics.Report(currentFileContext, structDecl.Span, $"Duplicate type definition '{structDecl.Name}'", DiagnosticIds.DuplicateTypeDefinition);
 			return;
 		}
 
@@ -292,7 +292,7 @@ internal sealed class TypeDeclarationRegistrar(BindingContext context)
 			if (!fieldNames.Add(field.Name))
 			{
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
-				context.Diagnostics.Report(currentFileContext, field.Span, $"Duplicate field '{field.Name}' in struct '{structDecl.Name}'");
+				context.Diagnostics.Report(currentFileContext, field.Span, $"Duplicate field '{field.Name}' in struct '{structDecl.Name}'", DiagnosticIds.DuplicateFieldInStruct);
 				continue;
 			}
 
@@ -300,7 +300,7 @@ internal sealed class TypeDeclarationRegistrar(BindingContext context)
 			if (fieldType is null)
 			{
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
-				context.Diagnostics.Report(currentFileContext, field.Span, $"Unknown type '{field.Type}' of field '{field.Name}'");
+				context.Diagnostics.Report(currentFileContext, field.Span, $"Unknown type '{field.Type}' of field '{field.Name}'", DiagnosticIds.UnknownTypeOfField);
 				continue;
 			}
 
@@ -330,7 +330,7 @@ internal sealed class TypeDeclarationRegistrar(BindingContext context)
 		if (context.InterfaceTypes.ContainsKey(mangledName))
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.Report(currentFileContext, interfaceDecl.Span, $"Duplicate interface definition '{interfaceDecl.Name}'");
+			context.Diagnostics.Report(currentFileContext, interfaceDecl.Span, $"Duplicate interface definition '{interfaceDecl.Name}'", DiagnosticIds.DuplicateInterfaceDefinition);
 			return;
 		}
 
@@ -353,7 +353,7 @@ internal sealed class TypeDeclarationRegistrar(BindingContext context)
 		if (context.ProtocolTypes.ContainsKey(mangledName))
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.Report(currentFileContext, protocolDecl.Span, $"Duplicate protocol definition '{protocolDecl.Name}'");
+			context.Diagnostics.Report(currentFileContext, protocolDecl.Span, $"Duplicate protocol definition '{protocolDecl.Name}'", DiagnosticIds.DuplicateProtocolDefinition);
 			return;
 		}
 
@@ -385,7 +385,7 @@ internal sealed class TypeDeclarationRegistrar(BindingContext context)
 		if (context.UnionTypes.ContainsKey(mangledName) || context.StructTypes.ContainsKey(mangledName) || TypeSymbol.FromName(unionDecl.Name) is not null)
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.Report(currentFileContext, unionDecl.Span, $"Duplicate type definition '{unionDecl.Name}'");
+			context.Diagnostics.Report(currentFileContext, unionDecl.Span, $"Duplicate type definition '{unionDecl.Name}'", DiagnosticIds.DuplicateTypeDefinition);
 			return;
 		}
 
@@ -427,7 +427,7 @@ internal sealed class TypeDeclarationRegistrar(BindingContext context)
 			if (!fieldNames.Add(field.Name))
 			{
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
-				context.Diagnostics.Report(currentFileContext, field.Span, $"Duplicate field '{field.Name}' in union '{unionDecl.Name}'");
+				context.Diagnostics.Report(currentFileContext, field.Span, $"Duplicate field '{field.Name}' in union '{unionDecl.Name}'", DiagnosticIds.DuplicateFieldInUnion);
 				continue;
 			}
 
@@ -452,7 +452,7 @@ internal sealed class TypeDeclarationRegistrar(BindingContext context)
 				if (fieldType is null)
 				{
 					var currentFileContext = context.FileContexts[context.CurrentUnit!];
-					context.Diagnostics.Report(currentFileContext, field.Span, $"Unknown type '{field.Type}' of field '{field.Name}' in union '{unionDecl.Name}'");
+					context.Diagnostics.Report(currentFileContext, field.Span, $"Unknown type '{field.Type}' of field '{field.Name}' in union '{unionDecl.Name}'", DiagnosticIds.UnknownTypeOfFieldInUnion);
 					continue;
 				}
 
@@ -583,7 +583,7 @@ internal sealed class TypeDeclarationRegistrar(BindingContext context)
 			|| context.ProtocolTypes.ContainsKey(mangledName) || TypeSymbol.FromName(enumDecl.Name) is not null)
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.Report(currentFileContext, enumDecl.Span, $"Duplicate type definition '{enumDecl.Name}'");
+			context.Diagnostics.Report(currentFileContext, enumDecl.Span, $"Duplicate type definition '{enumDecl.Name}'", DiagnosticIds.DuplicateTypeDefinition);
 			return;
 		}
 
@@ -596,7 +596,7 @@ internal sealed class TypeDeclarationRegistrar(BindingContext context)
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
 			context.Diagnostics.Report(currentFileContext, enumDecl.Span,
-				$"Invalid underlying storage type '{storageName}' for enum '{enumDecl.Name}'. Allowed storage types: int, uint, short, ushort, long, ulong, char, byte, sbyte.");
+				$"Invalid underlying storage type '{storageName}' for enum '{enumDecl.Name}'. Allowed storage types: int, uint, short, ushort, long, ulong, char, byte, sbyte.", DiagnosticIds.InvalidUnderlyingStorageTypeForEnumAllowedStorageTypesIntUin);
 			return;
 		}
 
@@ -606,7 +606,7 @@ internal sealed class TypeDeclarationRegistrar(BindingContext context)
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
 			context.Diagnostics.Report(currentFileContext, enumDecl.Span,
-				$"Invalid underlying storage type '{storageName}' for [Flags] enum '{enumDecl.Name}': [Flags] enums require unsigned storage (uint, ushort, byte, ulong, or char).");
+				$"Invalid underlying storage type '{storageName}' for [Flags] enum '{enumDecl.Name}': [Flags] enums require unsigned storage (uint, ushort, byte, ulong, or char).", DiagnosticIds.InvalidUnderlyingStorageTypeForFlagsEnumFlagsEnumsRequireUns);
 			return;
 		}
 
@@ -615,7 +615,7 @@ internal sealed class TypeDeclarationRegistrar(BindingContext context)
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
 			context.Diagnostics.Report(currentFileContext, enumDecl.Span,
-				$"Enum '{enumDecl.Name}' must contain at least one variant (empty enums are prohibited).");
+				$"Enum '{enumDecl.Name}' must contain at least one variant (empty enums are prohibited).", DiagnosticIds.EnumMustContainAtLeastOneVariantEmptyEnumsAreProhibited);
 			return;
 		}
 
@@ -636,7 +636,7 @@ internal sealed class TypeDeclarationRegistrar(BindingContext context)
 			if (!variantNames.Add(variant.Name))
 			{
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
-				context.Diagnostics.Report(currentFileContext, variant.Span, $"Duplicate variant '{variant.Name}' in enum '{enumDecl.Name}'");
+				context.Diagnostics.Report(currentFileContext, variant.Span, $"Duplicate variant '{variant.Name}' in enum '{enumDecl.Name}'", DiagnosticIds.DuplicateVariantInEnum);
 				continue;
 			}
 
@@ -672,7 +672,7 @@ internal sealed class TypeDeclarationRegistrar(BindingContext context)
 				{
 					var currentFileContext = context.FileContexts[context.CurrentUnit!];
 					context.Diagnostics.Report(currentFileContext, variant.Value.Span,
-						$"Variant '{variant.Name}' in enum '{enumDecl.Name}' must be assigned a compile-time constant integer value.");
+						$"Variant '{variant.Name}' in enum '{enumDecl.Name}' must be assigned a compile-time constant integer value.", DiagnosticIds.VariantInEnumMustBeAssignedACompileTimeConstantIntegerValue);
 					continue;
 				}
 
@@ -690,7 +690,7 @@ internal sealed class TypeDeclarationRegistrar(BindingContext context)
 				{
 					var currentFileContext = context.FileContexts[context.CurrentUnit!];
 					context.Diagnostics.Report(currentFileContext, variant.Span,
-						$"Variant '{variant.Name}' in [Flags] enum '{enumDecl.Name}' has value 0 and must be named None, Empty, Unset, or Zero.");
+						$"Variant '{variant.Name}' in [Flags] enum '{enumDecl.Name}' has value 0 and must be named None, Empty, Unset, or Zero.", DiagnosticIds.VariantInFlagsEnumHasValue0AndMustBeNamedNoneEmptyUnsetOrZer);
 					continue;
 				}
 
@@ -700,7 +700,7 @@ internal sealed class TypeDeclarationRegistrar(BindingContext context)
 				{
 					var currentFileContext = context.FileContexts[context.CurrentUnit!];
 					context.Diagnostics.Report(currentFileContext, variant.Span,
-						$"Variant '{variant.Name}' in [Flags] enum '{enumDecl.Name}' collides with an existing value '{value}'.");
+						$"Variant '{variant.Name}' in [Flags] enum '{enumDecl.Name}' collides with an existing value '{value}'.", DiagnosticIds.VariantInFlagsEnumCollidesWithAnExistingValue);
 					continue;
 				}
 			}

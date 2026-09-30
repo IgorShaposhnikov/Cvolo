@@ -676,4 +676,537 @@ public static class DiagnosticIds
 
 	/// <summary>An operator body uses an implicit instance field; operators have no receiver.</summary>
 	public const string OperatorUsesInstanceField = "CVL2207";
+
+	// ── Explicitly named diagnostics (formerly emitted without an id) ──
+
+	/// <summary>'&lt;x&gt;' is already borrowed; cannot borrow multiple elements of the same array</summary>
+	public const string IsAlreadyBorrowedCannotBorrowMultipleElementsOfTheSameArray = "CVL4001";
+
+	/// <summary>'&lt;x&gt;' is under an immutable borrow contract while it is being iterated: mutating method calls are not allowed inside the 'foreach' body.</summary>
+	public const string IsUnderAnImmutableBorrowContractWhileItIsBeingIteratedMutati = "CVL4002";
+
+	/// <summary>'&lt;x&gt;' is under an immutable borrow contract while it is being iterated: structural mutation is not allowed inside the 'foreach' body.</summary>
+	public const string IsUnderAnImmutableBorrowContractWhileItIsBeingIteratedStruct = "CVL4003";
+
+	/// <summary>(&lt;x&gt;,&lt;x&gt;): &lt;x&gt;</summary>
+	public const string Diagnostic = "CVL4004";
+
+	/// <summary>Ambiguous implementation of '&lt;x&gt;' for protocol '&lt;x&gt;' on type '&lt;x&gt;': multiple extension methods match the required signature.</summary>
+	public const string AmbiguousImplementationOfForProtocolOnTypeMultipleExtensionM = "CVL4005";
+
+	/// <summary>Array elements must have the same type. Expected '&lt;x&gt;', found '&lt;x&gt;'</summary>
+	public const string ArrayElementsMustHaveTheSameTypeExpectedFound = "CVL4006";
+
+	/// <summary>Array replication count must be an integer.</summary>
+	public const string ArrayReplicationCountMustBeAnInteger = "CVL4007";
+
+	/// <summary>Array size exceeds stack allocation safety threshold</summary>
+	public const string ArraySizeExceedsStackAllocationSafetyThreshold = "CVL4008";
+
+	/// <summary>Cannot &lt;x&gt; '&lt;x&gt;' while a field borrow is still active</summary>
+	public const string CannotWhileAFieldBorrowIsStillActive = "CVL4009";
+
+	/// <summary>Cannot assign &lt;x&gt;-origin reference to global variable '&lt;x&gt;': only global-origin references may be stored in globals</summary>
+	public const string CannotAssignOriginReferenceToGlobalVariableOnlyGlobalOriginR = "CVL4010";
+
+	/// <summary>Cannot assign to immutable variable '&lt;x&gt;'</summary>
+	public const string CannotAssignToImmutableVariable = "CVL4011";
+
+	/// <summary>Cannot assign to reference field '&lt;x&gt;' of variable '&lt;x&gt;' in safe code. Use an 'unbound' block or function to modify structural reference fields.</summary>
+	public const string CannotAssignToReferenceFieldOfVariableInSafeCodeUseAnUnbound = "CVL4012";
+
+	/// <summary>Cannot borrow '&lt;x&gt;' because an incompatible borrow is already active</summary>
+	public const string CannotBorrowBecauseAnIncompatibleBorrowIsAlreadyActive = "CVL4013";
+
+	/// <summary>Cannot cast nullable reference option '&lt;x&gt;' directly to a raw pointer; pattern-match it (switch on 'ref'/'refvar') to extract a non-null reference first.</summary>
+	public const string CannotCastNullableReferenceOptionDirectlyToARawPointerPatter = "CVL4014";
+
+	/// <summary>Cannot define a constructor for non-struct type '&lt;x&gt;'.</summary>
+	public const string CannotDefineAConstructorForNonStructType = "CVL4015";
+
+	/// <summary>Cannot dereference outside unsafe context.</summary>
+	public const string CannotDereferenceOutsideUnsafeContext = "CVL4016";
+
+	/// <summary>Cannot embed generic struct template '&lt;x&gt;' in struct '&lt;x&gt;'.</summary>
+	public const string CannotEmbedGenericStructTemplateInStruct = "CVL4017";
+
+	/// <summary>Cannot infer the type of a bare 'default' expression. Use default(T) or declare the variable with an explicit type.</summary>
+	public const string CannotInferTheTypeOfABareDefaultExpressionUseDefaultTOrDecla = "CVL4018";
+
+	/// <summary>Cannot initialize field '&lt;x&gt;' of type '&lt;x&gt;' with value of type '&lt;x&gt;'</summary>
+	public const string CannotInitializeFieldOfTypeWithValueOfType = "CVL4019";
+
+	/// <summary>Cannot initialize variable of type '&lt;x&gt;' with value of type '&lt;x&gt;'</summary>
+	public const string CannotInitializeVariableOfTypeWithValueOfType = "CVL4020";
+
+	/// <summary>Cannot pattern-match '&lt;x&gt; &lt;x&gt;' by value on a nullable reference option; switch on 'ref'/'refvar' to extract the reference safely.</summary>
+	public const string CannotPatternMatchByValueOnANullableReferenceOptionSwitchOnR = "CVL4021";
+
+	/// <summary>Cannot resolve the signature of '&lt;x&gt;' for the given type arguments</summary>
+	public const string CannotResolveTheSignatureOfForTheGivenTypeArguments = "CVL4022";
+
+	/// <summary>Cannot resolve type '&lt;x&gt;'.</summary>
+	public const string CannotResolveType = "CVL4023";
+
+	/// <summary>Cannot return '&lt;x&gt;' by value while a field borrow is still active</summary>
+	public const string CannotReturnByValueWhileAFieldBorrowIsStillActive = "CVL4024";
+
+	/// <summary>Cannot return '&lt;x&gt;' by value: reference field '&lt;x&gt;' targets local variable '&lt;x&gt;' (dangling reference)</summary>
+	public const string CannotReturnByValueReferenceFieldTargetsLocalVariableDanglin = "CVL4025";
+
+	/// <summary>Cannot return reference to local variable '&lt;x&gt;' (dangling reference)</summary>
+	public const string CannotReturnReferenceToLocalVariableDanglingReference = "CVL4026";
+
+	/// <summary>Cannot return value: reference '&lt;x&gt;' targets local variable '&lt;x&gt;' (dangling reference)</summary>
+	public const string CannotReturnValueReferenceTargetsLocalVariableDanglingRefere = "CVL4027";
+
+	/// <summary>Cannot take a mutable reference (refvar) of a read-only variable.</summary>
+	public const string CannotTakeAMutableReferenceRefvarOfAReadOnlyVariable = "CVL4028";
+
+	/// <summary>Cannot take address outside unsafe context.</summary>
+	public const string CannotTakeAddressOutsideUnsafeContext = "CVL4029";
+
+	/// <summary>Cannot use 'var' with reference type in global declaration. Use 'global ref' or 'global refvar' instead.</summary>
+	public const string CannotUseVarWithReferenceTypeInGlobalDeclarationUseGlobalRef = "CVL4030";
+
+	/// <summary>Cannot use embed in generic struct template '&lt;x&gt;'.</summary>
+	public const string CannotUseEmbedInGenericStructTemplate = "CVL4031";
+
+	/// <summary>Circular embed clause involving struct '&lt;x&gt;'.</summary>
+	public const string CircularEmbedClauseInvolvingStruct = "CVL4032";
+
+	/// <summary>Circular protocol inheritance involving '&lt;x&gt;'.</summary>
+	public const string CircularProtocolInheritanceInvolving = "CVL4033";
+
+	/// <summary>Constructor '&lt;x&gt;' is not accessible from the current constructor.</summary>
+	public const string ConstructorIsNotAccessibleFromTheCurrentConstructor = "CVL4034";
+
+	/// <summary>Constructor name '&lt;x&gt;' must match the extended type '&lt;x&gt;'.</summary>
+	public const string ConstructorNameMustMatchTheExtendedType = "CVL4035";
+
+	/// <summary>Could not resolve field type '&lt;x&gt;' during generic instantiation of '&lt;x&gt;'</summary>
+	public const string CouldNotResolveFieldTypeDuringGenericInstantiationOf = "CVL4036";
+
+	/// <summary>CyclicDestructorDepthError</summary>
+	public const string CyclicDestructorDepthError = "CVL4037";
+
+	/// <summary>Defensive initialization: constructor '&lt;x&gt;' does not initialize field '&lt;x&gt;'.</summary>
+	public const string DefensiveInitializationConstructorDoesNotInitializeField = "CVL4038";
+
+	/// <summary>Delegate '&lt;x&gt;' cannot be invoked with argument types (&lt;x&gt;).</summary>
+	public const string DelegateCannotBeInvokedWithArgumentTypes = "CVL4039";
+
+	/// <summary>Delegate '&lt;x&gt;' expects &lt;x&gt; argument(s) but received &lt;x&gt;</summary>
+	public const string DelegateExpectsArgumentSButReceived = "CVL4040";
+
+	/// <summary>Destructive cast '(&lt;x&gt;)' requires an owning heap handle; '&lt;x&gt;' is a stack value. Allocate it with 'heap &lt;x&gt; &lt;x&gt;' or 'heap &lt;x&gt;(...)', or cast its address with '&amp;&lt;x&gt;'.</summary>
+	public const string DestructiveCastRequiresAnOwningHeapHandleIsAStackValueAlloca = "CVL4041";
+
+	/// <summary>Destructor name '&lt;x&gt;' does not match extended type '&lt;x&gt;'.</summary>
+	public const string DestructorNameDoesNotMatchExtendedType = "CVL4042";
+
+	/// <summary>Duplicate constructor signature for type '&lt;x&gt;'.</summary>
+	public const string DuplicateConstructorSignatureForType = "CVL4043";
+
+	/// <summary>Duplicate definition of '&lt;x&gt;'</summary>
+	public const string DuplicateDefinitionOf = "CVL4044";
+
+	/// <summary>Duplicate definition of function '&lt;x&gt;' with a matching parameter signature.</summary>
+	public const string DuplicateDefinitionOfFunctionWithAMatchingParameterSignature = "CVL4045";
+
+	/// <summary>Duplicate definition of global variable '&lt;x&gt;'.</summary>
+	public const string DuplicateDefinitionOfGlobalVariable = "CVL4046";
+
+	/// <summary>Duplicate destructor definition for type '&lt;x&gt;'.</summary>
+	public const string DuplicateDestructorDefinitionForType = "CVL4047";
+
+	/// <summary>Duplicate field '&lt;x&gt;' in struct '&lt;x&gt;'</summary>
+	public const string DuplicateFieldInStruct = "CVL4048";
+
+	/// <summary>Duplicate field '&lt;x&gt;' in union '&lt;x&gt;'</summary>
+	public const string DuplicateFieldInUnion = "CVL4049";
+
+	/// <summary>Duplicate initializer for field '&lt;x&gt;'</summary>
+	public const string DuplicateInitializerForField = "CVL4050";
+
+	/// <summary>Duplicate interface definition '&lt;x&gt;'</summary>
+	public const string DuplicateInterfaceDefinition = "CVL4051";
+
+	/// <summary>Duplicate protocol definition '&lt;x&gt;'</summary>
+	public const string DuplicateProtocolDefinition = "CVL4052";
+
+	/// <summary>Duplicate symbol '&lt;x&gt;' on type '&lt;x&gt;' in extension blocks.</summary>
+	public const string DuplicateSymbolOnTypeInExtensionBlocks = "CVL4053";
+
+	/// <summary>Duplicate type definition '&lt;x&gt;'</summary>
+	public const string DuplicateTypeDefinition = "CVL4054";
+
+	/// <summary>Duplicate variant '&lt;x&gt;' in enum '&lt;x&gt;'</summary>
+	public const string DuplicateVariantInEnum = "CVL4055";
+
+	/// <summary>Enum '&lt;x&gt;' does not contain variant '&lt;x&gt;'</summary>
+	public const string EnumDoesNotContainVariant = "CVL4056";
+
+	/// <summary>Enum '&lt;x&gt;' must contain at least one variant (empty enums are prohibited).</summary>
+	public const string EnumMustContainAtLeastOneVariantEmptyEnumsAreProhibited = "CVL4057";
+
+	/// <summary>Enum variants cannot carry a promoted variable.</summary>
+	public const string EnumVariantsCannotCarryAPromotedVariable = "CVL4058";
+
+	/// <summary>Extension method '&lt;x&gt;' declares read-only 'ref this' receiver but mutates field(s) of '&lt;x&gt;'.</summary>
+	public const string ExtensionMethodDeclaresReadOnlyRefThisReceiverButMutatesFiel = "CVL4059";
+
+	/// <summary>Field '&lt;x&gt;' of struct '&lt;x&gt;' conflicts with embedded field from '&lt;x&gt;'.</summary>
+	public const string FieldOfStructConflictsWithEmbeddedFieldFrom = "CVL4060";
+
+	/// <summary>Function '&lt;x&gt;' expects &lt;x&gt; argument(s) but received &lt;x&gt;</summary>
+	public const string FunctionExpectsArgumentSButReceived = "CVL4061";
+
+	/// <summary>Function '&lt;x&gt;' expects &lt;x&gt; arguments but received &lt;x&gt;</summary>
+	public const string FunctionExpectsArgumentsButReceived = "CVL4062";
+
+	/// <summary>Function '&lt;x&gt;' expects &lt;x&gt; type &lt;x&gt; but received &lt;x&gt;</summary>
+	public const string FunctionExpectsTypeButReceived = "CVL4063";
+
+	/// <summary>Function '&lt;x&gt;' expects at least &lt;x&gt; arguments but received &lt;x&gt;</summary>
+	public const string FunctionExpectsAtLeastArgumentsButReceived = "CVL4064";
+
+	/// <summary>Function '&lt;x&gt;' expects return type '&lt;x&gt;' but found '&lt;x&gt;'</summary>
+	public const string FunctionExpectsReturnTypeButFound = "CVL4065";
+
+	/// <summary>Function '&lt;x&gt;' is declared to return '&lt;x&gt;' but is missing a return statement.</summary>
+	public const string FunctionIsDeclaredToReturnButIsMissingAReturnStatement = "CVL4066";
+
+	/// <summary>Function '&lt;x&gt;' must declare a body unless decorated with '[Intrinsic]'.</summary>
+	public const string FunctionMustDeclareABodyUnlessDecoratedWithIntrinsic = "CVL4067";
+
+	/// <summary>Generic parameter '&lt;x&gt;' does not have a default value and must be specified</summary>
+	public const string GenericParameterDoesNotHaveADefaultValueAndMustBeSpecified = "CVL4068";
+
+	/// <summary>Global delegate '&lt;x&gt;' requires an initializer; delegates are non-null and cannot be default-initialized.</summary>
+	public const string GlobalDelegateRequiresAnInitializerDelegatesAreNonNullAndCan = "CVL4069";
+
+	/// <summary>HasFlag expects exactly one argument of the same [Flags] enum type '&lt;x&gt;'.</summary>
+	public const string HasFlagExpectsExactlyOneArgumentOfTheSameFlagsEnumType = "CVL4070";
+
+	/// <summary>Heap array allocation size must be an integer.</summary>
+	public const string HeapArrayAllocationSizeMustBeAnInteger = "CVL4071";
+
+	/// <summary>Implicit conversion between enum '&lt;x&gt;' and '&lt;x&gt;' is forbidden; use an explicit cast.</summary>
+	public const string ImplicitConversionBetweenEnumAndIsForbiddenUseAnExplicitCast = "CVL4072";
+
+	/// <summary>Interface parameter '&lt;x&gt;' of function '&lt;x&gt;' cannot be resolved to a concrete conforming type; argument is abstract interface type '&lt;x&gt;'</summary>
+	public const string InterfaceParameterOfFunctionCannotBeResolvedToAConcreteConfo = "CVL4073";
+
+	/// <summary>Interface parameter '&lt;x&gt;' requires a single concrete type, but both '&lt;x&gt;' and '&lt;x&gt;' were passed</summary>
+	public const string InterfaceParameterRequiresASingleConcreteTypeButBothAndWereP = "CVL4074";
+
+	/// <summary>Invalid delegate return type '&lt;x&gt;': delegate '&lt;x&gt;' may not return a provenance-bearing type (§3.2).</summary>
+	public const string InvalidDelegateReturnTypeDelegateMayNotReturnAProvenanceBear = "CVL4075";
+
+	/// <summary>Invalid underlying storage type '&lt;x&gt;' for [Flags] enum '&lt;x&gt;': [Flags] enums require unsigned storage (uint, ushort, byte, ulong, or char).</summary>
+	public const string InvalidUnderlyingStorageTypeForFlagsEnumFlagsEnumsRequireUns = "CVL4076";
+
+	/// <summary>Invalid underlying storage type '&lt;x&gt;' for enum '&lt;x&gt;'. Allowed storage types: int, uint, short, ushort, long, ulong, char, byte, sbyte.</summary>
+	public const string InvalidUnderlyingStorageTypeForEnumAllowedStorageTypesIntUin = "CVL4077";
+
+	/// <summary>Method '&lt;x&gt;' is declared to return '&lt;x&gt;' but is missing a return statement.</summary>
+	public const string MethodIsDeclaredToReturnButIsMissingAReturnStatement = "CVL4078";
+
+	/// <summary>Method '&lt;x&gt;' must declare 'ref this' or 'refvar this' receiver in [StrictMutability] struct '&lt;x&gt;'.</summary>
+	public const string MethodMustDeclareRefThisOrRefvarThisReceiverInStrictMutabili = "CVL4079";
+
+	/// <summary>Method '&lt;x&gt;' must declare a body unless decorated with '[Intrinsic]'.</summary>
+	public const string MethodMustDeclareABodyUnlessDecoratedWithIntrinsic = "CVL4080";
+
+	/// <summary>Missing initializer for field '&lt;x&gt;' of struct '&lt;x&gt;'</summary>
+	public const string MissingInitializerForFieldOfStruct = "CVL4081";
+
+	/// <summary>Name expects no arguments.</summary>
+	public const string NameExpectsNoArguments = "CVL4082";
+
+	/// <summary>No constructor of '&lt;x&gt;' matches initializer argument types (&lt;x&gt;).</summary>
+	public const string NoConstructorOfMatchesInitializerArgumentTypes = "CVL4083";
+
+	/// <summary>No overload of function '&lt;x&gt;' matches argument types (&lt;x&gt;)</summary>
+	public const string NoOverloadOfFunctionMatchesArgumentTypes = "CVL4084";
+
+	/// <summary>Operator '~' cannot be applied to non-[Flags] enum '&lt;x&gt;'.</summary>
+	public const string OperatorCannotBeAppliedToNonFlagsEnum = "CVL4085";
+
+	/// <summary>Protocol parameter '&lt;x&gt;' of function '&lt;x&gt;' cannot be resolved to a concrete conforming type; argument is abstract protocol type '&lt;x&gt;'</summary>
+	public const string ProtocolParameterOfFunctionCannotBeResolvedToAConcreteConfor = "CVL4086";
+
+	/// <summary>Protocol parameter '&lt;x&gt;' requires a single concrete type, but both '&lt;x&gt;' and '&lt;x&gt;' were passed</summary>
+	public const string ProtocolParameterRequiresASingleConcreteTypeButBothAndWerePa = "CVL4087";
+
+	/// <summary>Raw pointer variables cannot be declared outside unsafe context.</summary>
+	public const string RawPointerVariablesCannotBeDeclaredOutsideUnsafeContext = "CVL4088";
+
+	/// <summary>Receiver parameter ('refvar this' / 'ref this') is only allowed on extension methods.</summary>
+	public const string ReceiverParameterRefvarThisRefThisIsOnlyAllowedOnExtensionMe = "CVL4089";
+
+	/// <summary>Reference cannot escape unbound scope: cannot assign local reference to global variable '&lt;x&gt;'</summary>
+	public const string ReferenceCannotEscapeUnboundScopeCannotAssignLocalReferenceT = "CVL4090";
+
+	/// <summary>Reference cannot escape unbound scope: cannot assign local reference to reference field '&lt;x&gt;' of non-local variable '&lt;x&gt;'</summary>
+	public const string ReferenceCannotEscapeUnboundScopeCannotAssignLocalReferenceT2 = "CVL4091";
+
+	/// <summary>Reference type inference requires an initializer</summary>
+	public const string ReferenceTypeInferenceRequiresAnInitializer = "CVL4092";
+
+	/// <summary>Struct '&lt;x&gt;' does not contain field '&lt;x&gt;'</summary>
+	public const string StructDoesNotContainField = "CVL4093";
+
+	/// <summary>Switch statement is not exhaustive. Missing case for variant '&lt;x&gt;'.</summary>
+	public const string SwitchStatementIsNotExhaustiveMissingCaseForVariant = "CVL4094";
+
+	/// <summary>Switch statement target must be a union type.</summary>
+	public const string SwitchStatementTargetMustBeAUnionType = "CVL4095";
+
+	/// <summary>Ternary branches must have the same type. Found '&lt;x&gt;' and '&lt;x&gt;'</summary>
+	public const string TernaryBranchesMustHaveTheSameTypeFoundAnd = "CVL4096";
+
+	/// <summary>Ternary condition must be 'bool', found '&lt;x&gt;'</summary>
+	public const string TernaryConditionMustBeBoolFound = "CVL4097";
+
+	/// <summary>The 'default' branch of a switch over [NonExhaustive] enum '&lt;x&gt;' must terminate with a 'return' but ends in non-terminating statement(s).</summary>
+	public const string TheDefaultBranchOfASwitchOverNonExhaustiveEnumMustTerminateW = "CVL4098";
+
+	/// <summary>The 'is' pattern can only be applied to a union type, got '&lt;x&gt;'.</summary>
+	public const string TheIsPatternCanOnlyBeAppliedToAUnionTypeGot = "CVL4099";
+
+	/// <summary>The 'null' literal requires a pointer type (Option or raw pointer).</summary>
+	public const string TheNullLiteralRequiresAPointerTypeOptionOrRawPointer = "CVL4100";
+
+	/// <summary>The mutable reference binding form 'refvar' cannot be combined with an explicit item type: 'foreach (refvar &lt;x&gt; &lt;x&gt; ...)' is not allowed.</summary>
+	public const string TheMutableReferenceBindingFormRefvarCannotBeCombinedWithAnEx = "CVL4101";
+
+	/// <summary>The visibility of generic type instantiation '&lt;x&gt;&lt;&lt;x&gt;</summary>
+	public const string TheVisibilityOfGenericTypeInstantiation = "CVL4102";
+
+	/// <summary>Type '&lt;x&gt;' cannot be used with default because it is not a Trivial Copy Type</summary>
+	public const string TypeCannotBeUsedWithDefaultBecauseItIsNotATrivialCopyType = "CVL4103";
+
+	/// <summary>Type '&lt;x&gt;' does not conform to interface '&lt;x&gt;' for parameter '&lt;x&gt;'</summary>
+	public const string TypeDoesNotConformToInterfaceForParameter = "CVL4104";
+
+	/// <summary>Type '&lt;x&gt;' does not satisfy constraint '&lt;x&gt;' of generic parameter '&lt;x&gt;'.</summary>
+	public const string TypeDoesNotSatisfyConstraintOfGenericParameter = "CVL4105";
+
+	/// <summary>Type '&lt;x&gt;' does not satisfy the requires-clause '&lt;x&gt;' of interface '&lt;x&gt;': it does not conform to interface '&lt;x&gt;'.</summary>
+	public const string TypeDoesNotSatisfyTheRequiresClauseOfInterfaceItDoesNotConfo = "CVL4106";
+
+	/// <summary>Type '&lt;x&gt;' does not satisfy the requires-clause '&lt;x&gt;' of interface '&lt;x&gt;': missing protocol member '&lt;x&gt;'.</summary>
+	public const string TypeDoesNotSatisfyTheRequiresClauseOfInterfaceMissingProtoco = "CVL4107";
+
+	/// <summary>Type '&lt;x&gt;' does not satisfy the requires-clause '&lt;x&gt;' of protocol '&lt;x&gt;'.</summary>
+	public const string TypeDoesNotSatisfyTheRequiresClauseOfProtocol = "CVL4108";
+
+	/// <summary>Type '&lt;x&gt;' does not structurally conform to protocol '&lt;x&gt;' for parameter '&lt;x&gt;'</summary>
+	public const string TypeDoesNotStructurallyConformToProtocolForParameter = "CVL4109";
+
+	/// <summary>Type '&lt;x&gt;' is an enum; only scoped variant access ('&lt;x&gt;.VariantName') is allowed.</summary>
+	public const string TypeIsAnEnumOnlyScopedVariantAccessVariantNameIsAllowed = "CVL4110";
+
+	/// <summary>Type '&lt;x&gt;' is not a struct or union; cannot access member '&lt;x&gt;'</summary>
+	public const string TypeIsNotAStructOrUnionCannotAccessMember = "CVL4111";
+
+	/// <summary>Type '&lt;x&gt;' is not a struct type</summary>
+	public const string TypeIsNotAStructType = "CVL4112";
+
+	/// <summary>Type alias '&lt;x&gt;' expects &lt;x&gt; type argument(s), but &lt;x&gt; was given.</summary>
+	public const string TypeAliasExpectsTypeArgumentSButWasGiven = "CVL4113";
+
+	/// <summary>Undefined variable '&lt;x&gt;'</summary>
+	public const string UndefinedVariable = "CVL4114";
+
+	/// <summary>Union '&lt;x&gt;' does not contain variant '&lt;x&gt;'</summary>
+	public const string UnionDoesNotContainVariant = "CVL4115";
+
+	/// <summary>Union '&lt;x&gt;' is &lt;x&gt; bytes. Passing by value is forbidden for unions larger than 16 bytes; pass by 'ref'/'refvar' instead.</summary>
+	public const string UnionIsBytesPassingByValueIsForbiddenForUnionsLargerThan16By = "CVL4116";
+
+	/// <summary>Union '&lt;x&gt;' is &lt;x&gt; bytes. Returning by value is forbidden for unions larger than 16 bytes; return a 'ref'/'refvar' instead.</summary>
+	public const string UnionIsBytesReturningByValueIsForbiddenForUnionsLargerThan16 = "CVL4117";
+
+	/// <summary>Union initialization of '&lt;x&gt;' must specify exactly one variant.</summary>
+	public const string UnionInitializationOfMustSpecifyExactlyOneVariant = "CVL4118";
+
+	/// <summary>Unknown contract '&lt;x&gt;' in base clause of interface '&lt;x&gt;'.</summary>
+	public const string UnknownContractInBaseClauseOfInterface = "CVL4119";
+
+	/// <summary>Unknown contract '&lt;x&gt;' in constraint for parameter '&lt;x&gt;'.</summary>
+	public const string UnknownContractInConstraintForParameter = "CVL4120";
+
+	/// <summary>Unknown contract '&lt;x&gt;' in requires-clause of interface '&lt;x&gt;'.</summary>
+	public const string UnknownContractInRequiresClauseOfInterface = "CVL4121";
+
+	/// <summary>Unknown parameter type '&lt;x&gt;'</summary>
+	public const string UnknownParameterType = "CVL4122";
+
+	/// <summary>Unknown parameter type '&lt;x&gt;' in delegate declaration '&lt;x&gt;'</summary>
+	public const string UnknownParameterTypeInDelegateDeclaration = "CVL4123";
+
+	/// <summary>Unknown protocol '&lt;x&gt;' in base clause of protocol '&lt;x&gt;'.</summary>
+	public const string UnknownProtocolInBaseClauseOfProtocol = "CVL4124";
+
+	/// <summary>Unknown return type '&lt;x&gt;'</summary>
+	public const string UnknownReturnType = "CVL4125";
+
+	/// <summary>Unknown return type '&lt;x&gt;' in delegate declaration '&lt;x&gt;'</summary>
+	public const string UnknownReturnTypeInDelegateDeclaration = "CVL4126";
+
+	/// <summary>Unknown struct '&lt;x&gt;' in embed clause of struct '&lt;x&gt;'.</summary>
+	public const string UnknownStructInEmbedClauseOfStruct = "CVL4127";
+
+	/// <summary>Unknown type '&lt;x&gt;'</summary>
+	public const string UnknownType = "CVL4128";
+
+	/// <summary>Unknown type '&lt;x&gt;' in &lt;x&gt; expression.</summary>
+	public const string UnknownTypeInExpression = "CVL4129";
+
+	/// <summary>Unknown type '&lt;x&gt;' in default expression</summary>
+	public const string UnknownTypeInDefaultExpression = "CVL4130";
+
+	/// <summary>Unknown type '&lt;x&gt;' in global variable '&lt;x&gt;'.</summary>
+	public const string UnknownTypeInGlobalVariable = "CVL4131";
+
+	/// <summary>Unknown type '&lt;x&gt;' in lambda parameter.</summary>
+	public const string UnknownTypeInLambdaParameter = "CVL4132";
+
+	/// <summary>Unknown type '&lt;x&gt;' in type argument list of '&lt;x&gt;'</summary>
+	public const string UnknownTypeInTypeArgumentListOf = "CVL4133";
+
+	/// <summary>Unknown type '&lt;x&gt;' inside extension block.</summary>
+	public const string UnknownTypeInsideExtensionBlock = "CVL4134";
+
+	/// <summary>Unknown type '&lt;x&gt;' of field '&lt;x&gt;'</summary>
+	public const string UnknownTypeOfField = "CVL4135";
+
+	/// <summary>Unknown type '&lt;x&gt;' of field '&lt;x&gt;' in union '&lt;x&gt;'</summary>
+	public const string UnknownTypeOfFieldInUnion = "CVL4136";
+
+	/// <summary>Unknown type argument '&lt;x&gt;'</summary>
+	public const string UnknownTypeArgument = "CVL4137";
+
+	/// <summary>Use of moved variable '&lt;x&gt;'</summary>
+	public const string UseOfMovedVariable = "CVL4138";
+
+	/// <summary>Use of possibly-uninitialized variable '&lt;x&gt;'</summary>
+	public const string UseOfPossiblyUninitializedVariable = "CVL4139";
+
+	/// <summary>Variable '&lt;x&gt;' is already declared in this scope</summary>
+	public const string VariableIsAlreadyDeclaredInThisScope = "CVL4140";
+
+	/// <summary>Variant '&lt;x&gt;' in [Flags] enum '&lt;x&gt;' collides with an existing value '&lt;x&gt;'.</summary>
+	public const string VariantInFlagsEnumCollidesWithAnExistingValue = "CVL4141";
+
+	/// <summary>Variant '&lt;x&gt;' in [Flags] enum '&lt;x&gt;' has value 0 and must be named None, Empty, Unset, or Zero.</summary>
+	public const string VariantInFlagsEnumHasValue0AndMustBeNamedNoneEmptyUnsetOrZer = "CVL4142";
+
+	/// <summary>Variant '&lt;x&gt;' in enum '&lt;x&gt;' must be assigned a compile-time constant integer value.</summary>
+	public const string VariantInEnumMustBeAssignedACompileTimeConstantIntegerValue = "CVL4143";
+
+	/// <summary>Void variant '&lt;x&gt;' cannot carry a bound variable.</summary>
+	public const string VoidVariantCannotCarryABoundVariable = "CVL4144";
+
+	/// <summary>Void variant '&lt;x&gt;' cannot carry a promoted variable.</summary>
+	public const string VoidVariantCannotCarryAPromotedVariable = "CVL4145";
+
+	/// <summary>[NonExhaustive] enum '&lt;x&gt;' is consumed from another unit and requires an explicit 'default' or 'case _' branch.</summary>
+	public const string NonExhaustiveEnumIsConsumedFromAnotherUnitAndRequiresAnExpli = "CVL4146";
+
+	/// <summary>isReturn ? $"Captured closure environment cannot escape: the lambda captures '&lt;x&gt;</summary>
+	public const string IsReturnCapturedClosureEnvironmentCannotEscapeTheLambdaCaptu = "CVL4147";
+
+	/// <summary>isReturn ? $"Reference lambda borrow cannot escape: the lambda borrows '&lt;x&gt;</summary>
+	public const string IsReturnReferenceLambdaBorrowCannotEscapeTheLambdaBorrows = "CVL4148";
+
+
+	// ── Additional explicitly named diagnostics ──
+
+	/// <summary>Unknown warning id '&lt;x&gt;'.</summary>
+	public const string UnknownWarningId = "CVL4149";
+
+	/// <summary>Attribute '[SuppressWarning]' requires exactly one string literal argument.</summary>
+	public const string AttributeSuppressWarningRequiresExactlyOneStringLiteralArgum = "CVL4150";
+
+	/// <summary>Attribute '[MustUse]' expects at most one string literal argument.</summary>
+	public const string AttributeMustUseExpectsAtMostOneStringLiteralArgument = "CVL4151";
+
+	/// <summary>Attribute '[ImportName]' requires exactly one string literal argument naming the native symbol.</summary>
+	public const string AttributeImportNameRequiresExactlyOneStringLiteralArgumentNa = "CVL4152";
+
+	/// <summary>Unknown [LibraryImport] named argument '&lt;x&gt;'. Supported names are 'win', 'linux' and 'mac'.</summary>
+	public const string UnknownLibraryImportNamedArgumentSupportedNamesAreWinLinuxAn = "CVL4153";
+
+	/// <summary>Attribute '[LibraryImport]' accepts at most one positional argument: the library name.</summary>
+	public const string AttributeLibraryImportAcceptsAtMostOnePositionalArgumentTheL = "CVL4154";
+
+	/// <summary>Attribute '[LibraryImport]' arguments must be string literals (the library name, then optional 'win'/'linux'/'mac' native paths).</summary>
+	public const string AttributeLibraryImportArgumentsMustBeStringLiteralsTheLibrar = "CVL4155";
+
+	/// <summary>Attribute '[ExposeName]' requires exactly one string literal argument naming the exported symbol.</summary>
+	public const string AttributeExposeNameRequiresExactlyOneStringLiteralArgumentNa = "CVL4156";
+
+	/// <summary>Attribute '[&lt;x&gt;]' cannot be applied in &lt;x&gt; context.</summary>
+	public const string AttributeCannotBeAppliedInContext = "CVL4157";
+
+	/// <summary>Attribute '[&lt;x&gt;]' cannot be applied to &lt;x&gt; declarations.</summary>
+	public const string AttributeCannotBeAppliedToDeclarations = "CVL4158";
+
+	/// <summary>Duplicate attribute '[&lt;x&gt;]'.</summary>
+	public const string DuplicateAttribute = "CVL4159";
+
+	/// <summary>Duplicate attribute '[ExposeName]'.</summary>
+	public const string DuplicateAttributeExposeName = "CVL4160";
+
+	/// <summary>Attribute '[&lt;x&gt;]' cannot be applied to expose extern block declarations.</summary>
+	public const string AttributeCannotBeAppliedToExposeExternBlockDeclarations = "CVL4161";
+
+	/// <summary>Attribute '[&lt;x&gt;]' cannot be applied to extern block function declarations.</summary>
+	public const string AttributeCannotBeAppliedToExternBlockFunctionDeclarations = "CVL4162";
+
+	/// <summary>Duplicate attribute '[ImportName]'.</summary>
+	public const string DuplicateAttributeImportName = "CVL4163";
+
+	/// <summary>Attribute '[&lt;x&gt;]' cannot be applied to extern block declarations.</summary>
+	public const string AttributeCannotBeAppliedToExternBlockDeclarations = "CVL4164";
+
+	/// <summary>Duplicate attribute '[LibraryImport]'.</summary>
+	public const string DuplicateAttributeLibraryImport = "CVL4165";
+
+	/// <summary>Type alias '&lt;x&gt;' conflicts with an existing type name.</summary>
+	public const string TypeAliasConflictsWithAnExistingTypeName = "CVL4166";
+
+	/// <summary>Duplicate type alias '&lt;x&gt;'</summary>
+	public const string DuplicateTypeAlias = "CVL4167";
+
+	/// <summary>Receiver parameter must be named 'this' (found '&lt;x&gt;').</summary>
+	public const string ReceiverParameterMustBeNamedThisFound = "CVL4168";
+
+	/// <summary>Receiver parameter ('refvar this' / 'ref this') must be the first parameter of the method.</summary>
+	public const string ReceiverParameterRefvarThisRefThisMustBeTheFirstParameterOfT = "CVL4169";
+
+	/// <summary>Attribute '[&lt;x&gt;]' cannot be applied to extern block global declarations.</summary>
+	public const string AttributeCannotBeAppliedToExternBlockGlobalDeclarations = "CVL4170";
+
+	/// <summary>Unknown type '&lt;x&gt;' in foreign global '&lt;x&gt;'.</summary>
+	public const string UnknownTypeInForeignGlobal = "CVL4171";
+
+	/// <summary>Attribute '[&lt;x&gt;]' cannot be applied to foreign global declarations.</summary>
+	public const string AttributeCannotBeAppliedToForeignGlobalDeclarations = "CVL4172";
+
+	// ── Parser syntax errors ──
+
+	/// <summary>Unexpected token '&lt;x&gt;'.</summary>
+	public const string UnexpectedToken = "CVL4173";
+
+	/// <summary>Missing '&lt;x&gt;' at '&lt;x&gt;'.</summary>
+	public const string ExpectedToken = "CVL4174";
+
+	/// <summary>Unexpected end of file.</summary>
+	public const string UnexpectedEndOfFile = "CVL4175";
+
 }

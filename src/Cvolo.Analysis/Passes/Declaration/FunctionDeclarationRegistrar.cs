@@ -37,7 +37,7 @@ internal sealed class FunctionDeclarationRegistrar(BindingContext context)
 		if (func.Receiver != ReceiverContract.None)
 		{
 			context.Diagnostics.Report(context.FileContexts[context.CurrentUnit!], func.NameSpan,
-				"Receiver parameter ('refvar this' / 'ref this') is only allowed on extension methods.");
+				"Receiver parameter ('refvar this' / 'ref this') is only allowed on extension methods.", DiagnosticIds.ReceiverParameterRefvarThisRefThisIsOnlyAllowedOnExtensionMe);
 			return;
 		}
 
@@ -63,7 +63,7 @@ internal sealed class FunctionDeclarationRegistrar(BindingContext context)
 				if (returnType is null)
 				{
 					var currentFileContext = context.FileContexts[context.CurrentUnit!];
-					context.Diagnostics.Report(currentFileContext, func.ReturnTypeSpan, $"Unknown return type '{func.ReturnType}'");
+					context.Diagnostics.Report(currentFileContext, func.ReturnTypeSpan, $"Unknown return type '{func.ReturnType}'", DiagnosticIds.UnknownReturnType);
 					return;
 				}
 
@@ -74,7 +74,7 @@ internal sealed class FunctionDeclarationRegistrar(BindingContext context)
 					if (paramType is null)
 					{
 						var currentFileContext = context.FileContexts[context.CurrentUnit!];
-						context.Diagnostics.Report(currentFileContext, param.Span, $"Unknown parameter type '{param.Type}'");
+						context.Diagnostics.Report(currentFileContext, param.Span, $"Unknown parameter type '{param.Type}'", DiagnosticIds.UnknownParameterType);
 						continue;
 					}
 
@@ -127,7 +127,7 @@ internal sealed class FunctionDeclarationRegistrar(BindingContext context)
 		if (type is null)
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.Report(currentFileContext, func.ReturnTypeSpan, $"Unknown return type '{func.ReturnType}'");
+			context.Diagnostics.Report(currentFileContext, func.ReturnTypeSpan, $"Unknown return type '{func.ReturnType}'", DiagnosticIds.UnknownReturnType);
 			return;
 		}
 
@@ -137,7 +137,7 @@ internal sealed class FunctionDeclarationRegistrar(BindingContext context)
 			var paramSymbol = CreateParameter(param);
 			if (paramSymbol is null)
 			{
-				ReportDeclarationDiagnostic(param, $"Unknown parameter type '{param.Type}'");
+				ReportDeclarationDiagnostic(param, $"Unknown parameter type '{param.Type}'", DiagnosticIds.UnknownParameterType);
 				continue;
 			}
 
@@ -150,7 +150,7 @@ internal sealed class FunctionDeclarationRegistrar(BindingContext context)
 		if (existing is not null)
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.Report(currentFileContext, func.NameSpan, $"Duplicate definition of function '{func.Name}' with a matching parameter signature.");
+			context.Diagnostics.Report(currentFileContext, func.NameSpan, $"Duplicate definition of function '{func.Name}' with a matching parameter signature.", DiagnosticIds.DuplicateDefinitionOfFunctionWithAMatchingParameterSignature);
 			return;
 		}
 
@@ -311,7 +311,7 @@ internal sealed class FunctionDeclarationRegistrar(BindingContext context)
 		if (returnType is null)
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.Report(currentFileContext, ext.Span, $"Unknown return type '{ext.ReturnType}'");
+			context.Diagnostics.Report(currentFileContext, ext.Span, $"Unknown return type '{ext.ReturnType}'", DiagnosticIds.UnknownReturnType);
 			return;
 		}
 
@@ -322,7 +322,7 @@ internal sealed class FunctionDeclarationRegistrar(BindingContext context)
 			if (paramType is null)
 			{
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
-				context.Diagnostics.Report(currentFileContext, param.Span, $"Unknown parameter type '{param.Type}'");
+				context.Diagnostics.Report(currentFileContext, param.Span, $"Unknown parameter type '{param.Type}'", DiagnosticIds.UnknownParameterType);
 				continue;
 			}
 
@@ -342,7 +342,7 @@ internal sealed class FunctionDeclarationRegistrar(BindingContext context)
 			}
 
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.Report(currentFileContext, ext.Span, $"Duplicate definition of '{ext.Name}'");
+			context.Diagnostics.Report(currentFileContext, ext.Span, $"Duplicate definition of '{ext.Name}'", DiagnosticIds.DuplicateDefinitionOf);
 			return;
 		}
 
@@ -405,7 +405,7 @@ internal sealed class FunctionDeclarationRegistrar(BindingContext context)
 				case "LibraryImport":
 					if (sawLibraryImport)
 					{
-						ReportDeclarationDiagnostic(attr, "Duplicate attribute '[LibraryImport]'.");
+						ReportDeclarationDiagnostic(attr, "Duplicate attribute '[LibraryImport]'.", DiagnosticIds.DuplicateAttributeLibraryImport);
 						continue;
 					}
 
@@ -419,7 +419,7 @@ internal sealed class FunctionDeclarationRegistrar(BindingContext context)
 					ReportDeclarationWarning(attr, $"Unknown attribute '{attr.Name}'; it will be ignored.", DiagnosticIds.UnknownAttribute);
 					break;
 				default:
-					ReportDeclarationDiagnostic(attr, $"Attribute '[{key}]' cannot be applied to extern block declarations.");
+					ReportDeclarationDiagnostic(attr, $"Attribute '[{key}]' cannot be applied to extern block declarations.", DiagnosticIds.AttributeCannotBeAppliedToExternBlockDeclarations);
 					break;
 			}
 		}
@@ -471,7 +471,7 @@ internal sealed class FunctionDeclarationRegistrar(BindingContext context)
 		var returnType = context.ResolveType(fn.ReturnType);
 		if (returnType is null)
 		{
-			ReportDeclarationDiagnostic(fn, $"Unknown return type '{fn.ReturnType}'");
+			ReportDeclarationDiagnostic(fn, $"Unknown return type '{fn.ReturnType}'", DiagnosticIds.UnknownReturnType);
 			return;
 		}
 
@@ -481,7 +481,7 @@ internal sealed class FunctionDeclarationRegistrar(BindingContext context)
 			var paramType = context.ResolveType(param.Type);
 			if (paramType is null)
 			{
-				ReportDeclarationDiagnostic(param, $"Unknown parameter type '{param.Type}'");
+				ReportDeclarationDiagnostic(param, $"Unknown parameter type '{param.Type}'", DiagnosticIds.UnknownParameterType);
 				continue;
 			}
 
@@ -498,7 +498,7 @@ internal sealed class FunctionDeclarationRegistrar(BindingContext context)
 			if (existing is FunctionSymbol existingFunc && existingFunc.IsExtern)
 				return;
 
-			ReportDeclarationDiagnostic(fn, $"Duplicate definition of '{fn.Name}'");
+			ReportDeclarationDiagnostic(fn, $"Duplicate definition of '{fn.Name}'", DiagnosticIds.DuplicateDefinitionOf);
 			return;
 		}
 
@@ -512,7 +512,7 @@ internal sealed class FunctionDeclarationRegistrar(BindingContext context)
 				case "ImportName":
 					if (sawImportName)
 					{
-						ReportDeclarationDiagnostic(attr, "Duplicate attribute '[ImportName]'.");
+						ReportDeclarationDiagnostic(attr, "Duplicate attribute '[ImportName]'.", DiagnosticIds.DuplicateAttributeImportName);
 						continue;
 					}
 
@@ -528,7 +528,7 @@ internal sealed class FunctionDeclarationRegistrar(BindingContext context)
 					ReportDeclarationWarning(attr, $"Unknown attribute '{attr.Name}'; it will be ignored.", DiagnosticIds.UnknownAttribute);
 					break;
 				default:
-					ReportDeclarationDiagnostic(attr, $"Attribute '[{key}]' cannot be applied to extern block function declarations.");
+					ReportDeclarationDiagnostic(attr, $"Attribute '[{key}]' cannot be applied to extern block function declarations.", DiagnosticIds.AttributeCannotBeAppliedToExternBlockFunctionDeclarations);
 					break;
 			}
 		}
@@ -588,7 +588,7 @@ internal sealed class FunctionDeclarationRegistrar(BindingContext context)
 				continue;
 			}
 
-			ReportDeclarationDiagnostic(attr, $"Attribute '[{key}]' cannot be applied to expose extern block declarations.");
+			ReportDeclarationDiagnostic(attr, $"Attribute '[{key}]' cannot be applied to expose extern block declarations.", DiagnosticIds.AttributeCannotBeAppliedToExposeExternBlockDeclarations);
 		}
 
 		foreach (var func in block.Functions)
@@ -636,7 +636,7 @@ internal sealed class FunctionDeclarationRegistrar(BindingContext context)
 			{
 				if (sawExposeName)
 				{
-					ReportDeclarationDiagnostic(attr, "Duplicate attribute '[ExposeName]'.");
+					ReportDeclarationDiagnostic(attr, "Duplicate attribute '[ExposeName]'.", DiagnosticIds.DuplicateAttributeExposeName);
 					continue;
 				}
 
@@ -755,15 +755,6 @@ internal sealed class FunctionDeclarationRegistrar(BindingContext context)
 	{
 		var currentFileContext = context.FileContexts[context.CurrentUnit!];
 		context.Diagnostics.Report(currentFileContext, node.Span, message, diagnosticId);
-	}
-
-	/// <summary>
-	/// Reports a declaration diagnostic without a stable diagnostic identifier in the current compilation unit.
-	/// </summary>
-	private void ReportDeclarationDiagnostic(SyntaxNode node, string message)
-	{
-		var currentFileContext = context.FileContexts[context.CurrentUnit!];
-		context.Diagnostics.Report(currentFileContext, node.Span, message);
 	}
 
 	/// <summary>

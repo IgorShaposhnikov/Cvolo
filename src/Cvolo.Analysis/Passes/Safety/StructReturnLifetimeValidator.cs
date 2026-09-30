@@ -47,7 +47,7 @@ internal sealed class StructReturnLifetimeValidator(
 						if (_isDanglingTarget(target, scope))
 						{
 							context.Diagnostics.Report(context.CurrentUnit!.Context, span,
-								$"Cannot return '{varName}' by value: reference field '{field.Name}' targets local variable '{target}' (dangling reference)");
+								$"Cannot return '{varName}' by value: reference field '{field.Name}' targets local variable '{target}' (dangling reference)", DiagnosticIds.CannotReturnByValueReferenceFieldTargetsLocalVariableDanglin);
 							return;
 						}
 					}
@@ -65,7 +65,7 @@ internal sealed class StructReturnLifetimeValidator(
 						if (_isDanglingTarget(target, scope))
 						{
 							context.Diagnostics.Report(context.CurrentUnit!.Context, span,
-								$"Cannot return '{varName}' by value: reference field '{field.Name}' targets local variable '{target}' (dangling reference)");
+								$"Cannot return '{varName}' by value: reference field '{field.Name}' targets local variable '{target}' (dangling reference)", DiagnosticIds.CannotReturnByValueReferenceFieldTargetsLocalVariableDanglin);
 							return;
 						}
 					}
