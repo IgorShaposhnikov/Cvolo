@@ -546,6 +546,9 @@ public static class DiagnosticIds
 	/// <summary>Cannot assign `null` to a safe reference (`ref`/`refvar`).</summary>
 	public const string NullToSafeReference = "CVL1910";
 
+	/// <summary>The lexer could not recognize a character, so it is not part of the language.</summary>
+	public const string UnrecognizedCharacter = "CVL1911";
+
 	// ── Strings (CVL20xx) ──
 
 	/// <summary>A raw string literal is missing its closing quote.</summary>
@@ -676,6 +679,12 @@ public static class DiagnosticIds
 
 	/// <summary>An operator body uses an implicit instance field; operators have no receiver.</summary>
 	public const string OperatorUsesInstanceField = "CVL2207";
+	/// <summary>
+	/// An associated (receiverless) extension function referenced an instance field of the extended
+	/// type by name. Instance state is only reachable through a receiver, so the field cannot be
+	/// accessed implicitly from an associated body.
+	/// </summary>
+	public const string InstanceFieldAccessedFromAssociatedFunction = "CVL2208";
 
 	// ── Explicitly named diagnostics (formerly emitted without an id) ──
 
@@ -1208,5 +1217,13 @@ public static class DiagnosticIds
 
 	/// <summary>Unexpected end of file.</summary>
 	public const string UnexpectedEndOfFile = "CVL4175";
+
+	// A condition that controls execution (if/while/for) must be a boolean. This is reported
+	// for any non-boolean condition, including an assignment used where a condition is expected.
+	public const string ConditionMustBeBoolFound = "CVL4176";
+
+	// A type name written with an argument list is not a call: a Cvolo type is not callable,
+	// and construction is written with a struct initializer such as `Name { ... }`.
+	public const string TypeIsNotCallable = "CVL4177";
 
 }
