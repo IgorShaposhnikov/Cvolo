@@ -16,10 +16,20 @@ public static class SourcePathRemapper
 		if (stdlibIndex >= 0)
 		{
 			var relative = normalized[(stdlibIndex + stdlibMarker.Length)..];
-			if (relative.StartsWith("Base/", StringComparison.OrdinalIgnoreCase))
-				return "/base/" + relative["Base/".Length..];
-			if (relative.StartsWith("System/", StringComparison.OrdinalIgnoreCase))
-				return "/system/" + relative["System/".Length..];
+			// Tier comes from the first module directory segment, matching SdkLibraryResolver:
+			// "Base" or "Base.*" is the Base tier, "System" or "System.*" the System tier.
+			// Dotted sibling modules such as System.Memory/ are therefore classified like the
+			// nested System/Memory/ form instead of falling through to the System catch-all.
+			var slash = relative.IndexOf('/');
+			var module = slash < 0 ? relative : relative[..slash];
+			if (module.Equals("Base", StringComparison.OrdinalIgnoreCase))
+				return "/base/" + (slash < 0 ? "" : relative[(slash + 1)..]);
+			if (module.Equals("System", StringComparison.OrdinalIgnoreCase))
+				return "/system/" + (slash < 0 ? "" : relative[(slash + 1)..]);
+			if (module.StartsWith("Base.", StringComparison.OrdinalIgnoreCase))
+				return "/base/" + module["Base.".Length..] + (slash < 0 ? "" : relative[slash..]);
+			if (module.StartsWith("System.", StringComparison.OrdinalIgnoreCase))
+				return "/system/" + module["System.".Length..] + (slash < 0 ? "" : relative[slash..]);
 			return "/system/" + relative;
 		}
 

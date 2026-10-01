@@ -117,8 +117,18 @@ internal static class PackCompilation
 			? null
 			: SdkLibraryResolver.Resolve(stdlibRoot, projectFiles, includeSystem: true);
 		var stdlibFiles = sdkResolution is null ? [] : sdkResolution.Sources;
-		var sourceFiles = stdlibFiles.Concat(projectFiles).ToList();
 		var pathComparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+		// A workspace that carries its own stdlib tree also has those files matched by the
+		// recursive project glob above. Deduplicate on the full path so every physical source
+		// enters the compilation exactly once, stdlib entries winning by position.
+		var sourceFiles = new List<string>(stdlibFiles.Count + projectFiles.Count);
+		var seenSourcePaths = new HashSet<string>(pathComparer);
+		foreach (var file in stdlibFiles.Concat(projectFiles))
+		{
+			if (seenSourcePaths.Add(Path.GetFullPath(file)))
+				sourceFiles.Add(file);
+		}
+
 		var baseSourceSet = sdkResolution is null
 			? new HashSet<string>(pathComparer)
 			: new HashSet<string>(sdkResolution.BaseSources.Select(Path.GetFullPath), pathComparer);
@@ -381,12 +391,43 @@ internal static class CompilationProjectLibraries
 		while (dir is not null)
 		{
 			var libPath = Path.Combine(dir.FullName, "libraries");
-			if (Directory.Exists(libPath))
+			// Same criterion as CompilationProject: the folder name alone never identifies the
+			// SDK. A tree only counts when it carries Base-tier sources, so an arbitrary
+			// project-owned "libraries" folder cannot shadow the bundled standard library.
+			if (Directory.Exists(libPath) && IsStandardLibraryTree(libPath))
 				return libPath;
 
 			dir = dir.Parent;
 		}
 
 		return null;
+	}
+
+	/// <summary>
+	/// Mirrors <c>CompilationProject.IsStandardLibraryTree</c>: at least one Base-tier source
+	/// under a <c>Base</c> or <c>Base.*</c> module directory.
+	/// </summary>
+	public static bool IsStandardLibraryTree(string libraryRoot)
+	{
+		if (!Directory.Exists(libraryRoot))
+			return false;
+
+		foreach (var moduleDirectory in Directory.EnumerateDirectories(libraryRoot))
+		{
+			var name = Path.GetFileName(moduleDirectory);
+			if (!string.Equals(name, "Base", StringComparison.Ordinal) &&
+				!name.StartsWith("Base.", StringComparison.Ordinal))
+			{
+				continue;
+			}
+
+			if (Directory.EnumerateFiles(moduleDirectory, "*.cvl", SearchOption.AllDirectories).Any() ||
+				Directory.EnumerateFiles(moduleDirectory, "*.cv", SearchOption.AllDirectories).Any())
+			{
+				return true;
+			}
+		}
+
+		return false;
 	}
 }

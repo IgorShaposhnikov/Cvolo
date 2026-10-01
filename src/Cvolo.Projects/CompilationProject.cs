@@ -42,12 +42,16 @@ public sealed class CompilationProject
 
 		var projectDir = Directory.Exists(inputPath) ? Path.GetFullPath(inputPath) : Path.GetDirectoryName(Path.GetFullPath(inputPath))!;
 
-		// 1. Locate exactly one active "libraries" folder. A local library tree that
-		// contains the input is authoritative; otherwise the bundled/compiler root is used.
+		// 1. Locate the active "libraries" folder. A local library tree found by walking up
+		// from the project is authoritative: a workspace that carries its own stdlib sources
+		// must be checked against exactly those sources, not against a bundled copy. Only
+		// when no local tree exists do we fall back to the compiler's bundled libraries.
+		// Those library paths are deduplicated against the project glob below, so a tree that
+		// both contains the project and is globbed as project sources is never loaded twice.
 		var localLibraryRoot = FindStandardLibraryPath(projectDir);
-		var stdLibFullPath = localLibraryRoot is not null && IsPathUnder(projectDir, localLibraryRoot)
-			? localLibraryRoot
-			: FindStandardLibraryPath(compilerBaseDir ?? AppContext.BaseDirectory) ?? FindStandardLibraryPath(Directory.GetCurrentDirectory());
+		var stdLibFullPath = localLibraryRoot
+			?? FindStandardLibraryPath(compilerBaseDir ?? AppContext.BaseDirectory)
+			?? FindStandardLibraryPath(Directory.GetCurrentDirectory());
 
 		// 2. Add user project files. A directory containing one .cvlproj is treated the
 		// same as passing that project file explicitly, which keeps `cvolo run App`
@@ -275,7 +279,12 @@ int main() {
 		while (dir != null)
 		{
 			var libPath = Path.Combine(dir.FullName, "libraries");
-			if (Directory.Exists(libPath))
+			// The directory name alone is not evidence that a tree is the SDK: any project may
+			// own a folder called "libraries". A tree is the standard library only when it
+			// actually carries Base-tier sources, which is the tier SdkLibraryResolver always
+			// selects and the only tier that is guaranteed complete. An arbitrary project-owned
+			// "libraries" folder therefore never shadows the SDK.
+			if (Directory.Exists(libPath) && IsStandardLibraryTree(libPath))
 			{
 				return libPath;
 			}
@@ -284,5 +293,36 @@ int main() {
 		}
 
 		return null;
+	}
+
+	/// <summary>
+	/// True when <paramref name="libraryRoot"/> is a Cvolo standard-library source tree, i.e. it
+	/// holds at least one Base-tier source under a <c>Base</c> or <c>Base.*</c> module directory.
+	/// Tier classification itself (including dotted <c>System.Memory</c> modules) is owned by
+	/// <c>SdkLibraryResolver</c>; this is only the "is this the SDK tree at all" test used to
+	/// decide between a local tree and the bundled copy.
+	/// </summary>
+	internal static bool IsStandardLibraryTree(string libraryRoot)
+	{
+		if (!Directory.Exists(libraryRoot))
+			return false;
+
+		foreach (var moduleDirectory in Directory.EnumerateDirectories(libraryRoot))
+		{
+			var name = Path.GetFileName(moduleDirectory);
+			if (!string.Equals(name, "Base", StringComparison.Ordinal) &&
+				!name.StartsWith("Base.", StringComparison.Ordinal))
+			{
+				continue;
+			}
+
+			if (Directory.EnumerateFiles(moduleDirectory, "*.cvl", SearchOption.AllDirectories).Any() ||
+				Directory.EnumerateFiles(moduleDirectory, "*.cv", SearchOption.AllDirectories).Any())
+			{
+				return true;
+			}
+		}
+
+		return false;
 	}
 }

@@ -222,32 +222,42 @@ internal static class SdkLibraryResolver
 
 	private static bool TryClassifyTier(string libraryRoot, string filePath, out SdkTier tier, out string expectedNamespace)
 	{
+		// The module directory (the file's directory relative to the library root) names the
+		// namespace; the file name itself never contributes. The first directory segment
+		// selects the tier so nested directories (System/Math/Int.cvl) and dotted module
+		// directories (System.Memory/Heap.cvl) classify identically and deterministically.
+		// No tier is inferred from a file name and no module is skipped for being nested.
 		var relative = Path.GetRelativePath(libraryRoot, filePath).Replace('\\', '/');
 		var segments = relative.Split('/', StringSplitOptions.RemoveEmptyEntries);
-		if (segments.Length == 0)
+		if (segments.Length < 2)
 		{
+			// A file directly in the library root belongs to no module.
 			tier = SdkTier.System;
 			expectedNamespace = "";
 			return false;
 		}
 
-		switch (segments[0])
+		var directorySegments = segments[..^1];
+		var first = directorySegments[0];
+
+		if (first == "Base" || first.StartsWith("Base.", StringComparison.Ordinal))
 		{
-			case "Base":
-				tier = SdkTier.Base;
-				expectedNamespace = "";
-				return true;
-			case "System":
-				tier = SdkTier.System;
-				var parts = new List<string> { "System" };
-				parts.AddRange(segments.Skip(1).Take(segments.Length - 2));
-				expectedNamespace = string.Join('.', parts);
-				return true;
-			default:
-				tier = SdkTier.System;
-				expectedNamespace = "";
-				return false;
+			// Base is the always-available tier and carries the global namespace.
+			tier = SdkTier.Base;
+			expectedNamespace = "";
+			return true;
 		}
+
+		if (first == "System" || first.StartsWith("System.", StringComparison.Ordinal))
+		{
+			tier = SdkTier.System;
+			expectedNamespace = string.Join('.', directorySegments);
+			return true;
+		}
+
+		tier = SdkTier.System;
+		expectedNamespace = "";
+		return false;
 	}
 
 	private static string NormalizeRelative(string libraryRoot, string filePath) =>
