@@ -354,6 +354,12 @@ internal sealed class FunctionBodyValidator(
 				localScope.Declare(new VariableSymbol(param.Name, paramType, isMutable: false) { IsInitialized = true, Origin = OriginKind.Parameter });
 		}
 
+		// An associated function has no receiver, so naming one of the extended type's instance fields
+		// is an error rather than a lifted local. Record the field names so the expression validator can
+		// report that specific mistake instead of a generic "undefined variable".
+		var previousAssociatedFields = validation.AssociatedInstanceFields;
+		validation.AssociatedInstanceFields = AssociatedFieldNames(context.ResolveType(extendedTypeName));
+
 		statements.CheckBlock(method.Body, localScope, method);
 
 		if (method.ReturnType != "void" && !EndsWithReturn(method.Body!))
@@ -368,6 +374,32 @@ internal sealed class FunctionBodyValidator(
 
 		validation.UnsafeDepth = baseUnsafeDepth;
 		validation.InUnbound = baseInUnbound;
+		validation.AssociatedInstanceFields = previousAssociatedFields;
+	}
+
+	/// <summary>
+	/// Names of the instance fields an associated body is forbidden to touch implicitly, or null when
+	/// the extended type is not an aggregate with fields.
+	/// </summary>
+	private static IReadOnlySet<string>? AssociatedFieldNames(TypeSymbol? extendedType)
+	{
+		var names = new HashSet<string>(StringComparer.Ordinal);
+		switch (extendedType)
+		{
+			case StructTypeSymbol structure:
+				foreach (var field in structure.Fields)
+					names.Add(field.Name);
+				break;
+			case UnionTypeSymbol union:
+				foreach (var field in union.Fields)
+				{
+					if (!field.IsVoidVariant)
+						names.Add(field.Name);
+				}
+				break;
+		}
+
+		return names.Count == 0 ? null : names;
 	}
 
 	/// <summary>

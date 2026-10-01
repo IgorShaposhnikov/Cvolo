@@ -47,6 +47,32 @@ internal sealed class StatementValidator(
 	/// <summary>Delegates semantic expression typing to the shared expression validator.</summary>
 	private TypeSymbol? GetExpressionType(ExpressionSyntax expression, SymbolTable scope) => getExpressionType(expression, scope);
 
+	// A condition that gates execution (if/while/for) must be a boolean. An assignment
+	// expression, for example, is not a value a condition may consume, so it is reported
+	// with a stable id rather than silently accepted.
+	private void CheckConditionType(ExpressionSyntax condition, SymbolTable scope)
+	{
+		// An assignment is not a value a condition may consume, and it has no value type
+		// to test, so it is reported before the type check.
+		if (condition is BinaryExpressionSyntax { Operator: "=" })
+		{
+			context.Diagnostics.Report(
+				context.FileContexts[context.CurrentUnit!],
+				condition.Span,
+				"Condition must be 'bool'; an assignment is not a value a condition may use.",
+				DiagnosticIds.ConditionMustBeBoolFound);
+			return;
+		}
+
+		var conditionType = GetExpressionType(condition, scope);
+		if (conditionType is not null && conditionType.Name != "bool")
+			context.Diagnostics.Report(
+				context.FileContexts[context.CurrentUnit!],
+				condition.Span,
+				$"Condition must be 'bool', found '{conditionType.Name}'.",
+				DiagnosticIds.ConditionMustBeBoolFound);
+	}
+
 	/// <summary>Delegates target-typed lambda validation to the shared expression validator.</summary>
 	private void CheckTargetTypedLambda(LambdaExpressionSyntax lambda, DelegateTypeSymbol delegateType, SymbolTable scope)
 		=> validateTargetTypedLambda(lambda, delegateType, scope);
@@ -127,6 +153,7 @@ internal sealed class StatementValidator(
 				}
 			case IfStatementSyntax ifStmt:
 				CheckExpression(ifStmt.Condition, scope);
+				CheckConditionType(ifStmt.Condition, scope);
 				CheckStatement(ifStmt.ThenStatement, scope, currentFunc);
 				if (ifStmt.ElseClause is not null)
 					CheckStatement(ifStmt.ElseClause.Body, scope, currentFunc);
@@ -134,6 +161,7 @@ internal sealed class StatementValidator(
 			case WhileStatementSyntax whileStmt:
 				EnterLoop(whileStmt.Label, whileStmt.Span);
 				CheckExpression(whileStmt.Condition, scope);
+				CheckConditionType(whileStmt.Condition, scope);
 				CheckStatement(whileStmt.Body, scope, currentFunc);
 				ExitLoop();
 				break;
@@ -143,6 +171,7 @@ internal sealed class StatementValidator(
 					EnterLoop(forStmt.Label, forStmt.Span);
 					CheckVariableDeclaration(forStmt.Initializer, forScope, currentFunc);
 					CheckExpression(forStmt.Condition, forScope);
+					CheckConditionType(forStmt.Condition, forScope);
 					CheckExpression(forStmt.Increment, forScope);
 					CheckStatement(forStmt.Body, forScope, currentFunc);
 					ExitLoop();

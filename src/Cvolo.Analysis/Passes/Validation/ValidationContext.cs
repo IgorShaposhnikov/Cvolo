@@ -63,4 +63,10 @@ internal sealed class ValidationContext
 	/// switch even when no loop is active, while <c>continue</c> remains loop-only.
 	/// </summary>
 	public int SwitchDepth { get; set; }
+	/// <summary>
+	/// Instance field names of the extended type while an associated (receiverless) extension body is
+	/// being validated, otherwise null. An unresolved identifier that names one of these fields is an
+	/// attempt to touch instance state without a receiver and is reported specifically.
+	/// </summary>
+	public IReadOnlySet<string>? AssociatedInstanceFields { get; set; }
 }

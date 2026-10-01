@@ -73,7 +73,16 @@ internal sealed class ExpressionValidator(
 						else if (resolvedGlobal is null)
 						{
 							var currentFileContext = context.FileContexts[context.CurrentUnit!];
-							context.Diagnostics.Report(currentFileContext, id.Span, $"Undefined variable '{id.Name}'", DiagnosticIds.UndefinedVariable);
+							if (_validation.AssociatedInstanceFields?.Contains(id.Name) == true)
+							{
+								context.Diagnostics.Report(currentFileContext, id.Span,
+									$"Instance field '{id.Name}' cannot be accessed because the associated function has no receiver.",
+									DiagnosticIds.InstanceFieldAccessedFromAssociatedFunction);
+							}
+							else
+							{
+								context.Diagnostics.Report(currentFileContext, id.Span, $"Undefined variable '{id.Name}'", DiagnosticIds.UndefinedVariable);
+							}
 						}
 					}
 
@@ -233,6 +242,25 @@ internal sealed class ExpressionValidator(
 							if (func is null)
 								return;
 						}
+
+						// No concrete overload matched: the callee may name a generic extension
+						// member whose type arguments were omitted. Resolving it here keeps the
+						// arity/inference finding specific ("expects a type argument") instead of
+						// the generic "no overload matches" mismatch. A template that reported an
+						// arity/inference problem returns false, so the call is resolved as
+						// unresolved and the generic overload message is suppressed.
+						if (func is null)
+						{
+							var extensionMember = TryInstantiateGenericExtensionMember(call, argTypes, scope);
+							if (extensionMember is not null)
+							{
+								func = extensionMember == true
+									? ResolveInstantiatedExtensionMember(call, argTypes, scope, out mismatch, out mismatchOwnerName)
+									: null;
+								if (func is null)
+									return;
+							}
+						}
 					}
 
 					if (func is null)
@@ -243,6 +271,35 @@ internal sealed class ExpressionValidator(
 						if (mismatch != DottedCallMismatch.None
 							&& ReportDottedCallMismatch(call, mismatch, mismatchOwnerName))
 						{
+							return;
+						}
+
+						// A receiver the compiler cannot name at all is the finding, not its arguments.
+						// Nothing behind the dot was ever a candidate, so an argument-mismatch report
+						// here would read as a second independent defect and point the reader at the
+						// wrong line. Reporting the receiver instead keeps the cascade out of the list.
+						if (ReportUnresolvedCallReceiver(scope, call))
+							return;
+
+						// A receiver that names a real aggregate type but has no such member is a
+						// member finding: the call site exists, the member does not. Continuing into
+						// overload resolution would fabricate candidates and report an argument
+						// mismatch against a member that was never declared.
+						if (ReportMissingMemberOnKnownReceiver(call))
+							return;
+
+						// A bare callee that names a type is not a call: a Cvolo type is not
+						// callable (construction is written as a struct initializer). Report the
+						// type rather than fabricating a function overload mismatch.
+						if (!call.FunctionName.Contains('.', StringComparison.Ordinal)
+							&& (context.ResolveType(context.GetMangledName(call.FunctionName, context.CurrentUnit?.NamespaceDeclaration?.Name))
+								?? context.ResolveType(call.FunctionName)) is not null)
+						{
+							context.Diagnostics.Report(
+								context.FileContexts[context.CurrentUnit!],
+								call.ArgumentListSpan,
+								$"Type '{call.FunctionName}' is not callable; construct it with a struct initializer.",
+								DiagnosticIds.TypeIsNotCallable);
 							return;
 						}
 
@@ -425,7 +482,16 @@ internal sealed class ExpressionValidator(
 							else
 							{
 								var currentFileContext = context.FileContexts[context.CurrentUnit!];
-								context.Diagnostics.Report(currentFileContext, id.Span, $"Undefined variable '{id.Name}'", DiagnosticIds.UndefinedVariable);
+								if (_validation.AssociatedInstanceFields?.Contains(id.Name) == true)
+								{
+									context.Diagnostics.Report(currentFileContext, id.Span,
+										$"Instance field '{id.Name}' cannot be accessed because the associated function has no receiver.",
+										DiagnosticIds.InstanceFieldAccessedFromAssociatedFunction);
+								}
+								else
+								{
+									context.Diagnostics.Report(currentFileContext, id.Span, $"Undefined variable '{id.Name}'", DiagnosticIds.UndefinedVariable);
+								}
 							}
 						}
 						else
@@ -777,6 +843,158 @@ internal sealed class ExpressionValidator(
 			default:
 				return false;
 		}
+	}
+
+	/// <summary>
+	/// Reports a dotted call whose receiver names neither a type nor a value, and returns whether one
+	/// was reported. The member name behind an unresolvable receiver cannot be resolved, matched, or
+	/// argued about, so continuing into overload resolution produces an argument-mismatch diagnostic
+	/// against candidates that were never candidates. The receiver is the finding; the stable
+	/// catalog entry for "this type name is not a type" is reused so no new identifier is minted.
+	/// </summary>
+	private bool ReportUnresolvedCallReceiver(SymbolTable scope, CallExpressionSyntax call)
+	{
+		var lastDot = LastTopLevelDotIndex(call.FunctionName);
+		if (lastDot <= 0 || lastDot == call.FunctionName.Length - 1)
+			return false;
+
+		var receiver = call.FunctionName[..lastDot];
+
+		// A receiver the type namespace can name is a type, and the ordinary member path reports
+		// whatever is actually wrong with the member.
+		if (context.ResolveType(receiver) is not null)
+			return false;
+
+		// A receiver that names a namespace is not missing either: `Console.Write()` is a namespace
+		// member that does not exist, not a type that does not exist. Reporting it as an unknown type
+		// would blame the wrong thing and change an established diagnostic for a common mistake.
+		if (NamesNamespace(receiver))
+			return false;
+
+		// Any segment naming a value makes the receiver a value chain (`this.field`, `a.b.c`).
+		// Its members are found by instance lookup, so a failure there is a different finding.
+		if (receiver.Split('.').Any(segment =>
+				segment is "self" or "this"
+				|| scope.Lookup(segment) is VariableSymbol
+				|| context.ResolveGlobalReference(segment, out _) is VariableSymbol))
+		{
+			return false;
+		}
+
+		var currentFileContext = context.FileContexts[context.CurrentUnit!];
+		context.Diagnostics.Report(
+			currentFileContext,
+			call.ArgumentListSpan,
+			$"Unknown type '{receiver}' in call to '{call.FunctionName}'",
+			DiagnosticIds.UnknownTypeInExpression);
+		return true;
+	}
+
+	/// <summary>
+	/// Reports a dotted call whose receiver names a real struct or union type that has no such member,
+	/// and returns whether one was reported. Overload resolution has already failed at this point, so
+	/// the member genuinely does not exist rather than merely being called the wrong way. Reporting the
+	/// member keeps the finding on the line that names it instead of emitting an argument-mismatch
+	/// against a fabricated candidate set. Existing catalog entries are reused for the two aggregate
+	/// kinds, so no new identifier is minted.
+	/// </summary>
+	private bool ReportMissingMemberOnKnownReceiver(CallExpressionSyntax call)
+	{
+		var lastDot = LastTopLevelDotIndex(call.FunctionName);
+		if (lastDot <= 0 || lastDot == call.FunctionName.Length - 1)
+			return false;
+
+		var receiver = call.FunctionName[..lastDot];
+		var memberName = call.FunctionName[(lastDot + 1)..];
+
+		// A namespace-qualified receiver (e.g. `System.Console.Write`) is not a type name; a
+		// type-qualified receiver (e.g. `Outer.Inner.Method`) is not this finding either.
+		if (NamesNamespace(receiver))
+			return false;
+
+		if (context.ResolveType(receiver) is not TypeSymbol owner || owner is not (StructTypeSymbol or UnionTypeSymbol))
+			return false;
+
+		// A member that exists in any callable table is not missing; it simply did not match these
+		// arguments, which the ordinary overload diagnostic already explains.
+		if (HasCallableMember(memberName))
+			return false;
+
+		var currentFileContext = context.FileContexts[context.CurrentUnit!];
+		var isUnion = owner is UnionTypeSymbol;
+		var noun = isUnion ? "variant" : "field";
+		context.Diagnostics.Report(
+			currentFileContext,
+			call.ArgumentListSpan,
+			$"Type '{owner.Name}' does not contain {noun} '{memberName}'",
+			isUnion ? DiagnosticIds.UnionDoesNotContainVariant : DiagnosticIds.StructDoesNotContainField);
+		return true;
+	}
+
+	/// <summary>
+	/// Whether any callable with the given leaf name is known to the compiler, in any receiver form.
+	/// Deliberately over-inclusive: a false positive here only suppresses a missing-member report,
+	/// whereas a false negative would replace a legitimate overload diagnostic with the wrong finding.
+	/// </summary>
+	private bool HasCallableMember(string memberName)
+	{
+		static bool HasLeaf(IEnumerable<string> keys, string leaf)
+		{
+			foreach (var key in keys)
+			{
+				var lastDot = key.LastIndexOf('.');
+				var keyLeaf = lastDot < 0 ? key : key[(lastDot + 1)..];
+				if (string.Equals(keyLeaf, leaf, StringComparison.Ordinal))
+					return true;
+			}
+
+			return false;
+		}
+
+		return HasLeaf(context.OverloadedFunctions.Keys, memberName)
+			|| HasLeaf(context.AssociatedFunctions.Keys, memberName)
+			|| HasLeaf(context.GenericFunctionTemplates.Keys, memberName)
+			|| HasLeaf(context.GenericExtensionMethodTemplates.Keys, memberName)
+			|| HasLeaf(context.InterfaceFunctionTemplates.Keys, memberName)
+			|| HasLeaf(context.ProtocolFunctionTemplates.Keys, memberName);
+	}
+
+	/// <summary>
+	/// Whether <paramref name="receiver"/> names a namespace rather than a type, either as written or
+	/// through one of the file's active imports. Uses the compiler's own symbol tables, so it agrees
+	/// with what completion offers at the same position.
+	/// </summary>
+	private bool NamesNamespace(string receiver)
+	{
+		if (IsNamespaceName(receiver))
+			return true;
+
+		foreach (var active in context.GetActiveUsings(context.CurrentUnit))
+		{
+			if (IsNamespaceName(active + "." + receiver))
+				return true;
+		}
+
+		return false;
+	}
+
+	private bool IsNamespaceName(string candidate)
+	{
+		if (context.DeclaredNamespaces.Contains(candidate))
+			return true;
+
+		var prefix = candidate + ".";
+		return context.OverloadedFunctions.Keys.Any(k => k.StartsWith(prefix, StringComparison.Ordinal))
+			|| context.AssociatedFunctions.Keys.Any(k => k.StartsWith(prefix, StringComparison.Ordinal))
+			|| context.GenericFunctionTemplates.Keys.Any(k => k.StartsWith(prefix, StringComparison.Ordinal))
+			|| context.GenericExtensionMethodTemplates.Keys.Any(k => k.StartsWith(prefix, StringComparison.Ordinal))
+			|| context.InterfaceFunctionTemplates.Keys.Any(k => k.StartsWith(prefix, StringComparison.Ordinal))
+			|| context.ProtocolFunctionTemplates.Keys.Any(k => k.StartsWith(prefix, StringComparison.Ordinal))
+			|| context.StructTypes.Keys.Any(k => k.StartsWith(prefix, StringComparison.Ordinal))
+			|| context.UnionTypes.Keys.Any(k => k.StartsWith(prefix, StringComparison.Ordinal))
+			|| context.EnumTypes.Keys.Any(k => k.StartsWith(prefix, StringComparison.Ordinal))
+			|| context.InterfaceTypes.Keys.Any(k => k.StartsWith(prefix, StringComparison.Ordinal))
+			|| context.ProtocolTypes.Keys.Any(k => k.StartsWith(prefix, StringComparison.Ordinal));
 	}
 
 	/// <summary>

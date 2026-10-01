@@ -192,29 +192,54 @@ public sealed class ValidationPass(BindingContext context)
 				else if (member is ExtensionDeclarationSyntax extDecl)
 				{
 					var extendedType = context.ResolveType(extDecl.ExtendedTypeName);
-					if (extendedType != null && (context.GenericStructTemplates.ContainsKey(extendedType.Name) || context.GenericUnionTemplates.ContainsKey(extendedType.Name)))
-					{
-						continue;
-					}
+					var genericExtendedType = extendedType != null
+						&& (context.GenericStructTemplates.ContainsKey(extendedType.Name) || context.GenericUnionTemplates.ContainsKey(extendedType.Name));
+
+					// A body that extends an open generic type can still be bound: the extension's own
+					// type parameters name the same parameters the extended declaration uses, so pushing
+					// their scope lets the members be checked instead of silently skipped.
+					var extensionScopeDepth = context.GenericParameterScopes.Count;
+					if (genericExtendedType)
+						context.PushGenericScope("extension", extDecl.ExtendedTypeName, extDecl.GenericParameters);
 
 					foreach (var method in extDecl.Methods.Concat(extDecl.Destructors.Select(static d => d.ToFunctionDeclaration())))
 					{
-						var isMethodTemplate = method.GenericParameters.Count > 0 && method.GenericParameters.Any(p => context.ResolveType(p) == null);
-						if (isMethodTemplate)
-							continue;
+						// A method's own type parameters are not registered while the pass walks the
+						// declaration, so push their scope before deciding whether the body is still a
+						// template. Only parameters inherited from an unresolved enclosing template keep
+						// the body uninstantiable (and therefore skipped); a method that introduces its
+						// own parameters can still be bound and checked.
+						var genericScopeDepth = context.GenericParameterScopes.Count;
+						if (method.GenericParameters.Count > 0)
+							context.PushGenericScope("method", method.Name, method.GenericParameters);
 
-						// Associated functions are receiverless: no `this`, no lifted fields, and no
-						// mutability contract, so they take a separate body-validation path.
-						if (method.IsAssociated)
-							FunctionBodies.ValidateAssociatedFunctionBody(extDecl.ExtendedTypeName, method);
-						else
-							FunctionBodies.ValidateExtensionBody(extDecl.ExtendedTypeName, method);
+						try
+						{
+							var isMethodTemplate = method.GenericParameters.Count > 0 && method.GenericParameters.Any(p => context.ResolveType(p) == null);
+							if (isMethodTemplate)
+								continue;
+
+							// Associated functions are receiverless: no `this`, no lifted fields, and no
+							// mutability contract, so they take a separate body-validation path.
+							if (method.IsAssociated)
+								FunctionBodies.ValidateAssociatedFunctionBody(extDecl.ExtendedTypeName, method);
+							else
+								FunctionBodies.ValidateExtensionBody(extDecl.ExtendedTypeName, method);
+						}
+						finally
+						{
+							while (context.GenericParameterScopes.Count > genericScopeDepth)
+								context.PopGenericScope();
+						}
 					}
 
 					foreach (var ctorDecl in extDecl.Constructors)
 					{
 						Constructors.ValidateBody(extDecl.ExtendedTypeName, ctorDecl);
 					}
+
+					while (context.GenericParameterScopes.Count > extensionScopeDepth)
+						context.PopGenericScope();
 				}
 			}
 		}

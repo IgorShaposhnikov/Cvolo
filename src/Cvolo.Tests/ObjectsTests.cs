@@ -28,7 +28,7 @@ public sealed class ObjectsTests : CompilerTestBase
 	[InlineData("DestructorNameMismatchFail", "Destructor name '~WrongName' does not match extended type 'Pair'")]
 	[InlineData("AssociatedFunctionThroughValueFail", "Associated function `MemBlock.AlignUp` must be called through the type.")]
 	[InlineData("InstanceMethodThroughTypeFail", "'IsAligned' is an instance method of 'MemBlock' and must be called on a value, not through the type.")]
-	[InlineData("AssociatedFieldAccessFail", "Undefined variable 'Size'")]
+	[InlineData("AssociatedFieldAccessFail", "Instance field 'Size' cannot be accessed because the associated function has no receiver.")]
 	[InlineData("AssociatedFunctionWithReceiverFail", "cannot declare an instance receiver")]
 	[InlineData("LeadingDotOutsideExtensionFail", "Associated function declarations are only allowed inside an extension block.")]
 	[InlineData("AssociatedFunctionInProtocolFail", "cannot be declared in an extension block on a protocol")]
