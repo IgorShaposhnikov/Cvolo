@@ -1,4 +1,7 @@
+using Cvolo.Analysis;
 using Cvolo.Analysis.Completion;
+using Cvolo.Analysis.Symbols.Base;
+using Cvolo.Analysis.Symbols.Structs;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
 using Cvolo.Core.AST.Expressions;
@@ -30,10 +33,16 @@ internal static class SemanticTokenService
 		{
 			foreach (var node in Descendants(unit))
 			{
-				if (TryAddDirectToken(node, source, tokens, seen))
-					continue;
+			if (TryAddDirectToken(node, source, tokens, seen))
+				continue;
 
-				foreach (var position in CandidatePositions(node, source))
+			// A non-dotted call name is not resolved by the symbol resolver (a call has
+			// no callee child node), so a name that denotes a type would otherwise fall
+			// back to the lexical function colour. Resolve it as a type here.
+			if (node is CallExpressionSyntax calleeTypeCall)
+				TryAddCalleeTypeToken(analysis.BinderContext, unit, calleeTypeCall, source, tokens, seen);
+
+			foreach (var position in CandidatePositions(node, source))
 				{
 					if (position < 0)
 						continue;
@@ -53,6 +62,53 @@ internal static class SemanticTokenService
 
 		return [.. tokens.OrderBy(token => token.Span.Start).ThenBy(token => token.Span.Length)];
 	}
+
+	/// <summary>
+	/// Classifies a non-dotted call name that denotes a type. A call node has no callee
+	/// child, so the symbol resolver does not resolve <c>WP</c> in <c>WP()</c>; a type name
+	/// would otherwise fall back to the lexical function colour.
+	/// </summary>
+	private static void TryAddCalleeTypeToken(
+		BindingContext context,
+		CompilationUnitSyntax unit,
+		CallExpressionSyntax call,
+		string source,
+		List<SemanticTokenInfo> tokens,
+		HashSet<(int Start, int Length)> seen)
+	{
+		if (call.FunctionName.Contains('.')
+			|| !TryIndexOf(source, call.Span, call.FunctionName, out var nameStart))
+		{
+			return;
+		}
+
+		var type = context.ResolveType(context.GetMangledName(call.FunctionName, unit.NamespaceDeclaration?.Name))
+			?? context.ResolveType(call.FunctionName);
+		if (type is null)
+		{
+			return;
+		}
+
+		var span = new TextSpan(nameStart, call.FunctionName.Length);
+		if (!seen.Add((span.Start, span.Length)))
+		{
+			return;
+		}
+
+		tokens.Add(new SemanticTokenInfo(span, TypeKind(type), SemanticTokenModifiers.None));
+	}
+
+	private static ToolingSymbolKind TypeKind(TypeSymbol type) => type switch
+	{
+		StructTypeSymbol => ToolingSymbolKind.Struct,
+		UnionTypeSymbol => ToolingSymbolKind.Union,
+		EnumTypeSymbol => ToolingSymbolKind.Enum,
+		InterfaceTypeSymbol => ToolingSymbolKind.Interface,
+		ProtocolTypeSymbol => ToolingSymbolKind.Protocol,
+		DelegateTypeSymbol => ToolingSymbolKind.Delegate,
+		TypeParameterSymbol => ToolingSymbolKind.TypeParameter,
+		_ => ToolingSymbolKind.OtherType,
+	};
 
 	private static bool TryAddDirectToken(SyntaxNode node, string source, List<SemanticTokenInfo> tokens, HashSet<(int Start, int Length)> seen)
 	{
@@ -86,6 +142,11 @@ internal static class SemanticTokenService
 				return false;
 			case OffsetofExpressionSyntax:
 				AddDirectToken(tokens, seen, new Cvolo.Core.Diagnostics.TextSpan(node.Span.Start, "offsetof".Length), ToolingSymbolKind.Keyword);
+				return false;
+			case DefaultExpressionSyntax:
+				// `default(T)` carries the default-value keyword; only the keyword itself is
+				// classified, so the parenthesised type argument keeps its ordinary type token.
+				AddDirectToken(tokens, seen, new Cvolo.Core.Diagnostics.TextSpan(node.Span.Start, "default".Length), ToolingSymbolKind.Keyword);
 				return false;
 			case FunctionDeclarationSyntax builtinFunction when builtinFunction.BuiltinSpan is { } builtinFunctionSpan:
 				AddDirectToken(tokens, seen, builtinFunctionSpan, ToolingSymbolKind.Keyword);
@@ -212,6 +273,9 @@ internal static class SemanticTokenService
 				break;
 			case CallExpressionSyntax call:
 				yield return call.Span.Start + call.FunctionName.Length - Leaf(call.FunctionName).Length;
+				if (ReceiverName(call.FunctionName) is { Length: > 0 } callReceiver
+					&& TryIndexOf(source, call.Span, callReceiver, out var callReceiverPosition))
+					yield return callReceiverPosition;
 				break;
 			case SizeofExpressionSyntax sizeofExpression:
 				if (TryIndexOf(source, sizeofExpression.Span, sizeofExpression.TypeName, out var sizeofType))
@@ -229,6 +293,8 @@ internal static class SemanticTokenService
 				break;
 			case FunctionDeclarationSyntax function:
 				yield return function.NameSpan.Start;
+				foreach (var genericPosition in GenericPositions(source, function.Span, function.Name, function.GenericParameters))
+					yield return genericPosition;
 				break;
 			case ConstructorDeclarationSyntax constructor:
 				yield return constructor.NameSpan.Start;
@@ -254,10 +320,24 @@ internal static class SemanticTokenService
 			case StructDeclarationSyntax structDeclaration:
 				if (TryIndexOf(source, structDeclaration.Span, structDeclaration.Name, out var structName))
 					yield return structName;
+				foreach (var genericPosition in GenericPositions(source, structDeclaration.Span, structDeclaration.Name, structDeclaration.GenericParameters))
+					yield return genericPosition;
+				foreach (var bounds in structDeclaration.GenericParameterConstraints.Values)
+					foreach (var bound in bounds)
+						if (TryIndexOf(source, structDeclaration.Span, bound, out var boundPosition))
+							yield return boundPosition;
+				foreach (var defaultType in structDeclaration.GenericParameterDefaults.Values)
+					if (TryIndexOf(source, structDeclaration.Span, defaultType, out var structDefaultPosition))
+						yield return structDefaultPosition;
 				break;
 			case UnionDeclarationSyntax unionDeclaration:
 				if (TryIndexOf(source, unionDeclaration.Span, unionDeclaration.Name, out var unionName))
 					yield return unionName;
+				foreach (var genericPosition in GenericPositions(source, unionDeclaration.Span, unionDeclaration.Name, unionDeclaration.GenericParameters))
+					yield return genericPosition;
+				foreach (var defaultType in unionDeclaration.GenericParameterDefaults.Values)
+					if (TryIndexOf(source, unionDeclaration.Span, defaultType, out var unionDefaultPosition))
+						yield return unionDefaultPosition;
 				break;
 			case EnumDeclarationSyntax enumDeclaration:
 				if (TryIndexOf(source, enumDeclaration.Span, enumDeclaration.Name, out var enumName))
@@ -266,18 +346,36 @@ internal static class SemanticTokenService
 			case InterfaceDeclarationSyntax interfaceDeclaration:
 				if (TryIndexOf(source, interfaceDeclaration.Span, interfaceDeclaration.Name, out var interfaceName))
 					yield return interfaceName;
+				foreach (var genericPosition in GenericPositions(source, interfaceDeclaration.Span, interfaceDeclaration.Name, interfaceDeclaration.GenericParameters))
+					yield return genericPosition;
 				break;
 			case ProtocolDeclarationSyntax protocolDeclaration:
 				if (TryIndexOf(source, protocolDeclaration.Span, protocolDeclaration.Name, out var protocolName))
 					yield return protocolName;
+				foreach (var genericPosition in GenericPositions(source, protocolDeclaration.Span, protocolDeclaration.Name, protocolDeclaration.GenericParameters))
+					yield return genericPosition;
 				break;
 			case DelegateDeclarationSyntax delegateDeclaration:
 				if (TryIndexOf(source, delegateDeclaration.Span, delegateDeclaration.Name, out var delegateName))
 					yield return delegateName;
+				foreach (var genericPosition in GenericPositions(source, delegateDeclaration.Span, delegateDeclaration.Name, delegateDeclaration.GenericParameters))
+					yield return genericPosition;
 				break;
 			case TypeAliasDeclarationSyntax typeAlias:
 				if (TryIndexOf(source, typeAlias.Span, typeAlias.Name, out var aliasName))
 					yield return aliasName;
+				foreach (var genericPosition in GenericPositions(source, typeAlias.Span, typeAlias.Name, typeAlias.GenericParameters))
+					yield return genericPosition;
+				break;
+			case ExtensionDeclarationSyntax extensionDeclaration:
+				if (extensionDeclaration.ExtendedTypeName.Length > 0
+					&& TryIndexOf(source, extensionDeclaration.Span, extensionDeclaration.ExtendedTypeName, out var extendedTypeName))
+					yield return extendedTypeName;
+				foreach (var genericPosition in GenericPositions(source, extensionDeclaration.Span, extensionDeclaration.ExtendedTypeName, extensionDeclaration.GenericParameters))
+					yield return genericPosition;
+				foreach (var defaultType in extensionDeclaration.GenericParameterDefaults.Values)
+					if (TryIndexOf(source, extensionDeclaration.Span, defaultType, out var extensionDefaultPosition))
+						yield return extensionDefaultPosition;
 				break;
 			case StructFieldSyntax structField:
 				if (TryIndexOf(source, structField.Span, structField.Type, out var structFieldType))
@@ -321,6 +419,64 @@ internal static class SemanticTokenService
 	{
 		var dot = name.LastIndexOf('.');
 		return dot < 0 ? name : name[(dot + 1)..];
+	}
+
+	private static string? ReceiverName(string functionName)
+	{
+		var dot = functionName.LastIndexOf('.');
+		return dot <= 0 ? null : functionName[..dot];
+	}
+
+	/// <summary>
+	/// Positions of the names in a declaration's generic-parameter list. The list is located by
+	/// finding the opening angle bracket after the declaration name and then its matching close, so
+	/// a parameter is never confused with a same-named identifier elsewhere in the declaration.
+	/// </summary>
+	private static IEnumerable<int> GenericPositions(string source, Cvolo.Core.Diagnostics.TextSpan span, string declarationName, IReadOnlyList<string> names)
+	{
+		if (names.Count == 0)
+			yield break;
+
+		var searchStart = span.Start;
+		if (declarationName.Length > 0 && TryIndexOf(source, span, declarationName, out var namePosition))
+			searchStart = namePosition + declarationName.Length;
+
+		var open = source.IndexOf('<', searchStart);
+		if (open < 0 || open >= span.End)
+			yield break;
+
+		var close = MatchingAngle(source, open, span.End);
+		var listEnd = close < 0 ? span.End : close;
+
+		foreach (var name in names)
+		{
+			if (name.Length == 0)
+				continue;
+
+			if (TryIndexOf(source, new Cvolo.Core.Diagnostics.TextSpan(open + 1, listEnd - open - 1), name, out var position))
+				yield return position;
+		}
+	}
+
+	private static int MatchingAngle(string source, int open, int limit)
+	{
+		var depth = 0;
+		var end = Math.Min(limit, source.Length);
+		for (var i = open; i < end; i++)
+		{
+			if (source[i] == '<')
+			{
+				depth++;
+			}
+			else if (source[i] == '>')
+			{
+				depth--;
+				if (depth == 0)
+					return i;
+			}
+		}
+
+		return -1;
 	}
 
 	private static IEnumerable<SyntaxNode> Descendants(SyntaxNode root)
