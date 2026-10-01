@@ -2,6 +2,7 @@ using Cvolo.Analysis.Symbols;
 using Cvolo.Analysis.Symbols.Base;
 using Cvolo.Analysis.Symbols.Collections;
 using Cvolo.Analysis.Symbols.Structs;
+using Cvolo.Core.AST.Declarations;
 using Cvolo.Core.AST.Expressions;
 
 namespace Cvolo.Analysis.Resolution;
@@ -116,6 +117,7 @@ internal sealed class OverloadResolver(BindingContext context)
 		var form = DottedCallForm.None;
 		TypeSymbol? ownerType = null;
 		string? memberName = null;
+		List<FunctionSymbol>? implicitThisCandidates = null;
 
 		if (name.Contains('.') && TrySplitDottedReceiver(name, scope, out var receiver))
 		{
@@ -125,8 +127,10 @@ internal sealed class OverloadResolver(BindingContext context)
 				if (receiverType is PointerTypeSymbol receiverPointer)
 					receiverType = receiverPointer.ReferencedType;
 
-				// Only struct/union/enum values can carry an instance receiver.
-				if (receiverType is StructTypeSymbol or UnionTypeSymbol or EnumTypeSymbol)
+				// Aggregate values carry ordinary extension receivers. An open generic type parameter
+				// can also carry a receiver when its declaration has a protocol/interface bound: during
+				// template binding that bound is the complete callable surface promised for the value.
+				if (receiverType is StructTypeSymbol or UnionTypeSymbol or EnumTypeSymbol or TypeParameterSymbol)
 				{
 					form = DottedCallForm.ValueReceiver;
 					ownerType = receiverType;
@@ -175,26 +179,50 @@ internal sealed class OverloadResolver(BindingContext context)
 					 && thisPointer.ReferencedType is StructTypeSymbol or UnionTypeSymbol or EnumTypeSymbol)
 			{
 				var enclosingType = thisPointer.ReferencedType;
-				if (context.OverloadedFunctions.ContainsKey($"{enclosingType.Name}.{name}"))
-				{
-					baseName = $"{enclosingType.Name}.{name}";
+
+				// An unqualified call inside an extension body (for example IsOk() -> IsErr())
+				// is an implicit-this instance call. Do not probe OverloadedFunctions with the raw
+				// "Type.Member" spelling here: extension registrations may be namespace-qualified,
+				// so that probe misses perfectly valid members and later reports CVL1078. Reuse the
+				// same owner-aware lookup used by dotted dispatch instead.
+				implicitThisCandidates = [];
+				AddRangeUnique(implicitThisCandidates, context
+					.GetExtensionMethodCandidates(enclosingType, context.CurrentUnit, name)
+					.Select(candidate => candidate.Function)
+					.ToList());
+
+				// Generic owner extensions are intentionally parked as templates and therefore have no
+				// OverloadedFunctions entries until a concrete owner is instantiated. Validation still binds
+				// the open template body, so an unqualified sibling call such as Result<T,E>.IsErr() ->
+				// IsOk() must be able to see non-generic sibling declarations directly from the enclosing
+				// extension. Build temporary semantic candidates for that open-template-only case.
+				AddRangeUnique(implicitThisCandidates, GetOpenGenericSiblingCandidates(enclosingType, name));
+
+				if (implicitThisCandidates.Count > 0)
 					adjustedArgumentTypes.Insert(0, new PointerTypeSymbol(enclosingType, isMutable: thisPointer.IsMutable));
-				}
 			}
 		}
 
 		if (form == DottedCallForm.ValueReceiver && ownerType is not null && memberName is not null)
 		{
-			// Value receiver: only receiver-backed extension methods are callable this way.
-			candidates.AddRange(context
-				.GetExtensionMethodCandidates(ownerType, context.CurrentUnit, memberName)
-				.Select(candidate => candidate.Function));
-
-			if (candidates.Count == 0
-				&& context.GetAssociatedFunctionCandidates(ownerType, context.CurrentUnit, memberName).Count > 0)
+			// Value receiver: ordinary aggregates use registered extension methods. An open generic
+			// parameter uses the receiver-backed members guaranteed by its declared contract bound.
+			if (ownerType is TypeParameterSymbol typeParameter)
 			{
-				mismatch = DottedCallMismatch.AssociatedCalledThroughValue;
-				mismatchOwnerName = ownerType.Name;
+				candidates.AddRange(GetConstrainedGenericReceiverCandidates(typeParameter, memberName, receiverIsMutable: adjustedArgumentTypes[0] is PointerTypeSymbol { IsMutable: true }));
+			}
+			else
+			{
+				candidates.AddRange(context
+					.GetExtensionMethodCandidates(ownerType, context.CurrentUnit, memberName)
+					.Select(candidate => candidate.Function));
+
+				if (candidates.Count == 0
+					&& context.GetAssociatedFunctionCandidates(ownerType, context.CurrentUnit, memberName).Count > 0)
+				{
+					mismatch = DottedCallMismatch.AssociatedCalledThroughValue;
+					mismatchOwnerName = ownerType.Name;
+				}
 			}
 		}
 		else if (form == DottedCallForm.TypeReceiver && ownerType is not null && memberName is not null)
@@ -219,7 +247,10 @@ internal sealed class OverloadResolver(BindingContext context)
 		}
 		else if (form == DottedCallForm.None)
 		{
-			GatherCandidates(baseName, candidates);
+			if (implicitThisCandidates is { Count: > 0 })
+				candidates.AddRange(implicitThisCandidates);
+			else
+				GatherCandidates(baseName, candidates);
 		}
 
 
@@ -453,6 +484,264 @@ internal sealed class OverloadResolver(BindingContext context)
 		if (isVariadic)
 			score += 1;
 		return score;
+	}
+
+	/// <summary>
+	/// Resolves the contract bounds promised by the currently active generic owner without requiring
+	/// BindingContext to expose a second generic-scope API. GenericParameterScope records the owner
+	/// name; generic struct templates are the authoritative source of `where T : Contract` clauses.
+	/// </summary>
+	private IReadOnlyList<TypeSymbol> GetActiveGenericParameterBounds(string parameterName)
+	{
+		var activeScope = context.FindGenericParameterScope(parameterName);
+		if (activeScope is null)
+			return [];
+
+		var normalizedOwner = context.NormalizeGenericName(activeScope.OwnerName);
+		var ownerLeaf = normalizedOwner;
+		var ownerDot = ownerLeaf.LastIndexOf('.');
+		if (ownerDot >= 0)
+			ownerLeaf = ownerLeaf[(ownerDot + 1)..];
+
+		var result = new List<TypeSymbol>();
+		var seen = new HashSet<string>(StringComparer.Ordinal);
+
+		foreach (var entry in context.GenericStructTemplates)
+		{
+			var template = entry.Value;
+			var templateName = context.NormalizeGenericName(template.Name);
+			var keyName = context.NormalizeGenericName(entry.Key);
+			var keyLeaf = keyName;
+			var keyDot = keyLeaf.LastIndexOf('.');
+			if (keyDot >= 0)
+				keyLeaf = keyLeaf[(keyDot + 1)..];
+
+			if (!string.Equals(templateName, ownerLeaf, StringComparison.Ordinal)
+				&& !string.Equals(keyName, normalizedOwner, StringComparison.Ordinal)
+				&& !string.Equals(keyLeaf, ownerLeaf, StringComparison.Ordinal))
+			{
+				continue;
+			}
+
+			if (!template.GenericParameters.Contains(parameterName)
+				|| !template.GenericParameterConstraints.TryGetValue(parameterName, out var constraints))
+			{
+				continue;
+			}
+
+			var previousUnit = context.CurrentUnit;
+			var previousNamespace = context.CurrentNamespace;
+			try
+			{
+				if (context.SymbolUnits.TryGetValue(entry.Key, out var ownerUnit))
+				{
+					context.CurrentUnit = ownerUnit;
+					context.CurrentNamespace = ownerUnit.NamespaceDeclaration?.Name;
+				}
+
+				foreach (var constraint in constraints)
+				{
+					if (!context.TryResolveTypeByLookupName(
+						context.NormalizeGenericName(constraint),
+						context.CurrentUnit,
+						out var bound))
+					{
+						continue;
+					}
+
+					if (seen.Add(bound.Name))
+						result.Add(bound);
+				}
+			}
+			finally
+			{
+				context.CurrentUnit = previousUnit;
+				context.CurrentNamespace = previousNamespace;
+			}
+		}
+
+		return result;
+	}
+
+	/// <summary>
+	/// Returns non-generic instance methods declared in the current open generic extension. Generic
+	/// owner extensions are stored in GenericExtensionTemplates and are not registered in the normal
+	/// overload table until a concrete owner exists. Their bodies are nevertheless validated while
+	/// T/E/etc. are active type parameters, so sibling calls need this declaration-backed candidate
+	/// surface during that validation pass.
+	/// </summary>
+	private IReadOnlyList<FunctionSymbol> GetOpenGenericSiblingCandidates(TypeSymbol ownerType, string memberName)
+	{
+		if (context.CurrentUnit is null)
+			return [];
+
+		var unit = context.CurrentUnit;
+		var members = unit.NamespaceDeclaration is { } ns ? ns.Members : unit.Members;
+		var result = new List<FunctionSymbol>();
+
+		foreach (var node in members)
+		{
+			if (node is not ExtensionDeclarationSyntax extension || extension.GenericParameters.Count == 0)
+				continue;
+
+			var resolvedOwner = context.ResolveType(context.NormalizeGenericName(extension.ExtendedTypeName));
+			if (resolvedOwner is null || !string.Equals(resolvedOwner.Name, ownerType.Name, StringComparison.Ordinal))
+				continue;
+
+			foreach (var method in extension.Methods)
+			{
+				if (method.IsAssociated
+					|| method.GenericParameters.Count != 0
+					|| !string.Equals(method.Name, memberName, StringComparison.Ordinal))
+				{
+					continue;
+				}
+
+				var returnType = context.ResolveType(method.ReturnType);
+				if (returnType is null)
+					continue;
+
+				var parameters = new List<ParameterSymbol>
+				{
+					new("this", new PointerTypeSymbol(ownerType, isMutable: false))
+				};
+
+				var valid = true;
+				foreach (var parameter in method.Parameters)
+				{
+					var parameterType = context.ResolveType(parameter.Type);
+					if (parameterType is null)
+					{
+						valid = false;
+						break;
+					}
+
+					parameters.Add(new ParameterSymbol(parameter.Name, parameterType));
+				}
+
+				if (!valid)
+					continue;
+
+				var baseName = context.GetMangledName(
+					$"{extension.ExtendedTypeName}.{method.Name}",
+					unit.NamespaceDeclaration?.Name);
+
+				result.Add(new FunctionSymbol(baseName, returnType, parameters)
+				{
+					Visibility = method.Visibility,
+					DeclaringUnit = unit,
+					CallableKind = CallableKind.InstanceExtension
+				});
+			}
+		}
+
+		return result;
+	}
+
+	/// <summary>
+	/// Builds the callable surface promised by the active bounds of an open generic receiver.
+	/// This is semantic template binding only: no generic is instantiated and no synthetic symbol
+	/// is registered globally. The temporary FunctionSymbol exists solely so the normal overload
+	/// scorer and argument validator can validate a call such as <c>allocator.Alloc(layout)</c>
+	/// when <c>allocator : A</c> and <c>A : Allocator</c>.
+	/// </summary>
+	private IReadOnlyList<FunctionSymbol> GetConstrainedGenericReceiverCandidates(
+		TypeParameterSymbol parameter,
+		string memberName,
+		bool receiverIsMutable)
+	{
+		var result = new List<FunctionSymbol>();
+
+		foreach (var bound in GetActiveGenericParameterBounds(parameter.Name))
+		{
+			if (bound is ProtocolTypeSymbol protocol)
+			{
+				var members = context.ProtocolEffectiveMembers.TryGetValue(protocol.Name, out var effective)
+					? effective.Select(entry => entry.Member)
+					: protocol.Members;
+
+				foreach (var member in members.Where(member => string.Equals(member.Name, memberName, StringComparison.Ordinal)))
+				{
+					if (TryBuildConstrainedMember(parameter, protocol.Name, member.Name, member.ReturnType, member.Parameters, receiverIsMutable, out var function))
+						result.Add(function);
+				}
+
+				continue;
+			}
+
+			if (bound is InterfaceTypeSymbol iface)
+			{
+				var declaration = context.InterfaceTemplates.TryGetValue(iface.Name, out var exact)
+					? exact
+					: context.InterfaceTemplates.FirstOrDefault(entry =>
+						string.Equals(entry.Key[(entry.Key.LastIndexOf('.') + 1)..], iface.Name[(iface.Name.LastIndexOf('.') + 1)..], StringComparison.Ordinal)).Value;
+
+				if (declaration is null)
+					continue;
+
+				foreach (var member in declaration.Members.Where(member => string.Equals(member.Name, memberName, StringComparison.Ordinal)))
+				{
+					if (TryBuildConstrainedMember(parameter, iface.Name, member.Name, member.ReturnType, member.Parameters, receiverIsMutable, out var function))
+						result.Add(function);
+				}
+			}
+		}
+
+		return result;
+	}
+
+	private bool TryBuildConstrainedMember(
+		TypeParameterSymbol parameter,
+		string boundName,
+		string memberName,
+		string returnTypeName,
+		IReadOnlyList<Cvolo.Core.AST.Declarations.ParameterSyntax> writtenParameters,
+		bool receiverIsMutable,
+		out FunctionSymbol function)
+	{
+		function = null!;
+		var previousUnit = context.CurrentUnit;
+		var previousNamespace = context.CurrentNamespace;
+
+		try
+		{
+			// Resolve the contract signature in the contract declaration's namespace, not in the
+			// caller's namespace. This matters for stdlib contracts whose parameter types are
+			// intentionally written unqualified (Allocator.Alloc(Layout)).
+			if (context.SymbolUnits.TryGetValue(boundName, out var boundUnit))
+			{
+				context.CurrentUnit = boundUnit;
+				context.CurrentNamespace = boundUnit.NamespaceDeclaration?.Name;
+			}
+
+			var returnType = context.ResolveType(returnTypeName);
+			if (returnType is null)
+				return false;
+
+			var parameters = new List<ParameterSymbol>
+			{
+				new("this", new PointerTypeSymbol(parameter, isMutable: receiverIsMutable))
+			};
+
+			foreach (var written in writtenParameters)
+			{
+				var type = context.ResolveType(written.Type);
+				if (type is null)
+					return false;
+				parameters.Add(new ParameterSymbol(written.Name, type));
+			}
+
+			function = new FunctionSymbol($"{boundName}.{memberName}", returnType, parameters)
+			{
+				CallableKind = CallableKind.InstanceExtension
+			};
+			return true;
+		}
+		finally
+		{
+			context.CurrentUnit = previousUnit;
+			context.CurrentNamespace = previousNamespace;
+		}
 	}
 
 	/// <summary>

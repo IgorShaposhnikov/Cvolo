@@ -16,7 +16,7 @@ public union Result<T, E> {
     E Err;
 }
 
-extension Result<T, E> {
+public extension Result<T, E> {
     /// <summary>
     /// Static factory or constructor layout to safely initialize the Result in an Ok state.
     /// Note: Depending on your compiler's constructor overloading semantics for unions,
@@ -36,7 +36,7 @@ extension Result<T, E> {
     /// using the pattern-matching switch statement in Phase 5.
     /// </summary>
     bool IsOk() {
-        return true;
+        return this is Ok;
     }
 
     /// <summary>
@@ -45,6 +45,6 @@ extension Result<T, E> {
     /// using the pattern-matching switch statement in Phase 5.
     /// </summary>
     bool IsErr() {
-        return !IsOk();
+        return this is Err;
     }
 }
