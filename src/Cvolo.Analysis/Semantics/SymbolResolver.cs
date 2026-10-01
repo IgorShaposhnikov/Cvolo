@@ -35,9 +35,10 @@ internal static class SymbolResolver
 		if (FindAttributeAt(unit, position) is { } attribute)
 			result = ResolveAttribute(context, index, source, attribute, position);
 		else if (node is MemberAccessExpressionSyntax memberAccess && position >= memberAccess.Expression.Span.End)
-			result = ResolveMember(context, visible, index, source, memberAccess);
-		else if (node is CallExpressionSyntax call && IsOnCallName(source, call, position))
-			result = ResolveCall(context, index, source, call);
+			result = ResolveMember(context, unit, visible, index, source, memberAccess);
+		else if (node is CallExpressionSyntax call && IsOnCallTarget(source, call, position))
+			result = ResolveCallee(context, unit, visible, index, source, call, position)
+				?? ResolveCall(context, index, source, call);
 		else if (node is IdentifierExpressionSyntax identifier)
 			result = ResolveIdentifier(context, visible, index, source, identifier)
 				?? ResolveImplicitExtensionField(context, unit, index, identifier);
@@ -226,6 +227,15 @@ internal static class SymbolResolver
 				return new ResolvedSymbol(ResolvedSymbolKind.Global, identifier.Name, null, identifier.Span, declaration, Display(declaration, global.Type.Name));
 		}
 
+		// A bare name is looked up through the compiler's own lookup path (current namespace, then
+		// active usings, then the unqualified name), so a type declared in the global namespace
+		// resolves from inside a namespace that does not import it.
+		if (context.TryResolveTypeByLookupName(context.NormalizeGenericName(identifier.Name), null, out var lookedUp)
+			&& index.FindType(lookedUp.Name) is { } lookedUpDeclaration)
+		{
+			return new ResolvedSymbol(KindOf(lookedUp), identifier.Name, null, identifier.Span, lookedUpDeclaration, Display(lookedUpDeclaration, lookedUp.Name));
+		}
+
 		var type = context.ResolveType(context.NormalizeGenericName(identifier.Name));
 		if (type is not null && index.FindType(type.Name) is { } typeDeclaration)
 			return new ResolvedSymbol(KindOf(type), identifier.Name, null, identifier.Span, typeDeclaration, Display(typeDeclaration, type.Name));
@@ -370,6 +380,157 @@ internal static class SymbolResolver
 		_ => ResolvedSymbolKind.OtherType,
 	};
 
+	/// <summary>
+	/// Resolves the position inside a dotted call's callee. A call keeps only its callee as a
+	/// string (<c>CallExpressionSyntax.FunctionName</c>) — the callee is not one of its child nodes,
+	/// so the receiver and the member name are split from that text. Inside an uninstantiated
+	/// generic template body no call is overload-resolved, so resolving the callee by shape is the
+	/// only way <c>Layout.FromType&lt;T&gt;()</c> stays navigable there.
+	/// </summary>
+	private static ResolvedSymbol? ResolveCallee(
+		BindingContext context,
+		CompilationUnitSyntax unit,
+		Dictionary<string, ScopedVariable> visible,
+		DeclarationIndex index,
+		string source,
+		CallExpressionSyntax call,
+		int position)
+	{
+		var separator = call.FunctionName.LastIndexOf('.');
+		if (separator <= 0 || separator == call.FunctionName.Length - 1)
+			return null;
+
+		var receiverName = call.FunctionName[..separator];
+		var memberName = call.FunctionName[(separator + 1)..];
+		var calleeStart = FindName(source, call.Span.Start, call.Span.End, call.FunctionName, fromEnd: false);
+		if (calleeStart < 0)
+			return null;
+
+		var receiverSpan = new TextSpan(calleeStart, receiverName.Length);
+		var memberSpan = new TextSpan(calleeStart + receiverName.Length + 1, memberName.Length);
+
+		if (position >= receiverSpan.Start && position <= receiverSpan.End)
+			return ResolveCalleeReceiver(context, unit, visible, index, source, receiverName, receiverSpan);
+
+		return position >= memberSpan.Start && position <= memberSpan.End
+			? ResolveCalleeMember(context, unit, visible, index, source, receiverName, memberName, memberSpan)
+			: null;
+	}
+
+	/// <summary>
+	/// Resolves a callee written on a type receiver. A member that declares its own type
+	/// parameters is parked as a template on its owner instead of entering the associated overload
+	/// table, so the template table is consulted first.
+	/// </summary>
+	private static ResolvedSymbol? ResolveCalleeMember(
+		BindingContext context,
+		CompilationUnitSyntax unit,
+		Dictionary<string, ScopedVariable> visible,
+		DeclarationIndex index,
+		string source,
+		string receiverName,
+		string memberName,
+		TextSpan subject)
+	{
+		if (context.TryResolveTypeByLookupName(context.NormalizeGenericName(receiverName), unit, out var ownerType))
+		{
+			if (ResolveAssociatedTemplate(context, unit, ownerType, memberName) is { } template)
+				return template with { SubjectSpan = subject };
+
+			return ownerType is EnumTypeSymbol enumType && enumType.FindVariant(memberName) is not null
+				? ResolveEnumVariant(index, enumType, memberName, subject)
+				: null;
+		}
+
+		// A receiver that is a value typed by one of the enclosing template's own type parameters is
+		// typed only by the bound that parameter declares. Resolving through that bound is what makes
+		// `allocator.Alloc` reachable while `A` is still an uninstantiated parameter.
+		return visible.TryGetValue(receiverName, out var scoped) && scoped.Type is TypeParameterSymbol typeParameter
+			? ResolveConstrainedMember(context, unit, index, source, typeParameter.Name, memberName, subject)
+			: null;
+	}
+
+	/// <summary>
+	/// Resolves a member written on a value whose type is a type parameter, through the bound that
+	/// parameter declares. That bound is the whole of what the template promises the value can do,
+	/// so its own declaration is where navigation lands.
+	/// </summary>
+	private static ResolvedSymbol? ResolveConstrainedMember(
+		BindingContext context,
+		CompilationUnitSyntax unit,
+		DeclarationIndex index,
+		string source,
+		string typeParameterName,
+		string memberName,
+		TextSpan subject)
+	{
+		foreach (var member in Members(unit))
+		{
+			if (member is not StructDeclarationSyntax { GenericParameterConstraints: { } constraints } owner
+				|| !constraints.TryGetValue(typeParameterName, out var bounds))
+			{
+				continue;
+			}
+
+			foreach (var bound in bounds)
+			{
+				if (!context.TryResolveTypeByLookupName(context.NormalizeGenericName(bound), unit, out var boundType))
+					continue;
+
+				if (boundType is ProtocolTypeSymbol protocol
+					&& protocol.Members.FirstOrDefault(m => m.Name == memberName) is { } protocolMember)
+				{
+					return new ResolvedSymbol(ResolvedSymbolKind.Method, memberName, Leaf(boundType.Name), subject, protocolMember, $"{protocolMember.ReturnType} {protocolMember.Name}({ParameterList(protocolMember.Parameters)})");
+				}
+
+				if (boundType is not StructTypeSymbol structType)
+					continue;
+
+				if (structType.FindField(memberName) is not null
+					&& index.FindType(structType.Name) is StructDeclarationSyntax fieldOwner
+					&& fieldOwner.Fields.FirstOrDefault(f => f.Name == memberName) is { } field)
+				{
+					return new ResolvedSymbol(ResolvedSymbolKind.Field, memberName, Leaf(structType.Name), subject, field, $"{field.Type} {field.Name}");
+				}
+
+				if (ResolveAssociatedTemplate(context, unit, structType, memberName) is { } associated)
+					return associated with { SubjectSpan = subject };
+			}
+		}
+
+		return null;
+	}
+
+	/// <summary>
+	/// Resolves a callee receiver written as a type name, selecting that type's declaration; a
+	/// receiver that names a value instead is resolved through the ordinary identifier path.
+	/// </summary>
+	private static ResolvedSymbol? ResolveCalleeReceiver(
+		BindingContext context,
+		CompilationUnitSyntax unit,
+		Dictionary<string, ScopedVariable> visible,
+		DeclarationIndex index,
+		string source,
+		string receiverName,
+		TextSpan subject)
+	{
+		if (context.TryResolveTypeByLookupName(context.NormalizeGenericName(receiverName), unit, out var receiverType)
+			&& index.FindType(receiverType.Name) is { } receiverDeclaration)
+		{
+			return new ResolvedSymbol(KindOf(receiverType), Leaf(receiverName), null, subject, receiverDeclaration, Display(receiverDeclaration, receiverType.Name));
+		}
+
+		return visible.TryGetValue(receiverName, out var scoped) && scoped.Declaration is not null
+			? new ResolvedSymbol(
+				scoped.Origin == OriginKind.Parameter ? ResolvedSymbolKind.Parameter : ResolvedSymbolKind.Local,
+				receiverName,
+				null,
+				subject,
+				scoped.Declaration,
+				Display(scoped.Declaration, scoped.Type?.Name ?? receiverName))
+			: null;
+	}
+
 	private static ResolvedSymbol? ResolveCall(BindingContext context, DeclarationIndex index, string source, CallExpressionSyntax call)
 	{
 		if (!context.ResolvedCalls.TryGetValue(call, out var function))
@@ -406,6 +567,7 @@ internal static class SymbolResolver
 
 	private static ResolvedSymbol? ResolveMember(
 		BindingContext context,
+		CompilationUnitSyntax unit,
 		Dictionary<string, ScopedVariable> visible,
 		DeclarationIndex index,
 		string source,
@@ -430,6 +592,17 @@ internal static class SymbolResolver
 				var declaration = FindGlobalDeclaration(context, qualifiedGlobal);
 				if (declaration is not null)
 					return new ResolvedSymbol(ResolvedSymbolKind.Global, memberName, null, subject, declaration, Display(declaration, qualifiedGlobal.Type.Name));
+			}
+
+			// A receiver written as a type name selects that type's callables. A member that
+			// declares its own type parameters is parked as a template on its owner instead of
+			// entering the associated overload table, so the template table is consulted as well.
+			// Without this, `Layout.FromType<T>()` — a callable the reader wrote and can complete —
+			// resolves to nothing at all.
+			if (context.TryResolveTypeByLookupName(dotted, null, out var ownerType)
+				&& ResolveAssociatedTemplate(context, unit, ownerType, memberName) is { } template)
+			{
+				return template with { SubjectSpan = subject };
 			}
 		}
 
@@ -456,6 +629,47 @@ internal static class SymbolResolver
 		}
 
 		return null;
+	}
+
+	/// <summary>
+	/// Resolves a member written on a type receiver that is still a generic template on that owner
+	/// (`Layout .FromType&lt;T&gt;()`). The call site supplies the type arguments at use time, so the
+	/// declaration that navigation must land on is the template's own source declaration.
+	/// </summary>
+	private static ResolvedSymbol? ResolveAssociatedTemplate(
+		BindingContext context,
+		CompilationUnitSyntax unit,
+		TypeSymbol ownerType,
+		string memberName)
+	{
+		var previousUnit = context.CurrentUnit;
+		var previousNamespace = context.CurrentNamespace;
+		context.CurrentUnit = unit;
+		context.CurrentNamespace = unit.NamespaceDeclaration?.Name;
+
+		try
+		{
+			foreach (var template in context.GetGenericExtensionMethodTemplates(ownerType, unit, memberName))
+			{
+				if (!template.Method.IsAssociated)
+					continue;
+
+				return new ResolvedSymbol(
+					ResolvedSymbolKind.AssociatedFunction,
+					template.Method.Name,
+					Leaf(ownerType.Name),
+					template.Method.NameSpan,
+					template.Method,
+					Display(template.Method, template.Method.Name));
+			}
+
+			return null;
+		}
+		finally
+		{
+			context.CurrentUnit = previousUnit;
+			context.CurrentNamespace = previousNamespace;
+		}
 	}
 
 	private static ResolvedSymbol? ResolveOffsetof(
@@ -529,7 +743,8 @@ internal static class SymbolResolver
 		switch (node)
 		{
 			case FunctionDeclarationSyntax function:
-				return ResolveTypeReference(context, index, source, function.ReturnTypeSpan, function.ReturnType, position)
+				return ResolveGenericDeclaration(context, index, source, function, function.Span, function.GenericParameters, null, null, position)
+					?? ResolveTypeReference(context, index, source, function.ReturnTypeSpan, function.ReturnType, position)
 					?? OnName(function.NameSpan, function.Name, position, DeclarationKind(unit, function), function, Display(function, function.ReturnType));
 			case ConstructorDeclarationSyntax constructor:
 				return OnName(constructor.NameSpan, constructor.StructName, position, ResolvedSymbolKind.Constructor, constructor, Display(constructor, constructor.StructName), constructor.StructName);
@@ -542,23 +757,29 @@ internal static class SymbolResolver
 				return OnName(NameSpan(source, destructor.Span, destructor.StructName, fromEnd: false), destructor.StructName, position, ResolvedSymbolKind.Destructor, destructor, Display(destructor, destructor.StructName), destructor.StructName);
 			case ExtensionDeclarationSyntax extension:
 				return ResolveConformance(context, index, source, extension, position)
+					?? ResolveGenericDeclaration(context, index, source, extension, extension.Span, extension.GenericParameters, null, extension.GenericParameterDefaults, position)
 					?? ResolveTypeReference(context, index, source, extension.NameSpan, extension.ExtendedTypeName, position)
 					?? OnName(NameSpan(source, extension.Span, Leaf(extension.ExtendedTypeName), fromEnd: false), Leaf(extension.ExtendedTypeName), position, ResolvedSymbolKind.ExtensionMethod, extension, Display(extension, extension.ExtendedTypeName));
 			case StructDeclarationSyntax structDeclaration:
-				return OnName(NameSpan(source, structDeclaration.Span, structDeclaration.Name, fromEnd: false), structDeclaration.Name, position, ResolvedSymbolKind.Struct, structDeclaration, Display(structDeclaration, structDeclaration.Name));
+				return ResolveGenericDeclaration(context, index, source, structDeclaration, structDeclaration.Span, structDeclaration.GenericParameters, structDeclaration.GenericParameterConstraints, structDeclaration.GenericParameterDefaults, position)
+					?? OnName(NameSpan(source, structDeclaration.Span, structDeclaration.Name, fromEnd: false), structDeclaration.Name, position, ResolvedSymbolKind.Struct, structDeclaration, Display(structDeclaration, structDeclaration.Name));
 			case UnionDeclarationSyntax unionDeclaration:
-				return OnName(NameSpan(source, unionDeclaration.Span, unionDeclaration.Name, fromEnd: false), unionDeclaration.Name, position, ResolvedSymbolKind.Union, unionDeclaration, Display(unionDeclaration, unionDeclaration.Name));
+				return ResolveGenericDeclaration(context, index, source, unionDeclaration, unionDeclaration.Span, unionDeclaration.GenericParameters, null, unionDeclaration.GenericParameterDefaults, position)
+					?? OnName(NameSpan(source, unionDeclaration.Span, unionDeclaration.Name, fromEnd: false), unionDeclaration.Name, position, ResolvedSymbolKind.Union, unionDeclaration, Display(unionDeclaration, unionDeclaration.Name));
 			case EnumDeclarationSyntax enumDeclaration:
 				return OnName(NameSpan(source, enumDeclaration.Span, enumDeclaration.Name, fromEnd: false), enumDeclaration.Name, position, ResolvedSymbolKind.Enum, enumDeclaration, Display(enumDeclaration, enumDeclaration.Name));
 			case InterfaceDeclarationSyntax interfaceDeclaration:
-				return OnName(NameSpan(source, interfaceDeclaration.Span, interfaceDeclaration.Name, fromEnd: false), interfaceDeclaration.Name, position, ResolvedSymbolKind.Interface, interfaceDeclaration, Display(interfaceDeclaration, interfaceDeclaration.Name));
+				return ResolveGenericDeclaration(context, index, source, interfaceDeclaration, interfaceDeclaration.Span, interfaceDeclaration.GenericParameters, null, null, position)
+					?? OnName(NameSpan(source, interfaceDeclaration.Span, interfaceDeclaration.Name, fromEnd: false), interfaceDeclaration.Name, position, ResolvedSymbolKind.Interface, interfaceDeclaration, Display(interfaceDeclaration, interfaceDeclaration.Name));
 			case InterfaceMethodDeclarationSyntax interfaceMember:
 				return ResolveTypeReference(context, index, source, interfaceMember.Span, interfaceMember.ReturnType, position)
 					?? OnName(NameSpan(source, interfaceMember.Span, interfaceMember.Name, fromEnd: false), interfaceMember.Name, position, ResolvedSymbolKind.Method, interfaceMember, $"{interfaceMember.ReturnType} {interfaceMember.Name}({ParameterList(interfaceMember.Parameters)})");
 			case ProtocolDeclarationSyntax protocolDeclaration:
-				return OnName(NameSpan(source, protocolDeclaration.Span, protocolDeclaration.Name, fromEnd: false), protocolDeclaration.Name, position, ResolvedSymbolKind.Protocol, protocolDeclaration, Display(protocolDeclaration, protocolDeclaration.Name));
+				return ResolveGenericDeclaration(context, index, source, protocolDeclaration, protocolDeclaration.Span, protocolDeclaration.GenericParameters, null, null, position)
+					?? OnName(NameSpan(source, protocolDeclaration.Span, protocolDeclaration.Name, fromEnd: false), protocolDeclaration.Name, position, ResolvedSymbolKind.Protocol, protocolDeclaration, Display(protocolDeclaration, protocolDeclaration.Name));
 			case DelegateDeclarationSyntax delegateDeclaration:
-				return ResolveTypeReference(context, index, source, delegateDeclaration.ReturnTypeSpan, delegateDeclaration.ReturnType, position)
+				return ResolveGenericDeclaration(context, index, source, delegateDeclaration, delegateDeclaration.Span, delegateDeclaration.GenericParameters, null, null, position)
+					?? ResolveTypeReference(context, index, source, delegateDeclaration.ReturnTypeSpan, delegateDeclaration.ReturnType, position)
 					?? OnName(NameSpan(source, delegateDeclaration.Span, delegateDeclaration.Name, fromEnd: false), delegateDeclaration.Name, position, ResolvedSymbolKind.Delegate, delegateDeclaration, Display(delegateDeclaration, delegateDeclaration.Name));
 			case ProtocolMethodDeclarationSyntax protocolMember:
 				return ResolveTypeReference(context, index, source, protocolMember.Span, protocolMember.ReturnType, position)
@@ -576,9 +797,11 @@ internal static class SymbolResolver
 					?? OnName(NameSpan(source, parameter.Span, parameter.Name, fromEnd: false), parameter.Name, position, ResolvedSymbolKind.Parameter, parameter, Display(parameter, parameter.Name));
 			case StructFieldSyntax structField:
 				return ResolveTypeReference(context, index, source, structField.Span, structField.Type, position)
+					?? ResolveDeclaredTypeParameter(context, unit, source, structField.Span, structField.Type, position)
 					?? OnName(NameSpan(source, structField.Span, structField.Name, fromEnd: false), structField.Name, position, ResolvedSymbolKind.Field, structField, Display(structField, structField.Name));
 			case UnionFieldSyntax unionField:
 				return ResolveTypeReference(context, index, source, unionField.Span, unionField.Type, position)
+					?? ResolveDeclaredTypeParameter(context, unit, source, unionField.Span, unionField.Type, position)
 					?? OnName(NameSpan(source, unionField.Span, unionField.Name, fromEnd: false), unionField.Name, position, ResolvedSymbolKind.Field, unionField, Display(unionField, unionField.Name));
 			case EnumVariantDeclarationSyntax enumVariant:
 				return OnName(NameSpan(source, enumVariant.Span, enumVariant.Name, fromEnd: false), enumVariant.Name, position, ResolvedSymbolKind.EnumMember, enumVariant, Display(enumVariant, enumVariant.Name));
@@ -625,6 +848,125 @@ internal static class SymbolResolver
 			return null;
 
 		return new ResolvedSymbol(KindOf(type), leaf, null, span, declaration, Display(declaration, type.Name));
+	}
+
+	/// <summary>
+	/// Resolves a declared type that names one of the enclosing template's own type parameters
+	/// (the <c>T*</c> field of <c>Heap&lt;T, A&gt;</c>). The parameter belongs to the generic
+	/// declaration rather than to the field, so navigation lands on the declaration that owns it.
+	/// </summary>
+	private static ResolvedSymbol? ResolveDeclaredTypeParameter(
+		BindingContext context,
+		CompilationUnitSyntax unit,
+		string source,
+		TextSpan declaredSpan,
+		string? writtenType,
+		int position)
+	{
+		var leaf = LeafType(writtenType).TrimEnd('*', '[', ']');
+		if (leaf.Length == 0 || !context.IsActiveGenericParameter(leaf))
+			return null;
+
+		var span = NameSpan(source, declaredSpan, leaf, fromEnd: false);
+		if (position < span.Start || position > span.End)
+			return null;
+
+		foreach (var declaration in Members(unit))
+		{
+			if (StrictContains(declaration.Span, declaredSpan.Start) && DeclaresTypeParameter(declaration, leaf))
+				return new ResolvedSymbol(ResolvedSymbolKind.TypeParameter, leaf, null, span, declaration, leaf);
+		}
+
+		return null;
+	}
+
+	private static bool DeclaresTypeParameter(SyntaxNode declaration, string name) => declaration switch
+	{
+		StructDeclarationSyntax structDeclaration => structDeclaration.GenericParameters.Contains(name),
+		UnionDeclarationSyntax unionDeclaration => unionDeclaration.GenericParameters.Contains(name),
+		ExtensionDeclarationSyntax extension => extension.GenericParameters.Contains(name),
+		_ => false,
+	};
+
+	/// <summary>
+	/// Resolves a type parameter written in a generic declaration's parameter list, and any bound or
+	/// default type named alongside it. A generic declaration records those names as text rather
+	/// than as nodes, so every occurrence is located inside the declaration's own span. Navigation
+	/// lands on the declaration that owns the parameter, because that is the only place the
+	/// parameter is defined — a template's parameter list has no node of its own to land on.
+	/// </summary>
+	private static ResolvedSymbol? ResolveGenericDeclaration(
+		BindingContext context,
+		DeclarationIndex index,
+		string source,
+		SyntaxNode declaration,
+		TextSpan declarationSpan,
+		IReadOnlyList<string> genericParameters,
+		IReadOnlyDictionary<string, List<string>>? genericParameterConstraints,
+		IReadOnlyDictionary<string, string>? genericParameterDefaults,
+		int position)
+	{
+		if (genericParameters.Count > 0)
+		{
+			var open = source.IndexOf('<', Math.Clamp(declarationSpan.Start, 0, source.Length));
+			if (open >= 0 && open < declarationSpan.End)
+			{
+				var close = MatchingAngle(source, open, declarationSpan.End);
+				if (close > open)
+				{
+					var parameterList = new TextSpan(open, close - open);
+					foreach (var parameter in genericParameters)
+					{
+						var span = NameSpan(source, parameterList, parameter, fromEnd: true);
+						if (position >= span.Start && position <= span.End)
+							return new ResolvedSymbol(ResolvedSymbolKind.TypeParameter, parameter, null, span, declaration, parameter);
+					}
+				}
+			}
+		}
+
+		if (genericParameterConstraints is not null)
+		{
+			foreach (var bound in genericParameterConstraints.Values.SelectMany(names => names))
+			{
+				if (ResolveTypeReference(context, index, source, declarationSpan, bound, position) is { } boundSymbol)
+					return boundSymbol;
+			}
+		}
+
+		if (genericParameterDefaults is not null)
+		{
+			foreach (var fallback in genericParameterDefaults.Values)
+			{
+				if (ResolveTypeReference(context, index, source, declarationSpan, fallback, position) is { } defaultSymbol)
+					return defaultSymbol;
+			}
+		}
+
+		return null;
+	}
+
+	/// <summary>
+	/// The index of the <c>&gt;</c> that closes the <c>&lt;</c> at <paramref name="open"/>, or -1
+	/// when the list is never closed inside <paramref name="limit"/>. Nested lists are counted, so a
+	/// parameter written as <c>Option&lt;T&gt;</c> does not end the outer list.
+	/// </summary>
+	private static int MatchingAngle(string source, int open, int limit)
+	{
+		var depth = 0;
+		for (var index = open; index < Math.Min(limit, source.Length); index++)
+		{
+			if (source[index] == '<')
+			{
+				depth++;
+			}
+			else if (source[index] == '>' && --depth == 0)
+			{
+				return index;
+			}
+		}
+
+		return -1;
 	}
 
 	/// <summary>
@@ -678,6 +1020,25 @@ internal static class SymbolResolver
 	{
 		var span = NameSpan(source, call.Span, Leaf(call.FunctionName), fromEnd: false);
 		return position >= span.Start && position <= span.End;
+	}
+
+	/// <summary>
+	/// Whether the position is on a call's callee at all — its member name or, for a dotted callee
+	/// such as <c>Layout.FromType</c>, its receiver. The receiver is part of the callee the reader
+	/// navigated to, so it must be claimable even though it is not the call's function name.
+	/// </summary>
+	private static bool IsOnCallTarget(string source, CallExpressionSyntax call, int position)
+	{
+		if (IsOnCallName(source, call, position))
+			return true;
+
+		var separator = call.FunctionName.LastIndexOf('.');
+		if (separator <= 0)
+			return false;
+
+		var receiverName = call.FunctionName[..separator];
+		var start = FindName(source, call.Span.Start, call.Span.End, receiverName, fromEnd: false);
+		return start >= 0 && position >= start && position <= start + receiverName.Length;
 	}
 
 	private static GlobalVariableDeclarationSyntax? FindGlobalDeclaration(BindingContext context, VariableSymbol symbol)

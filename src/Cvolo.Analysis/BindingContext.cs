@@ -249,9 +249,69 @@ public sealed class BindingContext
 	public Dictionary<string, List<(string OwnerProtocol, ProtocolMethodDeclarationSyntax Member)>> ProtocolEffectiveMembers { get; } = [];
 
 	/// <summary>
-	/// Stack or set of active generic type parameters currently in scope during binding/resolution.
+	/// Stack of active generic type parameters currently in scope during binding/resolution.
+	/// Each entry is the name set contributed by one owner (struct, class, extension, function or
+	/// delegate). Use <see cref="PushGenericScope"/> / <see cref="PopGenericScope"/> rather than
+	/// pushing directly so the owner identity stays available to editor services.
 	/// </summary>
 	public Stack<HashSet<string>> ActiveGenericParametersStack { get; } = [];
+
+	/// <summary>
+	/// One owner of generic parameter names, i.e. one declaration whose body is being bound while
+	/// its own type parameters are visible. Kept separately from the plain name set so completion
+	/// and go-to-definition can tell a type parameter apart from a real type of the same name, and
+	/// so the same mechanism serves every declaration kind instead of one special-cased form.
+	/// </summary>
+	public sealed record GenericParameterScope(string OwnerKind, string OwnerName, IReadOnlyList<string> ParameterNames)
+	{
+		public bool Contains(string name) =>
+			ParameterNames.Any(parameter => string.Equals(parameter, name, StringComparison.Ordinal));
+	}
+
+	/// <summary>Owner scopes, innermost last.</summary>
+	public Stack<GenericParameterScope> GenericParameterScopes { get; } = [];
+
+	/// <summary>
+	/// Makes <paramref name="parameterNames"/> resolve as type parameters for the duration of the
+	/// pushed scope. This is the single generalized entry point for binding an uninstantiated
+	/// generic declaration: it does not instantiate the generic and emits no code, it only makes
+	/// the parameter names resolvable while the template body is bound.
+	/// </summary>
+	public GenericParameterScope PushGenericScope(string ownerKind, string ownerName, IEnumerable<string> parameterNames)
+	{
+		var names = parameterNames as IReadOnlyList<string> ?? parameterNames.ToList();
+		var scope = new GenericParameterScope(ownerKind, ownerName, names);
+		GenericParameterScopes.Push(scope);
+		ActiveGenericParametersStack.Push([.. names]);
+		return scope;
+	}
+
+	/// <summary>Ends the innermost generic scope pushed by <see cref="PushGenericScope"/>.</summary>
+	public void PopGenericScope()
+	{
+		if (GenericParameterScopes.Count > 0)
+			GenericParameterScopes.Pop();
+		if (ActiveGenericParametersStack.Count > 0)
+			ActiveGenericParametersStack.Pop();
+	}
+
+	/// <summary>
+	/// The innermost scope declaring <paramref name="name"/> as a type parameter, or null when the
+	/// name is not a type parameter in any active scope.
+	/// </summary>
+	public GenericParameterScope? FindGenericParameterScope(string name)
+	{
+		foreach (var scope in GenericParameterScopes)
+		{
+			if (scope.Contains(name))
+				return scope;
+		}
+
+		return null;
+	}
+
+	/// <summary>True when <paramref name="name"/> is a generic type parameter in an active scope.</summary>
+	public bool IsActiveGenericParameter(string name) => FindGenericParameterScope(name) is not null;
 
 	public CompilationUnitSyntax? CurrentUnit { get; set; }
 	public string? CurrentNamespace { get; set; }
@@ -629,9 +689,9 @@ public sealed class BindingContext
 		{
 			if (scopeSet.Contains(name))
 			{
-				var paramSym = new TypeParameterSymbol(name);
-				_typeCache[name] = paramSym;
-				return paramSym;
+				// Deliberately NOT cached: a type parameter is only valid while its owner's scope
+				// is active. Caching it would leak "T" into every later, unrelated resolution.
+				return new TypeParameterSymbol(name);
 			}
 		}
 

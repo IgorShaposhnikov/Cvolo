@@ -81,7 +81,7 @@ internal sealed class TypeDeclarationRegistrar(BindingContext context)
 			context.GenericDelegateTemplates[mangledName] = delegateDecl;
 
 			var activeParams = new HashSet<string>(delegateDecl.GenericParameters);
-			context.ActiveGenericParametersStack.Push(activeParams);
+			context.PushGenericScope("delegate", delegateDecl.Name, activeParams);
 			try
 			{
 				var templateReturn = context.ResolveType(delegateDecl.ReturnType);
@@ -103,7 +103,7 @@ internal sealed class TypeDeclarationRegistrar(BindingContext context)
 			}
 			finally
 			{
-				context.ActiveGenericParametersStack.Pop();
+				context.PopGenericScope();
 			}
 			return;
 		}
@@ -257,9 +257,36 @@ internal sealed class TypeDeclarationRegistrar(BindingContext context)
 
 			_genericDefaultCopies.Validate(structDecl);
 
-			var placeholderFields = new List<StructFieldSymbol>();
+			// A generic template is never instantiated for the editor, but its body must still
+			// be bound so that field types resolve to type parameters (e.g. `T* Ptr` where T is
+			// this struct's own parameter). Bind the fields inside a generic scope so completion,
+			// go-to-definition and references work on the template itself. No code is emitted for
+			// this symbol; instantiation still happens per use site as before.
+			var templateFields = new List<StructFieldSymbol>();
+			var templateFieldNames = new HashSet<string>();
+			context.PushGenericScope("struct", structDecl.Name, structDecl.GenericParameters);
+			try
+			{
+				foreach (var field in structDecl.Fields)
+				{
+					if (!templateFieldNames.Add(field.Name))
+						continue;
 
-			var templateSymbol = new StructTypeSymbol(mangledName, placeholderFields)
+					if (context.ResolveType(field.Type) is not { } fieldType)
+						continue;
+
+					templateFields.Add(new StructFieldSymbol(field.Name, fieldType)
+					{
+						Visibility = field.Visibility
+					});
+				}
+			}
+			finally
+			{
+				context.PopGenericScope();
+			}
+
+			var templateSymbol = new StructTypeSymbol(mangledName, templateFields)
 			{
 				IsStrictMutability = appliedAttrs.Contains("StrictMutability"),
 				Visibility = structDecl.Visibility,
@@ -268,6 +295,7 @@ internal sealed class TypeDeclarationRegistrar(BindingContext context)
 			};
 
 			context.StructTypes[mangledName] = templateSymbol;
+			context.ReplaceTypeInCache(mangledName, templateSymbol);
 			return;
 		}
 
@@ -407,14 +435,44 @@ internal sealed class TypeDeclarationRegistrar(BindingContext context)
 
 			_genericDefaultCopies.Validate(unionDecl);
 
-			var placeholderFields = new List<UnionFieldSymbol>();
-			var templateSymbol = new UnionTypeSymbol(mangledName, placeholderFields)
+			// Same editor-semantics contract as generic structs: bind the variant types inside a
+			// generic scope so the uninstantiated template resolves its own type parameters,
+			// without instantiating or emitting anything for it.
+			var templateFields = new List<UnionFieldSymbol>();
+			var templateFieldNames = new HashSet<string>();
+			context.PushGenericScope("union", unionDecl.Name, unionDecl.GenericParameters);
+			try
+			{
+				foreach (var field in unionDecl.Fields)
+				{
+					if (!templateFieldNames.Add(field.Name))
+						continue;
+
+					if (field.Type == "void")
+						continue;
+
+					if (context.ResolveType(field.Type) is not { } templateFieldType)
+						continue;
+
+					templateFields.Add(new UnionFieldSymbol(field.Name, templateFieldType, isVoidVariant: false)
+					{
+						Visibility = field.Visibility
+					});
+				}
+			}
+			finally
+			{
+				context.PopGenericScope();
+			}
+
+			var templateSymbol = new UnionTypeSymbol(mangledName, templateFields)
 			{
 				Visibility = unionDecl.Visibility,
 				IsMustUse = isMustUse,
 				MustUseMessage = mustUseMsg
 			};
 			context.UnionTypes[mangledName] = templateSymbol;
+			context.ReplaceTypeInCache(mangledName, templateSymbol);
 			return;
 		}
 

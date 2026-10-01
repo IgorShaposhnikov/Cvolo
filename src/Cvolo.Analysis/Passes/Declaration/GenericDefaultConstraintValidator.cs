@@ -28,24 +28,58 @@ internal sealed class GenericDefaultConstraintValidator(BindingContext context)
 				if (member is not StructDeclarationSyntax structDecl)
 					continue;
 
-				if (structDecl.GenericParameterDefaults.Count == 0)
+				if (structDecl.GenericParameterDefaults.Count == 0 &&
+					structDecl.GenericParameterConstraints.Count == 0)
 					continue;
+
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+
+				// A constraint name is checked in its own right, independent of whether the
+				// parameter also declares a default. Previously a constrained parameter with
+				// no default was skipped entirely, so an unresolved contract vanished without
+				// any diagnostic and left the parameter silently unbound.
+				foreach (var (paramName, constraints) in structDecl.GenericParameterConstraints)
+				{
+					foreach (var constraintName in constraints)
+					{
+						if (context.ResolveType(constraintName) is not null)
+							continue;
+
+						context.Diagnostics.Report(
+							currentFileContext,
+							structDecl.Span,
+							$"Unknown contract '{constraintName}' in constraint for parameter '{paramName}'.",
+							DiagnosticIds.UnknownContractInConstraintForParameter);
+					}
+				}
 
 				foreach (var (paramName, defaultTypeName) in structDecl.GenericParameterDefaults)
 				{
-					if (!structDecl.GenericParameterConstraints.TryGetValue(paramName, out var constraints))
-						continue;
-
+					// An unresolved name must never be swallowed. Report a stable id so the
+					// diagnostic survives from the binder to the editor instead of silently
+					// leaving the generic parameter unbound (which is what hid the failure
+					// behind an unrelated overload error, or no error at all).
 					var defaultType = context.ResolveType(defaultTypeName);
 					if (defaultType is null)
+					{
+						context.Diagnostics.Report(
+							currentFileContext,
+							structDecl.Span,
+							$"Unknown type '{defaultTypeName}' in default for generic parameter '{paramName}'.",
+							DiagnosticIds.UnknownType);
+						continue;
+					}
+
+					if (!structDecl.GenericParameterConstraints.TryGetValue(paramName, out var constraints))
 						continue;
 
 					foreach (var constraintName in constraints)
 					{
-						var constraintType = context.ResolveType(constraintName);
-						if (constraintType is not null && !context.TypeSatisfiesContract(defaultType, constraintType))
+						if (context.ResolveType(constraintName) is not { } constraintType)
+							continue;
+
+						if (!context.TypeSatisfiesContract(defaultType, constraintType))
 						{
-							var currentFileContext = context.FileContexts[context.CurrentUnit!];
 							context.Diagnostics.Report(
 								currentFileContext,
 								structDecl.Span,

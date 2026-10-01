@@ -41,7 +41,8 @@ public sealed record CompletionCandidate(
 	string Label,
 	string InsertText,
 	CompletionKind Kind,
-	string? CallableGroupKey = null);
+	string? CallableGroupKey = null,
+	string? Detail = null);
 
 public sealed record CompletionQueryResult(CompletionQueryContext Context, IReadOnlyList<CompletionCandidate> Candidates);
 
@@ -53,10 +54,11 @@ public static class CompletionQuery
 		ArgumentNullException.ThrowIfNull(unit);
 		ArgumentOutOfRangeException.ThrowIfNegative(position);
 
-		var previousUnit = context.CurrentUnit;
+var previousUnit = context.CurrentUnit;
 		var previousNamespace = context.CurrentNamespace;
 		context.CurrentUnit = unit;
 		context.CurrentNamespace = unit.NamespaceDeclaration?.Name;
+		var genericScopeDepth = EnterEnclosingGenericScope(context, unit, position);
 
 		// COMPLETION-TIME MUTATION BLOCKER (reported): BindingContext.CurrentUnit/CurrentNamespace are
 		// shared mutable fields read by every resolver (ResolveGlobalReference, ResolveQualifiedGlobal,
@@ -83,10 +85,11 @@ public static class CompletionQuery
 			var visibleMap = BuildVisibleScopeMap(state);
 			return new CompletionQueryResult(contextKind, EnumerateIdentifierCandidates(state, visibleMap));
 		}
-		finally
+finally
 		{
 			context.CurrentUnit = previousUnit;
 			context.CurrentNamespace = previousNamespace;
+			ExitEnclosingGenericScope(context, genericScopeDepth);
 		}
 	}
 
@@ -104,6 +107,7 @@ public static class CompletionQuery
 		var previousNamespace = context.CurrentNamespace;
 		context.CurrentUnit = unit;
 		context.CurrentNamespace = unit.NamespaceDeclaration?.Name;
+		var genericScopeDepth = EnterEnclosingGenericScope(context, unit, position);
 
 		try
 		{
@@ -115,8 +119,117 @@ public static class CompletionQuery
 		{
 			context.CurrentUnit = previousUnit;
 			context.CurrentNamespace = previousNamespace;
+			ExitEnclosingGenericScope(context, genericScopeDepth);
 		}
 	}
+
+	/// <summary>
+	/// Binds the type parameters of the generic declaration the position sits inside, for the
+	/// duration of one query. The compiler pushes that scope while it declares the template, so the
+	/// parameter names already exist as symbols; a query runs long after declaration and would
+	/// otherwise see an uninstantiated template body with its own parameters unresolved, which is
+	/// what left <c>default(A)</c> and <c>allocator.Alloc</c> untyped.
+	/// </summary>
+	private static int EnterEnclosingGenericScope(BindingContext context, CompilationUnitSyntax unit, int position)
+	{
+		var depth = context.GenericParameterScopes.Count;
+
+		foreach (var declaration in EnclosingGenericDeclarations(unit, position))
+		{
+			context.PushGenericScope(OwnerKind(declaration), OwnerName(declaration), GenericParametersOf(declaration));
+		}
+
+		return depth;
+	}
+
+	private static void ExitEnclosingGenericScope(BindingContext context, int depth)
+	{
+		while (context.GenericParameterScopes.Count > depth)
+		{
+			context.PopGenericScope();
+		}
+	}
+
+	/// <summary>
+	/// The generic declarations enclosing <paramref name="position"/>, outermost first, so they are
+	/// entered and left as a stack.
+	/// </summary>
+	private static IEnumerable<SyntaxNode> EnclosingGenericDeclarations(CompilationUnitSyntax unit, int position)
+	{
+		var enclosing = new List<SyntaxNode>();
+
+		foreach (var member in TopLevelMembers(unit))
+		{
+			if (!StrictContains(member.Span, position))
+				continue;
+
+			if (GenericParametersOf(member).Count > 0)
+				enclosing.Add(member);
+
+			foreach (var nested in NestedGenericDeclarations(member, position))
+				enclosing.Add(nested);
+
+			break;
+		}
+
+		return enclosing;
+	}
+
+	private static IEnumerable<SyntaxNode> TopLevelMembers(CompilationUnitSyntax unit)
+		=> unit.NamespaceDeclaration is { } declaration
+			? declaration.Members.Cast<SyntaxNode>()
+			: unit.Members.Cast<SyntaxNode>();
+
+	private static IEnumerable<SyntaxNode> NestedGenericDeclarations(SyntaxNode member, int position)
+	{
+		if (member is not ExtensionDeclarationSyntax extension)
+			yield break;
+
+		foreach (var nested in extension.Methods)
+		{
+			if (StrictContains(nested.Span, position) && GenericParametersOf(nested).Count > 0)
+				yield return nested;
+		}
+	}
+
+	private static IReadOnlyList<string> GenericParametersOf(SyntaxNode declaration) => declaration switch
+	{
+		StructDeclarationSyntax structDeclaration => structDeclaration.GenericParameters,
+		UnionDeclarationSyntax unionDeclaration => unionDeclaration.GenericParameters,
+		ExtensionDeclarationSyntax extension => extension.GenericParameters,
+		FunctionDeclarationSyntax function => function.GenericParameters,
+		ProtocolDeclarationSyntax protocol => protocol.GenericParameters,
+		InterfaceDeclarationSyntax interfaceDeclaration => interfaceDeclaration.GenericParameters,
+		DelegateDeclarationSyntax delegateDeclaration => delegateDeclaration.GenericParameters,
+		TypeAliasDeclarationSyntax typeAlias => typeAlias.GenericParameters,
+		_ => [],
+	};
+
+	private static string OwnerKind(SyntaxNode declaration) => declaration switch
+	{
+		StructDeclarationSyntax => "struct",
+		UnionDeclarationSyntax => "union",
+		ExtensionDeclarationSyntax => "extension",
+		FunctionDeclarationSyntax => "function",
+		ProtocolDeclarationSyntax => "protocol",
+		InterfaceDeclarationSyntax => "interface",
+		DelegateDeclarationSyntax => "delegate",
+		TypeAliasDeclarationSyntax => "alias",
+		_ => "declaration",
+	};
+
+	private static string OwnerName(SyntaxNode declaration) => declaration switch
+	{
+		StructDeclarationSyntax structDeclaration => structDeclaration.Name,
+		UnionDeclarationSyntax unionDeclaration => unionDeclaration.Name,
+		ExtensionDeclarationSyntax extension => extension.ExtendedTypeName,
+		FunctionDeclarationSyntax function => function.Name,
+		ProtocolDeclarationSyntax protocol => protocol.Name,
+		InterfaceDeclarationSyntax interfaceDeclaration => interfaceDeclaration.Name,
+		DelegateDeclarationSyntax delegateDeclaration => delegateDeclaration.Name,
+		TypeAliasDeclarationSyntax typeAlias => typeAlias.Name,
+		_ => "",
+	};
 
 	/// <summary>
 	/// Returns a compiler-owned display string for a declaration node, used by the tooling
@@ -306,7 +419,7 @@ public static class CompletionQuery
 	private static void DeclareFromStatement(SyntaxNode statement, List<ScopedVariable> frame, QueryState state)
 	{
 		if (statement is VariableDeclarationSyntax v && v.Span.End <= state.Position)
-			frame.Add(new ScopedVariable(v.Name, OriginKind.Local, ResolveVariableType(state, v), v));
+			frame.Add(new ScopedVariable(v.Name, OriginKind.Local, ResolveVariableType(state, v, frame), v));
 	}
 
 	private static void EnterStatement(
@@ -319,7 +432,7 @@ public static class CompletionQuery
 		{
 			case VariableDeclarationSyntax v:
 				if (v.Span.End <= state.Position)
-					frame.Add(new ScopedVariable(v.Name, OriginKind.Local, ResolveVariableType(state, v), v));
+					frame.Add(new ScopedVariable(v.Name, OriginKind.Local, ResolveVariableType(state, v, frame), v));
 				break;
 
 			case BlockStatementSyntax block:
@@ -351,7 +464,7 @@ public static class CompletionQuery
 					var child = new List<ScopedVariable>();
 					frames.Add(child);
 					if (forStatement.Initializer is not null && forStatement.Initializer.Span.End <= state.Position)
-						child.Add(new ScopedVariable(forStatement.Initializer.Name, OriginKind.Local, ResolveVariableType(state, forStatement.Initializer), forStatement.Initializer));
+						child.Add(new ScopedVariable(forStatement.Initializer.Name, OriginKind.Local, ResolveVariableType(state, forStatement.Initializer, frame), forStatement.Initializer));
 					WalkBody(forStatement.Condition, child, state, frames);
 					WalkBody(forStatement.Increment, child, state, frames);
 					WalkBody(forStatement.Body, child, state, frames);
@@ -979,8 +1092,43 @@ public static class CompletionQuery
 			visibleFunctions.TryAdd(memberName, FindCallableGroupKey(state.Context, function));
 		}
 
+		// An associated member that declares its own type parameters (`Layout .FromType<T>()`) is
+		// parked as a template on its owner instead of entering the associated overload table, so it
+		// is absent from the loop above. It is still a callable the reader can write at this cursor,
+		// so it is offered from the template table by its source name.
+		var genericDetails = new SortedDictionary<string, string>(StringComparer.Ordinal);
+		foreach (var template in state.Context.GetGenericExtensionMethodTemplates(type, state.Unit))
+		{
+			var method = template.Method;
+			if (!method.IsAssociated || OperatorTokens.IsOperatorToken(method.Name))
+				continue;
+
+			if (!IsVisible(state, method.SyntacticVisibility ?? Visibility.Internal, state.Unit))
+				continue;
+
+			visibleFunctions.TryAdd(method.Name, template.BaseMangledName);
+			genericDetails[method.Name] = AssociatedSignatureOf(method);
+		}
+
 		foreach (var (functionName, groupKey) in visibleFunctions)
-			candidates.Add(new CompletionCandidate(functionName, functionName, CompletionKind.Method, groupKey));
+		{
+			genericDetails.TryGetValue(functionName, out var detail);
+			candidates.Add(new CompletionCandidate(functionName, functionName, CompletionKind.Method, groupKey, detail));
+		}
+	}
+
+	/// <summary>
+	/// The signature shown for an associated member that declares its own type parameters
+	/// (`FromType&lt;T&gt;()`). Its parameter and return types are not resolved yet - the template is
+	/// kept generic precisely so the IDE need not instantiate it - so the display names the method
+	/// and its type parameters, which is what a reader needs to recognise the call.
+	/// </summary>
+	private static string AssociatedSignatureOf(FunctionDeclarationSyntax method)
+	{
+		var typeParameters = method.GenericParameters.Count == 0
+			? string.Empty
+			: $"<{string.Join(", ", method.GenericParameters)}>";
+		return $"{method.Name}{typeParameters}()";
 	}
 
 	private static string? FindCallableGroupKey(BindingContext context, FunctionSymbol function)
@@ -1083,11 +1231,22 @@ public static class CompletionQuery
 		return state.Context.ResolveType(state.Context.NormalizeGenericName(typeName));
 	}
 
-	private static TypeSymbol? ResolveVariableType(QueryState state, VariableDeclarationSyntax v)
+	private static TypeSymbol? ResolveVariableType(QueryState state, VariableDeclarationSyntax v, List<ScopedVariable> frame)
 	{
 		if (state.Context.VariableSymbols.TryGetValue(v, out var symbol) && symbol.Type is not null)
 			return symbol.Type;
-		return ResolveTypeOrNull(state, v.Type);
+
+		if (!string.IsNullOrWhiteSpace(v.Type))
+			return ResolveTypeOrNull(state, v.Type);
+
+		// A `val` written without a type takes its type from the initializer. Inside an
+		// uninstantiated template body the compiler emitted no variable symbol at all, so without
+		// this `default(A)` types nothing and every member written on the result stays unreachable.
+		var preceding = new Dictionary<string, ScopedVariable>(StringComparer.Ordinal);
+		foreach (var declared in frame)
+			preceding[declared.Name] = declared;
+
+		return ExpressionTypeResolver.Resolve(state.Context, preceding, v.Initializer);
 	}
 
 	private static bool StrictContains(TextSpan span, int position) => span.Start <= position && position < span.End;
