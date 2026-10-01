@@ -26,7 +26,16 @@ internal sealed class TempProject : IDisposable
 			new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 
 		foreach (var (fileName, source) in sources)
-			File.WriteAllText(Path.Combine(root, fileName), source, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+		{
+			// A fixture may declare a file inside a subdirectory (for example a project-owned
+			// "libraries" folder), so the containing directory has to exist first.
+			var path = Path.Combine(root, fileName);
+			var directory = Path.GetDirectoryName(path);
+			if (!string.IsNullOrEmpty(directory))
+				Directory.CreateDirectory(directory);
+
+			File.WriteAllText(path, source, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+		}
 
 		return new TempProject(root, projectFile);
 	}

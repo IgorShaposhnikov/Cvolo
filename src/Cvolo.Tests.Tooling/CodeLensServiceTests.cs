@@ -117,7 +117,7 @@ public sealed class CodeLensServiceTests
 		using (x.Fixture)
 		{
 			var lens = LayoutLensFor(x.Document.GetCodeLenses(), x.Document, "Header");
-			Assert.Equal("size 8B | align 4B | padding 3B", lens.Title);
+			Assert.Equal("size 8B, align 4B, padding 3B", lens.Title);
 			Assert.Equal(8, lens.Layout!.Size);
 			Assert.Equal(4, lens.Layout.Alignment);
 			Assert.Equal(3, lens.Layout.PaddingSize);
@@ -427,7 +427,7 @@ public sealed class CodeLensServiceTests
 			Assert.DoesNotContain(byDefault, lens => lens.FieldLayout is not null);
 
 			var enabled = x.Document.GetCodeLenses(ToolingCodeLensOptions.Default with { FieldLayout = true });
-			Assert.Equal("offset 0B | size 1B | align 1B", FieldLayoutLensFor(enabled, x.Document, "Kind").Title);
+			Assert.Equal("offset 0B, size 1B, align 1B", FieldLayoutLensFor(enabled, x.Document, "Kind").Title);
 		}
 	}
 
@@ -442,7 +442,7 @@ public sealed class CodeLensServiceTests
 			// repeats it.
 			var length = FieldLayoutLensFor(x.Document.GetCodeLenses(ToolingCodeLensOptions.Default with { FieldLayout = true }), x.Document, "Length");
 
-			Assert.Equal("offset 4B | size 4B | align 4B | pad 3B before", length.Title);
+			Assert.Equal("offset 4B, size 4B, align 4B, pad 3B before", length.Title);
 			Assert.Equal("Header", length.FieldLayout!.ContainingTypeDisplay);
 			Assert.Equal("Length", length.FieldLayout.FieldName);
 			Assert.Equal(4, length.FieldLayout.Offset);
@@ -462,8 +462,8 @@ public sealed class CodeLensServiceTests
 		using (x.Fixture)
 		{
 			var lenses = x.Document.GetCodeLenses(ToolingCodeLensOptions.Default with { FieldLayout = true });
-			Assert.Equal("offset 0B | size 4B | align 4B", FieldLayoutLensFor(lenses, x.Document, "First").Title);
-			Assert.Equal("offset 4B | size 4B | align 4B", FieldLayoutLensFor(lenses, x.Document, "Second").Title);
+			Assert.Equal("offset 0B, size 4B, align 4B", FieldLayoutLensFor(lenses, x.Document, "First").Title);
+			Assert.Equal("offset 4B, size 4B, align 4B", FieldLayoutLensFor(lenses, x.Document, "Second").Title);
 		}
 	}
 
@@ -482,7 +482,7 @@ public sealed class CodeLensServiceTests
 			Assert.Equal(ToolingCodeLensKind.References, lenses[0].Kind);
 			Assert.Equal("0 references", lenses[0].Title);
 			Assert.Equal(ToolingCodeLensKind.Layout, lenses[1].Kind);
-			Assert.Equal("offset 4B | size 4B | align 4B | pad 3B before", lenses[1].Title);
+			Assert.Equal("offset 4B, size 4B, align 4B, pad 3B before", lenses[1].Title);
 		}
 	}
 
@@ -555,8 +555,8 @@ public sealed class CodeLensServiceTests
 			var lenses = x.Document.GetCodeLenses(ToolingCodeLensOptions.Default with { FieldLayout = true });
 
 			// Every variant overlaps the others: sequential struct offsets would be a lie here.
-			Assert.Equal("offset 0B | size 4B | align 4B", FieldLayoutLensFor(lenses, x.Document, "I").Title);
-			Assert.Equal("offset 0B | size 8B | align 8B", FieldLayoutLensFor(lenses, x.Document, "D").Title);
+			Assert.Equal("offset 0B, size 4B, align 4B", FieldLayoutLensFor(lenses, x.Document, "I").Title);
+			Assert.Equal("offset 0B, size 8B, align 8B", FieldLayoutLensFor(lenses, x.Document, "D").Title);
 		}
 	}
 
@@ -577,13 +577,13 @@ public sealed class CodeLensServiceTests
 			Assert.DoesNotContain(x.Document.GetDiagnostics(), diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
 			var lenses = x.Document.GetCodeLenses(ToolingCodeLensOptions.Default with { FieldLayout = true });
 
-			Assert.Equal("offset 0B | size 4B | align 4B", FieldLayoutLensFor(lenses, x.Document, "Nested").Title);
-			Assert.Equal("offset 4B | size 16B | align 4B", FieldLayoutLensFor(lenses, x.Document, "Values").Title);
-			Assert.Equal("offset 20B | size 1B | align 1B", FieldLayoutLensFor(lenses, x.Document, "Tag").Title);
+			Assert.Equal("offset 0B, size 4B, align 4B", FieldLayoutLensFor(lenses, x.Document, "Nested").Title);
+			Assert.Equal("offset 4B, size 16B, align 4B", FieldLayoutLensFor(lenses, x.Document, "Values").Title);
+			Assert.Equal("offset 20B, size 1B, align 1B", FieldLayoutLensFor(lenses, x.Document, "Tag").Title);
 
 			// The three bytes that round the 21-byte payload up to the struct's 4-byte alignment are
 			// tail padding: they are reported once, on the type summary, never as "before" a field.
-			Assert.Equal("size 24B | align 4B | padding 3B", LayoutLensFor(lenses, x.Document, "Outer").Title);
+			Assert.Equal("size 24B, align 4B, padding 3B", LayoutLensFor(lenses, x.Document, "Outer").Title);
 			Assert.DoesNotContain(lenses, lens => lens.FieldLayout is not null && lens.Title.Contains("pad", StringComparison.Ordinal));
 		}
 	}

@@ -93,6 +93,52 @@ public sealed class DiagnosticIdTests
 	}
 
 	[Fact]
+	public void LexerError_UnrecognizedCharacter_GetsItsOwnStableId()
+	{
+		// `$` is not part of the language, so the lexer cannot recognize it.
+		var document = Open("int main()\n{\n    int x = 0;\n    $;\n    return 0;\n}\n");
+
+		var diagnostics = document.GetDiagnostics();
+		Assert.NotEmpty(diagnostics);
+		Assert.DoesNotContain(diagnostics, d => d.Id == PlaceholderId);
+		Assert.Contains(diagnostics, d => d.Id == "CVL1911");
+	}
+
+	[Fact]
+	public void LexerError_IsReportedOncePerOccurrence()
+	{
+		// Two independent unrecognized characters on separate lines must yield two diagnostics,
+		// not one, and no CVL0000 placeholder.
+		var document = Open("int main()\n{\n    $;\n    @;\n    return 0;\n}\n");
+
+		var diagnostics = document.GetDiagnostics();
+		Assert.DoesNotContain(diagnostics, d => d.Id == PlaceholderId);
+		Assert.Equal(2, diagnostics.Count(d => d.Id == "CVL1911"));
+	}
+
+	[Fact]
+	public void LexerError_IsNotWrittenToTheConsole()
+	{
+		// The lexer used to keep ANTLR's default listener, which printed
+		// "token recognition error at: '...'" to stderr on every parse. The language server then
+		// surfaced that as log spam instead of a diagnostic.
+		var original = Console.Error;
+		var captured = new StringWriter();
+		Console.SetError(captured);
+		try
+		{
+			var document = Open("int main()\n{\n    int x = 0;\n    $;\n    return 0;\n}\n");
+			_ = document.GetDiagnostics();
+		}
+		finally
+		{
+			Console.SetError(original);
+		}
+
+		Assert.DoesNotContain("token recognition error", captured.ToString(), StringComparison.OrdinalIgnoreCase);
+	}
+
+	[Fact]
 	public void ProductionSources_DoNotContainThePlaceholderId()
 	{
 		var root = FindRepositoryRoot();
