@@ -13,8 +13,15 @@ namespace Cvolo.Compiler.Tooling.Internal;
 /// </summary>
 internal static class CodeLensService
 {
-	/// <summary>The separator between the facts of one lens title, e.g. the layout facts.</summary>
-	private const char Separator = '|';
+	/// <summary>
+	/// The separator between the facts of one lens title, e.g. the layout facts.
+	/// <para>
+	/// Deliberately a comma, never <c>|</c>: an editor joins the several lenses of one line with its own
+	/// <c>|</c>, so a pipe inside a title makes one lens read as two and hides where one ends. A
+	/// struct declared on a single line would then show a row that looks like duplicated lenses.
+	/// </para>
+	/// </summary>
+	private const char Separator = ',';
 
 	internal static IReadOnlyList<ToolingCodeLensInfo> GetCodeLenses(ProjectSnapshot snapshot, DocumentId document, ToolingCodeLensOptions options)
 	{
@@ -174,7 +181,7 @@ internal static class CodeLensService
 	}
 
 	private static string LayoutTitle(TypeLayoutInspection layout) =>
-		$"size {layout.Size}B {Separator} align {layout.Alignment}B {Separator} padding {layout.PaddingSize}B";
+		$"size {layout.Size}B{Separator} align {layout.Alignment}B{Separator} padding {layout.PaddingSize}B";
 
 	/// <summary>
 	/// Where one field is stored. The offset comes first because that is the question a field layout
@@ -182,14 +189,14 @@ internal static class CodeLensService
 	/// explained where it appears, and tail padding stays with the type summary.
 	/// </summary>
 	private static string FieldLayoutTitle(ToolingFieldLayoutInfo field) =>
-		$"offset {field.Offset}B {Separator} size {field.Size}B {Separator} align {field.Alignment}B"
-		+ (field.PaddingBefore > 0 ? $" {Separator} pad {field.PaddingBefore}B before" : string.Empty);
+		$"offset {field.Offset}B{Separator} size {field.Size}B{Separator} align {field.Alignment}B"
+		+ (field.PaddingBefore > 0 ? $"{Separator} pad {field.PaddingBefore}B before" : string.Empty);
 
 	private static string LinkageTitle(NativeLinkageInfo linkage)
 	{
 		var direction = linkage.Direction == NativeLinkageDirection.Import ? "import" : "export";
-		var convention = string.IsNullOrEmpty(linkage.CallingConvention) ? string.Empty : $"{linkage.CallingConvention} {Separator} ";
-		var library = string.IsNullOrEmpty(linkage.Library) ? string.Empty : $"{linkage.Library} {Separator} ";
+		var convention = string.IsNullOrEmpty(linkage.CallingConvention) ? string.Empty : $"{linkage.CallingConvention} {Separator}";
+		var library = string.IsNullOrEmpty(linkage.Library) ? string.Empty : $"{linkage.Library} {Separator}";
 		return $"{direction} {convention}{library}{linkage.ExternalName}";
 	}
 

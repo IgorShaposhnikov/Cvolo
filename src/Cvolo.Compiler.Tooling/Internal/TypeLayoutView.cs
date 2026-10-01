@@ -1,5 +1,7 @@
 using Cvolo.Analysis;
 using Cvolo.Analysis.Symbols.Base;
+using Cvolo.Analysis.Symbols.Collections;
+using Cvolo.Analysis.Symbols.Structs;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
 using CoreTextSpan = Cvolo.Core.Diagnostics.TextSpan;
@@ -139,8 +141,8 @@ internal static class TypeLayoutView
 
 		string? name = declaration switch
 		{
-			StructDeclarationSyntax { GenericParameters.Count: 0 } structDeclaration => structDeclaration.Name,
-			UnionDeclarationSyntax { GenericParameters.Count: 0 } unionDeclaration => unionDeclaration.Name,
+			StructDeclarationSyntax structDeclaration => structDeclaration.Name,
+			UnionDeclarationSyntax unionDeclaration => unionDeclaration.Name,
 			EnumDeclarationSyntax enumDeclaration => enumDeclaration.Name,
 			DelegateDeclarationSyntax delegateDeclaration => delegateDeclaration.Name,
 			_ => null,
@@ -151,10 +153,13 @@ internal static class TypeLayoutView
 
 		// Resolve the name inside the declaration's own unit and namespace. The binding context keeps a
 		// single CurrentNamespace/CurrentUnit that by now points at whatever unit was bound last, so a
-		// namespaced type would otherwise be looked up under the wrong namespace and vanish.
+		// namespaced type would otherwise be looked up under the wrong namespace and vanish. A generic
+		// template is registered under its mangled (namespaced) name, so the mangled form is resolved
+		// first; whether that open template has a layout is then the layout service's decision.
 		TypeSymbol? type;
 		if (FindUnit(snapshot.GetAnalysis(), declaration) is { } unit)
-			type = UnderUnit(context, unit, () => context.ResolveType(name));
+			type = UnderUnit(context, unit, () => context.ResolveType(context.GetMangledName(name, unit.NamespaceDeclaration?.Name))
+				?? context.ResolveType(name));
 		else
 			lock (context)
 				type = context.ResolveType(name);
@@ -162,19 +167,27 @@ internal static class TypeLayoutView
 		if (type is null)
 			return false;
 
-		inspection = TypeLayoutAdapter.ToTooling(context.LayoutService.Inspect(type));
-		return true;
+		return TryInspect(type, context, out inspection);
 	}
 
 	/// <summary>
 	/// Produces the authoritative layout of an already-resolved type, or false when there is no concrete
 	/// storage type to describe. The caller resolved the type through the compiler's own binding, so this
-	/// never guesses one.
+	/// never guesses one. A type parameter is the one resolved type with no concrete storage: its size
+	/// is whatever the eventual instantiation supplies, so it is reported as unavailable rather than
+	/// as a default-sized guess (§54).
 	/// </summary>
 	internal static bool TryInspect(TypeSymbol? type, BindingContext? context, out TypeLayoutInspection inspection)
 	{
 		inspection = null!;
-		if (context is null || type is null)
+		if (context is null || type is null || type is TypeParameterSymbol)
+			return false;
+
+		// A template that stores a type parameter by value has no size until the argument is
+		// supplied, so the layout service would fall back to a default width that is a guess. A
+		// template that stores only pointers, slices or delegates to its parameters has a real,
+		// target-independent layout, so that case is allowed through and laid out normally.
+		if (DependsOnOpenTypeParameter(type, []))
 			return false;
 
 		var layout = context.LayoutService.Inspect(type);
@@ -183,6 +196,36 @@ internal static class TypeLayoutView
 
 		inspection = TypeLayoutAdapter.ToTooling(layout);
 		return true;
+	}
+
+	/// <summary>
+	/// True when <paramref name="type"/> contains a type parameter stored by value - directly, or
+	/// inside an array or an aggregate field - so its byte size is unknown until the template is
+	/// instantiated. Pointers, slices and delegates carry their size independently of what they
+	/// refer to, so a template whose only generic fields are those does not depend on the parameter
+	/// for its layout.
+	/// </summary>
+	private static bool DependsOnOpenTypeParameter(TypeSymbol type, HashSet<TypeSymbol> active)
+	{
+		if (!active.Add(type))
+			return false;
+
+		try
+		{
+			return type switch
+			{
+				TypeParameterSymbol => true,
+				PointerTypeSymbol or RawPointerTypeSymbol or SliceTypeSymbol or DelegateTypeSymbol => false,
+				ArrayTypeSymbol array => DependsOnOpenTypeParameter(array.ElementType, active),
+				StructTypeSymbol structure => structure.Fields.Any(field => DependsOnOpenTypeParameter(field.Type, active)),
+				UnionTypeSymbol union => union.Fields.Any(field => !field.IsVoidVariant && DependsOnOpenTypeParameter(field.Type, active)),
+				_ => false,
+			};
+		}
+		finally
+		{
+			active.Remove(type);
+		}
 	}
 
 	/// <summary>

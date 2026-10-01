@@ -209,7 +209,7 @@ internal static class CompletionService
 
 			candidates.Add(new Completion.CompletionCandidate(
 				null, candidate.Label, candidate.InsertText, kind,
-				null, null, CompletionResolvableFields.None));
+				candidate.Detail, null, CompletionResolvableFields.None));
 		}
 
 		foreach (var keyword in CompletionKeywordProvider.For(queryContext))

@@ -48,10 +48,19 @@ public sealed class DocumentSnapshot
 		var all = OwningSnapshot.GetAnalysis().ResultDiagnostics;
 		var result = new List<Diagnostic>();
 
+		// Two validation paths can reach the same syntax (for example a member access whose
+		// receiver is also visited as an identifier expression) and produce two byte-identical
+		// findings. The editor shows one marker per (code, range, message), so collapse exact
+		// repeats here rather than publishing a redundant duplicate squiggle.
+		var seen = new HashSet<(string Id, DiagnosticLocation Location, string Message)>();
+
 		foreach (var diagnostic in all)
 		{
-			if (diagnostic.Location.DocumentId == Id)
+			if (diagnostic.Location.DocumentId == Id
+				&& seen.Add((diagnostic.Id, diagnostic.Location, diagnostic.Message)))
+			{
 				result.Add(diagnostic);
+			}
 		}
 
 		return result;

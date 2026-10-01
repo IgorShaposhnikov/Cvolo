@@ -22,7 +22,12 @@ namespace Cvolo.Compiler.Tooling.Internal;
 /// </remarks>
 internal static class InlayHintService
 {
-	private const char Separator = '|';
+	/// <summary>
+	/// The separator between the facts of one hint, matching the compiler's own CodeLens titles. A
+	/// comma, never <c>|</c>, because <c>|</c> is the editor's own separator between the several
+	/// annotations of one line and would make one annotation read as two.
+	/// </summary>
+	private const char Separator = ',';
 
 	internal static IReadOnlyList<ToolingInlayHint> GetInlayHints(
 		ProjectSnapshot snapshot,
@@ -196,12 +201,12 @@ internal static class InlayHintService
 			? pad.Size
 			: 0L;
 
-		var suffix = paddingBefore > 0 ? $" {Separator} pad {paddingBefore} before" : string.Empty;
+		var suffix = paddingBefore > 0 ? $"{Separator} pad {paddingBefore} before" : string.Empty;
 
 		hints.Add(new ToolingInlayHint(
 			span.End,
 			ToolingInlayHintKind.Layout,
-			$"offset {member.Offset} {Separator} size {member.Size} {Separator} align {member.Alignment}{suffix}",
+			$"offset {member.Offset}{Separator} size {member.Size}{Separator} align {member.Alignment}{suffix}",
 			PaddingLeft: true,
 			FieldLayout: new ToolingFieldLayoutInfo(
 				layout.TypeDisplay,
