@@ -1,0 +1,29 @@
+namespace System.Memory;
+
+extern void* malloc(int size);
+extern void free(void* ptr);
+
+public struct SystemAllocator { }
+
+public extension SystemAllocator
+{
+    unsafe void* Alloc(Layout layout)
+    {
+        if (layout.Size == 0) 
+        {
+            return null;
+        }
+        
+        return malloc(layout.Size);
+    }
+        
+    unsafe void Dealloc(void* ptr, Layout layout) 
+    {
+        if (ptr == null) 
+        {
+            return;
+        }
+
+        return free(ptr);
+    }
+}

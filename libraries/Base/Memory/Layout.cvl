@@ -1,0 +1,39 @@
+/// Describes the storage requirements of a value or memory block.
+///
+/// Size is the number of bytes that must be reserved.
+/// Alignment constrains the address at which that storage may begin.
+///
+/// For example, a layout with Alignment = 8 must be placed at an
+/// address divisible by 8. An allocator may therefore need to insert
+/// padding before the allocation even when Size itself is unchanged.
+///
+/// Layout does not own or allocate memory. It only describes the
+/// requirements that an allocator or layout algorithm must satisfy.
+public struct Layout
+{
+    /// Number of bytes occupied by the described storage.
+    public nuint Size;
+
+    /// Required alignment of the starting address, in bytes.
+    ///
+    /// A valid address for this layout must satisfy:
+    ///
+    /// address % Alignment == 0
+    ///
+    /// Alignment is normally a non-zero power of two.
+    public nuint Alignment;
+}
+
+public extension Layout
+{
+    public Layout(nuint size, nuint alignment)
+    {
+        Size = size;
+        Alignment = alignment;
+    }
+
+    public Layout .FromType<T>() 
+    {
+        return Layout(sizeof<T>(), alignof<T>());
+    }
+}

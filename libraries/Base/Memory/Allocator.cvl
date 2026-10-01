@@ -1,0 +1,5 @@
+protocol Allocator
+{
+    void* Alloc(Layout layout);
+    void Dealloc(void* ptr, Layout layout);
+}

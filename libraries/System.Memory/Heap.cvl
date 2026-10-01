@@ -1,0 +1,18 @@
+namespace System.Memory;
+
+public struct Heap<T, A> 
+    where A : Allocator
+    where default A : SystemAllocator
+{
+    T* Ptr;
+}
+
+public extension Heap<T, A>
+{
+    Heap(T value) 
+    {
+        val allocator = default(A);
+        val layout = Layout.FromType<A>();
+        Ptr = allocator.Alloc(layout);
+    }
+}
