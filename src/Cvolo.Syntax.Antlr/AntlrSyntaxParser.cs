@@ -23,6 +23,14 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		_compilationContext = context;
 		var inputStream = new AntlrInputStream(context.Source);
 		var lexer = new CvoloLexer(inputStream);
+
+		// The lexer's default error listener writes "token recognition error" straight to the
+		// console. That is invisible to the compiler driver (which reads the diagnostic bag) and
+		// floods the language server's stderr on every reparse. Route lexer errors into the same
+		// diagnostic pipeline as parser errors so they become real editor diagnostics instead.
+		lexer.RemoveErrorListeners();
+		lexer.AddErrorListener(new LexerErrorListener(_diagnostics, context));
+
 		var tokenStream = new CommonTokenStream(lexer);
 		var parser = new CvoloParser(tokenStream);
 
@@ -1802,6 +1810,58 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		if (context.VOID() is not null)
 			return "void";
 		return GetTypeName(context.type());
+	}
+
+	// Turns a lexer "token recognition error" into a CVL1911 diagnostic anchored on the offending
+	// character. The default ANTLR listener writes to the console, which the compiler driver never
+	// sees and the language server spams to stderr on every reparse.
+	private sealed class LexerErrorListener(DiagnosticBag diagnostics, CompilationContext context) : IAntlrErrorListener<int>
+	{
+		public void SyntaxError(TextWriter output, IRecognizer recognizer, int offendingSymbol, int line, int charPositionInLine, string msg, RecognitionException e)
+		{
+			var source = context.Source;
+			var start = e is LexerNoViableAltException lexerError
+				? lexerError.StartIndex
+				: OffsetOf(source, line, charPositionInLine);
+
+			var length = e is LexerNoViableAltException bad
+				? bad.InputStream.Index - bad.StartIndex
+				: 1;
+
+			if (start < 0)
+				start = 0;
+			if (start > source.Length)
+				start = source.Length;
+			if (length < 1)
+				length = 1;
+			if (start + length > source.Length)
+				length = source.Length - start;
+			if (length < 1)
+			{
+				diagnostics.Report(context, new TextSpan(start, 0),
+					$"({line},{charPositionInLine}): unrecognized character.", DiagnosticIds.UnrecognizedCharacter);
+				return;
+			}
+
+			var text = source.Substring(start, length);
+			diagnostics.Report(context, new TextSpan(start, length),
+				$"({line},{charPositionInLine}): unrecognized character '{text}'.", DiagnosticIds.UnrecognizedCharacter);
+		}
+
+		private static int OffsetOf(string source, int line, int charPositionInLine)
+		{
+			var currentLine = 1;
+			var index = 0;
+			while (index < source.Length && currentLine < line)
+			{
+				if (source[index] == '\n')
+					currentLine++;
+				index++;
+			}
+
+			var offset = index + charPositionInLine;
+			return offset > source.Length ? source.Length : offset;
+		}
 	}
 
 	private sealed class SyntaxErrorListener(DiagnosticBag diagnostics, CompilationContext context, CommonTokenStream tokenStream) : BaseErrorListener
