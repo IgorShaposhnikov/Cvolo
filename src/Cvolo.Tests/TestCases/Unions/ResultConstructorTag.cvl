@@ -1,0 +1,27 @@
+using System;
+
+[Error]
+struct TestError
+{
+	public int id;
+}
+
+Result<int, TestError> Get()
+{
+	return Result<int, TestError>(0);
+}
+
+int Main()
+{
+	val result = Get();
+	if (result.IsOk())
+	{
+		Console.WriteLine(result.Ok);
+	}
+	else
+	{
+		Console.WriteLine("false");
+	}
+
+	return 0;
+}

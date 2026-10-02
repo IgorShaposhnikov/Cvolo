@@ -10,6 +10,7 @@ public sealed class UnionsTests : CompilerTestBase
 	[InlineData("UnionExtension", "Some: 100, IsSome: 1\nEmpty option created.")]
 	[InlineData("OptionSwitchPromotion", "Some: 99")]
 	[InlineData("NullOption", "Safe Option null initialized successfully.\nRaw pointer is null as expected.")]
+	[InlineData("ResultConstructorTag", "0")]
 	public void Execution_Success(string caseName, string expected)
 	{
 		var fileName = $"Unions/{caseName}.cvl";
@@ -19,6 +20,19 @@ public sealed class UnionsTests : CompilerTestBase
 		var (runCode, runStdout) = ExecuteBinary(caseName, "Unions");
 		Assert.Equal(0, runCode);
 		Assert.Contains(expected.Replace("\r\n", "\n").Trim(), runStdout.Replace("\r\n", "\n").Trim());
+	}
+
+	[Fact]
+	public void ResultConstructor_SetsTheActiveVariantTag_WithoutOptimization()
+	{
+		const string caseName = "ResultConstructorTag";
+		var fileName = $"Unions/{caseName}.cvl";
+		var (exitCode, stdout, stderr) = RunCompiler(fileName, "-O0");
+		AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
+
+		var (runCode, runStdout) = ExecuteBinary(caseName, "Unions");
+		Assert.Equal(0, runCode);
+		Assert.Equal("0", runStdout.Replace("\r\n", "\n").Trim());
 	}
 
 	[Theory]

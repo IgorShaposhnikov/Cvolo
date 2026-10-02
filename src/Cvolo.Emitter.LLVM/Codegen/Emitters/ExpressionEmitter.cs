@@ -909,6 +909,22 @@ internal sealed class ExpressionEmitter(
 					if (field is not null)
 					{
 						var (fieldPtr, _, _, _) = aggregates.GetFieldPointer(id);
+						if (!unionType.IsNpoEligible && !unionType.IsUnsafe)
+						{
+							var unionLayout = LowerType(unionType);
+							var unionPtr = Builder.BuildLoad2(
+								LLVMTypeRef.CreatePointer(unionLayout, 0),
+								thisPtr,
+								"union_this_ptr");
+							var variantIndex = codegen.AggregateLayout.GetFieldIndex(unionType, id.Name);
+							var tagPtr = Builder.BuildGEP2(unionLayout, unionPtr, new LLVMValueRef[]
+							{
+								LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
+								LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0)
+							}, "union_tag_ptr");
+							Builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, (ulong)variantIndex), tagPtr);
+						}
+
 						if (bin.Right is StructInitializationExpressionSyntax thisFieldReinit)
 							aggregates.EmitStructInitializationInPlace(thisFieldReinit, fieldPtr);
 						else
