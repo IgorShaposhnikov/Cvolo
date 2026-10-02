@@ -8,7 +8,7 @@ using Xunit;
 
 namespace Cvolo.Tests;
 
-public sealed class Inc9LibrarySelectionTests : CompilerTestBase
+public sealed class StandardLibraryResolutionTests : CompilerTestBase
 {
 	private const string BaseOption = "Base/Option.cvl";
 	private const string BaseType = "Base/Type.cvl";
@@ -58,43 +58,43 @@ public sealed class Inc9LibrarySelectionTests : CompilerTestBase
 	[Fact]
 	public void NoImportProject_SelectsBaseAndExcludesSystem()
 	{
-		var sources = ResolveSources("Inc9/NoImport.cvl");
+		var sources = ResolveSources("StandardLibraryResolution/NoImport.cvl");
 
 		Assert.True(HasLibrary(sources, BaseOption), "Base Option.cvl must always be selected.");
 		Assert.False(HasLibrary(sources, SystemConsole), "Console.cvl must not be selected without an import.");
 		Assert.False(HasLibrary(sources, SystemMathInt), "Math sources must not be selected without an import.");
 
-		AssertCheckSucceeds("Inc9/NoImport.cvl");
+		AssertCheckSucceeds("StandardLibraryResolution/NoImport.cvl");
 	}
 
 	[Fact]
 	public void OptionalSyntax_ResolvesFromBaseWithoutUsing()
 	{
-		var sources = ResolveSources("Inc9/LocalOptional.cvl");
+		var sources = ResolveSources("StandardLibraryResolution/LocalOptional.cvl");
 		Assert.True(HasLibrary(sources, BaseOption));
 
-		AssertCheckSucceeds("Inc9/LocalOptional.cvl");
+		AssertCheckSucceeds("StandardLibraryResolution/LocalOptional.cvl");
 	}
 
 	[Fact]
 	public void Typeof_ResolvesTypeFromBaseWithoutUsing()
 	{
-		var sources = ResolveSources("Inc9/TypeofCore.cvl");
+		var sources = ResolveSources("StandardLibraryResolution/TypeofCore.cvl");
 		Assert.True(HasLibrary(sources, BaseType));
 
-		AssertCheckSucceeds("Inc9/TypeofCore.cvl");
+		AssertCheckSucceeds("StandardLibraryResolution/TypeofCore.cvl");
 	}
 
 	[Fact]
 	public void IntrinsicAttribute_IsAcceptedWithoutUsing()
 	{
-		AssertCheckSucceeds("Inc9/AttributeCore.cvl");
+		AssertCheckSucceeds("StandardLibraryResolution/AttributeCore.cvl");
 	}
 
 	[Fact]
 	public void UsingSystem_SelectsConsoleAndExcludesUnrelatedSystem()
 	{
-		var sources = ResolveSources("Inc9/UsingSystemConsole.cvl");
+		var sources = ResolveSources("StandardLibraryResolution/UsingSystemConsole.cvl");
 
 		Assert.True(HasLibrary(sources, BaseOption));
 		Assert.True(HasLibrary(sources, SystemSystem));
@@ -106,7 +106,7 @@ public sealed class Inc9LibrarySelectionTests : CompilerTestBase
 	[Fact]
 	public void NestedSystemImport_SelectsRequiredModuleOnly()
 	{
-		var sources = ResolveSources("Inc9/UsingSystemMathInt.cvl");
+		var sources = ResolveSources("StandardLibraryResolution/UsingSystemMathInt.cvl");
 
 		Assert.True(HasLibrary(sources, SystemMathInt));
 		Assert.False(HasLibrary(sources, SystemMathDouble));
@@ -115,7 +115,7 @@ public sealed class Inc9LibrarySelectionTests : CompilerTestBase
 	[Fact]
 	public void FullyQualifiedSystemReference_SelectsRequiredModule()
 	{
-		var sources = ResolveSources("Inc9/FullyQualifiedMath.cvl");
+		var sources = ResolveSources("StandardLibraryResolution/FullyQualifiedMath.cvl");
 
 		Assert.True(HasLibrary(sources, SystemMathInt));
 	}
@@ -123,19 +123,19 @@ public sealed class Inc9LibrarySelectionTests : CompilerTestBase
 	[Fact]
 	public void Freestanding_KeepsBaseAndDisablesSystem()
 	{
-		var consoleSources = ResolveSources("Inc9/UsingSystemConsole.cvl", includeSystem: false);
+		var consoleSources = ResolveSources("StandardLibraryResolution/UsingSystemConsole.cvl", includeSystem: false);
 		Assert.True(HasLibrary(consoleSources, BaseOption));
 		Assert.False(HasLibrary(consoleSources, SystemConsole));
 
-		var optionalSources = ResolveSources("Inc9/LocalOptional.cvl", includeSystem: false);
+		var optionalSources = ResolveSources("StandardLibraryResolution/LocalOptional.cvl", includeSystem: false);
 		Assert.True(HasLibrary(optionalSources, BaseOption));
 	}
 
 	[Fact]
 	public void LibraryClosure_IsDeterministicAndDuplicateFree()
 	{
-		var first = ResolveSources("Inc9/UsingSystemMathInt.cvl");
-		var second = ResolveSources("Inc9/UsingSystemMathInt.cvl");
+		var first = ResolveSources("StandardLibraryResolution/UsingSystemMathInt.cvl");
+		var second = ResolveSources("StandardLibraryResolution/UsingSystemMathInt.cvl");
 
 		Assert.Equal(first, second);
 
@@ -158,7 +158,7 @@ public sealed class Inc9LibrarySelectionTests : CompilerTestBase
 	[Fact]
 	public void LocalLibraryRoot_IsAuthoritativeOverBundledRoot()
 	{
-		var root = Path.Combine(Path.GetTempPath(), "cvolo-inc9-" + Guid.NewGuid().ToString("N"));
+		var root = Path.Combine(Path.GetTempPath(), "cvolo-stdlib-resolution-" + Guid.NewGuid().ToString("N"));
 		var localLibraries = Path.Combine(root, "libraries");
 		var baseDirectory = Path.Combine(localLibraries, "Base");
 		var systemDirectory = Path.Combine(localLibraries, "System");
@@ -189,7 +189,7 @@ public sealed class Inc9LibrarySelectionTests : CompilerTestBase
 	[Fact]
 	public void Freestanding_SystemImport_IsRejected()
 	{
-		var (exitCode, _, stderr) = RunCompilerCheck("Inc9/FreestandingSystemUse.cvl", "--freestanding");
+		var (exitCode, _, stderr) = RunCompilerCheck("StandardLibraryResolution/FreestandingSystemUse.cvl", "--freestanding");
 		Assert.Equal(1, exitCode);
 		Assert.Contains("CVL1097", stderr);
 	}
@@ -197,20 +197,20 @@ public sealed class Inc9LibrarySelectionTests : CompilerTestBase
 	[Fact]
 	public void Freestanding_WithoutSystemImport_Succeeds()
 	{
-		var (exitCode, stdout, stderr) = RunCompilerCheck("Inc9/NoImport.cvl", "--freestanding");
-		AssertCompilationSucceeded(exitCode, stdout, stderr, "Inc9/NoImport.cvl");
+		var (exitCode, stdout, stderr) = RunCompilerCheck("StandardLibraryResolution/NoImport.cvl", "--freestanding");
+		AssertCompilationSucceeded(exitCode, stdout, stderr, "StandardLibraryResolution/NoImport.cvl");
 	}
 
 	[Fact]
 	public void CustomResultUnion_WorksWithTryCatch()
 	{
-		AssertCheckSucceeds("Inc9/ResultShapeCustom.cvl");
+		AssertCheckSucceeds("StandardLibraryResolution/ResultShapeCustom.cvl");
 	}
 
 	[Fact]
 	public void ResultUnion_MissingErr_IsRejected()
 	{
-		var (exitCode, _, stderr) = RunCompilerCheck("Inc9/ResultShapeMissingErr.cvl");
+		var (exitCode, _, stderr) = RunCompilerCheck("StandardLibraryResolution/ResultShapeMissingErr.cvl");
 		Assert.Equal(1, exitCode);
 		Assert.Contains("CVL1092", stderr);
 	}
