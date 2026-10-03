@@ -1,0 +1,18 @@
+/// <summary>
+/// `&ptr[1]` must build the GEP from the `int*` pointer value. Reading `values[1]` back proves the
+/// address points into the array rather than at the `int**` storage slot of the local `ptr`.
+/// </summary>
+using System;
+
+[UnsafeBody]
+int Main()
+{
+    var int[2] values = { 10, 20 };
+    int* ptr = (int*)&values;
+
+    int* second = &ptr[1];
+    *second = 55;
+
+    Console.WriteLine($"v1={values[1]}");
+    return values[1] == 55 ? 0 : 1;
+}

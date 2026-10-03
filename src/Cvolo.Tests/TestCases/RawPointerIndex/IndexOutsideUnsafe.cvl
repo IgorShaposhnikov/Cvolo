@@ -1,0 +1,16 @@
+/// <summary>
+/// Raw-pointer indexing is an unsafe operation: reading through a raw pointer without unsafe
+/// capability reports CVL4182. The pointer arrives as a global so this file isolates the
+/// indexing diagnostic from the raw-pointer-declaration diagnostic (CVL4088).
+/// </summary>
+global var int* gptr;
+
+int Read()
+{
+    return gptr[0];
+}
+
+int Main()
+{
+    return Read();
+}

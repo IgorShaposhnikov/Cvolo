@@ -1,0 +1,24 @@
+/// <summary>
+/// Raw-pointer indexing records `UnsafeUsageKind.RawPointerIndex`, so an `[UnsafeBody]` function
+/// that only indexes a raw pointer must NOT also receive CVL1001.
+/// </summary>
+using System;
+
+[UnsafeBody]
+int Read(int* ptr)
+{
+    return ptr[1];
+}
+
+int Main()
+{
+    var int[3] data = { 10, 20, 30 };
+
+    unsafe
+    {
+        int* ptr = (int*)&data;
+        Console.WriteLine($"v={Read(ptr)}");
+    }
+
+    return 0;
+}

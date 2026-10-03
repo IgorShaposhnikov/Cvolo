@@ -1,0 +1,14 @@
+/// <summary>
+/// The index operand of a raw-pointer index must be an integer. A `float` index is rejected by
+/// semantic analysis (CVL4183) using the same canonical integer rule as `ptr + index`.
+/// </summary>
+using System;
+
+[UnsafeBody]
+int Main()
+{
+    var int[3] data = { 10, 20, 30 };
+    int* ptr = (int*)&data;
+
+    return ptr[1.5f];
+}

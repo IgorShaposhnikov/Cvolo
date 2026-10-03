@@ -1242,4 +1242,15 @@ public static class DiagnosticIds
 	/// <summary>Type 'X' contains itself by value and has no finite size. Use a pointer or reference field instead.</summary>
 	public const string TypeContainsItselfByValue = "CVL4181";
 
+	// ==================== Raw-pointer indexing (`ptr[index]`) ====================
+
+	/// <summary>Indexing a raw pointer requires an unsafe context.</summary>
+	public const string RawPointerIndexRequiresUnsafe = "CVL4182";
+
+	/// <summary>The index operand of a raw-pointer index must be an integer.</summary>
+	public const string RawPointerIndexMustBeAnInteger = "CVL4183";
+
+	/// <summary>The pointee of a raw pointer is not an indexable element type.</summary>
+	public const string RawPointerIndexPointeeIsNotIndexable = "CVL4184";
+
 }

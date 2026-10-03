@@ -123,12 +123,7 @@ internal sealed class ExpressionValidator(
 				// can escape canonical binding and first reach LLVM codegen unbound.
 				Check(index.Left, scope);
 				Check(index.Index, scope);
-				// Indexing through a raw pointer is an unsafe operation. It is recorded through the
-				// canonical usage path so UnsafeBody effectiveness and any future safety rule share
-				// the same classification; the operation-specific diagnostic is owned by the safety
-				// validator when raw-pointer indexing is enforced.
-				if (GetType(index.Left, scope) is RawPointerTypeSymbol)
-					_validation.RecordUnsafeUsage(UnsafeUsageKind.RawPointerIndex);
+				CheckRawPointerIndex(index, scope);
 				break;
 			case ArrayInitializationExpressionSyntax arrInit:
 				foreach (var el in arrInit.Elements)
@@ -1404,18 +1399,70 @@ internal sealed class ExpressionValidator(
 	/// <paramref name="target"/> is expected. Beyond exact equality, permits the safe
 	/// refvar→ref downcast (dropping mutability of a reference to the same type).
 	/// </summary>
-	private static bool TypesAssignable(TypeSymbol target, TypeSymbol source)
+private static bool TypesAssignable(TypeSymbol target, TypeSymbol source)
 	{
 		if (target.Equals(source))
 			return true;
 
 		if (source is PointerTypeSymbol srcPtr && target is PointerTypeSymbol tgtPtr &&
 			!tgtPtr.IsMutable && srcPtr.IsMutable &&
-			srcPtr.ReferencedType.Equals(tgtPtr.ReferencedType))
+			tgtPtr.ReferencedType.Equals(srcPtr.ReferencedType))
 			return true;
 
 		return false;
 	}
+
+	/// <summary>
+	/// Classifies <c>T*[index]</c> as a raw-pointer storage access. Raw-pointer indexing is a
+	/// genuine unsafe operation in its own right, so it is recorded through the canonical
+	/// <see cref="ValidationContext.RequireUnsafe"/> path whether the value is read, written, or
+	/// addressed. It deliberately carries no bounds check and no null check: it is unchecked C-style
+	/// pointer arithmetic, and an invalid resulting address stays ordinary unsafe raw-pointer
+	/// behavior.
+	/// </summary>
+	private void CheckRawPointerIndex(IndexExpressionSyntax index, SymbolTable scope)
+	{
+		if (GetType(index.Left, scope) is not RawPointerTypeSymbol rawPointer)
+			return;
+
+		_validation.RequireUnsafe(
+			context,
+			index,
+			UnsafeUsageKind.RawPointerIndex,
+			"Indexing a raw pointer requires an unsafe context.",
+			DiagnosticIds.RawPointerIndexRequiresUnsafe);
+
+		if (!RawPointerPointeeIsIndexable(rawPointer.ElementType))
+		{
+			context.Diagnostics.Report(
+				context.FileContexts[context.CurrentUnit!],
+				index.Left.Span,
+				$"Raw-pointer indexing requires an indexable pointee type, but '{rawPointer.ElementType.Name}' has no element stride.",
+				DiagnosticIds.RawPointerIndexPointeeIsNotIndexable);
+			return;
+		}
+
+		// The index operand is source-language semantics, not an LLVM GEP detail. Reuse the
+		// canonical integer domain that raw-pointer arithmetic already accepts for `ptr + index`
+		// so this INC introduces no new implicit index conversions.
+		var indexType = GetType(index.Index, scope);
+		if (indexType is not null && !TypeSymbol.IsIntegerType(indexType))
+		{
+			context.Diagnostics.Report(
+				context.FileContexts[context.CurrentUnit!],
+				index.Index.Span,
+				$"Raw-pointer index must be an integer, but it is '{indexType.Name}'.",
+				DiagnosticIds.RawPointerIndexMustBeAnInteger);
+		}
+	}
+
+	/// <summary>
+	/// Raw-pointer indexing is available only where raw-pointer stepping already accepts the
+	/// pointee, because both forms need the same concrete element stride. An opaque or unsized
+	/// pointee such as <c>void</c> stays non-indexable rather than becoming indexable here.
+	/// </summary>
+	private static bool RawPointerPointeeIsIndexable(TypeSymbol? elementType) =>
+		elementType is not null && !elementType.Equals(TypeSymbol.Void);
 
 	/// <summary>
 	/// Validates named struct or union initialization and returns the constructed semantic type.
@@ -1789,6 +1836,10 @@ internal sealed class ExpressionValidator(
 			{
 				ArrayTypeSymbol array => array.ElementType,
 				SliceTypeSymbol slice => slice.ElementType,
+				// `T*[i]` is normal indexed storage over the pointee and yields `T`. Raw-pointer
+				// indexing deliberately resolves no bounds/null policy here; unchecked C-style
+				// pointer arithmetic is the whole point of the form.
+				RawPointerTypeSymbol rawPointer => rawPointer.ElementType,
 				_ => null,
 			},
 			ArrayInitializationExpressionSyntax a => CheckArrayInitialization(a, scope),

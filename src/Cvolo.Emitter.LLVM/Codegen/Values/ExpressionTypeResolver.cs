@@ -296,8 +296,12 @@ internal sealed class ExpressionTypeResolver(CodegenContext codegen, Func<Functi
 	}
 
 	/// <summary>
-	/// Resolves the element type produced by indexing an array or slice.
+	/// Resolves the element type produced by indexing an array, slice, or raw pointer.
 	/// </summary>
+	/// <remarks>
+	/// <c>T*[i]</c> yields <c>T</c>, matching validation. The <c>int</c> fallback stays reserved
+	/// for bases that are not indexable at all; a resolved raw pointer must never degrade to it.
+	/// </remarks>
 	private TypeSymbol ResolveIndex(IndexExpressionSyntax index)
 	{
 		var parentType = Resolve(index.Left);
@@ -305,6 +309,7 @@ internal sealed class ExpressionTypeResolver(CodegenContext codegen, Func<Functi
 		{
 			ArrayTypeSymbol arrayType => arrayType.ElementType,
 			SliceTypeSymbol sliceType => sliceType.ElementType,
+			RawPointerTypeSymbol rawPointerType => rawPointerType.ElementType,
 			_ => TypeSymbol.Int,
 		};
 	}

@@ -1,0 +1,39 @@
+/// <summary>
+/// Compiler Target: Cvolo.Analysis (raw-pointer index validation + CVL4183 rejection),
+/// Cvolo.Emitter.LLVM (AggregateEmitter.GetFieldPointer GEP from the pointer value).
+///
+/// Exercises every form of `T*` indexing: r-value read, l-value write, a non-literal index,
+/// and taking the address of an indexed element. The single-evaluation and -O3 requirements are
+/// covered by IndexSingleEvaluation and by the -O0/-O3 theory in RawPointerIndexTests.
+/// </summary>
+using System;
+
+[UnsafeBody]
+int Main()
+{
+    var int[3] data = { 10, 20, 30 };
+    int* ptr = (int*)&data;
+
+    // r-value read
+    if (ptr[1] != 20)
+        return 1;
+
+    // l-value write
+    ptr[1] = 42;
+
+    // non-literal index
+    var int index = 2;
+    ptr[index] = 99;
+
+    // address of an indexed element
+    int* second = &ptr[1];
+
+    if (*second != 42)
+        return 2;
+
+    if (data[1] != 42 || data[2] != 99)
+        return 3;
+
+    Console.WriteLine("IndexBasic OK");
+    return 0;
+}

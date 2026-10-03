@@ -664,6 +664,26 @@ internal sealed class AggregateEmitter(
 
 		if (expr is IndexExpressionSyntax indexExpression)
 		{
+			// Raw-pointer indexing must build its GEP from the `T*` pointer VALUE, never from the
+			// `T**` storage slot a pointer variable occupies. Asking aggregate-address logic for the
+			// base address would return that slot and silently compute `T**`-relative offsets.
+			// The base type is therefore resolved first through the non-executing resolver, so the
+			// base expression is still emitted exactly once below.
+			if (expressionTypes.Resolve(indexExpression.Left) is RawPointerTypeSymbol rawPointer)
+			{
+				var basePointerValue = emitExpression(indexExpression.Left);
+				var rawIndexVal = emitExpression(indexExpression.Index);
+				var rawElementType = rawPointer.ElementType;
+				// Mirrors canonical raw-pointer stepping exactly: the accepted integer index is
+				// handed to GEP unchanged, with no separate index-conversion table.
+				var rawElementPtr = Builder.BuildGEP2(
+					codegen.Types.Lower(rawElementType),
+					basePointerValue,
+					new LLVMValueRef[] { rawIndexVal },
+					"raw_index_ptr");
+				return (rawElementPtr, rawElementType, false, null);
+			}
+
 			var (parentPtr, parentType, _, _) = GetFieldPointer(indexExpression.Left);
 			var indexVal = emitExpression(indexExpression.Index);
 			if (parentType is SliceTypeSymbol sliceType)

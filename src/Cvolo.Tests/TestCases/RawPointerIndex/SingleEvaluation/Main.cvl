@@ -1,0 +1,33 @@
+/// <summary>
+/// The base and index expressions of `GetPointer()[NextIndex()]` must each be evaluated exactly
+/// once. Deriving the base type and the base address separately would double-emit the call.
+/// </summary>
+using System;
+
+global var int[3] data;
+global var int pointerCalls;
+global var int indexCalls;
+
+[UnsafeBody]
+int* GetPointer()
+{
+    pointerCalls = pointerCalls + 1;
+    return (int*)&data;
+}
+
+int NextIndex()
+{
+    indexCalls = indexCalls + 1;
+    return 1;
+}
+
+int Main()
+{
+    unsafe
+    {
+        int value = GetPointer()[NextIndex()];
+        Console.WriteLine($"v={value} pc={pointerCalls} ic={indexCalls}");
+    }
+
+    return pointerCalls == 1 && indexCalls == 1 ? 0 : 1;
+}
