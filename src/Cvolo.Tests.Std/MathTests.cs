@@ -113,8 +113,7 @@ public sealed class MathTests : CompilerTestBase
 		var (exitCode, stdout, stderr) = RunCompiler("Math/BitOps.cvl", "-O0", "--llvm");
 		AssertCompilationSucceeded(exitCode, stdout, stderr, "Math/BitOps.cvl");
 
-		var assemblyDir = Path.GetDirectoryName(typeof(CompilerTestBase).Assembly.Location)!;
-		var irPath = Path.Combine(assemblyDir, TestCasesDirectory, "_isolated", "Math", "BitOps", "obj", "Debug", "BitOps.ll");
+		var irPath = GetCompilationArtifactPath("Math/BitOps.cvl", "obj", "Debug", "BitOps.ll");
 		var ir = File.ReadAllText(irPath);
 
 		Assert.Contains("@llvm.fshl.i8(i8", ir);

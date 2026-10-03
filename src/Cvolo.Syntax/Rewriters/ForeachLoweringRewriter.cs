@@ -2,6 +2,7 @@ using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
 using Cvolo.Core.AST.Expressions;
 using Cvolo.Core.AST.Statements;
+using Cvolo.Core.Diagnostics;
 
 namespace Cvolo.Syntax.Rewriters;
 
@@ -17,14 +18,25 @@ namespace Cvolo.Syntax.Rewriters;
 /// — enumerator-based foreach is kept as-is (stamps preserved) for the emitter to expand.
 /// </summary>
 /// <remarks>
-/// IMPORTANT: this pass runs POST-binding, so it must never rebuild expression nodes —
-/// the emitter's <c>_bindingContext.ResolvedCalls</c> is keyed by CallExpressionSyntax
-/// instance. Only statement/declaration containers and the foreach node itself are rebuilt;
-/// every expression is passed through unchanged.
+/// IMPORTANT: this pass runs POST-binding, so existing expression nodes are never rebuilt —
+/// semantic caches are keyed by syntax-node identity. Only statement/declaration containers and the
+/// foreach node itself are rebuilt. The small index-loop binary nodes synthesized by this pass are new
+/// by definition and are registered through the supplied callback before code generation.
 /// </remarks>
 public sealed class ForeachLoweringRewriter : AstRewriterBase
 {
+	private readonly Action<BinaryExpressionSyntax>? _registerSynthesizedBinary;
 	private int _counter;
+
+	/// <summary>
+	/// Creates the post-binding foreach lowering. The optional callback is invoked for every binary
+	/// expression synthesized by this pass so the semantic layer can attach a canonical binding before
+	/// LLVM emission consumes the rewritten tree.
+	/// </summary>
+	public ForeachLoweringRewriter(Action<BinaryExpressionSyntax>? registerSynthesizedBinary = null)
+	{
+		_registerSynthesizedBinary = registerSynthesizedBinary;
+	}
 
 	public override SyntaxNode Rewrite(SyntaxNode node)
 	{
@@ -201,15 +213,24 @@ public sealed class ForeachLoweringRewriter : AstRewriterBase
 			: new MemberAccessExpressionSyntax(span, forEach.Collection, "Length");
 
 		var lengthDecl = new VariableDeclarationSyntax(span, isMutable: false, "int", lengthName, lengthExpr);
+		var condition = SynthesizeBinary(span, indexId, "<", lengthId);
+		var incrementValue = SynthesizeBinary(span, indexId, "+", one);
+		var increment = SynthesizeBinary(span, indexId, "=", incrementValue);
 		var forLoop = new ForStatementSyntax(
 			span,
 			new VariableDeclarationSyntax(span, isMutable: true, "int", indexName, zero),
-			new BinaryExpressionSyntax(span, indexId, "<", lengthId),
-			new BinaryExpressionSyntax(span, indexId, "=",
-				new BinaryExpressionSyntax(span, indexId, "+", one)),
+			condition,
+			increment,
 			new BlockStatementSyntax(span, bodyStatements),
 			forEach.Label);
 
 		return new BlockStatementSyntax(span, new List<SyntaxNode> { lengthDecl, forLoop });
+	}
+
+	private BinaryExpressionSyntax SynthesizeBinary(TextSpan span, ExpressionSyntax left, string @operator, ExpressionSyntax right)
+	{
+		var binary = new BinaryExpressionSyntax(span, left, @operator, right);
+		_registerSynthesizedBinary?.Invoke(binary);
+		return binary;
 	}
 }

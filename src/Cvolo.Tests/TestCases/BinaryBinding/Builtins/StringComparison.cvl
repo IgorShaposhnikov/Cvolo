@@ -1,0 +1,9 @@
+void TakeBool(bool value) {
+}
+
+int Main() {
+    string left = "left";
+    string right = "right";
+    TakeBool(left != right);
+    return left == right ? 1 : 0;
+}

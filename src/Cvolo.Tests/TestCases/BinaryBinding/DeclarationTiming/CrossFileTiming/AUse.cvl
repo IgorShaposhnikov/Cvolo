@@ -1,0 +1,9 @@
+int Take(Cell value) {
+    return value.Value;
+}
+
+int Main() {
+    val Cell a(Value: 10);
+    val Cell b(Value: 20);
+    return Take(a + b) == 30 ? 0 : 1;
+}

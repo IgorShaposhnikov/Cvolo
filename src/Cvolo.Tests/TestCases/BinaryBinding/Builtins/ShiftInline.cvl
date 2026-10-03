@@ -1,0 +1,11 @@
+int TakeInt(int value) {
+    return value;
+}
+
+int Main() {
+    int value = 3;
+    int direct = TakeInt(value << 2);
+    int shifted = value << 2;
+    int local = TakeInt(shifted);
+    return direct == 12 && local == 12 ? 0 : 1;
+}

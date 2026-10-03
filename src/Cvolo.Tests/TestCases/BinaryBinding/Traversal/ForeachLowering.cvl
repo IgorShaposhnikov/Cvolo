@@ -1,0 +1,10 @@
+int Main() {
+    int[3] values = { 1, 2, 3 };
+    var int sum = 0;
+
+    foreach (val item in values) {
+        sum = sum + item;
+    }
+
+    return sum == 6 ? 0 : 1;
+}

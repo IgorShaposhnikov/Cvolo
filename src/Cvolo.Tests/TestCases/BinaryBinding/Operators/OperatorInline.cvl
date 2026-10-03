@@ -1,0 +1,35 @@
+struct Vec2 {
+    int X;
+    int Y;
+}
+
+public extension Vec2 {
+    public Vec2 operator +(Vec2 left, Vec2 right) {
+        val Vec2 result(X: left.X + right.X, Y: left.Y + right.Y);
+        return result;
+    }
+
+    public Vec2 operator *(Vec2 value, float scale) {
+        val Vec2 result(X: (int)(value.X * scale), Y: (int)(value.Y * scale));
+        return result;
+    }
+}
+
+int TakeVec(Vec2 value) {
+    return value.X + value.Y;
+}
+
+int Main() {
+    val Vec2 a(X: 1, Y: 2);
+    val Vec2 b(X: 3, Y: 4);
+
+    int direct = TakeVec(a + b);
+    val Vec2 temp = a + b;
+    int throughLocal = TakeVec(temp);
+
+    int convertedDirect = TakeVec(a * 2);
+    val Vec2 convertedTemp = a * 2;
+    int convertedLocal = TakeVec(convertedTemp);
+
+    return direct == 10 && throughLocal == 10 && convertedDirect == 6 && convertedLocal == 6 ? 0 : 1;
+}

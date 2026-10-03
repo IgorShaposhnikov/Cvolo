@@ -1,0 +1,9 @@
+T Add<T>(T a, T b) {
+    return a + b;
+}
+
+int Main() {
+    int i = Add<int>(1, 2);
+    float f = Add<float>(1.0f, 2.0f);
+    return i == 3 && f == 3.0f ? 0 : 1;
+}

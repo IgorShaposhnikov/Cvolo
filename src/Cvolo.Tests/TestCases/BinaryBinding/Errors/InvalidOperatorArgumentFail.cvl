@@ -1,0 +1,13 @@
+struct A {
+    int X;
+}
+
+void TakeInt(int value) {
+}
+
+int Main() {
+    val A a(X: 1);
+    val A b(X: 2);
+    TakeInt(a * b);
+    return 0;
+}

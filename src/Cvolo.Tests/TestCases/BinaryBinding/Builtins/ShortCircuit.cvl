@@ -1,0 +1,13 @@
+global var int Calls = 0;
+
+bool SideEffect() {
+    Calls = Calls + 1;
+    return true;
+}
+
+int Main() {
+    Calls = 0;
+    bool a = false && SideEffect();
+    bool b = true || SideEffect();
+    return Calls == 0 ? 0 : 1;
+}

@@ -1,0 +1,10 @@
+struct A {
+    int X;
+}
+
+int Main() {
+    val A a(X: 1);
+    val A b(X: 2);
+    A x = a * b;
+    return x.X;
+}

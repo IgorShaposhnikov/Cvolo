@@ -1,0 +1,9 @@
+float TakeFloat(float value) {
+    return value;
+}
+
+int Main() {
+    int a = 2;
+    float b = 0.5f;
+    return TakeFloat(a * b) == 1.0f ? 0 : 1;
+}

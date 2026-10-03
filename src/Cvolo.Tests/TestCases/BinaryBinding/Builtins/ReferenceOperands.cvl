@@ -1,0 +1,9 @@
+int Sum(ref int left, ref int right) {
+    return left + right;
+}
+
+int Main() {
+    int a = 7;
+    int b = 5;
+    return Sum(ref a, ref b) == 12 ? 0 : 1;
+}

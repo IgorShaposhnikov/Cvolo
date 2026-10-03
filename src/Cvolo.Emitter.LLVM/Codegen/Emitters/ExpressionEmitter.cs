@@ -1,5 +1,6 @@
 using System.Text;
 using Cvolo.Analysis;
+using Cvolo.Analysis.Semantics;
 using Cvolo.Analysis.Symbols;
 using Cvolo.Analysis.Symbols.Base;
 using Cvolo.Analysis.Symbols.Collections;
@@ -506,20 +507,6 @@ internal sealed class ExpressionEmitter(
 
 
 	/// <summary>
-	/// Returns whether an expression is a compile-time string literal concatenation tree.
-	/// </summary>
-	internal static bool IsConstantStringTree(ExpressionSyntax expr)
-	{
-		return expr switch
-		{
-			StringLiteralExpressionSyntax => true,
-			BinaryExpressionSyntax bin when bin.Operator == "+" =>
-				IsConstantStringTree(bin.Left) && IsConstantStringTree(bin.Right),
-			_ => false,
-		};
-	}
-
-	/// <summary>
 	/// Folds a compile-time string concatenation tree into its final literal value.
 	/// </summary>
 	private static string ConstantStringValue(ExpressionSyntax expr)
@@ -539,163 +526,190 @@ internal sealed class ExpressionEmitter(
 	/// </summary>
 	private LLVMValueRef EmitBinaryExpression(BinaryExpressionSyntax bin)
 	{
-		// Intercept assignment operators first to prevent mathematical promotion conflicts
+		// Assignment owns storage/lifetime semantics rather than operator semantics. Validation still
+		// records a canonical Assignment descriptor for the syntax node, but lowering stays on the
+		// dedicated store path.
 		if (bin.Operator == "=")
-		{
 			return EmitAssignStore(bin);
+
+		if (!BindingContext.ResolvedBinaryExpressions.TryGetValue(bin, out var resolved)
+			|| resolved.State != BinaryBindingState.Success)
+		{
+			throw new InvalidOperationException(
+				$"Binary expression '{bin.Operator}' reached code generation without a successful canonical binding.");
 		}
 
-		// OPERATOR OVERLOAD (spec §14): the expression is an ordinary call to a receiverless
-		// associated function, so it is emitted as one before any builtin operator rule applies.
-		if (BindingContext.FindOperatorOverload(bin.Operator, expressionTypes.Resolve(bin.Left), expressionTypes.Resolve(bin.Right)) is { } overload)
-			return EmitOperatorOverload(overload, [bin.Left, bin.Right]);
+		if (resolved.OperatorOverload is not null)
+			return EmitBoundOperatorOverload(resolved);
 
-		// Fold '+': constant string concatenation lowers to a single constant.
-		if (bin.Operator == "+" && IsConstantStringTree(bin.Left) && IsConstantStringTree(bin.Right))
-		{
+		if (resolved.BuiltinOperatorKind == BuiltinBinaryOperatorKind.ConstantStringConcatenation)
 			return EmitStringLiteral(ConstantStringValue(bin.Left) + ConstantStringValue(bin.Right));
-		}
 
-		var left = Emit(bin.Left);
-		var right = Emit(bin.Right);
-		var lTy = expressionTypes.Resolve(bin.Left);
-		var rTy = expressionTypes.Resolve(bin.Right);
+		if (resolved.BuiltinOperatorKind is BuiltinBinaryOperatorKind.BooleanLogicalAnd or BuiltinBinaryOperatorKind.BooleanLogicalOr)
+			return EmitShortCircuitLogical(bin, resolved);
 
-		if (lTy is PointerTypeSymbol lPtr && left.TypeOf.Kind == LLVMTypeKind.LLVMPointerTypeKind)
+		var left = ApplyBinaryConversion(Emit(bin.Left), resolved.LeftConversion
+			?? throw new InvalidOperationException("Canonical binary binding is missing the left operand conversion."), "left");
+		var right = ApplyBinaryConversion(Emit(bin.Right), resolved.RightConversion
+			?? throw new InvalidOperationException("Canonical binary binding is missing the right operand conversion."), "right");
+
+		return resolved.BuiltinOperatorKind switch
 		{
-			left = Builder.BuildLoad2(LowerType(lPtr.ReferencedType), left, "deref_left");
-			lTy = lPtr.ReferencedType;
-		}
+			BuiltinBinaryOperatorKind.RawPointerAdd =>
+				Builder.BuildGEP2(LowerType(((RawPointerTypeSymbol)resolved.ResultType!).ElementType), left, new[] { right }, "ptr_add"),
+			BuiltinBinaryOperatorKind.RawPointerAddReversed =>
+				Builder.BuildGEP2(LowerType(((RawPointerTypeSymbol)resolved.ResultType!).ElementType), right, new[] { left }, "ptr_add"),
+			BuiltinBinaryOperatorKind.RawPointerSubtract =>
+				Builder.BuildGEP2(LowerType(((RawPointerTypeSymbol)resolved.ResultType!).ElementType), left, new[] { Builder.BuildNeg(right, "ptr_sub_neg") }, "ptr_sub"),
+			BuiltinBinaryOperatorKind.FloatingArithmetic => EmitFloatingArithmetic(bin.Operator, left, right),
+			BuiltinBinaryOperatorKind.FloatingComparison => EmitFloatingComparison(bin.Operator, left, right),
+			BuiltinBinaryOperatorKind.IntegerArithmetic => EmitIntegerArithmetic(bin.Operator, left, right, resolved.UseUnsignedIntegerSemantics),
+			BuiltinBinaryOperatorKind.IntegerComparison => EmitIntegerComparison(bin.Operator, left, right),
+			BuiltinBinaryOperatorKind.BooleanComparison => EmitIntegerComparison(bin.Operator, left, right),
+			BuiltinBinaryOperatorKind.StringComparison => EmitIntegerComparison(bin.Operator, left, right),
+			BuiltinBinaryOperatorKind.NativeDelegateEquality => EmitIntegerComparison(bin.Operator, left, right),
+			BuiltinBinaryOperatorKind.EnumComparison => EmitIntegerComparison(bin.Operator, left, right),
+			BuiltinBinaryOperatorKind.RawPointerComparison => EmitIntegerComparison(bin.Operator, left, right),
+			BuiltinBinaryOperatorKind.IntegerBitwise => bin.Operator switch
+			{
+				"&" => Builder.BuildAnd(left, right),
+				"|" => Builder.BuildOr(left, right),
+				"^" => Builder.BuildXor(left, right),
+				_ => throw new InvalidOperationException($"Unexpected bitwise operator '{bin.Operator}'."),
+			},
+			BuiltinBinaryOperatorKind.FlagsBitwise => bin.Operator switch
+			{
+				"&" => Builder.BuildAnd(left, right),
+				"|" => Builder.BuildOr(left, right),
+				"^" => Builder.BuildXor(left, right),
+				_ => throw new InvalidOperationException($"Unexpected flags operator '{bin.Operator}'."),
+			},
+			BuiltinBinaryOperatorKind.ShiftLeft => Builder.BuildShl(left, right),
+			BuiltinBinaryOperatorKind.ShiftRightArithmetic => Builder.BuildAShr(left, right),
+			BuiltinBinaryOperatorKind.ShiftRightLogical => Builder.BuildLShr(left, right),
+			_ => throw new InvalidOperationException(
+				$"Unsupported canonical builtin binary operation '{resolved.BuiltinOperatorKind}' for '{bin.Operator}'."),
+		};
+	}
 
-		// Implicit Dereference for right operand
-		if (rTy is PointerTypeSymbol rPtr && right.TypeOf.Kind == LLVMTypeKind.LLVMPointerTypeKind)
+	/// <summary>Applies exactly the operand conversion selected by semantic binary binding.</summary>
+	private LLVMValueRef ApplyBinaryConversion(LLVMValueRef value, BinaryOperandConversion conversion, string side)
+	{
+		// ValueLoader already materializes scalar safe-reference reads. Aggregate references remain
+		// pointer-shaped until their consumer requests the value, so only emit an LLVM load when the
+		// representation still is a pointer. The semantic conversion itself remains recorded here.
+		if (conversion.Dereference && value.TypeOf.Kind == LLVMTypeKind.LLVMPointerTypeKind)
+			value = Builder.BuildLoad2(LowerType(conversion.ValueType), value, $"binary_{side}_deref");
+
+		return conversion.NumericKind switch
 		{
-			right = Builder.BuildLoad2(LowerType(rPtr.ReferencedType), right, "deref_right");
-			rTy = rPtr.ReferencedType;
-		}
+			BinaryNumericConversionKind.None => value,
+			BinaryNumericConversionKind.IntegerWidth => coercion.CoerceIntegerWidth(value, conversion.ValueType, conversion.TargetType),
+			BinaryNumericConversionKind.IntegerToFloating => TypeSymbol.IsSignedIntegerType(conversion.ValueType)
+				? Builder.BuildSIToFP(value, LowerType(conversion.TargetType), $"binary_{side}_sitofp")
+				: Builder.BuildUIToFP(value, LowerType(conversion.TargetType), $"binary_{side}_uitofp"),
+			BinaryNumericConversionKind.FloatToDouble => Builder.BuildFPExt(value, LLVMTypeRef.Double, $"binary_{side}_fpext"),
+			_ => throw new InvalidOperationException($"Unknown binary operand conversion '{conversion.NumericKind}'."),
+		};
+	}
 
-		// 1. Unmanaged Pointer Arithmetic
-		if (lTy is RawPointerTypeSymbol rawPtrL && TypeSymbol.IsIntegerType(rTy))
+	/// <summary>Emits the already-selected user-defined binary operator and its bound conversions.</summary>
+	private LLVMValueRef EmitBoundOperatorOverload(ResolvedBinaryExpression resolved)
+	{
+		var overload = resolved.OperatorOverload
+			?? throw new InvalidOperationException("User-defined binary binding has no operator function.");
+		if (!codegen.Globals.TryGetValue(overload.Name, out var callee)
+			|| !codegen.FunctionTypes.TryGetValue(overload.Name, out var functionType))
 		{
-			if (bin.Operator == "+")
-			{
-				return Builder.BuildGEP2(LowerType(rawPtrL.ElementType), left, new[] { right }, "ptr_add");
-			}
-
-			if (bin.Operator == "-")
-			{
-				var negRight = Builder.BuildNeg(right, "ptr_sub_neg");
-				return Builder.BuildGEP2(LowerType(rawPtrL.ElementType), left, new[] { negRight }, "ptr_sub");
-			}
+			throw new InvalidOperationException($"Operator overload '{overload.Name}' was never declared for emission.");
 		}
-		else if (rTy is RawPointerTypeSymbol rawPtrR && TypeSymbol.IsIntegerType(lTy) && bin.Operator == "+")
+
+		var left = ApplyBinaryConversion(Emit(resolved.Syntax.Left), resolved.LeftConversion!, "operator_left");
+		var right = ApplyBinaryConversion(Emit(resolved.Syntax.Right), resolved.RightConversion!, "operator_right");
+		return Builder.BuildCall2(functionType, callee, new[] { left, right },
+			overload.ReturnType.Equals(TypeSymbol.Void) ? "" : "operator_call");
+	}
+
+	/// <summary>Preserves language-level conditional RHS evaluation for && and ||.</summary>
+	private LLVMValueRef EmitShortCircuitLogical(BinaryExpressionSyntax binary, ResolvedBinaryExpression resolved)
+	{
+		var kind = resolved.BuiltinOperatorKind;
+		var left = ApplyBinaryConversion(Emit(binary.Left), resolved.LeftConversion
+			?? throw new InvalidOperationException("Canonical logical binding is missing the left operand conversion."), "logical_left");
+		var currentFunction = Builder.InsertBlock.Parent;
+		var rhsBlock = currentFunction.AppendBasicBlock(kind == BuiltinBinaryOperatorKind.BooleanLogicalAnd ? "and_rhs" : "or_rhs");
+		var mergeBlock = currentFunction.AppendBasicBlock(kind == BuiltinBinaryOperatorKind.BooleanLogicalAnd ? "and_end" : "or_end");
+		var result = memory.BuildEntryAlloca(LLVMTypeRef.Int1, "logical_result");
+
+		if (kind == BuiltinBinaryOperatorKind.BooleanLogicalAnd)
 		{
-			return Builder.BuildGEP2(LowerType(rawPtrR.ElementType), right, new[] { left }, "ptr_add");
+			Builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int1, 0), result);
+			Builder.BuildCondBr(left, rhsBlock, mergeBlock);
 		}
-
-		var isDouble = lTy.Equals(TypeSymbol.Double) || rTy.Equals(TypeSymbol.Double);
-		var isFloat = lTy.Equals(TypeSymbol.Float) || rTy.Equals(TypeSymbol.Float);
-
-		if (isDouble || isFloat)
+		else
 		{
-			var targetFpType = isDouble ? LLVMTypeRef.Double : LLVMTypeRef.Float;
-
-			// Promote Left operand
-			if (TypeSymbol.IsIntegerType(lTy))
-			{
-				left = TypeSymbol.IsSignedIntegerType(lTy)
-					? Builder.BuildSIToFP(left, targetFpType, "sitofp_left")
-					: Builder.BuildUIToFP(left, targetFpType, "uitofp_left");
-			}
-			else if (isDouble && lTy.Equals(TypeSymbol.Float))
-			{
-				left = Builder.BuildFPExt(left, LLVMTypeRef.Double, "fpext_left");
-			}
-
-			// Promote Right operand
-			if (TypeSymbol.IsIntegerType(rTy))
-			{
-				right = TypeSymbol.IsSignedIntegerType(rTy)
-					? Builder.BuildSIToFP(right, targetFpType, "sitofp_right")
-					: Builder.BuildUIToFP(right, targetFpType, "uitofp_right");
-			}
-			else if (isDouble && rTy.Equals(TypeSymbol.Float))
-			{
-				right = Builder.BuildFPExt(right, LLVMTypeRef.Double, "fpext_right");
-			}
-
-			return bin.Operator switch
-			{
-				"+" => Builder.BuildFAdd(left, right),
-				"-" => Builder.BuildFSub(left, right),
-				"*" => Builder.BuildFMul(left, right),
-				"/" => Builder.BuildFDiv(left, right),
-				"%" => Builder.BuildFRem(left, right),
-				"==" => Builder.BuildFCmp(LLVMRealPredicate.LLVMRealOEQ, left, right),
-				"!=" => Builder.BuildFCmp(LLVMRealPredicate.LLVMRealONE, left, right),
-				"<" => Builder.BuildFCmp(LLVMRealPredicate.LLVMRealOLT, left, right),
-				">" => Builder.BuildFCmp(LLVMRealPredicate.LLVMRealOGT, left, right),
-				"<=" => Builder.BuildFCmp(LLVMRealPredicate.LLVMRealOLE, left, right),
-				">=" => Builder.BuildFCmp(LLVMRealPredicate.LLVMRealOGE, left, right),
-				_ => throw new InvalidOperationException($"Unknown floating-point operator '{bin.Operator}'"),
-			};
+			Builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int1, 1), result);
+			Builder.BuildCondBr(left, mergeBlock, rhsBlock);
 		}
 
-		// Integer width promotion: when mixing integer widths, zext/sext the narrower
-		// operand up to the wider operand's width before the operation.
-		if (TypeSymbol.IsIntegerType(lTy) && TypeSymbol.IsIntegerType(rTy))
+		Builder.PositionAtEnd(rhsBlock);
+		var right = ApplyBinaryConversion(Emit(binary.Right), resolved.RightConversion
+			?? throw new InvalidOperationException("Canonical logical binding is missing the right operand conversion."), "logical_right");
+		Builder.BuildStore(right, result);
+		if (Builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
+			Builder.BuildBr(mergeBlock);
+
+		Builder.PositionAtEnd(mergeBlock);
+		return Builder.BuildLoad2(LLVMTypeRef.Int1, result, "logical_value");
+	}
+
+	private LLVMValueRef EmitFloatingArithmetic(string op, LLVMValueRef left, LLVMValueRef right)
+		=> op switch
 		{
-			var lWidth = TypeSymbol.IntegerBitWidth(lTy);
-			var rWidth = TypeSymbol.IntegerBitWidth(rTy);
+			"+" => Builder.BuildFAdd(left, right),
+			"-" => Builder.BuildFSub(left, right),
+			"*" => Builder.BuildFMul(left, right),
+			"/" => Builder.BuildFDiv(left, right),
+			"%" => Builder.BuildFRem(left, right),
+			_ => throw new InvalidOperationException($"Unknown floating-point arithmetic operator '{op}'."),
+		};
 
-			if (lWidth < rWidth)
-			{
-				left = TypeSymbol.IsSignedIntegerType(lTy)
-					? Builder.BuildSExt(left, LowerType(rTy), "promote_left_sext")
-					: Builder.BuildZExt(left, LowerType(rTy), "promote_left_zext");
-			}
-			else if (rWidth < lWidth)
-			{
-				right = TypeSymbol.IsSignedIntegerType(rTy)
-					? Builder.BuildSExt(right, LowerType(lTy), "promote_right_sext")
-					: Builder.BuildZExt(right, LowerType(lTy), "promote_right_zext");
-			}
+	private LLVMValueRef EmitFloatingComparison(string op, LLVMValueRef left, LLVMValueRef right)
+		=> op switch
+		{
+			"==" => Builder.BuildFCmp(LLVMRealPredicate.LLVMRealOEQ, left, right),
+			"!=" => Builder.BuildFCmp(LLVMRealPredicate.LLVMRealONE, left, right),
+			"<" => Builder.BuildFCmp(LLVMRealPredicate.LLVMRealOLT, left, right),
+			">" => Builder.BuildFCmp(LLVMRealPredicate.LLVMRealOGT, left, right),
+			"<=" => Builder.BuildFCmp(LLVMRealPredicate.LLVMRealOLE, left, right),
+			">=" => Builder.BuildFCmp(LLVMRealPredicate.LLVMRealOGE, left, right),
+			_ => throw new InvalidOperationException($"Unknown floating-point comparison operator '{op}'."),
+		};
 
-			// Signed division/modulo must be relaxed for unsigned operands
-			if (bin.Operator is "/" or "%" && (!TypeSymbol.IsSignedIntegerType(lTy) || !TypeSymbol.IsSignedIntegerType(rTy)))
-			{
-				return bin.Operator switch
-				{
-					"/" => Builder.BuildUDiv(left, right),
-					_ => Builder.BuildURem(left, right),
-				};
-			}
-		}
-
-		return bin.Operator switch
+	private LLVMValueRef EmitIntegerArithmetic(string op, LLVMValueRef left, LLVMValueRef right, bool useUnsigned)
+		=> op switch
 		{
 			"+" => Builder.BuildAdd(left, right),
 			"-" => Builder.BuildSub(left, right),
 			"*" => Builder.BuildMul(left, right),
+			"/" when useUnsigned => Builder.BuildUDiv(left, right),
 			"/" => Builder.BuildSDiv(left, right),
+			"%" when useUnsigned => Builder.BuildURem(left, right),
 			"%" => Builder.BuildSRem(left, right),
+			_ => throw new InvalidOperationException($"Unknown integer arithmetic operator '{op}'."),
+		};
+
+	private LLVMValueRef EmitIntegerComparison(string op, LLVMValueRef left, LLVMValueRef right)
+		=> op switch
+		{
 			"==" => Builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, left, right),
 			"!=" => Builder.BuildICmp(LLVMIntPredicate.LLVMIntNE, left, right),
 			"<" => Builder.BuildICmp(LLVMIntPredicate.LLVMIntSLT, left, right),
 			">" => Builder.BuildICmp(LLVMIntPredicate.LLVMIntSGT, left, right),
 			"<=" => Builder.BuildICmp(LLVMIntPredicate.LLVMIntSLE, left, right),
 			">=" => Builder.BuildICmp(LLVMIntPredicate.LLVMIntSGE, left, right),
-			"&" => Builder.BuildAnd(left, right),
-			"|" => Builder.BuildOr(left, right),
-			"^" => Builder.BuildXor(left, right),
-			"&&" => Builder.BuildAnd(left, right),
-			"||" => Builder.BuildOr(left, right),
-			"<<" => Builder.BuildShl(left, right),
-			">>" => Builder.BuildAShr(left, right),
-			">>>" => Builder.BuildLShr(left, right),
-			_ => throw new InvalidOperationException($"Unknown binary operator '{bin.Operator}'"),
+			_ => throw new InvalidOperationException($"Unknown integer comparison operator '{op}'."),
 		};
-	}
 
 	/// <summary>
 	/// Stores an assignment result into its bound destination while preserving cleanup, coercion, and ownership semantics.

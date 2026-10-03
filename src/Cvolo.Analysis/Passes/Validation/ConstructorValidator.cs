@@ -110,6 +110,19 @@ internal sealed class ConstructorValidator(
 			argTypes.Add(getExpressionType(arg, scope) ?? TypeSymbol.Int);
 		}
 
+		// An open generic constructor has no concrete sibling-constructor signature yet. For example,
+		// `Buffer<T, A>(int size) : this(default(A), size)` produces the semantic argument types
+		// `(A, int)`, while the constructor table only contains concrete monomorphizations. Binding that
+		// initializer now would therefore manufacture CVL4083. The expressions above are still fully
+		// validated; target selection, accessibility and cycle checks run again on the substituted
+		// monomorphized constructor where A/T are concrete.
+		if (argTypes.Any(ExpressionValidator.ContainsTypeParameter)
+			|| ctorParamTypes.Any(ExpressionValidator.ContainsTypeParameter))
+		{
+			WarnOnNonEmptyDelegatingBody(ctor);
+			return;
+		}
+
 		// 2. Overload resolution: pick the sibling constructor (same type, by
 		//    construction) whose signature best matches the initializer arguments.
 		var target = ResolveInitializerTarget(extendedType, argTypes);
@@ -160,15 +173,21 @@ internal sealed class ConstructorValidator(
 		}
 
 		// 6. Empty-body warning: a delegating constructor's body should defer all logic.
-		if (ctor.Body.Statements.Count > 0)
-		{
-			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.ReportWarning(
-				currentFileContext,
-				ctor.Body.Span,
-				"Constructor body is not empty after `this(...)`; consider moving logic to the target constructor.",
-				DiagnosticIds.NonEmptyDelegatingConstructorBody);
-		}
+		WarnOnNonEmptyDelegatingBody(ctor);
+	}
+
+	/// <summary>Reports the existing style warning for a non-empty delegating constructor body.</summary>
+	private void WarnOnNonEmptyDelegatingBody(ConstructorDeclarationSyntax ctor)
+	{
+		if (ctor.Body.Statements.Count == 0)
+			return;
+
+		var currentFileContext = context.FileContexts[context.CurrentUnit!];
+		context.Diagnostics.ReportWarning(
+			currentFileContext,
+			ctor.Body.Span,
+			"Constructor body is not empty after `this(...)`; consider moving logic to the target constructor.",
+			DiagnosticIds.NonEmptyDelegatingConstructorBody);
 	}
 
 	/// <summary>

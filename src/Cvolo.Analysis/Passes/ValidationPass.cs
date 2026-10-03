@@ -139,7 +139,16 @@ public sealed class ValidationPass(BindingContext context)
 			var members = context.CurrentNamespace != null ? unit.NamespaceDeclaration!.Members : unit.Members;
 			foreach (var member in members)
 			{
-				if (member is FunctionDeclarationSyntax func)
+				// Global constant expressions are emitted without a function frame, but their binary
+				// operations still belong to the same semantic authority. DeclarationPass only performs
+				// syntax-level constant-shape checks; bind binary nodes here, after the complete declaration
+				// universe (including cross-file operators) is stable.
+				if (member is GlobalVariableDeclarationSyntax { IsForeign: false, Initializer: not null } global
+					&& context.GlobalVariables.Any(entry => ReferenceEquals(entry.Node, global)))
+				{
+					BindGlobalInitializerBinaries(global.Initializer);
+				}
+				else if (member is FunctionDeclarationSyntax func)
 				{
 					var isTemplate = func.GenericParameters.Count > 0 && func.GenericParameters.Any(p => context.ResolveType(p) == null);
 
@@ -192,8 +201,15 @@ public sealed class ValidationPass(BindingContext context)
 				else if (member is ExtensionDeclarationSyntax extDecl)
 				{
 					var extendedType = context.ResolveType(extDecl.ExtendedTypeName);
-					var genericExtendedType = extendedType != null
-						&& (context.GenericStructTemplates.ContainsKey(extendedType.Name) || context.GenericUnionTemplates.ContainsKey(extendedType.Name));
+					// The declaration itself is the primary authority for an open extension scope: if the AST
+					// carries T/E/... on `extension Result<T, E>`, those names must resolve while its body is
+					// validated regardless of how an imported short owner name re-resolves at this later stage.
+					// Registration/type lookup remain defensive fallbacks for rewritten/template-owned blocks.
+					var genericExtendedType = extDecl.GenericParameters.Count > 0
+						|| context.GenericExtensionTemplateUnits.ContainsKey(extDecl)
+						|| (extendedType != null
+							&& (context.GenericStructTemplates.ContainsKey(extendedType.Name)
+								|| context.GenericUnionTemplates.ContainsKey(extendedType.Name)));
 
 					// A body that extends an open generic type can still be bound: the extension's own
 					// type parameters name the same parameters the extended declaration uses, so pushing
@@ -202,7 +218,9 @@ public sealed class ValidationPass(BindingContext context)
 					if (genericExtendedType)
 						context.PushGenericScope("extension", extDecl.ExtendedTypeName, extDecl.GenericParameters);
 
-					foreach (var method in extDecl.Methods.Concat(extDecl.Destructors.Select(static d => d.ToFunctionDeclaration())))
+					foreach (var method in extDecl.Methods
+						.Concat(extDecl.Destructors.Select(static d => d.ToFunctionDeclaration()))
+						.Concat(extDecl.Operators.Select(static o => o.ToFunctionDeclaration())))
 					{
 						// A method's own type parameters are not registered while the pass walks the
 						// declaration, so push their scope before deciding whether the body is still a
@@ -281,6 +299,34 @@ public sealed class ValidationPass(BindingContext context)
 				{
 					Constructors.ValidateBody(extendedTypeName, ctor);
 				}
+			}
+		}
+	}
+
+	/// <summary>
+	/// Binds binary operations that occur in the restricted compile-time global-initializer grammar.
+	/// This deliberately runs in ValidationPass, never DeclarationPass, so an incomplete early probe
+	/// cannot poison the final binary-binding cache before operator declarations are registered.
+	/// </summary>
+	private void BindGlobalInitializerBinaries(ExpressionSyntax expression)
+	{
+		var globalScope = new SymbolTable();
+		Bind(expression);
+
+		void Bind(ExpressionSyntax current)
+		{
+			switch (current)
+			{
+				case BinaryExpressionSyntax binary:
+					Expressions.Check(binary, globalScope);
+					break;
+				case UnaryExpressionSyntax { Operator: "-" } unary:
+					Bind(unary.Operand);
+					break;
+				case StructInitializationExpressionSyntax structInitializer:
+					foreach (var member in structInitializer.Initializers)
+						Bind(member.Expression);
+					break;
 			}
 		}
 	}

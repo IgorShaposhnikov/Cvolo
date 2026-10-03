@@ -102,7 +102,7 @@ public sealed class UnsafeCAbiFixtureTests : CompilerTestBase
 	}
 
 
-	private static string PrepareCObjectForIsolatedCase(
+	private string PrepareCObjectForIsolatedCase(
 		string clang,
 		string caseFile,
 		string fixtureName,
@@ -110,12 +110,7 @@ public sealed class UnsafeCAbiFixtureTests : CompilerTestBase
 	{
 		var assemblyDir = Path.GetDirectoryName(typeof(UnsafeCAbiFixtureTests).Assembly.Location)!;
 		var source = Path.Combine(assemblyDir, TestCasesDirectory, "UnsafeCAbi", "Fixtures", fixtureName);
-
-		var categoryDir = Path.GetDirectoryName(caseFile) ?? string.Empty;
-		var caseName = Path.GetFileNameWithoutExtension(caseFile);
-		var isolatedDir = Path.GetFullPath(Path.Combine(
-			assemblyDir, TestCasesDirectory, "_isolated", categoryDir, caseName));
-		Directory.CreateDirectory(isolatedDir);
+		var isolatedDir = GetOrCreateIsolatedCaseDirectory(caseFile);
 
 		var objectPath = Path.Combine(isolatedDir, objectFileName);
 

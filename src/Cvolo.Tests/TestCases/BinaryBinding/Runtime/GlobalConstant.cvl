@@ -1,0 +1,6 @@
+global float Scale = 2.0f * 0.5f;
+global int Count = 4 * 5 + 2;
+
+int Main() {
+    return Scale == 1.0f && Count == 22 ? 0 : 1;
+}

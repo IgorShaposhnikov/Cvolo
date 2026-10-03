@@ -1,5 +1,6 @@
 using System.Text;
 using Cvolo.Analysis;
+using Cvolo.Analysis.Symbols.Base;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.Diagnostics;
 using Cvolo.Emitter.LLVM;
@@ -280,7 +281,8 @@ internal static class PackCompilation
 		// 5. Foreach lowering (source-level) after binding.
 		{
 			var expandedAsts = new List<CompilationUnitSyntax>();
-			var foreachLoweringRewriter = new ForeachLoweringRewriter();
+			var foreachLoweringRewriter = new ForeachLoweringRewriter(binary =>
+			binder.Context.RegisterCompilerGeneratedBinaryExpression(binary, TypeSymbol.Int, TypeSymbol.Int));
 			foreach (var ast in asts)
 			{
 				if (binder.Context.ExternalPackageUnits.Contains(ast))

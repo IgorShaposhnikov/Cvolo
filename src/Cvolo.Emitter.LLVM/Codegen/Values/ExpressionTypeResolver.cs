@@ -12,10 +12,9 @@ namespace Cvolo.Emitter.LLVM.Codegen.Values;
 /// Resolves the semantic type produced by already-bound Cvolo expressions during LLVM emission.
 /// </summary>
 /// <remarks>
-/// Semantic validation and overload resolution happen before code generation. This resolver mirrors
-/// the code generator's existing post-binding type classification so emitters share one source of
-/// truth instead of carrying independent expression-type callbacks. It does not decide whether a
-/// conversion or operation is legal and it does not lower semantic types to LLVM types.
+/// Semantic validation and overload resolution happen before code generation. For binary expressions
+/// this resolver reads only the canonical descriptor stored in <see cref="BindingContext.ResolvedBinaryExpressions"/>;
+/// operator applicability, conversions, and result typing are never re-derived during emission.
 /// </remarks>
 /// <remarks>
 /// Creates an expression-type resolver over the module-level semantic state and the function
@@ -251,38 +250,17 @@ internal sealed class ExpressionTypeResolver(CodegenContext codegen, Func<Functi
 			: TypeSymbol.Int;
 	}
 
-	/// <summary>
-	/// Resolves binary-expression result types using the existing string, comparison, floating-point,
-	/// and integer-width promotion rules.
-	/// </summary>
+	/// <summary>Returns the result type owned by the canonical binary-expression binding.</summary>
 	private TypeSymbol ResolveBinary(BinaryExpressionSyntax binary)
 	{
-		var leftType = Resolve(binary.Left);
-		var rightType = Resolve(binary.Right);
-
-		// A declared operator overload (spec §14) is an ordinary receiverless call, so it decides
-		// the expression type before the builtin string, comparison and promotion rules apply.
-		if (BindingContext.FindOperatorOverload(binary.Operator, leftType, rightType) is { } overloaded)
-			return overloaded.ReturnType;
-
-		if (binary.Operator == "+" && IsConstantStringTree(binary.Left) && IsConstantStringTree(binary.Right))
-			return TypeSymbol.String;
-
-		if (binary.Operator is "==" or "!=" or "<" or ">" or "<=" or ">=")
-			return TypeSymbol.Bool;
-
-		if (leftType.Equals(TypeSymbol.Double) || rightType.Equals(TypeSymbol.Double))
-			return TypeSymbol.Double;
-
-		if (TypeSymbol.IsIntegerType(leftType) && TypeSymbol.IsIntegerType(rightType))
+		if (BindingContext.ResolvedBinaryExpressions.TryGetValue(binary, out var resolved)
+			&& resolved.ResultType is { } resultType)
 		{
-			var leftWidth = TypeSymbol.IntegerBitWidth(leftType);
-			var rightWidth = TypeSymbol.IntegerBitWidth(rightType);
-			if (rightWidth > leftWidth)
-				return rightType;
+			return resultType;
 		}
 
-		return leftType;
+		throw new InvalidOperationException(
+			$"Binary expression '{binary.Operator}' reached code generation without a successful canonical semantic binding.");
 	}
 
 	/// <summary>
@@ -383,18 +361,4 @@ internal sealed class ExpressionTypeResolver(CodegenContext codegen, Func<Functi
 		return name;
 	}
 
-	/// <summary>
-	/// Returns whether an expression is a compile-time tree consisting only of string literals
-	/// joined by the binary <c>+</c> operator.
-	/// </summary>
-	private static bool IsConstantStringTree(ExpressionSyntax expression)
-	{
-		return expression switch
-		{
-			StringLiteralExpressionSyntax => true,
-			BinaryExpressionSyntax binary when binary.Operator == "+" =>
-				IsConstantStringTree(binary.Left) && IsConstantStringTree(binary.Right),
-			_ => false,
-		};
-	}
 }

@@ -1,0 +1,19 @@
+[Flags]
+enum MyFlags : byte {
+    None,
+    Read,
+    Write
+}
+
+int TakeFlags(MyFlags value) {
+    return (int)value;
+}
+
+int Main() {
+    MyFlags a = MyFlags.Read;
+    MyFlags b = MyFlags.Write;
+    int direct = TakeFlags(a | b);
+    MyFlags temp = a | b;
+    int local = TakeFlags(temp);
+    return direct == local && direct == 3 ? 0 : 1;
+}

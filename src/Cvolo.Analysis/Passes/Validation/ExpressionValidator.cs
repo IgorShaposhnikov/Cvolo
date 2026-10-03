@@ -110,6 +110,13 @@ internal sealed class ExpressionValidator(
 				}
 
 				break;
+			case IndexExpressionSyntax index:
+				// Indexing is an expression container. Its children must be validated before any
+				// surrounding expression is typed; otherwise a binary index such as a[i - 1]
+				// can escape canonical binding and first reach LLVM codegen unbound.
+				Check(index.Left, scope);
+				Check(index.Index, scope);
+				break;
 			case ArrayInitializationExpressionSyntax arrInit:
 				foreach (var el in arrInit.Elements)
 					Check(el, scope);
@@ -163,9 +170,27 @@ internal sealed class ExpressionValidator(
 						}
 
 						Check(arg, scope);
-						var argType = GetType(arg, scope) ?? TypeSymbol.Int;
-						argTypes.Add(argType);
+						var argType = GetType(arg, scope);
+						if (argType is null
+							&& arg is BinaryExpressionSyntax binaryArgument
+							&& context.ResolvedBinaryExpressions.TryGetValue(binaryArgument, out var binaryBinding)
+							&& binaryBinding.State == BinaryBindingState.Error)
+						{
+							argTypes.Add(OverloadResolver.UnresolvedArgument);
+						}
+						else
+						{
+							// Preserve legacy fallback behavior for non-binary expression families; this INC
+							// deliberately changes only canonical BinaryExpression binding.
+							argTypes.Add(argType ?? TypeSymbol.Int);
+						}
 					}
+
+					// An argument with a final semantic error must not be disguised as a primitive just so
+					// overload resolution can continue. Its own diagnostic is authoritative; suppress the
+					// secondary "no overload" cascade for this call shape.
+					if (argTypes.Any(type => ReferenceEquals(type, OverloadResolver.UnresolvedArgument)))
+						return;
 
 					FunctionSymbol? func = null;
 					var mismatch = DottedCallMismatch.None;
@@ -191,6 +216,23 @@ internal sealed class ExpressionValidator(
 						}
 						else
 						{
+							// Open generic template binding must not materialize a concrete owner specialization.
+							// `Result<T, E>(value)` inside `extension Result<T, E>` is valid template syntax, but
+							// constructing a synthetic `Result<T,E>` runtime type here would enqueue bodies whose T/E
+							// cease to exist after the template scope is popped. Defer the constructor target until the
+							// enclosing owner is monomorphized with concrete arguments.
+							var writtenTypeArgs = call.TypeArguments
+								.Select(context.ResolveType)
+								.ToList();
+							var hasOpenTypeArgument = writtenTypeArgs.Any(t => t is not null && ContainsTypeParameter(t));
+							var openOwner = hasOpenTypeArgument ? context.ResolveType(call.FunctionName) : null;
+							var isOpenGenericConstructor = openOwner is not null
+								&& (context.GenericStructTemplates.ContainsKey(openOwner.Name)
+									|| context.GenericUnionTemplates.ContainsKey(openOwner.Name));
+
+							if (isOpenGenericConstructor)
+								return;
+
 							// Reconstruct and resolve the struct/union instantiation name to check if this is a generic constructor call
 							var structNameWithArgs = $"{call.FunctionName}<{string.Join(", ", call.TypeArguments)}>";
 							var resolvedType = context.ResolveType(structNameWithArgs);
@@ -202,12 +244,17 @@ internal sealed class ExpressionValidator(
 							}
 							else
 							{
-								// Fallback to standard generic function monomorphization
+								// Fallback to standard generic function monomorphization. An open T/E/... argument is
+								// deferred for the same reason as an open generic constructor above.
 								var templateName = Generics.ResolveFunctionTemplateName(call.FunctionName, scope);
 								if (templateName != null && context.GenericFunctionTemplates.TryGetValue(templateName, out var templateDecl))
 								{
-									var typeArgs = call.TypeArguments.Select(t => context.ResolveType(t)!).ToList();
-									func = Generics.InstantiateGenericFunction(templateDecl, typeArgs, scope);
+									var typeArgs = call.TypeArguments.Select(context.ResolveType).ToList();
+									if (typeArgs.Any(t => t is not null && ContainsTypeParameter(t)))
+										return;
+
+									if (typeArgs.All(static t => t is not null))
+										func = Generics.InstantiateGenericFunction(templateDecl, typeArgs.Select(static t => t!).ToList(), scope);
 								}
 							}
 						}
@@ -412,6 +459,7 @@ internal sealed class ExpressionValidator(
 						if (bin.Left is IdentifierExpressionSyntax discardId && discardId.Name == "_")
 						{
 							Check(bin.Right, scope);
+							_ = GetOrBindBinaryExpression(bin, scope, final: true);
 							break;
 						}
 
@@ -431,6 +479,7 @@ internal sealed class ExpressionValidator(
 							if (isTargetTypedDelegateValue)
 							{
 								CheckDelegateValue(bin.Right, assigneeDelegate, scope);
+								_ = GetOrBindBinaryExpression(bin, scope, final: true);
 								break;
 							}
 						}
@@ -509,28 +558,16 @@ internal sealed class ExpressionValidator(
 						Check(bin.Left, scope);
 						Check(bin.Right, scope);
 
-						var binLeftType = GetType(bin.Left, scope);
-						var binRightType = GetType(bin.Right, scope);
-
-						// OPERATOR OVERLOAD (§14): a declared operator is an ordinary call to a
-						// receiverless associated function, so the builtin-only rules below do not
-						// apply and the emitter lowers the expression as that call.
-						if (context.FindOperatorOverload(bin.Operator, binLeftType, binRightType) is not null)
-							break;
-
-						CheckEnumIntMismatch(binLeftType, binRightType, bin.Span);
-						if (bin.Operator == "+" &&
-							((binLeftType?.Equals(TypeSymbol.String) ?? false) || (binRightType?.Equals(TypeSymbol.String) ?? false)) &&
-							(!IsConstantStringExpression(bin.Left) || !IsConstantStringExpression(bin.Right)))
-						{
-							var currentFileContext = context.FileContexts[context.CurrentUnit!];
-							context.Diagnostics.Report(currentFileContext, bin.Span,
-								"The `+` operator on strings is only allowed between compile-time constant strings (literals).",
-								DiagnosticIds.DynamicStringConcatenation);
-						}
-
-						ReportMissingOperatorOverload(bin.Operator, binLeftType, binRightType, unary: false, bin.Span);
+						// Binary operator semantics are selected exactly once after both operands have
+						// themselves been validated. The final descriptor is then reused by overload
+						// resolution, tooling, and code generation.
+						_ = GetOrBindBinaryExpression(bin, scope, final: true);
 					}
+
+					// Assignment is compiler-owned rather than overloadable, but it is still a
+					// BinaryExpressionSyntax and therefore receives a canonical descriptor too.
+					if (bin.Operator == "=")
+						_ = GetOrBindBinaryExpression(bin, scope, final: true);
 
 					break;
 				}
@@ -1047,8 +1084,9 @@ internal sealed class ExpressionValidator(
 	/// </summary>
 	/// <returns>
 	/// Null when the callee is not a generic extension member, so the caller keeps its other generic-call
-	/// paths. False when the callee was recognized but the type arguments are unusable (a diagnostic was
-	/// reported). True when a concrete candidate was registered and the call should be resolved again.
+	/// paths. False when the callee was recognized but no concrete candidate should be materialized
+	/// (invalid arguments, or an open TypeParameterSymbol argument while binding a template). True when
+	/// a concrete candidate was registered and the call should be resolved again.
 	/// </returns>
 	private bool? TryInstantiateGenericExtensionMember(CallExpressionSyntax call, IReadOnlyList<TypeSymbol> argTypes, SymbolTable scope)
 	{
@@ -1103,6 +1141,16 @@ internal sealed class ExpressionValidator(
 
 			typeArgs.Add(resolvedTypeArg);
 		}
+
+		// Template binding is not monomorphization. `Layout.FromType<T>()` inside an open generic
+		// declaration may be checked while T is a TypeParameterSymbol, but registering a synthetic
+		// `FromType<T>` declaration would enqueue its body for validation after the generic scope has
+		// been popped. That poisoned the validation queue with false CVL2103/CVL2104 diagnostics from
+		// `sizeof<T>()` / `alignof<T>()`. Keep the call deferred until a concrete call-site supplies
+		// concrete type arguments; generic-scope validation intentionally suppresses the unresolved
+		// concrete-overload diagnostic for that open call.
+		if (typeArgs.Any(ContainsTypeParameter))
+			return false;
 
 		if (Generics.InstantiateGenericExtensionMethod(template, typeArgs) is null)
 		{
@@ -1625,6 +1673,69 @@ internal sealed class ExpressionValidator(
 	}
 
 	/// <summary>
+	/// Returns the final canonical binary binding for the current validation context, creating it
+	/// exactly once after declaration registration is complete. Error bindings are cached as final
+	/// results as well, so repeated type queries cannot repeat overload search or diagnostics.
+	/// </summary>
+	private ResolvedBinaryExpression GetOrBindBinaryExpression(BinaryExpressionSyntax binary, SymbolTable scope, bool final = false)
+	{
+		if (context.ResolvedBinaryExpressions.TryGetValue(binary, out var existing))
+			return existing;
+
+		var leftType = GetType(binary.Left, scope);
+		var rightType = GetType(binary.Right, scope);
+		var resolved = BinaryExpressionBinder.Bind(context, binary, leftType, rightType);
+
+		// A type probe can happen before a child call/lambda has itself been bound. Such an
+		// incomplete result is not canonical: caching it would poison later validation with a
+		// transient Error. Final validation, on the other hand, records failure as well as success.
+		if (!final && resolved.ErrorKind == BinaryBindingErrorKind.UnresolvedOperand)
+			return resolved;
+
+		context.ResolvedBinaryExpressions.Add(binary, resolved);
+
+		if (resolved.State == BinaryBindingState.Error)
+			ReportBinaryBindingError(resolved);
+
+		return resolved;
+	}
+
+	/// <summary>Reports the one primary diagnostic retained by a final error-bound binary operation.</summary>
+	private void ReportBinaryBindingError(ResolvedBinaryExpression resolved)
+	{
+		switch (resolved.ErrorKind)
+		{
+			case BinaryBindingErrorKind.None:
+			case BinaryBindingErrorKind.UnresolvedOperand:
+				return;
+			case BinaryBindingErrorKind.EnumIntegerMix:
+				CheckEnumIntMismatch(resolved.LeftType, resolved.RightType, resolved.Syntax.Span);
+				return;
+		}
+
+		var currentFileContext = context.FileContexts[context.CurrentUnit!];
+		if (resolved.ErrorKind == BinaryBindingErrorKind.DynamicStringConcatenation)
+		{
+			context.Diagnostics.Report(currentFileContext, resolved.Syntax.Span,
+				"The `+` operator on strings is only allowed between compile-time constant strings (literals).",
+				DiagnosticIds.DynamicStringConcatenation);
+			return;
+		}
+
+		if (resolved.ErrorKind == BinaryBindingErrorKind.OperatorOverloadNoMatch && resolved.ErrorOwnerType is { } owner)
+		{
+			context.Diagnostics.Report(currentFileContext, resolved.Syntax.Span,
+				$"No '{resolved.Operator}' operator overload declared on '{owner.Name}' accepts operand type(s) {resolved.LeftType?.Name ?? "?"}, {resolved.RightType?.Name ?? "?"}.",
+				DiagnosticIds.OperatorNoMatch);
+			return;
+		}
+
+		context.Diagnostics.Report(currentFileContext, resolved.Syntax.Span,
+			$"Operator '{resolved.Operator}' is not valid/applicable for '{resolved.LeftType?.Name ?? "?"}' and '{resolved.RightType?.Name ?? "?"}'.",
+			DiagnosticIds.OperatorNoMatch);
+	}
+
+	/// <summary>
 	/// Returns the semantic result type used by validation for an already parsed expression.
 	/// </summary>
 	public TypeSymbol? GetType(ExpressionSyntax expr, SymbolTable scope)
@@ -1654,7 +1765,12 @@ internal sealed class ExpressionValidator(
 			StructInitializationExpressionSyntax s => CheckStructInitializationExpression(s, scope),
 			HeapAllocationExpressionSyntax h => GetType(h.Expression, scope),
 			HeapArrayAllocationExpressionSyntax ha => new SliceTypeSymbol(context.ResolveType(ha.ElementTypeName)!),
-			IndexExpressionSyntax idx => (GetType(idx.Left, scope) as ArrayTypeSymbol)?.ElementType,
+			IndexExpressionSyntax idx => GetType(idx.Left, scope) switch
+			{
+				ArrayTypeSymbol array => array.ElementType,
+				SliceTypeSymbol slice => slice.ElementType,
+				_ => null,
+			},
 			ArrayInitializationExpressionSyntax a => CheckArrayInitialization(a, scope),
 			ArrayReplicationExpressionSyntax r => CheckArrayReplication(r, scope),
 			ParenthesizedStructInitializerExpressionSyntax p => p.ResolvedStructTypeName is not null ? context.ResolveType(p.ResolvedStructTypeName) : null,
@@ -1666,9 +1782,7 @@ internal sealed class ExpressionValidator(
 			NameofExpressionSyntax => TypeSymbol.String,
 			TypeofExpressionSyntax => context.ResolveType("Type"),
 			IsPatternExpressionSyntax => TypeSymbol.Bool,
-			BinaryExpressionSyntax bin when context.FindOperatorOverload(bin.Operator, GetType(bin.Left, scope), GetType(bin.Right, scope)) is { } overloaded => overloaded.ReturnType,
-			BinaryExpressionSyntax bin when bin.Operator is "|" or "&" or "^" => GetFlagsBinaryType(bin, scope),
-			BinaryExpressionSyntax bin when bin.Operator == "+" && IsConstantStringExpression(bin.Left) && IsConstantStringExpression(bin.Right) => TypeSymbol.String,
+			BinaryExpressionSyntax bin => GetOrBindBinaryExpression(bin, scope).ResultType,
 			_ => null
 		};
 	}
@@ -2132,21 +2246,6 @@ internal sealed class ExpressionValidator(
 	}
 
 	/// <summary>
-	/// Returns the enum type preserved by synthesized flags binary operators.
-	/// </summary>
-	private TypeSymbol? GetFlagsBinaryType(BinaryExpressionSyntax bin, SymbolTable scope)
-	{
-		// (§3.B) Typing for the synthesized [Flags] operators: '|', '&', '^' preserve the
-		// enum type. Mixed/int operands are caught by CheckEnumIntMismatch during
-		// CheckExpression; for pure-integer binaries keep the historical null result
-		// (vars fall back to int) so nothing changes for non-enum code.
-		var left = GetType(bin.Left, scope);
-		var right = GetType(bin.Right, scope);
-		return left is EnumTypeSymbol ? left : right is EnumTypeSymbol ? right : null;
-	}
-
-
-	/// <summary>
 	/// Returns the root identifier of a nested member or borrow expression when present.
 	/// </summary>
 	public string? GetBaseIdentifierName(ExpressionSyntax expr)
@@ -2254,20 +2353,6 @@ internal sealed class ExpressionValidator(
 		var currentFileContext = context.FileContexts[context.CurrentUnit!];
 		context.Diagnostics.Report(currentFileContext, span,
 			$"Implicit conversion between enum '{enumType.Name}' and '{otherType.Name}' is forbidden; use an explicit cast.", DiagnosticIds.ImplicitConversionBetweenEnumAndIsForbiddenUseAnExplicitCast);
-	}
-
-	/// <summary>
-	/// Returns whether an expression is a compile-time string concatenation tree.
-	/// </summary>
-	private static bool IsConstantStringExpression(ExpressionSyntax expr)
-	{
-		return expr switch
-		{
-			StringLiteralExpressionSyntax => true,
-			BinaryExpressionSyntax bin when bin.Operator == "+" =>
-				IsConstantStringExpression(bin.Left) && IsConstantStringExpression(bin.Right),
-			_ => false,
-		};
 	}
 
 	/// <summary>

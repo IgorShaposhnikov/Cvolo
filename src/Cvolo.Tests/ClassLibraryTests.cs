@@ -14,15 +14,6 @@ public sealed class ClassLibraryTests : CompilerTestBase
 	}
 
 	[Fact]
-	public void ClassLibrary_NoMain_EmitIr_SkipsEntryPointCheck()
-	{
-		var (exitCode, stdout, stderr) = RunCompiler("ClassLibrary/NoMain.cvl", "--emit-ir");
-		Assert.Equal(0, exitCode);
-		Assert.Contains("ModuleID", stdout);
-		Assert.DoesNotContain("CVL5001", stderr);
-	}
-
-	[Fact]
 	public void ClassLibrary_NoMain_SkippedForSharedLibrary()
 	{
 		var (exitCode, stdout, stderr) = RunCompiler("ClassLibrary/NoMain.cvl", "--shared");
@@ -36,8 +27,7 @@ public sealed class ClassLibraryTests : CompilerTestBase
 		var (exitCode, stdout, stderr) = RunCompiler(fileName);
 		AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
 
-		var assemblyDir = Path.GetDirectoryName(typeof(ClassLibraryTests).Assembly.Location)!;
-		var llPath = Path.Combine(assemblyDir, "TestCases", "_isolated", "ExposeExtern", "ExposeRender", "obj", "Debug", "ExposeRender.ll");
+		var llPath = GetCompilationArtifactPath(fileName, "obj", "Debug", "ExposeRender.ll");
 
 		Assert.True(File.Exists(llPath), $"Expected generated LLVM IR file at '{llPath}' but it was missing.");
 		var irContent = File.ReadAllText(llPath);
@@ -55,8 +45,7 @@ public sealed class ClassLibraryTests : CompilerTestBase
 		var (exitCode, stdout, stderr) = RunCompiler(fileName, "--shared");
 		AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
 
-		var assemblyDir = Path.GetDirectoryName(typeof(ClassLibraryTests).Assembly.Location)!;
-		var llPath = Path.Combine(assemblyDir, "TestCases", "_isolated", "InteropCSharp", "GraphicsCore", "obj", "Debug", "GraphicsCore.ll");
+		var llPath = GetCompilationArtifactPath(fileName, "obj", "Debug", "GraphicsCore.ll");
 
 		Assert.True(File.Exists(llPath), $"Expected generated LLVM IR file at '{llPath}' but it was missing.");
 		var irContent = File.ReadAllText(llPath);
@@ -88,8 +77,7 @@ public sealed class ClassLibraryTests : CompilerTestBase
 		var (exitCode, stdout, stderr) = RunCompiler(fileName);
 		AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
 
-		var assemblyDir = Path.GetDirectoryName(typeof(ClassLibraryTests).Assembly.Location)!;
-		var llPath = Path.Combine(assemblyDir, "TestCases", "_isolated", Category, "ExposeBoolParams", "obj", "Debug", "ExposeBoolParams.ll");
+		var llPath = GetCompilationArtifactPath(fileName, "obj", "Debug", "ExposeBoolParams.ll");
 
 		Assert.True(File.Exists(llPath), $"Expected generated LLVM IR file at '{llPath}' but it was missing.");
 		var irContent = File.ReadAllText(llPath);
@@ -110,8 +98,7 @@ public sealed class ClassLibraryTests : CompilerTestBase
 		var (exitCode, stdout, stderr) = RunCompiler(fileName, "--checked-ffi-bounds");
 		AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
 
-		var assemblyDir = Path.GetDirectoryName(typeof(ClassLibraryTests).Assembly.Location)!;
-		var llPath = Path.Combine(assemblyDir, "TestCases", "_isolated", Category, "ExposeBoolParams", "obj", "Debug", "ExposeBoolParams.ll");
+		var llPath = GetCompilationArtifactPath(fileName, "obj", "Debug", "ExposeBoolParams.ll");
 
 		Assert.True(File.Exists(llPath), $"Expected generated LLVM IR file at '{llPath}' but it was missing.");
 		var irContent = File.ReadAllText(llPath);

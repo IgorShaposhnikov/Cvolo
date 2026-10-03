@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Xml;
 using System.Xml.Linq;
 using Cvolo.Analysis;
+using Cvolo.Analysis.Symbols.Base;
 using Cvolo.Analysis.Symbols.FFI;
 using Cvolo.Core.AST;
 using Cvolo.Core.AST.Base;
@@ -265,7 +266,8 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 		// 6. Source-level foreach expansion (arrays/slices → cached-length index loops).
 		// Runs after binding so the binder-stamped fields on ForEachStatementSyntax are
 		// populated; enumerator-based foreach is left for the emitter to expand.
-		var foreachLoweringRewriter = new ForeachLoweringRewriter();
+		var foreachLoweringRewriter = new ForeachLoweringRewriter(binary =>
+			binder.Context.RegisterCompilerGeneratedBinaryExpression(binary, TypeSymbol.Int, TypeSymbol.Int));
 		{
 			var expandedAsts = new List<CompilationUnitSyntax>();
 			foreach (var ast in asts)

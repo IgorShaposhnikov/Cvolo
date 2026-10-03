@@ -1,0 +1,40 @@
+void TakeFloat(float value) {
+}
+
+void TakeInt(int value) {
+}
+
+void TakeDouble(double value) {
+}
+
+void TakeBool(bool value) {
+}
+
+float Multiply(float a, float b) {
+    return a * b;
+}
+
+float TanF(float value) {
+    return value;
+}
+
+int Main() {
+    float a = 2.0f;
+    float b = 3.0f;
+    float c = 4.0f;
+    int i = 4;
+    int j = 5;
+    double d = 4.0;
+    double e = 0.5;
+
+    TakeFloat((a + b) * c);
+    TakeFloat(TanF(a * 0.5f));
+    TakeInt(i * j + 2);
+    TakeDouble(d * e);
+    TakeBool(a > 0.0f);
+    TakeBool(a > 0.0f && b > a);
+
+    var float assigned = 0.0f;
+    assigned = a * b;
+    return Multiply(a, b) == assigned ? 0 : 1;
+}

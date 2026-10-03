@@ -1,4 +1,5 @@
 using Cvolo.Analysis;
+using Cvolo.Analysis.Semantics;
 using Cvolo.Analysis.Symbols.Base;
 using Cvolo.Analysis.Symbols.Structs;
 using Cvolo.Core.AST.Base;
@@ -137,7 +138,7 @@ internal sealed class GlobalEmitter
 
 					return LLVMValueRef.CreateConstNamedStruct(namedStruct, [.. fieldValues]);
 				}
-			case BinaryExpressionSyntax binary when binary.Operator is "+" or "-" or "*" or "/":
+			case BinaryExpressionSyntax binary when binary.Operator is "+" or "-" or "*" or "/" or "%":
 				if (TryEvaluateConstant(binary, out var isDoubleResult, out var doubleResult, out var integerResult))
 				{
 					var isFloatType = llvmType.Kind is LLVMTypeKind.LLVMDoubleTypeKind or LLVMTypeKind.LLVMFloatTypeKind;
@@ -214,6 +215,16 @@ internal sealed class GlobalEmitter
 				integerValue = -integerValue;
 				return true;
 			case BinaryExpressionSyntax binary:
+				if (!BindingContext.ResolvedBinaryExpressions.TryGetValue(binary, out var binding)
+					|| !binding.IsSuccess
+					|| binding.BuiltinOperatorKind is not (BuiltinBinaryOperatorKind.IntegerArithmetic or BuiltinBinaryOperatorKind.FloatingArithmetic))
+				{
+					isDouble = false;
+					doubleValue = 0;
+					integerValue = 0;
+					return false;
+				}
+
 				if (!TryEvaluateConstant(binary.Left, out var leftIsDouble, out var leftDouble, out var leftInteger)
 					|| !TryEvaluateConstant(binary.Right, out var rightIsDouble, out var rightDouble, out var rightInteger))
 				{
@@ -223,7 +234,7 @@ internal sealed class GlobalEmitter
 					return false;
 				}
 
-				isDouble = leftIsDouble || rightIsDouble;
+				isDouble = binding.BuiltinOperatorKind == BuiltinBinaryOperatorKind.FloatingArithmetic;
 				if (isDouble)
 				{
 					var left = leftIsDouble ? leftDouble : leftInteger;
@@ -234,6 +245,7 @@ internal sealed class GlobalEmitter
 						"-" => left - right,
 						"*" => left * right,
 						"/" => left / right,
+						"%" => left % right,
 						_ => 0,
 					};
 					integerValue = 0;

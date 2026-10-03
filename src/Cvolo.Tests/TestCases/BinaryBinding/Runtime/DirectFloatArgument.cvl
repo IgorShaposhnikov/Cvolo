@@ -1,0 +1,16 @@
+void Take(float value) {
+}
+
+int Select(int value) {
+    return 1;
+}
+
+int Select(float value) {
+    return 2;
+}
+
+int Main() {
+    float time = 2.0f;
+    Take(time * 0.70f);
+    return Select(time * 0.5f) == 2 ? 0 : 1;
+}

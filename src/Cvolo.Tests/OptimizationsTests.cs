@@ -13,8 +13,7 @@ public sealed class OptimizationsTests : CompilerTestBase
 		AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
 
 		// 2. Locate the generated LLVM IR (.ll) file in the obj/Debug folder
-		var assemblyDir = Path.GetDirectoryName(typeof(OptimizationsTests).Assembly.Location)!;
-		var llPath = Path.Combine(assemblyDir, "TestCases", "_isolated", "Optimizations", "Optimize", "obj", "Debug", "Optimize.ll");
+		var llPath = GetCompilationArtifactPath(fileName, "obj", "Debug", "Optimize.ll");
 
 		Assert.True(File.Exists(llPath), $"Expected generated LLVM IR file at '{llPath}' but it was missing.");
 		var irContent = File.ReadAllText(llPath);

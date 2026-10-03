@@ -1,0 +1,17 @@
+using System;
+
+struct TemplateError {
+    int Code;
+}
+
+// This block is intentionally never instantiated. Validation still has to bind the
+// open template body with T/E in scope so editor/check mode sees real semantics.
+extension Result<T, E> {
+    Result<T, E> .FromValue(T value) {
+        return Result<T, E>(value);
+    }
+}
+
+int main() {
+    return 0;
+}

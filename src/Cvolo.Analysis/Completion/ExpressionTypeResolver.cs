@@ -10,31 +10,9 @@ using Cvolo.Core.AST.Expressions;
 namespace Cvolo.Analysis.Completion;
 
 /// <summary>
-/// Resolves the receiver type of an expression at a completion cursor.
-/// Every lookup delegates to compiler-owned authorities (BindingContext.VariableSymbols,
-/// BindingContext.ResolvedCalls, BindingContext.ResolveType, ResolveGlobalReference,
-/// ResolveQualifiedGlobal, StructTypeSymbol.FindField, UnionTypeSymbol.FindField,
-/// EnumTypeSymbol.FindVariant). The handful of rules that remain here (enum metadata members,
-/// the slice/array 'Length' pseudo-member, pointer unwrapping, named-argument receiver typing)
-/// duplicate no compiler state: they are the pure, side-effect-free subset of the compiler's own
-/// expression typing, cited below. The compiler has NO standalone typing primitive to call
-/// because its type inference is validation-interleaved — it reports diagnostics into the shared
-/// DiagnosticBag while typing (e.g. ValidationPass.CheckMemberAccessExpression fully re-validates
-/// the receiver subexpression, which cannot see position-scoped locals) and its scope tables are
-/// transient pass-traversal state. So completion orchestrates the existing symbol lookups rather
-/// than re-running validation.
-/// Citations: ValidationPass.cs:1914-1954 GetExpressionType, :1419-1521 CheckMemberAccessExpression,
-/// :1438-1462 enum metadata + 'Length' rules, :1751-1768 CheckArrayInitialization,
-/// :3317-3326 CheckArrayReplication, :1839-1862 CheckTernaryExpression, :1956-1964
-/// GetFlagsBinaryType, :1967-1973 GetAsmExpressionType, :4149-4191 GetUnaryExpressionType;
-/// BindingContext.cs:615-619 ResolveEnumSizeTerm (Min/Max/Count), :315-316 dynamic slice resolution.
-///
-/// Fallback audit: TypeSymbol.Int coercions are kept ONLY where the compiler itself coerces an
-/// unresolved operand the same way: borrow :1934, array-literal first element :1756,
-/// array-replication value :3319, sizeof :1931. Fabricated coercions were REMOVED: heap-array
-/// allocation no longer falls back to Int (the compiler asserts its element type, :1937;
-/// unresolved => null), unary '&' now yields null when its operand is unresolved (:4154), and
-/// ternary typing returns the THEN-branch type only (:1861), dropping the else-branch fallback.
+/// Resolves expression types for completion from compiler-owned semantic state. Binary expressions
+/// are deliberately cache-only consumers of <see cref="BindingContext.ResolvedBinaryExpressions"/>;
+/// tooling must never recreate operator applicability or numeric-promotion rules.
 /// </summary>
 internal static class ExpressionTypeResolver
 {
@@ -132,28 +110,13 @@ internal static class ExpressionTypeResolver
 
 	private static TypeSymbol? ResolveBinary(BindingContext context, Dictionary<string, ScopedVariable> visible, BinaryExpressionSyntax binary)
 	{
-		if (binary.Operator is "|" or "&" or "^")
-		{
-			var left = Resolve(context, visible, binary.Left);
-			return left is EnumTypeSymbol
-				? left
-				: Resolve(context, visible, binary.Right) is EnumTypeSymbol right ? right : null;
-		}
-
-		if (binary.Operator == "+" && IsConstantStringExpression(binary.Left) && IsConstantStringExpression(binary.Right))
-			return TypeSymbol.String;
-		return null;
+		// Tooling is a consumer of the compiler-owned semantic operation. Never recreate
+		// arithmetic/flags/promotion rules here: an absent binding is genuinely unknown.
+		return context.ResolvedBinaryExpressions.TryGetValue(binary, out var resolved)
+			? resolved.ResultType
+			: null;
 	}
 
-	private static bool IsConstantStringExpression(ExpressionSyntax? expression)
-	{
-		return expression switch
-		{
-			StringLiteralExpressionSyntax => true,
-			BinaryExpressionSyntax binary => binary.Operator == "+" && IsConstantStringExpression(binary.Left) && IsConstantStringExpression(binary.Right),
-			_ => false,
-		};
-	}
 
 	private static TypeSymbol? ResolveMember(BindingContext context, Dictionary<string, ScopedVariable> visible, MemberAccessExpressionSyntax memberAccess)
 	{

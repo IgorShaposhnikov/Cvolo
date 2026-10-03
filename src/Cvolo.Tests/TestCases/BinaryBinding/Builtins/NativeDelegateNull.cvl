@@ -1,0 +1,11 @@
+unsafe "C" delegate int Callback(int value);
+
+void TakeBool(bool value) {
+}
+
+[UnsafeBody]
+int Main() {
+    Callback callback = null;
+    TakeBool(callback == null);
+    return callback != null ? 1 : 0;
+}

@@ -68,6 +68,10 @@ internal sealed class OverloadResolver(BindingContext context)
 	/// </summary>
 	public static TypeSymbol DeferredCallableArgument { get; } = new TypeSymbol("<lambda-argument>");
 
+	/// <summary>Semantic sentinel for an expression that has already bound to an error. It must never
+	/// participate in overload selection as a fabricated primitive type.</summary>
+	public static TypeSymbol UnresolvedArgument { get; } = new TypeSymbol("<unresolved-argument>");
+
 	/// <summary>
 	/// Resolves the best ordinary function, constructor, or extension-method overload for a call shape.
 	/// </summary>
@@ -420,6 +424,9 @@ internal sealed class OverloadResolver(BindingContext context)
 			var parameter = parameterTypes[i];
 			var argument = argumentTypes[i];
 
+			if (argument == UnresolvedArgument)
+				return -1;
+
 			if (argument == DeferredCallableArgument)
 			{
 				if (parameter is DelegateTypeSymbol)
@@ -510,7 +517,15 @@ internal sealed class OverloadResolver(BindingContext context)
 			return [];
 
 		var normalizedOwner = context.NormalizeGenericName(activeScope.OwnerName);
-		var ownerLeaf = normalizedOwner;
+		// Extension scopes record the written owner (`Buffer<T,A>`), while generic template
+		// dictionaries are keyed by the definition (`Buffer`). Compare definition names, not the
+		// instantiated/open spelling, otherwise constraints disappear inside generic extensions.
+		var ownerDefinition = normalizedOwner;
+		var ownerGenericStart = ownerDefinition.IndexOf('<');
+		if (ownerGenericStart > 0)
+			ownerDefinition = ownerDefinition[..ownerGenericStart];
+
+		var ownerLeaf = ownerDefinition;
 		var ownerDot = ownerLeaf.LastIndexOf('.');
 		if (ownerDot >= 0)
 			ownerLeaf = ownerLeaf[(ownerDot + 1)..];
@@ -529,7 +544,7 @@ internal sealed class OverloadResolver(BindingContext context)
 				keyLeaf = keyLeaf[(keyDot + 1)..];
 
 			if (!string.Equals(templateName, ownerLeaf, StringComparison.Ordinal)
-				&& !string.Equals(keyName, normalizedOwner, StringComparison.Ordinal)
+				&& !string.Equals(keyName, ownerDefinition, StringComparison.Ordinal)
 				&& !string.Equals(keyLeaf, ownerLeaf, StringComparison.Ordinal))
 			{
 				continue;
@@ -695,6 +710,39 @@ internal sealed class OverloadResolver(BindingContext context)
 				{
 					if (TryBuildConstrainedMember(parameter, iface.Name, member.Name, member.ReturnType, member.Parameters, receiverIsMutable, out var function))
 						result.Add(function);
+				}
+
+				continue;
+			}
+
+			// A nominal concrete bound (for example `where A : MallocAllocator`) promises the
+			// callable surface of that concrete type to the open type parameter. The normal
+			// extension candidates carry `ref Bound` as parameter zero, which cannot score
+			// against `ref A`; project only that receiver to the active type parameter while
+			// preserving the real candidate's explicit parameter/return types. This is a
+			// validation-only symbol, exactly like the protocol/interface projections above.
+			if (bound is StructTypeSymbol or UnionTypeSymbol or EnumTypeSymbol)
+			{
+				foreach (var (_, candidate) in context.GetExtensionMethodCandidates(bound, context.CurrentUnit, memberName))
+				{
+					if (!candidate.IsInstanceExtension || candidate.Parameters.Count == 0
+						|| candidate.Parameters[0].Type is not PointerTypeSymbol boundReceiver)
+					{
+						continue;
+					}
+
+					var projectedParameters = new List<ParameterSymbol>(candidate.Parameters.Count)
+					{
+						new("this", new PointerTypeSymbol(parameter, boundReceiver.IsMutable))
+					};
+					projectedParameters.AddRange(candidate.Parameters.Skip(1));
+
+					result.Add(new FunctionSymbol(candidate.Name, candidate.ReturnType, projectedParameters, candidate.IsExtern, candidate.IsVariadic)
+					{
+						CallableKind = CallableKind.InstanceExtension,
+						SafetyTier = candidate.SafetyTier,
+						IsUnsafeBody = candidate.IsUnsafeBody
+					});
 				}
 			}
 		}

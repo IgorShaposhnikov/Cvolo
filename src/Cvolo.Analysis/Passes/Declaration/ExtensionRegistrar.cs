@@ -80,6 +80,7 @@ internal sealed class ExtensionRegistrar(
 				DiagnosticIds.OperatorGenericNotSupported);
 
 			templates.Add(extDecl);
+			context.GenericExtensionTemplateUnits[extDecl] = context.CurrentUnit!;
 			return;
 		}
 

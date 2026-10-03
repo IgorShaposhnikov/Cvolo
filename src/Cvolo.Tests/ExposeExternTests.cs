@@ -41,8 +41,7 @@ public sealed class ExposeExternTests : CompilerTestBase
 		var (exitCode, stdout, stderr) = RunCompiler(fileName);
 		AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
 
-		var assemblyDir = Path.GetDirectoryName(typeof(ExposeExternTests).Assembly.Location)!;
-		var llPath = Path.Combine(assemblyDir, "TestCases", "_isolated", Category, "ExposeLinkage", "obj", "Debug", "ExposeLinkage.ll");
+		var llPath = GetCompilationArtifactPath(fileName, "obj", "Debug", "ExposeLinkage.ll");
 
 		Assert.True(File.Exists(llPath), $"Expected generated LLVM IR file at '{llPath}' but it was missing.");
 		var irContent = File.ReadAllText(llPath);
@@ -70,7 +69,7 @@ public sealed class ExposeExternTests : CompilerTestBase
 		AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
 
 		var assemblyDir = Path.GetDirectoryName(typeof(ExposeExternTests).Assembly.Location)!;
-		var dllPath = Path.Combine(assemblyDir, "TestCases", "_isolated", "InteropCSharp", "GraphicsCore", "bin", "Debug", "GraphicsCore.dll");
+		var dllPath = GetCompilationArtifactPath(fileName, "bin", "Debug", "GraphicsCore.dll");
 		Assert.True(File.Exists(dllPath), $"Expected shared library at '{dllPath}' but it was missing.");
 
 		if (!OperatingSystem.IsWindows())

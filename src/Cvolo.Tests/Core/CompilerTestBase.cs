@@ -11,6 +11,12 @@ public abstract class CompilerTestBase
 {
 	protected const string TestCasesDirectory = Constants.TestCasesDirectory;
 
+	// Every xUnit test instance gets its own physical isolation root. Multiple test classes may
+	// compile the same .cvl fixture in parallel; sharing _isolated/<category>/<case> lets one
+	// invocation delete obj/bin while another clang/lld process is still writing into it.
+	private readonly string _isolationId = $"{Environment.ProcessId}-{Guid.NewGuid():N}";
+	private readonly Dictionary<string, string> _isolatedCaseDirectories = new(StringComparer.OrdinalIgnoreCase);
+
 	protected (IReadOnlyList<CompilationUnitSyntax>? AST, BindingContext Context) AnalyzeProject(string path)
 	{
 		var assemblyDir = Path.GetDirectoryName(typeof(CompilerTestBase).Assembly.Location)!;
@@ -90,15 +96,12 @@ public abstract class CompilerTestBase
 	{
 		var sourceRoot = Path.Combine(assemblyDir, TestCasesDirectory);
 		var fullSourcePath = Path.Combine(sourceRoot, sourcePath);
-		var categoryDir = Path.GetDirectoryName(sourcePath) ?? string.Empty;
 		var caseName = Path.GetFileNameWithoutExtension(sourcePath);
-		var isolatedDir = Path.GetFullPath(Path.Combine(sourceRoot, "_isolated", categoryDir, caseName));
+		var isolatedDir = GetOrCreateIsolatedCaseDirectory(sourcePath);
 
-		Directory.CreateDirectory(isolatedDir);
-
-		// A test asset may have been replaced from an archive whose original timestamp is older
-		// than the existing isolated obj/bin output.  Do not let either MSBuild's asset copy or
-		// Cvolo's own incremental build reuse an older program after the source text changed.
+		// Repeated compiles inside the same test instance intentionally reuse the same root so
+		// companion .obj/.o fixtures placed beside the staged source survive. Only compiler outputs
+		// are reset between invocations; other test instances have different roots and cannot race.
 		var isolatedObj = Path.Combine(isolatedDir, "obj");
 		var isolatedBin = Path.Combine(isolatedDir, "bin");
 		if (Directory.Exists(isolatedObj))
@@ -112,18 +115,59 @@ public abstract class CompilerTestBase
 		return stagedSource;
 	}
 
+	/// <summary>
+	/// Returns the per-test isolation directory for one single-file fixture, creating it if needed.
+	/// Tests that need to place native companion objects beside the staged .cvl use this helper so
+	/// their inputs and the compiler invocation share the same unique root.
+	/// </summary>
+	protected string GetOrCreateIsolatedCaseDirectory(string sourcePath)
+	{
+		var key = NormalizeSourcePathKey(sourcePath);
+		if (_isolatedCaseDirectories.TryGetValue(key, out var existing))
+			return existing;
+
+		var assemblyDir = Path.GetDirectoryName(typeof(CompilerTestBase).Assembly.Location)!;
+		var sourceRoot = Path.Combine(assemblyDir, TestCasesDirectory);
+		var categoryDir = Path.GetDirectoryName(key) ?? string.Empty;
+		var caseName = Path.GetFileNameWithoutExtension(key);
+		var isolatedDir = Path.GetFullPath(Path.Combine(
+			sourceRoot, "_isolated", categoryDir, caseName, _isolationId));
+
+		Directory.CreateDirectory(isolatedDir);
+		_isolatedCaseDirectories[key] = isolatedDir;
+		return isolatedDir;
+	}
+
+	/// <summary>Returns an artifact path produced by the most recent compile of a fixture in this test instance.</summary>
+	protected string GetCompilationArtifactPath(string sourcePath, params string[] relativeSegments)
+	{
+		var root = GetOrCreateIsolatedCaseDirectory(sourcePath);
+		var path = root;
+		foreach (var segment in relativeSegments)
+			path = Path.Combine(path, segment);
+		return path;
+	}
+
+	private static string NormalizeSourcePathKey(string sourcePath)
+	{
+		var normalized = sourcePath.Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar);
+		return normalized.TrimStart(Path.DirectorySeparatorChar);
+	}
+
 	private string ResolveBinaryPath(string assemblyDir, string binaryName, string folderPath)
 	{
 		var binaryExt = OperatingSystem.IsWindows() ? ".exe" : "";
 		var binaryFileName = binaryName + binaryExt;
 
-		var isolatedPath = Path.GetFullPath(Path.Combine(
-			assemblyDir, TestCasesDirectory, "_isolated", folderPath, binaryName, "bin", "Debug", binaryFileName));
-		if (File.Exists(isolatedPath))
+		var logicalSource = NormalizeSourcePathKey(Path.Combine(folderPath, binaryName + ".cvl"));
+		if (_isolatedCaseDirectories.TryGetValue(logicalSource, out var isolatedDir))
 		{
-			return isolatedPath;
+			var isolatedPath = Path.Combine(isolatedDir, "bin", "Debug", binaryFileName);
+			if (File.Exists(isolatedPath))
+				return isolatedPath;
 		}
 
+		// Directory-project tests are not staged and keep their historical output layout.
 		return Path.GetFullPath(Path.Combine(
 			assemblyDir, TestCasesDirectory, folderPath, "bin", "Debug", binaryFileName));
 	}

@@ -1,0 +1,6 @@
+public extension Cell {
+    public Cell operator +(Cell left, Cell right) {
+        val Cell result(Value: left.Value + right.Value);
+        return result;
+    }
+}

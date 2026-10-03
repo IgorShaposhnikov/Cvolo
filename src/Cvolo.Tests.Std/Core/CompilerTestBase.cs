@@ -11,6 +11,9 @@ public abstract class CompilerTestBase
 {
 	protected const string TestCasesDirectory = Constants.TestCasesDirectory;
 
+	private readonly string _isolationId = $"{Environment.ProcessId}-{Guid.NewGuid():N}";
+	private readonly Dictionary<string, string> _isolatedCaseDirectories = new(StringComparer.OrdinalIgnoreCase);
+
 	protected (IReadOnlyList<CompilationUnitSyntax>? AST, BindingContext Context) AnalyzeProject(string path)
 	{
 		var assemblyDir = Path.GetDirectoryName(typeof(CompilerTestBase).Assembly.Location)!;
@@ -90,13 +93,53 @@ public abstract class CompilerTestBase
 	{
 		var sourceRoot = Path.Combine(assemblyDir, TestCasesDirectory);
 		var fullSourcePath = Path.Combine(sourceRoot, sourcePath);
-		var categoryDir = Path.GetDirectoryName(sourcePath) ?? string.Empty;
 		var caseName = Path.GetFileNameWithoutExtension(sourcePath);
-		var isolatedDir = Path.GetFullPath(Path.Combine(sourceRoot, "_isolated", categoryDir, caseName));
+		var isolatedDir = GetOrCreateIsolatedCaseDirectory(sourcePath);
+
+		var isolatedObj = Path.Combine(isolatedDir, "obj");
+		var isolatedBin = Path.Combine(isolatedDir, "bin");
+		if (Directory.Exists(isolatedObj))
+			Directory.Delete(isolatedObj, recursive: true);
+		if (Directory.Exists(isolatedBin))
+			Directory.Delete(isolatedBin, recursive: true);
+
+		var stagedSource = Path.Combine(isolatedDir, caseName + ".cvl");
+		File.Copy(fullSourcePath, stagedSource, overwrite: true);
+		File.SetLastWriteTimeUtc(stagedSource, DateTime.UtcNow);
+		return stagedSource;
+	}
+
+	protected string GetOrCreateIsolatedCaseDirectory(string sourcePath)
+	{
+		var key = NormalizeSourcePathKey(sourcePath);
+		if (_isolatedCaseDirectories.TryGetValue(key, out var existing))
+			return existing;
+
+		var assemblyDir = Path.GetDirectoryName(typeof(CompilerTestBase).Assembly.Location)!;
+		var sourceRoot = Path.Combine(assemblyDir, TestCasesDirectory);
+		var categoryDir = Path.GetDirectoryName(key) ?? string.Empty;
+		var caseName = Path.GetFileNameWithoutExtension(key);
+		var isolatedDir = Path.GetFullPath(Path.Combine(
+			sourceRoot, "_isolated", categoryDir, caseName, _isolationId));
 
 		Directory.CreateDirectory(isolatedDir);
-		File.Copy(fullSourcePath, Path.Combine(isolatedDir, caseName + ".cvl"), overwrite: true);
-		return Path.Combine(isolatedDir, caseName + ".cvl");
+		_isolatedCaseDirectories[key] = isolatedDir;
+		return isolatedDir;
+	}
+
+	protected string GetCompilationArtifactPath(string sourcePath, params string[] relativeSegments)
+	{
+		var root = GetOrCreateIsolatedCaseDirectory(sourcePath);
+		var path = root;
+		foreach (var segment in relativeSegments)
+			path = Path.Combine(path, segment);
+		return path;
+	}
+
+	private static string NormalizeSourcePathKey(string sourcePath)
+	{
+		var normalized = sourcePath.Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar);
+		return normalized.TrimStart(Path.DirectorySeparatorChar);
 	}
 
 	private string ResolveBinaryPath(string assemblyDir, string binaryName, string folderPath)
@@ -104,11 +147,12 @@ public abstract class CompilerTestBase
 		var binaryExt = OperatingSystem.IsWindows() ? ".exe" : "";
 		var binaryFileName = binaryName + binaryExt;
 
-		var isolatedPath = Path.GetFullPath(Path.Combine(
-			assemblyDir, TestCasesDirectory, "_isolated", folderPath, binaryName, "bin", "Debug", binaryFileName));
-		if (File.Exists(isolatedPath))
+		var logicalSource = NormalizeSourcePathKey(Path.Combine(folderPath, binaryName + ".cvl"));
+		if (_isolatedCaseDirectories.TryGetValue(logicalSource, out var isolatedDir))
 		{
-			return isolatedPath;
+			var isolatedPath = Path.Combine(isolatedDir, "bin", "Debug", binaryFileName);
+			if (File.Exists(isolatedPath))
+				return isolatedPath;
 		}
 
 		return Path.GetFullPath(Path.Combine(

@@ -56,6 +56,38 @@ public sealed class BindingContext
 	public Dictionary<CallExpressionSyntax, FunctionSymbol> ResolvedCalls { get; } = [];
 
 	/// <summary>
+	/// Final canonical binary-expression bindings for this semantic binding context. Source entries are
+	/// populated by validation after declaration/header registration is complete; post-binding compiler
+	/// synthesized nodes are registered explicitly. Successful and failed source bindings are retained
+	/// so later consumers never repeat operator resolution.
+	/// </summary>
+	public Dictionary<BinaryExpressionSyntax, ResolvedBinaryExpression> ResolvedBinaryExpressions { get; } = [];
+
+	/// <summary>
+	/// Registers a compiler-generated binary node created after ordinary semantic validation.
+	/// Post-binding lowerings (currently array/slice foreach expansion) must use this hook so codegen
+	/// never needs a private fallback typing engine for synthesized <see cref="BinaryExpressionSyntax"/> nodes.
+	/// </summary>
+	public ResolvedBinaryExpression RegisterCompilerGeneratedBinaryExpression(
+		BinaryExpressionSyntax syntax,
+		TypeSymbol leftType,
+		TypeSymbol rightType)
+	{
+		if (ResolvedBinaryExpressions.TryGetValue(syntax, out var existing))
+			return existing;
+
+		var resolved = BinaryExpressionBinder.Bind(this, syntax, leftType, rightType);
+		if (!resolved.IsSuccess)
+		{
+			throw new InvalidOperationException(
+				$"Compiler-generated binary expression '{syntax.Operator}' failed canonical binding ({resolved.ErrorKind}).");
+		}
+
+		ResolvedBinaryExpressions.Add(syntax, resolved);
+		return resolved;
+	}
+
+	/// <summary>
 	/// Compile-time layout constants folded for <c>sizeof</c>/<c>alignof</c>/<c>offsetof</c>,
 	/// keyed by the operator expression node, consumed by LLVM emission and global/array
 	/// constant evaluation.
@@ -166,8 +198,12 @@ public sealed class BindingContext
 	public Dictionary<string, List<VariableSymbol>> GlobalsByShortName { get; } = new(StringComparer.Ordinal);
 	// Constructors registered via 'T(...)' extension members, keyed by the struct type name
 	public Dictionary<string, List<FunctionSymbol>> Constructors { get; } = [];
-	// Store generic extension templates, keyed by the extended template struct name (mangled)
+	// Store generic extension templates, keyed by the extended template struct name (mangled).
 	public Dictionary<string, List<ExtensionDeclarationSyntax>> GenericExtensionTemplates { get; } = [];
+	// Generic extensions can live in a different source unit than the generic owner (for example
+	// user code extending System.Result<T, E>). Keep the declaration unit per template so a later
+	// monomorphized body resolves names, spans, and associated calls in the extension's own file.
+	public Dictionary<ExtensionDeclarationSyntax, CompilationUnitSyntax> GenericExtensionTemplateUnits { get; } = [];
 
 	/// <summary>
 	/// Extension members that declare their own type parameters (<c>extension Box { Box .From&lt;T&gt;() }</c>),
@@ -741,6 +777,16 @@ public sealed class BindingContext
 					}
 				}
 
+				// Open generic template binding is semantic binding, not monomorphization.
+				// A name such as Result<T, E> while T/E are active TypeParameterSymbols must
+				// resolve to the template nominal symbol without creating a synthetic
+				// Result<T,E> runtime type. Otherwise generic extension bodies are queued
+				// for later validation after the generic scope has been popped, producing
+				// false undefined-parameter/overload diagnostics. Concrete call sites still
+				// take the normal instantiation path below.
+				if (typeArgs.Any(Cvolo.Analysis.Passes.Validation.ExpressionValidator.ContainsTypeParameter))
+					return baseStruct;
+
 				var instantiatedType = InstantiateGenericStruct(templateDecl, baseType.Name, typeArgs, name);
 				StructTypes[name] = instantiatedType;
 				_typeCache[name] = instantiatedType;
@@ -787,6 +833,9 @@ public sealed class BindingContext
 					}
 				}
 
+				if (unionTypeArgs.Any(Cvolo.Analysis.Passes.Validation.ExpressionValidator.ContainsTypeParameter))
+					return baseUnion;
+
 				var instantiatedType = InstantiateGenericUnion(unionTemplateDecl, baseUnion.Name, unionTypeArgs);
 				UnionTypes[name] = instantiatedType;
 				_typeCache[name] = instantiatedType;
@@ -798,6 +847,9 @@ public sealed class BindingContext
 					return null;
 				if (protocolTypeArgs.Count != baseProtocol.GenericParameters.Count)
 					return null;
+				if (protocolTypeArgs.Any(Cvolo.Analysis.Passes.Validation.ExpressionValidator.ContainsTypeParameter))
+					return baseProtocol;
+
 				if (HasRefTypeArgument(protocolTypeArgs))
 				{
 					ReportUnallowedRefTypeArgument(baseProtocol.Name, protocolTypeArgs);
@@ -814,6 +866,9 @@ public sealed class BindingContext
 					return null;
 				if (delegateTypeArgs.Count != delegateDecl.GenericParameters.Count)
 					return null;
+
+				if (delegateTypeArgs.Any(Cvolo.Analysis.Passes.Validation.ExpressionValidator.ContainsTypeParameter))
+					return baseDelegate;
 
 				var instantiatedType = InstantiateGenericDelegate(delegateDecl, baseDelegate.Name, delegateTypeArgs, name);
 				if (instantiatedType is not null)
@@ -1747,6 +1802,7 @@ public sealed class BindingContext
 		}
 
 		var substitutionMap = new Dictionary<string, TypeSymbol>();
+		CompilationUnitSyntax? extensionResolutionUnit = null;
 		for (var i = 0; i < genericParams.Count; i++)
 		{
 			substitutionMap[genericParams[i]] = typeArgs[i];
@@ -1768,7 +1824,23 @@ public sealed class BindingContext
 				return new PointerTypeSymbol(innerType, isMutable);
 			}
 
-			return ResolveType(substitutedTypeName)!;
+			var previousUnit = CurrentUnit;
+			var previousNamespace = CurrentNamespace;
+			try
+			{
+				if (extensionResolutionUnit is not null)
+				{
+					CurrentUnit = extensionResolutionUnit;
+					CurrentNamespace = extensionResolutionUnit.NamespaceDeclaration?.Name;
+				}
+
+				return ResolveType(substitutedTypeName)!;
+			}
+			finally
+			{
+				CurrentUnit = previousUnit;
+				CurrentNamespace = previousNamespace;
+			}
 		}
 
 		BlockStatementSyntax SubstituteBlockGenerics(BlockStatementSyntax block)
@@ -1926,7 +1998,13 @@ public sealed class BindingContext
 
 		foreach (var extDecl in templates)
 		{
-			SymbolUnits.TryGetValue(templateMangledName, out var originalUnit);
+			// The extension declaration, not the generic owner, owns body lookup and diagnostics.
+			// Using Result<T,E>'s declaration unit for a user-authored extension can make a
+			// monomorphized body resolve against /base/Result.cvl instead of the caller's file.
+			var originalUnit = GenericExtensionTemplateUnits.TryGetValue(extDecl, out var extensionUnit)
+				? extensionUnit
+				: SymbolUnits.TryGetValue(templateMangledName, out var ownerUnit) ? ownerUnit : null;
+			extensionResolutionUnit = originalUnit;
 
 			// Monomorphize Methods & Destructors
 			foreach (var method in extDecl.Methods.Concat(extDecl.Destructors.Select(static d => d.ToFunctionDeclaration())))
@@ -2102,6 +2180,8 @@ public sealed class BindingContext
 				MonomorphizedExtensionExtendedTypes[ctorOverloadedName] = instantiatedType.Name;
 				MonomorphizedExtensionNames[instDecl] = ctorOverloadedName;
 			}
+
+			extensionResolutionUnit = null;
 		}
 	}
 
@@ -2567,14 +2647,11 @@ public sealed class BindingContext
 		var score = 0;
 		for (var i = 0; i < parameterTypes.Count; i++)
 		{
-			if (parameterTypes[i].Equals(argumentTypes[i]))
-				score += 4;
-			else if (TypeSymbol.IsIntegerType(parameterTypes[i]) && TypeSymbol.IsFloatingPointType(argumentTypes[i]))
-				score += 1;
-			else if (TypeSymbol.IsIntegerType(parameterTypes[i]) && TypeSymbol.IsIntegerType(argumentTypes[i]))
-				score += 1;
-			else
+			var conversion = BinaryExpressionBinder.ClassifyOperatorArgumentConversion(argumentTypes[i], parameterTypes[i]);
+			if (conversion is null)
 				return -1;
+
+			score += conversion.IsIdentity ? 4 : 1;
 		}
 
 		return score;
