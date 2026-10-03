@@ -1,0 +1,9 @@
+/// <summary>
+/// Feature: Namespace Alias Using Directives (spec section 6).
+/// A namespace alias must target a namespace, not a type. Type aliases keep using 'alias'.
+/// </summary>
+using Bad = Aliasing.Point;
+
+int Main() {
+    return 0;
+}

@@ -1226,4 +1226,15 @@ public static class DiagnosticIds
 	// and construction is written with a struct initializer such as `Name { ... }`.
 	public const string TypeIsNotCallable = "CVL4177";
 
+	// ── Namespace alias using directives (`using Alias = Namespace.Path;`) ──
+
+	/// <summary>namespace alias target 'X' does not exist.</summary>
+	public const string NamespaceAliasTargetDoesNotExist = "CVL4178";
+
+	/// <summary>Duplicate namespace alias 'X' in the same scope.</summary>
+	public const string DuplicateNamespaceAlias = "CVL4179";
+
+	/// <summary>'expose using' cannot declare a namespace alias.</summary>
+	public const string ExposeUsingCannotDeclareNamespaceAlias = "CVL4180";
+
 }

@@ -1,0 +1,8 @@
+/// <summary>
+/// A plain type that a namespace alias must not be allowed to target.
+/// </summary>
+namespace Aliasing;
+
+public struct Point {
+    public double X;
+}

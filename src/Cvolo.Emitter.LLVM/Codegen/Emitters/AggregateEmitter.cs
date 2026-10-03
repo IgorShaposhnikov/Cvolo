@@ -772,9 +772,14 @@ internal sealed class AggregateEmitter(
 	}
 
 	/// <summary>
-	/// Extracts the fully qualified name represented by a pure identifier/member-access chain.
+	/// Extracts the module storage key represented by a pure identifier/member-access chain.
 	/// Returns <see langword="null"/> when the expression contains a value-producing receiver.
 	/// </summary>
+	/// <remarks>
+	/// When the binder resolves the chain as a namespace-qualified global the declared key is
+	/// returned, so a <c>using Alias = Namespace;</c> prefix reaches the same storage as the target
+	/// namespace. Code generation does not interpret the alias itself; it asks the binder.
+	/// </remarks>
 	public string? TryExtractQualifiedGlobalKey(ExpressionSyntax expr)
 	{
 		if (expr is not MemberAccessExpressionSyntax outer)
@@ -794,7 +799,18 @@ internal sealed class AggregateEmitter(
 			return null;
 		segments.Add(leaf.Name);
 		segments.Reverse();
-		return string.Join(".", segments);
+
+		var dottedName = string.Join(".", segments);
+		if (codegen.GlobalVariables.ContainsKey(dottedName))
+			return dottedName;
+
+		var separator = dottedName.LastIndexOf('.');
+		if (separator <= 0 || separator == dottedName.Length - 1)
+			return dottedName;
+
+		var resolved = BindingContext.ResolveQualifiedGlobal(
+			dottedName[..separator], dottedName[(separator + 1)..]);
+		return resolved?.QualifiedGlobalName ?? dottedName;
 	}
 
 	/// <summary>

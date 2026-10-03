@@ -1,0 +1,9 @@
+/// <summary>
+/// Feature: Namespace Alias Using Directives (spec section 14 regression).
+/// The native layer is modelled exactly as OpenGL exposes it: a delegate-valued global.
+/// </summary>
+namespace OpenGL.Native;
+
+public unsafe "C" delegate void ViewportProc(int x, int y, int width, int height);
+
+public global var ViewportProc Viewport;

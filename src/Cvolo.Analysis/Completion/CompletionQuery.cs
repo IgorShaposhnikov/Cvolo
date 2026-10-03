@@ -774,7 +774,7 @@ finally
 		// A namespace receiver completes to the namespace's own declarations (free functions,
 		// types, nested namespaces) using the compiler's namespace/using semantics. An
 		// unresolved namespace yields no members - never a global/keyword fallback.
-		if (type is null && !isEnumTypeNameReceiver && dotted is not null && TryResolveNamespace(state, dotted, out var namespaceName))
+		if (type is null && !isEnumTypeNameReceiver && dotted is not null && TryResolveNamespace(state, dotted, visible, out var namespaceName))
 			return EnumerateNamespaceMembers(namespaceName, state);
 
 		if (type is null)
@@ -919,15 +919,26 @@ finally
 	}
 
 	/// <summary>
-	/// Resolves a (possibly dotted) receiver name to a declared namespace, first as written and
-	/// then through the current unit's active <c>using</c> namespaces. Returns false when the name
-	/// does not denote a namespace.
+	/// Resolves a (possibly dotted) receiver name to a declared namespace, first as written, then
+	/// through the current unit's namespace aliases, then through its active <c>using</c> namespaces.
+	/// Returns false when the name does not denote a namespace.
 	/// </summary>
-	private static bool TryResolveNamespace(QueryState state, string dotted, out string namespaceName)
+	private static bool TryResolveNamespace(QueryState state, string dotted, Dictionary<string, ScopedVariable> visible, out string namespaceName)
 	{
 		if (IsNamespace(state, dotted))
 		{
 			namespaceName = dotted;
+			return true;
+		}
+
+		// 'using Alias = Namespace.Path;' makes Alias a namespace prefix and nothing more, so it
+		// completes to the target's members - never to the alias' own scope. A local that already
+		// owns the spelling keeps the value path, matching the compiler's resolution order.
+		if (!IsValueName(dotted, visible, state)
+			&& state.Context.GetNamespaceAliases(state.Unit).TryGetValue(dotted, out var alias)
+			&& IsNamespace(state, alias.NamespaceName))
+		{
+			namespaceName = alias.NamespaceName;
 			return true;
 		}
 

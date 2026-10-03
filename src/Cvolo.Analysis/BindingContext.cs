@@ -8,6 +8,7 @@ using Cvolo.Analysis.Symbols.FFI;
 using Cvolo.Analysis.Symbols.Structs;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
+using Cvolo.Core.AST.Directives;
 using Cvolo.Core.AST.Expressions;
 using Cvolo.Core.AST.Statements;
 using Cvolo.Core.Diagnostics;
@@ -383,6 +384,142 @@ public sealed class BindingContext
 	public HashSet<string> DeclaredNamespaces { get; } = [];
 
 	/// <summary>
+	/// Namespace aliases declared by <c>using Alias = Namespace.Path;</c>, keyed by the owning unit's
+	/// <see cref="CompilationUnitSyntax.Context"/> and then by local alias name. Aliases are lexical
+	/// to a single physical compilation unit: two files declaring the same namespace never share an
+	/// alias table. The file context is the key rather than the unit node itself because every
+	/// AST rewriter rebuilds the <c>CompilationUnitSyntax</c> root while preserving its context
+	/// instance, so the table stays addressable from the rewritten tree the emitter walks.
+	/// Populated by the declaration pass; see <see cref="Passes.Declaration.NamespaceAliasValidator"/>.
+	/// </summary>
+	public Dictionary<CompilationContext, Dictionary<string, UsingDirectiveSyntax>> NamespaceAliases { get; } =
+		new(ReferenceEqualityComparer.Instance);
+
+	/// <summary>
+	/// Returns the namespace aliases visible in <paramref name="unit"/>, merging the file-level
+	/// and namespace-level using scopes. Namespace-level declarations are added last so, within one
+	/// compilation unit, the narrower scope is the one that wins.
+	/// </summary>
+	public IReadOnlyDictionary<string, UsingDirectiveSyntax> GetNamespaceAliases(CompilationUnitSyntax? unit)
+	{
+		if (unit?.Context is null || !NamespaceAliases.TryGetValue(unit.Context, out var declared) || declared.Count == 0)
+			return EmptyNamespaceAliases;
+
+		return declared;
+	}
+
+	private static readonly Dictionary<string, UsingDirectiveSyntax> EmptyNamespaceAliases = new(StringComparer.Ordinal);
+
+	/// <summary>
+	/// Rewrites the namespace prefix of a qualified name when that prefix is a namespace alias
+	/// declared by <paramref name="unit"/>, so <c>Native.Callback</c> is looked up as
+	/// <c>OpenGL.Native.Callback</c>.
+	/// </summary>
+	/// <remarks>
+	/// Expansion is deliberately late and narrow:
+	/// <list type="bullet">
+	/// <item>only a leading alias segment in a qualified path is rewritten; an unqualified name
+	/// and a name whose prefix is not an alias are returned untouched, so ordinary shadowing and
+	/// diagnostic messages still speak in the author's spelling;</item>
+	/// <item>a leading segment already claimed by a runtime value (<paramref name="valueScope"/> or a
+	/// module global) is left alone, preserving the value-path-before-namespace lookup order;</item>
+	/// <item>the alias target is used verbatim. Alias-on-alias right-hand sides are not required by
+	/// the language and are not canonicalized here.</item>
+	/// </list>
+	/// </remarks>
+	/// <param name="unit">The compilation unit whose alias scope applies.</param>
+	/// <param name="dottedName">The written qualified name, or a namespace path such as the prefix of a qualified global.</param>
+	/// <param name="valueScope">Optional call-site scope consulted for value-path precedence.</param>
+	public string ExpandNamespaceAlias(CompilationUnitSyntax? unit, string dottedName, SymbolTable? valueScope = null)
+	{
+		if (string.IsNullOrEmpty(dottedName) || unit is null)
+			return dottedName;
+
+		// A bare segment is never rewritten here: unqualified names keep their own resolution and
+		// diagnostic spelling, which is why namespace-path callers use ResolveNamespacePathAlias.
+		var separator = FirstTopLevelDotIndex(dottedName);
+		if (separator <= 0)
+			return dottedName;
+
+		return RewriteAliasPrefix(unit, dottedName, separator, valueScope);
+	}
+
+	/// <summary>
+	/// Rewrites <paramref name="namespacePath"/> through the aliases of <paramref name="unit"/>
+	/// even when the path consists of the alias alone, so <c>Native</c> behind
+	/// <c>using Native = MathLib.Constants;</c> yields <c>MathLib.Constants</c>.
+	/// </summary>
+	/// <remarks>
+	/// This is the namespace-prefix half of a qualified lookup, where the member name has already
+	/// been split off. Every <see cref="ExpandNamespaceAlias"/> rule still applies, including
+	/// value-path precedence over <paramref name="valueScope"/>.
+	/// </remarks>
+	/// <param name="unit">The compilation unit whose alias scope applies.</param>
+	/// <param name="namespacePath">The written namespace path, with or without further segments.</param>
+	/// <param name="valueScope">Optional call-site scope consulted for value-path precedence.</param>
+	public string ResolveNamespacePathAlias(CompilationUnitSyntax? unit, string namespacePath, SymbolTable? valueScope = null)
+	{
+		if (string.IsNullOrEmpty(namespacePath) || unit is null)
+			return namespacePath;
+
+		var separator = FirstTopLevelDotIndex(namespacePath);
+		return RewriteAliasPrefix(unit, namespacePath, separator < 0 ? namespacePath.Length : separator, valueScope);
+	}
+
+	/// <summary>
+	/// Replaces the leading <paramref name="prefixEnd"/>-bounded segment of <paramref name="name"/>
+	/// with its alias target when that segment names an alias of <paramref name="unit"/> and no
+	/// runtime value owns the same spelling.
+	/// </summary>
+	private string RewriteAliasPrefix(CompilationUnitSyntax unit, string name, int prefixEnd, SymbolTable? valueScope)
+	{
+		if (prefixEnd <= 0)
+			return name;
+
+		var aliases = GetNamespaceAliases(unit);
+		if (aliases.Count == 0)
+			return name;
+
+		var prefix = name[..prefixEnd];
+		if (!aliases.TryGetValue(prefix, out var alias) || alias.NamespaceName.Length == 0)
+			return name;
+
+		// A runtime value already owning this spelling keeps the path; alias expansion is a
+		// namespace-prefix fallback, never a takeover of a value path.
+		if (valueScope?.Lookup(prefix) is VariableSymbol || GlobalsByShortName.ContainsKey(prefix))
+			return name;
+
+		return alias.NamespaceName + name[prefixEnd..];
+	}
+
+	/// <summary>
+	/// Index of the first '.' that is not nested inside a generic argument list, so
+	/// <c>Ns.Result&lt;int, Other.Error&gt;.Ok</c> splits after the alias segment only.
+	/// </summary>
+	private static int FirstTopLevelDotIndex(string name)
+	{
+		var genericDepth = 0;
+
+		for (var i = 0; i < name.Length; i++)
+		{
+			switch (name[i])
+			{
+				case '<':
+					genericDepth++;
+					break;
+				case '>':
+					if (genericDepth > 0)
+						genericDepth--;
+					break;
+				case '.' when genericDepth == 0:
+					return i;
+			}
+		}
+
+		return -1;
+	}
+
+	/// <summary>
 	/// Resolves a string type name to its canonical, immutable TypeSymbol object.
 	/// </summary>
 	/// <summary>
@@ -396,6 +533,19 @@ public sealed class BindingContext
 		// 1. Check Canonical Type Cache first (Flyweight Pattern)
 		if (_typeCache.TryGetValue(name, out var cached))
 			return cached;
+
+		// 1a. Expand Namespace Aliases ('using Alias = Namespace.Path;'). Only the namespace prefix of
+		//      a qualified name is rewritten; the canonical path then resolves through the very same
+		//      type tables a fully-qualified spelling would reach. An alias claims its prefix, so an
+		//      unresolvable expansion does not fall back to the written spelling.
+		var namespaceAliased = ExpandNamespaceAlias(CurrentUnit, name);
+		if (!string.Equals(namespaceAliased, name, StringComparison.Ordinal))
+		{
+			var aliasedType = ResolveType(namespaceAliased);
+			if (aliasedType is not null)
+				_typeCache[name] = aliasedType;
+			return aliasedType;
+		}
 
 		// 1b. Expand Type Aliases ('alias Name = Type;'). Aliases are transparent: the
 		//     underlying type string is resolved in place of the alias name, and generic
@@ -1012,14 +1162,28 @@ public sealed class BindingContext
 	/// distinct qualified name is reported via <paramref name="ambiguousCandidates"/> (null when
 	/// unique or not found).
 	/// </summary>
-	public VariableSymbol? ResolveGlobalReference(string shortName, out List<string>? ambiguousCandidates)
+	public VariableSymbol? ResolveGlobalReference(string shortName, out List<string>? ambiguousCandidates) =>
+		ResolveGlobalReference(shortName, null, out ambiguousCandidates);
+
+	/// <summary>
+	/// Scope-aware overload of <see cref="ResolveGlobalReference(string, out List{string}?)"/> used from
+	/// call sites that already classify value paths, so a local or global value named like a namespace
+	/// alias keeps its path instead of being rewritten through the alias.
+	/// </summary>
+	/// <param name="valueScope">The call-site scope consulted before a namespace alias may claim the leading segment.</param>
+	public VariableSymbol? ResolveGlobalReference(string shortName, SymbolTable? valueScope, out List<string>? ambiguousCandidates)
 	{
 		ambiguousCandidates = null;
+
+		// A namespace alias rewrites only the namespace prefix, so the canonical spelling is tried as
+		// a declaration key. Value precedence still comes first: ExpandNamespaceAlias declines to
+		// rewrite when 'valueScope' or a module global already owns the leading segment.
+		var canonicalName = ExpandNamespaceAlias(CurrentUnit, shortName, valueScope);
 
 		// Qualified value paths are already canonical declaration keys. Accept them directly
 		// before applying short-name namespace/using resolution so calls such as
 		// Native.Callback(...) can bind a delegate-valued module global.
-		if (GlobalsByQualifiedName.TryGetValue(shortName, out var qualifiedGlobal))
+		if (GlobalsByQualifiedName.TryGetValue(canonicalName, out var qualifiedGlobal))
 			return qualifiedGlobal;
 
 		if (!GlobalsByShortName.TryGetValue(shortName, out var candidates))
@@ -1081,7 +1245,10 @@ public sealed class BindingContext
 	/// is tried as-is, then prefixed with the current namespace, then each active <c>using</c>.
 	/// Returns null when the path does not name a namespace or the member does not exist.
 	/// </summary>
-	public VariableSymbol? ResolveQualifiedGlobal(string namespacePath, string memberName)
+	/// <param name="namespacePath">The written namespace path, which may be a bare namespace alias.</param>
+	/// <param name="memberName">The member name, already split from the namespace path.</param>
+	/// <param name="valueScope">Optional call-site scope consulted for value-path precedence.</param>
+	public VariableSymbol? ResolveQualifiedGlobal(string namespacePath, string memberName, SymbolTable? valueScope = null)
 	{
 		VariableSymbol? single = null;
 		var count = 0;
@@ -1098,13 +1265,19 @@ public sealed class BindingContext
 			}
 		}
 
-		TryPath(namespacePath);
+		// 'using Alias = Namespace.Path;' rewrites the namespace prefix before the ordinary
+		// namespace-priority search runs, so the alias reaches exactly the same declaration key.
+		// The path may be the alias alone, hence ResolveNamespacePathAlias rather than the
+		// qualified-only ExpandNamespaceAlias.
+		var resolvedNamespacePath = ResolveNamespacePathAlias(CurrentUnit, namespacePath, valueScope);
+
+		TryPath(resolvedNamespacePath);
 		if (!string.IsNullOrEmpty(CurrentNamespace))
-			TryPath(GetMangledName(namespacePath, CurrentNamespace));
+			TryPath(GetMangledName(resolvedNamespacePath, CurrentNamespace));
 		if (CurrentUnit is not null)
 		{
 			foreach (var ns in GetActiveUsings(CurrentUnit))
-				TryPath(GetMangledName(namespacePath, ns));
+				TryPath(GetMangledName(resolvedNamespacePath, ns));
 		}
 
 
@@ -2083,13 +2256,14 @@ public sealed class BindingContext
 
 		var directUsings = new HashSet<string>(StringComparer.Ordinal);
 
-		// 1. Collect standard 'using' directives (exclude 'expose using' which only re-exports)
-		foreach (var u in unit.Usings.Where(x => !x.IsExposed))
+		// 1. Collect standard 'using' directives (exclude 'expose using' which only re-exports, and
+		// namespace aliases which bind a prefix instead of importing members)
+		foreach (var u in unit.Usings.Where(x => !x.IsExposed && !x.IsAlias))
 			directUsings.Add(u.NamespaceName);
 
 		if (unit.NamespaceDeclaration is not null)
 		{
-			foreach (var u in unit.NamespaceDeclaration.Usings.Where(x => !x.IsExposed))
+			foreach (var u in unit.NamespaceDeclaration.Usings.Where(x => !x.IsExposed && !x.IsAlias))
 				directUsings.Add(u.NamespaceName);
 		}
 

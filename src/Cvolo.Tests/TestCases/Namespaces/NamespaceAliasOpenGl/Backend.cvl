@@ -1,0 +1,19 @@
+/// <summary>
+/// Feature: Namespace Alias Using Directives (spec section 14 regression).
+/// 'Native' must stay a namespace prefix here: it may neither be mistaken for a type
+/// receiver nor reported as an undefined variable, and the alias-qualified name must
+/// resolve to the delegate-valued global that is then invoked.
+/// </summary>
+namespace OpenGL;
+
+using System;
+using Native = OpenGL.Native;
+
+public unsafe void Resize() {
+    Native.Viewport = &Record;
+    Native.Viewport(1, 2, 3, 4);
+}
+
+public unsafe "C" void Record(int x, int y, int width, int height) {
+    Console.WriteLine($"Viewport: {x}, {y}, {width}, {height}");
+}

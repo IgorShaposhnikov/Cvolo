@@ -4,6 +4,7 @@ using Cvolo.Analysis.Symbols.Base;
 using Cvolo.Analysis.Symbols.Structs;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
+using Cvolo.Core.AST.Directives;
 using Cvolo.Core.AST.Expressions;
 
 namespace Cvolo.Compiler.Tooling.Internal;
@@ -166,6 +167,11 @@ internal static class SemanticTokenService
 			case DestructorDeclarationSyntax builtinDestructor when builtinDestructor.BuiltinSpan is { } builtinDestructorSpan:
 				AddDirectToken(tokens, seen, builtinDestructorSpan, ToolingSymbolKind.Keyword);
 				return false;
+			case UsingDirectiveSyntax { AliasSpan: { } aliasSpan } namespaceAlias:
+				// 'using Alias = Namespace.Path;' declares a compile-time namespace prefix, so the
+				// alias name is the declaration and gets the alias token kind.
+				AddDirectToken(tokens, seen, aliasSpan, ToolingSymbolKind.NamespaceAlias);
+				return true;
 		}
 
 		return false;

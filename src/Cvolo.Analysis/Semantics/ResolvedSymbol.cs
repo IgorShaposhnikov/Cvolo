@@ -21,6 +21,7 @@ public enum ResolvedSymbolKind
 	Protocol,
 	Delegate,
 	TypeAlias,
+	NamespaceAlias,
 	TypeParameter,
 	Function,
 	Method,

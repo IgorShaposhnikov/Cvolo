@@ -336,6 +336,18 @@ internal sealed class OverloadResolver(BindingContext context)
 	/// </summary>
 	public void GatherCandidates(string name, List<FunctionSymbol> targetList)
 	{
+		GatherCandidatesForSpelling(name, targetList);
+
+		// 'using Alias = Namespace.Path;' rewrites the namespace prefix of a qualified call path, so
+		// the canonical spelling is searched as well. The alias never imports unqualified members, so
+		// only the dotted spelling gains candidates.
+		var canonicalName = context.ExpandNamespaceAlias(context.CurrentUnit, name);
+		if (!string.Equals(canonicalName, name, StringComparison.Ordinal))
+			GatherCandidatesForSpelling(canonicalName, targetList);
+	}
+
+	private void GatherCandidatesForSpelling(string name, List<FunctionSymbol> targetList)
+	{
 		if (context.OverloadedFunctions.TryGetValue(name, out var directMatches))
 			AddRangeUnique(targetList, directMatches);
 

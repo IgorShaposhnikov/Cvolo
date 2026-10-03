@@ -1,0 +1,17 @@
+/// <summary>
+/// Feature: Namespace Alias Using Directives (spec section 3).
+/// A namespace alias expands the namespace prefix only. It never imports the target
+/// namespace's members, so the unqualified struct name must stay undefined.
+/// </summary>
+using System;
+using Native = MathLib.Constants;
+
+Native.Vec2 Make() {
+    return Vec2 { X: 1.0, Y: 2.0 };
+}
+
+int Main() {
+    Native.Vec2 v = Make();
+    Console.WriteLine($"{v.X}");
+    return 0;
+}

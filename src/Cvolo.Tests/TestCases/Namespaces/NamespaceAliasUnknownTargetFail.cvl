@@ -1,0 +1,9 @@
+/// <summary>
+/// Feature: Namespace Alias Using Directives (spec section 5).
+/// A namespace alias target must resolve to a namespace known to the compilation.
+/// </summary>
+using Missing = Not.Here;
+
+int Main() {
+    return 0;
+}

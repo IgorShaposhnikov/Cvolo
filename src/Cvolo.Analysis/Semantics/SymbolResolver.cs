@@ -4,6 +4,7 @@ using Cvolo.Analysis.Symbols.Base;
 using Cvolo.Analysis.Symbols.Structs;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
+using Cvolo.Core.AST.Directives;
 using Cvolo.Core.AST.Expressions;
 using Cvolo.Core.Diagnostics;
 
@@ -41,7 +42,8 @@ internal static class SymbolResolver
 				?? ResolveCall(context, index, source, call);
 		else if (node is IdentifierExpressionSyntax identifier)
 			result = ResolveIdentifier(context, visible, index, source, identifier)
-				?? ResolveImplicitExtensionField(context, unit, index, identifier);
+				?? ResolveImplicitExtensionField(context, unit, index, identifier)
+				?? ResolveNamespaceAliasUse(context, unit, identifier);
 		else if (node is StructInitializationExpressionSyntax structInitialization)
 			result = ResolveTypeReference(context, index, source, structInitialization.Span, structInitialization.StructTypeName, position);
 		else if (node is SizeofExpressionSyntax sizeofExpression)
@@ -786,6 +788,8 @@ internal static class SymbolResolver
 					?? OnName(NameSpan(source, protocolMember.Span, protocolMember.Name, fromEnd: false), protocolMember.Name, position, ResolvedSymbolKind.Method, protocolMember, $"{protocolMember.ReturnType} {protocolMember.Name}({ParameterList(protocolMember.Parameters)})");
 			case TypeAliasDeclarationSyntax typeAlias:
 				return OnName(NameSpan(source, typeAlias.Span, typeAlias.Name, fromEnd: false), typeAlias.Name, position, ResolvedSymbolKind.TypeAlias, typeAlias, Display(typeAlias, typeAlias.Name));
+			case UsingDirectiveSyntax usingDirective when usingDirective.IsAlias:
+				return ResolveNamespaceAliasDirective(source, usingDirective, position);
 			case GlobalVariableDeclarationSyntax global:
 				return ResolveTypeReference(context, index, source, global.Span, global.Type, position)
 					?? OnName(NameSpan(source, global.Span, global.Name, fromEnd: false), global.Name, position, ResolvedSymbolKind.Global, global, Display(global, global.Name));
@@ -1014,6 +1018,43 @@ internal static class SymbolResolver
 			return null;
 
 		return new ResolvedSymbol(kind, name, owner, span, declaration, display);
+	}
+
+	/// <summary>
+	/// Resolves the alias name inside <c>using Alias = Namespace.Path;</c>. Only the alias name is
+	/// the binding: the target namespace keeps its own identity, so navigating or renaming the
+	/// target text is never treated as an alias occurrence.
+	/// </summary>
+	private static ResolvedSymbol? ResolveNamespaceAliasDirective(string source, UsingDirectiveSyntax directive, int position)
+	{
+		if (directive.AliasSpan is not { } aliasSpan || position < aliasSpan.Start || position > aliasSpan.End)
+			return null;
+
+		return DescribeNamespaceAlias(directive);
+	}
+
+	/// <summary>
+	/// Resolves a written use of a namespace alias prefix. Only reached after the local, parameter,
+	/// and global lookups have failed, so a runtime value that shares the alias' spelling still wins.
+	/// </summary>
+	private static ResolvedSymbol? ResolveNamespaceAliasUse(BindingContext context, CompilationUnitSyntax unit, IdentifierExpressionSyntax identifier)
+	{
+		return context.GetNamespaceAliases(unit).TryGetValue(identifier.Name, out var directive)
+			? DescribeNamespaceAlias(directive)
+			: null;
+	}
+
+	private static ResolvedSymbol DescribeNamespaceAlias(UsingDirectiveSyntax directive)
+	{
+		var alias = directive.AliasName ?? directive.NamespaceName;
+		var span = directive.AliasSpan ?? directive.Span;
+		return new ResolvedSymbol(
+			ResolvedSymbolKind.NamespaceAlias,
+			alias,
+			directive.NamespaceName,
+			span,
+			directive,
+			$"namespace alias {alias} = {directive.NamespaceName}");
 	}
 
 	private static bool IsOnCallName(string source, CallExpressionSyntax call, int position)

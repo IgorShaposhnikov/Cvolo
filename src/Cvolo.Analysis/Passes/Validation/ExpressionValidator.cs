@@ -293,8 +293,11 @@ internal sealed class ExpressionValidator(
 						// type rather than fabricating a function overload mismatch.
 						if (!call.FunctionName.Contains('.', StringComparison.Ordinal)
 							&& (context.ResolveType(context.GetMangledName(call.FunctionName, context.CurrentUnit?.NamespaceDeclaration?.Name))
-								?? context.ResolveType(call.FunctionName)) is not null)
+								?? context.ResolveType(call.FunctionName)) is StructTypeSymbol)
 						{
+							if (context.GenericParameterScopes.Count > 0)
+								return;
+
 							context.Diagnostics.Report(
 								context.FileContexts[context.CurrentUnit!],
 								call.ArgumentListSpan,
@@ -305,6 +308,8 @@ internal sealed class ExpressionValidator(
 
 						var currentFileContext = context.FileContexts[context.CurrentUnit!];
 						var sigString = string.Join(", ", argTypes.Select(t => t.Name));
+						if (context.GenericParameterScopes.Count > 0)
+							return;
 						var diagnosticId = call.FunctionName.Contains('.', StringComparison.Ordinal)
 							? DiagnosticIds.NoOverloadOfFunctionMatchesArgumentTypes
 							: DiagnosticIds.UnresolvedFunctionCall;
@@ -960,12 +965,17 @@ internal sealed class ExpressionValidator(
 	}
 
 	/// <summary>
-	/// Whether <paramref name="receiver"/> names a namespace rather than a type, either as written or
-	/// through one of the file's active imports. Uses the compiler's own symbol tables, so it agrees
-	/// with what completion offers at the same position.
+	/// Whether <paramref name="receiver"/> names a namespace rather than a type, either as written,
+	/// through one of the file's active imports, or through a namespace alias. Uses the compiler's
+	/// own symbol tables, so it agrees with what completion offers at the same position.
 	/// </summary>
 	private bool NamesNamespace(string receiver)
 	{
+		// 'using Native = OpenGL.Native;' makes the alias spelling itself name a namespace, so
+		// Native.Callback(...) is a qualified value path and never a type-prefix diagnostic.
+		if (context.GetNamespaceAliases(context.CurrentUnit).ContainsKey(receiver))
+			return true;
+
 		if (IsNamespaceName(receiver))
 			return true;
 
@@ -1124,7 +1134,7 @@ internal sealed class ExpressionValidator(
 	{
 		// Namespace-qualified global access: Ns.Sub.Member. Resolved before the receiver is
 		// checked as an expression so 'Math' is not reported as an undefined variable.
-		if (TryResolveNamespaceGlobal(expr, out var globalSymbol))
+		if (TryResolveNamespaceGlobal(expr, scope, out var globalSymbol))
 		{
 			return globalSymbol.Type;
 		}
@@ -1244,7 +1254,7 @@ internal sealed class ExpressionValidator(
 	/// (<c>Ns.Sub.Member</c>); returns the resolved symbol. Only identifier chains are treated
 	/// as namespace paths — value receivers (struct fields, unions, etc.) fall through.
 	/// </summary>
-	private bool TryResolveNamespaceGlobal(MemberAccessExpressionSyntax expr, out VariableSymbol? globalSymbol)
+	private bool TryResolveNamespaceGlobal(MemberAccessExpressionSyntax expr, SymbolTable? scope, out VariableSymbol? globalSymbol)
 	{
 		globalSymbol = null;
 		if (expr.Expression is not (IdentifierExpressionSyntax or MemberAccessExpressionSyntax))
@@ -1265,7 +1275,7 @@ internal sealed class ExpressionValidator(
 		segments.Add(leaf.Name);
 		segments.Reverse();
 
-		globalSymbol = context.ResolveQualifiedGlobal(string.Join(".", segments), expr.MemberName);
+		globalSymbol = context.ResolveQualifiedGlobal(string.Join(".", segments), expr.MemberName, scope);
 		return globalSymbol is not null;
 	}
 
@@ -2106,7 +2116,7 @@ internal sealed class ExpressionValidator(
 		// Namespace-qualified globals are values, not method groups. Resolve the full
 		// access before inspecting its receiver so namespace prefixes are not checked
 		// as ordinary variables (for example: System.Math.Int.MaxValue).
-		if (TryResolveNamespaceGlobal(ma, out _))
+		if (TryResolveNamespaceGlobal(ma, scope, out _))
 			return false;
 
 		var receiverType = GetType(ma.Expression, scope);

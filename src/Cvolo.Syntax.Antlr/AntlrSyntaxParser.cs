@@ -1972,8 +1972,17 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 
 	private UsingDirectiveSyntax BuildUsingDirective(CvoloParser.UsingDirectiveContext context)
 	{
-		var isExposed = context.EXPOSE() != null;
-		return new UsingDirectiveSyntax(SpanOf(context), context.qualifiedName().GetText(), isExposed);
+		// 'using Alias = Namespace.Path;' declares a namespace alias; the leading Identifier of that
+		// alternative is the alias name and the following qualifiedName is the canonical target.
+		// The plain import alternative has no leading Identifier, so the alias stays null there.
+		var alias = context.Identifier();
+
+		return new UsingDirectiveSyntax(
+			SpanOf(context),
+			context.qualifiedName().GetText(),
+			context.EXPOSE() != null,
+			alias?.GetText(),
+			alias is null ? null : SpanOf(alias.Symbol));
 	}
 
 	private NamespaceDeclarationSyntax BuildNamespaceDeclaration(CvoloParser.NamespaceDeclarationContext context)

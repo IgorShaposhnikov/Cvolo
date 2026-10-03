@@ -1,0 +1,8 @@
+/// <summary>
+/// Sub-namespace providing a delegate-valued global: the spec section 14 shape.
+/// </summary>
+namespace MathLib.Native;
+
+public unsafe "C" delegate int Callback(int value);
+
+public global var Callback Slot;

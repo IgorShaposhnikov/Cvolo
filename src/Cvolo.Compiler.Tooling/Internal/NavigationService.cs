@@ -5,6 +5,7 @@ using Cvolo.Analysis.Symbols.Base;
 using Cvolo.Analysis.Symbols.Structs;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
+using Cvolo.Core.AST.Directives;
 using Cvolo.Core.AST.Expressions;
 using Cvolo.Core.AST.Statements;
 using Cvolo.Projects;
@@ -286,9 +287,33 @@ internal sealed class NavigationIndex
 				continue;
 
 			var source = _snapshot.GetDocument(documentId).Text.ToString();
+			foreach (var directive in unit.Usings)
+				IndexUsingDirective(documentId, source, directive);
+			if (unit.NamespaceDeclaration is { } unitNamespace)
+			{
+				foreach (var directive in unitNamespace.Usings)
+					IndexUsingDirective(documentId, source, directive);
+			}
+
 			foreach (var member in Members(unit))
 				IndexMember(documentId, source, member);
 		}
+	}
+
+	/// <summary>
+	/// Registers a <c>using Alias = Namespace.Path;</c> directive as a navigable symbol. Only the
+	/// alias form has an identity of its own; a plain <c>using</c> names a namespace, not a binding.
+	/// </summary>
+	private void IndexUsingDirective(DocumentId documentId, string source, UsingDirectiveSyntax directive)
+	{
+		if (!directive.IsAlias || string.IsNullOrEmpty(directive.AliasName))
+			return;
+
+		var selection = directive.AliasSpan is { } aliasSpan && aliasSpan.Start >= 0 && aliasSpan.Length >= 0
+			? new CoreTextSpan(aliasSpan.Start, aliasSpan.Length)
+			: (CoreTextSpan?)null;
+
+		Register(documentId, source, directive, directive.AliasName!, ToolingSymbolKind.NamespaceAlias, selection);
 	}
 
 	/// <summary>
@@ -903,6 +928,7 @@ internal sealed class NavigationIndex
 		ResolvedSymbolKind.Protocol => ToolingSymbolKind.Protocol,
 		ResolvedSymbolKind.Delegate => ToolingSymbolKind.Delegate,
 		ResolvedSymbolKind.TypeAlias => ToolingSymbolKind.TypeAlias,
+		ResolvedSymbolKind.NamespaceAlias => ToolingSymbolKind.NamespaceAlias,
 		ResolvedSymbolKind.TypeParameter => ToolingSymbolKind.TypeParameter,
 		ResolvedSymbolKind.Function => ToolingSymbolKind.Function,
 		ResolvedSymbolKind.Method => ToolingSymbolKind.Method,

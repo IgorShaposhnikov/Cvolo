@@ -1,0 +1,6 @@
+/// <summary>
+/// Sub-namespace consumed through an alias in a sibling file only.
+/// </summary>
+namespace MathLib.Constants;
+
+public global double MATH_PI = 3.14159;

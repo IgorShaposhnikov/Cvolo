@@ -1,0 +1,41 @@
+/// <summary>
+/// Feature: Namespace Alias Using Directives.
+/// File-level namespace aliases expand only the namespace prefix: types, functions, globals,
+/// extension methods and delegate-valued globals all resolve through the alias, while the
+/// target namespace's members are never imported unqualified.
+/// </summary>
+using System;
+using Const = MathLib.Constants;
+using Db = MathLib.Double;
+using Native = MathLib.Native;
+using ScopedProgram;
+
+alias Half = double;
+
+unsafe int Main() {
+    Const.COUNTER = 5;
+    Console.WriteLine($"PI: {Const.MATH_PI}");
+    Console.WriteLine($"Counter: {Const.COUNTER}");
+    Console.WriteLine($"Sum: {Const.SumOf(1.0, 2.0)}");
+    Console.WriteLine($"Sqrt: {Db.Sqrt(9.0)}");
+    Console.WriteLine($"ScopedPi: {ScopedProgram.ScopedPi()}");
+    Console.WriteLine($"ScopedSum: {ScopedProgram.ScopedSum()}");
+
+    Const.Vec2 v;
+    v.X = 3.0;
+    v.Y = 4.0;
+    Console.WriteLine($"Vec: {v.X}, {v.Y}");
+    Console.WriteLine($"Magnitude: {v.MagnitudeSquared()}");
+
+    Half half = Const.MATH_PI / 2.0;
+    Console.WriteLine($"Half: {half}");
+
+    Native.Slot = &Increment;
+    Console.WriteLine($"Callback: {Native.Slot(41)}");
+
+    return 0;
+}
+
+unsafe "C" int Increment(int value) {
+    return value + 1;
+}

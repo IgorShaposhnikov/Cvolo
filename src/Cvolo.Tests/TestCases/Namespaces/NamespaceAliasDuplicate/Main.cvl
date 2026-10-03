@@ -1,0 +1,12 @@
+/// <summary>
+/// Feature: Namespace Alias Using Directives (spec section 9).
+/// Declaring the same alias name twice in one using scope is rejected.
+/// </summary>
+using System;
+using Dup = MathLib.Constants;
+using Dup = MathLib.Double;
+
+int Main() {
+    Console.WriteLine($"{Dup.MATH_PI}");
+    return 0;
+}

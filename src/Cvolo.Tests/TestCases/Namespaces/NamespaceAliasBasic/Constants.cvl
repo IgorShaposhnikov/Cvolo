@@ -1,0 +1,23 @@
+/// <summary>
+/// Sub-namespace providing math constants, types and functions.
+/// </summary>
+namespace MathLib.Constants;
+
+public struct Vec2 {
+    public double X;
+    public double Y;
+}
+
+public global double MATH_PI = 3.14159;
+
+public global var int COUNTER = 0;
+
+public double SumOf(double a, double b) {
+    return a + b;
+}
+
+public extension Vec2 {
+    public double MagnitudeSquared() {
+        return X * X + Y * Y;
+    }
+}

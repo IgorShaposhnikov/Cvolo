@@ -1,0 +1,15 @@
+/// <summary>
+/// Feature: Namespace Alias Using Directives (spec section 8).
+/// A runtime value whose spelling equals the alias spelling wins: the alias is only a
+/// fallback for the namespace path, never a blind textual substitution.
+/// </summary>
+using System;
+using Db = MathLib.Double;
+
+global var int Db = 7;
+
+int Main() {
+    var int copied = Db;
+    Console.WriteLine($"Value: {copied}");
+    return 0;
+}

@@ -20,6 +20,8 @@ public sealed class CvoloSourcePrinter
 				return $"{usings}{nsd}{members}";
 
 			case UsingDirectiveSyntax u:
+				if (u.IsAlias)
+					return $"{ind}using {u.AliasName} = {u.NamespaceName};\n";
 				return $"{ind}{(u.IsExposed ? "expose " : "")}using {u.NamespaceName};\n";
 
 			case NamespaceDeclarationSyntax ns:

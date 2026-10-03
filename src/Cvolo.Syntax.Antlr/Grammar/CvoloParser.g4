@@ -8,6 +8,7 @@ compilationUnit
 
 usingDirective
 	: EXPOSE? USING qualifiedName SEMI
+	| USING Identifier ASSIGN qualifiedName SEMI
 	;
 
 namespaceDeclaration

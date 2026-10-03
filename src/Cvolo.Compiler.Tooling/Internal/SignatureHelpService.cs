@@ -59,7 +59,7 @@ internal static class SignatureHelpService
 			return null;
 
 		var namespaceName = unit.NamespaceDeclaration?.Name;
-		var key = context.GetMangledName(call.FunctionName, namespaceName);
+		var key = context.GetMangledName(context.ExpandNamespaceAlias(unit, call.FunctionName), namespaceName);
 		if (!GroupFor(context, key, out var group) || group.Count == 0)
 			return null;
 

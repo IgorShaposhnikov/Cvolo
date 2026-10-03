@@ -208,7 +208,7 @@ internal static class CodeFixRegistry
 
 		foreach (var directive in requestingUnit.Usings)
 		{
-			if (!directive.IsExposed)
+			if (!directive.IsExposed && !directive.IsAlias)
 				active.Add(directive.NamespaceName);
 		}
 
@@ -216,7 +216,7 @@ internal static class CodeFixRegistry
 		{
 			foreach (var directive in ownNamespace.Usings)
 			{
-				if (!directive.IsExposed)
+				if (!directive.IsExposed && !directive.IsAlias)
 					active.Add(directive.NamespaceName);
 			}
 

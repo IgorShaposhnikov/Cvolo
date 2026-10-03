@@ -74,8 +74,9 @@ internal sealed class CallResolver(BindingContext context, OverloadResolver over
 
 		// A fully-qualified global native/safe delegate (e.g. Native.Callback(...)) is
 		// itself the callable value. Resolve that exact value path before interpreting the
-		// final segment as a struct-field invocation.
-		if (context.ResolveGlobalReference(call.FunctionName, out _) is VariableSymbol qualifiedGlobal
+		// final segment as a struct-field invocation. The call-site scope is handed down so a
+		// local named like a namespace alias keeps value-path precedence over alias expansion.
+		if (context.ResolveGlobalReference(call.FunctionName, scope, out _) is VariableSymbol qualifiedGlobal
 			&& qualifiedGlobal.Type is DelegateTypeSymbol qualifiedDelegate)
 		{
 			delegateMemberType = qualifiedDelegate;

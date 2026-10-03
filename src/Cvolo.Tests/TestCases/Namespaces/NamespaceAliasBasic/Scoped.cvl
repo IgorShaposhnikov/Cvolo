@@ -1,0 +1,16 @@
+/// <summary>
+/// Feature: Namespace Alias Using Directives.
+/// A namespace-local alias (declared between 'namespace X;' and the members) is visible to
+/// every declaration in that namespace and to no other physical file.
+/// </summary>
+namespace ScopedProgram;
+
+using Scoped = MathLib.Constants;
+
+double ScopedPi() {
+    return Scoped.MATH_PI;
+}
+
+double ScopedSum() {
+    return Scoped.SumOf(2.0, 3.0);
+}

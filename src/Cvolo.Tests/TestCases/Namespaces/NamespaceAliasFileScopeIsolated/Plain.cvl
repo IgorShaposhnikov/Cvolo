@@ -1,0 +1,8 @@
+/// <summary>
+/// Feature: Namespace Alias Using Directives (spec section 4).
+/// A namespace alias is scoped to the ordinary using scope that declares it. It must not
+/// leak into a sibling physical file even though both files share the same namespace.
+/// </summary>
+double Unaliased() {
+    return Native.MATH_PI;
+}

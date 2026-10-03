@@ -1,0 +1,10 @@
+/// <summary>
+/// Feature: Namespace Alias Using Directives (spec section 14 regression).
+/// </summary>
+using System;
+using OpenGL;
+
+unsafe int Main() {
+    OpenGL.Resize();
+    return 0;
+}

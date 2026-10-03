@@ -1,0 +1,9 @@
+/// <summary>
+/// Feature: Namespace Alias Using Directives (spec section 4).
+/// This file declares the alias, so 'Native' resolves here.
+/// </summary>
+using Native = MathLib.Constants;
+
+double Aliased() {
+    return Native.MATH_PI;
+}

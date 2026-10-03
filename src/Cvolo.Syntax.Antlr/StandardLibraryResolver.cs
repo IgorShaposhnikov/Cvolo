@@ -288,6 +288,10 @@ internal static class SdkLibraryResolver
 		var unit = entry.Unit!;
 		foreach (var directive in unit.Usings)
 		{
+			// A namespace alias binds a namespace prefix only; it never imports members of its target.
+			if (directive.IsAlias)
+				continue;
+
 			if (directive.IsExposed)
 			{
 				entry.ReExports.Add(directive.NamespaceName);
@@ -302,6 +306,9 @@ internal static class SdkLibraryResolver
 		{
 			foreach (var directive in unit.NamespaceDeclaration.Usings)
 			{
+				if (directive.IsAlias)
+					continue;
+
 				if (directive.IsExposed)
 				{
 					entry.ReExports.Add(directive.NamespaceName);
@@ -319,7 +326,7 @@ internal static class SdkLibraryResolver
 		var active = new List<string>();
 		foreach (var directive in unit.Usings)
 		{
-			if (!directive.IsExposed)
+			if (!directive.IsExposed && !directive.IsAlias)
 			{
 				active.Add(directive.NamespaceName);
 			}
@@ -329,7 +336,7 @@ internal static class SdkLibraryResolver
 		{
 			foreach (var directive in unit.NamespaceDeclaration.Usings)
 			{
-				if (!directive.IsExposed)
+				if (!directive.IsExposed && !directive.IsAlias)
 				{
 					active.Add(directive.NamespaceName);
 				}

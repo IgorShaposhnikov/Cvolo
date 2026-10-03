@@ -18,6 +18,7 @@ public sealed class DeclarationPass(BindingContext context)
 	private readonly FunctionDeclarationRegistrar _functions = new(context);
 	private readonly GlobalVariableRegistrar _globals = new(context);
 	private readonly ExposeUsingValidator _exposeUsings = new(context);
+	private readonly NamespaceAliasValidator _namespaceAliases = new(context);
 	private readonly NativeAbiPostDeclarationValidator _nativeAbiPost = new(context);
 	private readonly BuiltinValidator _builtins = new(context);
 	private ExtensionRegistrar? _extensions;
@@ -35,6 +36,7 @@ public sealed class DeclarationPass(BindingContext context)
 	{
 		_builtins.Validate(units);
 		_exposeUsings.Process(units);
+		_namespaceAliases.Register(units);
 
 		// Pass 0a-pre: Register all type aliases before any type/field/parameter resolution
 		// so struct fields and function signatures may reference them. Names are reserved
@@ -141,7 +143,12 @@ public sealed class DeclarationPass(BindingContext context)
 			}
 		}
 
-		// Pass 1.25: extension destructors are now known; revalidate native ABI resource ownership.
+		// Pass 1.25: namespace alias targets are now checkable against every registry. An imported
+		// namespace is frequently implied only by the symbols beneath it (a package-rehydrated
+		// namespace holding no declaration of its own), so this must run after Pass 1.
+		_namespaceAliases.ValidateTargets(units);
+
+		// Pass 1.3: extension destructors are now known; revalidate native ABI resource ownership.
 		_nativeAbiPost.Validate();
 
 		// Pass 1.5: Promote embedded-type extension methods onto every struct that

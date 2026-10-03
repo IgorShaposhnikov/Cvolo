@@ -111,8 +111,10 @@ public sealed class PackageApiMetadata
 			apiUnits.Add(new PackageApiUnit
 			{
 				Namespace = ns?.Name,
-				FileUsings = unit.Usings.Where(u => !u.IsExposed).Select(u => u.NamespaceName).ToArray(),
-				NamespaceUsings = ns?.Usings.Where(u => !u.IsExposed).Select(u => u.NamespaceName).ToArray() ?? [],
+				// Namespace aliases are local source conveniences and are never serialized: a consumer
+				// re-declares its own aliases over the namespaces rehydrated from this metadata.
+				FileUsings = unit.Usings.Where(u => !u.IsExposed && !u.IsAlias).Select(u => u.NamespaceName).ToArray(),
+				NamespaceUsings = ns?.Usings.Where(u => !u.IsExposed && !u.IsAlias).Select(u => u.NamespaceName).ToArray() ?? [],
 				Functions = functions,
 				Structs = structs,
 				Unions = unions,

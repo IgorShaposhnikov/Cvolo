@@ -24,13 +24,17 @@ internal sealed class ValueLoader(
 	private FunctionCodegenContext Function => getFunction();
 
 	/// <summary>
-	/// Resolves an unqualified global name to the visible fully qualified global key.
+	/// Resolves an unqualified or namespace-qualified global name to the visible fully qualified
+	/// global key.
 	/// </summary>
 	/// <remarks>
 	/// A globally unique short name resolves directly. Ambiguous names prefer the current namespace
 	/// and then active using directives, preserving the previous code-generation lookup order.
+	/// A dotted name that is not already a storage key is handed back to the binder, which owns the
+	/// namespace-path rules (active usings, re-exports and <c>using Alias = Namespace;</c> prefixes);
+	/// code generation never interprets an alias itself.
 	/// </remarks>
-	/// <param name="shortName">Unqualified source-level global name.</param>
+	/// <param name="shortName">Source-level global name, optionally namespace-qualified.</param>
 	/// <returns>The qualified global key, or <see langword="null"/> when no unique visible key exists.</returns>
 	public string? ResolveGlobalKey(string shortName)
 	{
@@ -38,6 +42,9 @@ internal sealed class ValueLoader(
 		// delegate invocation through paths such as Native.Callback(...).
 		if (codegen.GlobalVariables.ContainsKey(shortName))
 			return shortName;
+
+		if (shortName.Contains('.'))
+			return ResolveQualifiedGlobalKey(shortName);
 
 		if (!codegen.GlobalShortNames.TryGetValue(shortName, out var candidates))
 			return null;
@@ -62,6 +69,30 @@ internal sealed class ValueLoader(
 		}
 
 		return null;
+	}
+
+	/// <summary>
+	/// Maps a dotted global path onto its module storage key through the binder's qualified-global
+	/// resolution, so a namespace alias reaches the same storage as its target namespace.
+	/// </summary>
+	private string? ResolveQualifiedGlobalKey(string dottedName)
+	{
+		var separator = dottedName.LastIndexOf('.');
+		if (separator <= 0 || separator == dottedName.Length - 1)
+			return null;
+
+		var bindingContext = codegen.BindingContext;
+		if (bindingContext is null)
+			return null;
+
+		var resolved = bindingContext.ResolveQualifiedGlobal(
+			dottedName[..separator], dottedName[(separator + 1)..]);
+		if (resolved is null)
+			return null;
+
+		return codegen.GlobalVariables.ContainsKey(resolved.QualifiedGlobalName)
+			? resolved.QualifiedGlobalName
+			: null;
 	}
 
 	/// <summary>

@@ -17,6 +17,10 @@ public enum ToolingSymbolKind
 	Protocol,
 	Delegate,
 	TypeAlias,
+	/// <summary>
+	/// A compile-time namespace prefix declared by <c>using Alias = Namespace.Path;</c>.
+	/// </summary>
+	NamespaceAlias,
 	TypeParameter,
 	Function,
 	Method,

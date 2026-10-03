@@ -1,0 +1,9 @@
+/// <summary>
+/// Feature: Namespace Alias Using Directives (spec section 11).
+/// 'expose using' keeps its existing semantics and may not declare an alias.
+/// </summary>
+expose using Bad = MathLib.Constants;
+
+int Main() {
+    return 0;
+}

@@ -1,0 +1,9 @@
+/// <summary>
+/// Feature: Namespace Alias Using Directives (spec section 4).
+/// </summary>
+using System;
+
+int Main() {
+    Console.WriteLine($"Aliased: {Aliased()}");
+    return 0;
+}
