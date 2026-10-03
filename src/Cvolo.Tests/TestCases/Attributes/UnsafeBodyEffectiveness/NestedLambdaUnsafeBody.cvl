@@ -1,0 +1,21 @@
+delegate int UnaryInt(int value);
+
+[UnsafeBody]
+int Outer(int x)
+{
+    UnaryInt f = (int v) => {
+        var value = 0;
+        unsafe
+        {
+            int* p = &v;
+            value = *p;
+        }
+        return value;
+    };
+    return f(x);
+}
+
+int main()
+{
+    return 0;
+}

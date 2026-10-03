@@ -228,7 +228,7 @@ internal sealed class FunctionDeclarationRegistrar(BindingContext context)
 		if (newSymbol.IsUnsafeBody)
 			newSymbol.SafetyTier = SafetyTier.Unsafe;
 
-		_attributes.WarnIfUnsafeBodyUnused(func.NameSpan, func.Body, newSymbol, suppressedWarnings);
+		// CVL1001 is emitted by the validation pass after the body's unsafe usages are known.
 
 		// [Inline] on a directly recursive function is advisory only; attribute diagnostics own the warning.
 		_attributes.WarnIfInlineRecursive(func, newSymbol, suppressedWarnings);

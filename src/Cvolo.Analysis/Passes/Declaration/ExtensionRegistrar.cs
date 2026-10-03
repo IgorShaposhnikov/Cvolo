@@ -219,7 +219,7 @@ internal sealed class ExtensionRegistrar(
 				newSymbol,
 				methodSuppressedWarnings,
 				method.Attributes);
-			_attributes.WarnIfUnsafeBodyUnused(method.NameSpan, method.Body, newSymbol, methodSuppressedWarnings);
+			// CVL1001 is emitted by the validation pass after the body's unsafe usages are known.
 
 			// COLLISION RULE: an extension may not re-declare a method the type already
 			// has with a matching signature (another extension block, the proto-default
@@ -311,7 +311,7 @@ internal sealed class ExtensionRegistrar(
 			};
 			var ctorSuppressedWarnings = new List<string>();
 			_attributes.ApplyFunctionAttributes(_attributes.Verify(ctorDecl.Attributes, "Constructor", ctorSuppressedWarnings), ctorSymbol, ctorSuppressedWarnings);
-			_attributes.WarnIfUnsafeBodyUnused(ctorDecl.NameSpan, ctorDecl.Body, ctorSymbol, ctorSuppressedWarnings);
+			// CVL1001 is emitted by the validation pass after the body's unsafe usages are known.
 
 			// COLLISION RULE: duplicate constructor signatures on the same type.
 			if (context.Globals.Lookup(ctorOverloadedName) is not null)

@@ -1,0 +1,11 @@
+[UnsafeBody]
+int Compute()
+{
+    DoesNotExist();
+    return 6 * 7;
+}
+
+int main()
+{
+    return 0;
+}

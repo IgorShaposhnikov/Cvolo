@@ -1,0 +1,20 @@
+unsafe "C" delegate int Proc(int value);
+
+global var Proc Callback;
+
+[UnsafeBody]
+int Inner(int x)
+{
+    return Callback(x);
+}
+
+[UnsafeBody]
+int Outer()
+{
+    return Inner(1);
+}
+
+int main()
+{
+    return 0;
+}

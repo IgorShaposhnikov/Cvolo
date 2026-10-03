@@ -1,0 +1,15 @@
+unsafe int Raw(int value)
+{
+    return value;
+}
+
+[UnsafeBody]
+int Compute(int x)
+{
+    return Raw(x);
+}
+
+int main()
+{
+    return 0;
+}

@@ -4,9 +4,12 @@ using Cvolo.Core.AST.Expressions;
 namespace Cvolo.Analysis.Passes;
 
 /// <summary>
-/// Detects constructs that only make sense under an unsafe context. Grows as the
-/// unbound/unsafe tier lands; today heap allocations, pointer dereference, address-of,
-/// and unsafe casts are the raw-memory operations.
+/// Detects constructs that only make sense under an unsafe context. This is an implementation aid
+/// for syntax-level unsafe operations whose semantic validation site does not need to inspect a
+/// fully-bound type; semantic unsafe operations (native delegate/ABI calls, raw-pointer indexing)
+/// are recorded by validation through the canonical unsafe-usage registry. It deliberately does not
+/// descend into nested callable bodies: usage inside a lambda belongs to that nested body, not to
+/// the syntactically enclosing function.
 /// </summary>
 internal static class UnsafeOperationScanner
 {
@@ -20,6 +23,10 @@ internal static class UnsafeOperationScanner
 	{
 		foreach (var child in root.GetChildren())
 		{
+			// A nested callable body owns its own unsafe usage; do not attribute it to the outer body.
+			if (child is LambdaExpressionSyntax)
+				continue;
+
 			if (UnsafeKinds.Contains(child.Kind))
 				return true;
 

@@ -1,0 +1,13 @@
+unsafe "C" delegate int Proc(int value);
+
+global var Proc Callback;
+
+int InvokeIt(int x)
+{
+    return Callback(x);
+}
+
+int main()
+{
+    return 0;
+}

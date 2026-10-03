@@ -99,11 +99,18 @@ internal sealed class ExpressionValidator(
 				break;
 			case CharacterLiteralExpressionSyntax:
 				break;
+			case NullLiteralExpressionSyntax:
+				// The null literal is unsafe-only; record it as the canonical unsafe usage so a
+				// [UnsafeBody] whose only operation is `null` is still recognized as effective.
+				_validation.RecordUnsafeUsage(UnsafeUsageKind.NullUnsafeLiteral);
+				break;
 			case HeapAllocationExpressionSyntax heap:
 				Check(heap.Expression, scope);
+				_validation.RecordUnsafeUsage(UnsafeUsageKind.HeapAllocation);
 				break;
 			case HeapArrayAllocationExpressionSyntax heapArr:
 				Check(heapArr.CountExpression, scope);
+				_validation.RecordUnsafeUsage(UnsafeUsageKind.HeapAllocation);
 				if (GetType(heapArr.CountExpression, scope) is { } heapCountTy && !heapCountTy.Equals(TypeSymbol.Int))
 				{
 					context.Diagnostics.Report(context.FileContexts[context.CurrentUnit!], heapArr.CountExpression.Span, "Heap array allocation size must be an integer.", DiagnosticIds.HeapArrayAllocationSizeMustBeAnInteger);
@@ -116,6 +123,12 @@ internal sealed class ExpressionValidator(
 				// can escape canonical binding and first reach LLVM codegen unbound.
 				Check(index.Left, scope);
 				Check(index.Index, scope);
+				// Indexing through a raw pointer is an unsafe operation. It is recorded through the
+				// canonical usage path so UnsafeBody effectiveness and any future safety rule share
+				// the same classification; the operation-specific diagnostic is owned by the safety
+				// validator when raw-pointer indexing is enforced.
+				if (GetType(index.Left, scope) is RawPointerTypeSymbol)
+					_validation.RecordUnsafeUsage(UnsafeUsageKind.RawPointerIndex);
 				break;
 			case ArrayInitializationExpressionSyntax arrInit:
 				foreach (var el in arrInit.Elements)
@@ -400,13 +413,13 @@ internal sealed class ExpressionValidator(
 					// API (form B) and are exempt, as are calls already inside an unsafe context.
 					// Enforce CVL1009: Calling a raw 'unsafe function' from code that is not in an unsafe context
 					// Note: [UnsafeBody] functions are encapsulated and exempt from this call-site restriction.
-					if (func.SafetyTier == SafetyTier.Unsafe && !func.IsUnsafeBody && _validation.UnsafeDepth == 0)
+					if (func.SafetyTier == SafetyTier.Unsafe && !func.IsUnsafeBody)
 					{
-						var currentFileContext = context.FileContexts[context.CurrentUnit!];
 						var isNativeAbiCall = func.IsNativeAbi;
-						context.Diagnostics.Report(
-							currentFileContext,
-							call.Span,
+						_validation.RequireUnsafe(
+							context,
+							call,
+							isNativeAbiCall ? UnsafeUsageKind.NativeAbiCall : UnsafeUsageKind.RawUnsafeCall,
 							isNativeAbiCall
 								? $"Calling native-ABI function '{call.FunctionName}' requires an unsafe context."
 								: $"Calling a raw 'unsafe function' '{call.FunctionName}' from code that is not in an unsafe context.",
@@ -601,6 +614,14 @@ internal sealed class ExpressionValidator(
 
 				Check(unary.Operand, scope);
 
+				// Raw dereference and address-of are unsafe-only operations. Record the canonical
+				// usage; the safety validator owns the operation-specific diagnostic so recording
+				// here never double-reports.
+				if (unary.Operator == "*")
+					_validation.RecordUnsafeUsage(UnsafeUsageKind.PointerDereference);
+				else if (unary.Operator == "&")
+					_validation.RecordUnsafeUsage(UnsafeUsageKind.AddressOf);
+
 				// OPERATOR OVERLOAD (§14): a declared unary operator answers before the builtin
 				// cast and [Flags] meanings of '-', '!' and '~'.
 				var unaryOperandType = GetType(unary.Operand, scope);
@@ -661,11 +682,8 @@ internal sealed class ExpressionValidator(
 					}
 					else if (defaultTy is DelegateTypeSymbol { IsNative: true })
 					{
-						if (_validation.UnsafeDepth == 0)
-						{
-							var currentFileContext = context.FileContexts[context.CurrentUnit!];
-							context.Diagnostics.Report(currentFileContext, defaultExpr.Span, $"default({defaultExpr.TypeName}) creates a null native function pointer and requires unsafe.", DiagnosticIds.NullForNativeDelegate);
-						}
+						_validation.RequireUnsafe(context, defaultExpr, UnsafeUsageKind.NullUnsafeLiteral,
+							$"default({defaultExpr.TypeName}) creates a null native function pointer and requires unsafe.", DiagnosticIds.NullForNativeDelegate);
 					}
 					else if (defaultTy is DelegateTypeSymbol { IsNative: false })
 					{
@@ -819,10 +837,12 @@ internal sealed class ExpressionValidator(
 			context.Diagnostics.Report(currentFileContext, call.ArgumentListSpan,
 				$"Delegate '{delegateType.Name}' cannot be invoked with argument types ({actual}).", DiagnosticIds.DelegateCannotBeInvokedWithArgumentTypes);
 		}
-		if (delegateType.IsNative && _validation.UnsafeDepth == 0)
+		if (delegateType.IsNative)
 		{
-			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.Report(currentFileContext, call.Span,
+			_validation.RequireUnsafe(
+				context,
+				call,
+				UnsafeUsageKind.NativeDelegateInvocation,
 				$"Invoking native delegate '{delegateType.Name}' requires an unsafe context.",
 				DiagnosticIds.NativeDelegateInvokeRequiresUnsafe);
 		}
@@ -1241,12 +1261,12 @@ internal sealed class ExpressionValidator(
 			// Do not re-run GetType(expr.Expression): namespace-qualified expressions are not
 			// value receivers and a second generic lookup would spuriously diagnose their root
 			// namespace (for example `System`) as an undefined variable.
-			if (unionType.IsUnsafe && _validation.UnsafeDepth == 0)
+			if (unionType.IsUnsafe)
 			{
-				var currentFileContext = context.FileContexts[context.CurrentUnit!];
-				context.Diagnostics.Report(
-					currentFileContext,
-					expr.Span,
+				_validation.RequireUnsafe(
+					context,
+					expr,
+					UnsafeUsageKind.UnsafeUnionAccess,
 					$"Accessing field '{expr.MemberName}' of raw unsafe union '{unionType.Name}' requires an unsafe context.",
 					DiagnosticIds.UnsafeUnionAccessRequiresUnsafe);
 			}
@@ -1855,41 +1875,52 @@ internal sealed class ExpressionValidator(
 			BodyIsValueExpression = lam.BodyKind == LambdaBodyKind.Expression,
 		};
 
-		if (lam.ExpressionBody is not null)
+		// Unsafe usage inside a lambda body belongs to that nested callable, never to the
+		// syntactically enclosing function (§ nested callable ownership).
+		var prevCallableBody = _validation.CurrentCallableBody;
+		_validation.CurrentCallableBody = lam;
+		try
 		{
-			Check(lam.ExpressionBody, lambdaScope);
-			var bodyType = GetType(lam.ExpressionBody, lambdaScope);
-			if (bodyType != null && !bodyType.Equals(delegateType.ReturnType))
+			if (lam.ExpressionBody is not null)
 			{
-				context.Diagnostics.Report(currentFileContext, lam.ExpressionBody.Span,
-					$"Lambda body has type '{bodyType.Name}' but delegate '{delegateType.Name}' returns '{delegateType.ReturnType.Name}'.",
-					DiagnosticIds.LambdaReturnTypeMismatch);
+				Check(lam.ExpressionBody, lambdaScope);
+				var bodyType = GetType(lam.ExpressionBody, lambdaScope);
+				if (bodyType != null && !bodyType.Equals(delegateType.ReturnType))
+				{
+					context.Diagnostics.Report(currentFileContext, lam.ExpressionBody.Span,
+						$"Lambda body has type '{bodyType.Name}' but delegate '{delegateType.Name}' returns '{delegateType.ReturnType.Name}'.",
+						DiagnosticIds.LambdaReturnTypeMismatch);
+				}
+			}
+			else if (lam.BlockBody is not null)
+			{
+				var prevLambdaReturn = _validation.LambdaReturnType;
+				_validation.LambdaReturnType = delegateType.ReturnType;
+				var prevUnsafeDepth = _validation.UnsafeDepth;
+				// Lambda bodies are validated as safe-callable bodies (§21.3): the enclosing
+				// function's unsafe context must not leak into the lambda.
+				_validation.UnsafeDepth = 0;
+				try
+				{
+					CheckBlock(lam.BlockBody, lambdaScope, _validation.EnclosingFunction!);
+				}
+				finally
+				{
+					_validation.LambdaReturnType = prevLambdaReturn;
+					_validation.UnsafeDepth = prevUnsafeDepth;
+				}
+
+				if (!delegateType.ReturnType.Equals(TypeSymbol.Void) && !EndsWithReturn(lam.BlockBody))
+				{
+					context.Diagnostics.Report(currentFileContext, lam.BlockBody.Span,
+						$"Lambda body does not end with a return statement but delegate '{delegateType.Name}' returns '{delegateType.ReturnType.Name}'.",
+						DiagnosticIds.LambdaReturnTypeMismatch);
+				}
 			}
 		}
-		else if (lam.BlockBody is not null)
+		finally
 		{
-			var prevLambdaReturn = _validation.LambdaReturnType;
-			_validation.LambdaReturnType = delegateType.ReturnType;
-			var prevUnsafeDepth = _validation.UnsafeDepth;
-			// Lambda bodies are validated as safe-callable bodies (§21.3): the enclosing
-			// function's unsafe context must not leak into the lambda.
-			_validation.UnsafeDepth = 0;
-			try
-			{
-				CheckBlock(lam.BlockBody, lambdaScope, _validation.EnclosingFunction!);
-			}
-			finally
-			{
-				_validation.LambdaReturnType = prevLambdaReturn;
-				_validation.UnsafeDepth = prevUnsafeDepth;
-			}
-
-			if (!delegateType.ReturnType.Equals(TypeSymbol.Void) && !EndsWithReturn(lam.BlockBody))
-			{
-				context.Diagnostics.Report(currentFileContext, lam.BlockBody.Span,
-					$"Lambda body does not end with a return statement but delegate '{delegateType.Name}' returns '{delegateType.ReturnType.Name}'.",
-					DiagnosticIds.LambdaReturnTypeMismatch);
-			}
+			_validation.CurrentCallableBody = prevCallableBody;
 		}
 	}
 
@@ -2004,12 +2035,9 @@ internal sealed class ExpressionValidator(
 		SymbolTable scope)
 	{
 		var currentFileContext = context.FileContexts[context.CurrentUnit!];
-		if (_validation.UnsafeDepth == 0)
-		{
-			context.Diagnostics.Report(currentFileContext, address.Span,
-				"Taking a native function address requires an unsafe context.",
-				DiagnosticIds.FunctionAddressRequiresUnsafe);
-		}
+		_validation.RequireUnsafe(context, address, UnsafeUsageKind.NativeFunctionAddress,
+			"Taking a native function address requires an unsafe context.",
+			DiagnosticIds.FunctionAddressRequiresUnsafe);
 
 		var candidates = new List<FunctionSymbol>();
 		var isBoundMethod = false;
@@ -2393,15 +2421,18 @@ internal sealed class ExpressionValidator(
 			|| (operandDelegate is { IsNative: true } && targetRawPointer is not null);
 		if (isNativeReinterpret)
 		{
-			if (_validation.UnsafeDepth == 0)
-			{
-				var currentFileContext = context.FileContexts[context.CurrentUnit!];
-				context.Diagnostics.Report(currentFileContext, unary.Span,
-					"Casting a native delegate to/from a raw pointer or another native delegate requires an unsafe context.",
-					DiagnosticIds.NativeDelegateCastRequiresUnsafe);
-			}
+			_validation.RequireUnsafe(context, unary, UnsafeUsageKind.NativeDelegateCast,
+				"Casting a native delegate to/from a raw pointer or another native delegate requires an unsafe context.",
+				DiagnosticIds.NativeDelegateCastRequiresUnsafe);
 			return;
 		}
+
+		// Any other cast whose target is a raw pointer is a raw-pointer cast. It may be a valid
+		// reinterpretation but still only belongs in unsafe code; record the canonical usage so
+		// UnsafeBody effectiveness sees it. The operation-specific safety check lives with the
+		// raw-pointer rules below and in the safety validator.
+		if (targetRawPointer is not null)
+			_validation.RecordUnsafeUsage(UnsafeUsageKind.RawPointerCast);
 
 		// From here down preserve the existing destructive raw-pointer cast rules.
 		if (targetRawPointer is null)
@@ -2429,11 +2460,9 @@ internal sealed class ExpressionValidator(
 		}
 
 		if (targetRawPointer.ElementType.Equals(TypeSymbol.Char)
-			&& operandType.Equals(TypeSymbol.String)
-			&& _validation.UnsafeDepth == 0)
+			&& operandType.Equals(TypeSymbol.String))
 		{
-			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.Report(currentFileContext, unary.Span,
+			_validation.RequireUnsafe(context, unary, UnsafeUsageKind.RawPointerCast,
 				"Casting a `string` to `char*` requires an unsafe context. Wrap the cast in `unsafe { }` or mark the enclosing function `[UnsafeBody]`.",
 				DiagnosticIds.StringToCharPointerOutsideUnsafe);
 		}

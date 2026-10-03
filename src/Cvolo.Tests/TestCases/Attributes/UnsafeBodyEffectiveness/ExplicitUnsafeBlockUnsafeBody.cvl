@@ -1,0 +1,16 @@
+[UnsafeBody]
+int Compute(int x)
+{
+    var result = 0;
+    unsafe
+    {
+        int* p = &x;
+        result = *p;
+    }
+    return result;
+}
+
+int main()
+{
+    return 0;
+}

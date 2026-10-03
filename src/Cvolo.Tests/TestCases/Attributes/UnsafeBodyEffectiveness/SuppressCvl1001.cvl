@@ -1,0 +1,14 @@
+using System;
+
+[UnsafeBody]
+[SuppressWarning("CVL1001")]
+int Compute()
+{
+    return 6 * 7;
+}
+
+int main()
+{
+    Console.WriteLine($"Answer: {Compute()}");
+    return 0;
+}

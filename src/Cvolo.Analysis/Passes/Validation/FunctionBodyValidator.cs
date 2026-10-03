@@ -1,3 +1,4 @@
+using Cvolo.Analysis.Passes;
 using Cvolo.Analysis.Symbols;
 using Cvolo.Analysis.Symbols.Base;
 using Cvolo.Analysis.Symbols.Structs;
@@ -60,10 +61,13 @@ internal sealed class FunctionBodyValidator(
 
 		var baseUnsafeDepth = validation.UnsafeDepth;
 		var baseInUnbound = validation.InUnbound;
+		var baseCallableBody = validation.CurrentCallableBody;
 		validation.UnsafeDepth = IsUnsafeFunction(func) ? 1 : 0;
 		validation.InUnbound = func.Modifier == SafetyTier.Unbound;
 		var baseEnclosingFunction = validation.EnclosingFunction;
 		validation.EnclosingFunction = func;
+		validation.CurrentCallableBody = func;
+		var errorCountBefore = ErrorCount;
 		var localScope = new SymbolTable(context.Globals);
 
 		foreach (var param in func.Parameters)
@@ -93,9 +97,12 @@ internal sealed class FunctionBodyValidator(
 			, DiagnosticIds.FunctionIsDeclaredToReturnButIsMissingAReturnStatement);
 		}
 
+		CheckUnsafeBodyEffectiveness(func, errorCountBefore);
+
 		validation.UnsafeDepth = baseUnsafeDepth;
 		validation.InUnbound = baseInUnbound;
 		validation.EnclosingFunction = baseEnclosingFunction;
+		validation.CurrentCallableBody = baseCallableBody;
 	}
 
 	/// <summary>
@@ -106,6 +113,70 @@ internal sealed class FunctionBodyValidator(
 		return func.Modifier == SafetyTier.Unsafe ||
 		func.CallingConvention is not null ||
 		func.Attributes.Any(static a => string.Equals(a.Name, "UnsafeBody", StringComparison.OrdinalIgnoreCase));
+	}
+
+	/// <summary>Number of error-severity diagnostics currently recorded for the compilation.</summary>
+	private int ErrorCount =>
+		context.Diagnostics.Diagnostics.Count(static d => d.Severity == DiagnosticSeverity.Error);
+
+	/// <summary>
+	/// Emits CVL1001 once a <c>[UnsafeBody]</c> body has been fully validated. The decision consumes
+	/// the canonical unsafe-usage registry populated by semantic validation: if any operation that
+	/// requires unsafe capability was recorded for this exact callable body, the attribute is
+	/// effective. The warning is suppressed for incomplete analysis (new blocking errors) so it never
+	/// speculates on a body the compiler could not reliably classify.
+	/// </summary>
+	private void CheckUnsafeBodyEffectiveness(FunctionDeclarationSyntax decl, int errorCountBefore)
+	{
+		if (decl.Body is null || !IsUnsafeBodyDeclaration(decl))
+			return;
+
+		// Blocking errors introduced while validating this body mean unsafe-effect analysis did
+		// not complete; do not emit a misleading no-effect warning.
+		if (ErrorCount > errorCountBefore)
+			return;
+
+		if (SuppressesCvl1001(decl))
+			return;
+
+		if (validation.HasUnsafeUsage(decl))
+			return;
+
+		// Syntax-level unsafe operations that do not (yet) have a dedicated semantic validation
+		// site remain covered by the shared scanner. It is an implementation aid only and never
+		// overrides the semantic registry above.
+		if (UnsafeOperationScanner.ContainsUnsafeOperations(decl.Body))
+			return;
+
+		context.Diagnostics.ReportWarning(
+			context.FileContexts[context.CurrentUnit!],
+			decl.NameSpan,
+			"'[UnsafeBody]' attribute has no effect because function contains no unsafe operations.",
+			DiagnosticIds.UnsafeBodyNoEffect);
+	}
+
+	/// <summary>Returns whether the declaration carries the <c>[UnsafeBody]</c> attribute.</summary>
+	private static bool IsUnsafeBodyDeclaration(FunctionDeclarationSyntax decl) =>
+		decl.Attributes.Any(static a => NormalizeAttributeName(a.Name) == "UnsafeBody");
+
+	/// <summary>
+	/// Returns whether the declaration suppresses CVL1001 through <c>[SuppressWarning("CVL1001")]</c>.
+	/// </summary>
+	private static bool SuppressesCvl1001(FunctionDeclarationSyntax decl) =>
+		decl.Attributes.Any(static a =>
+			NormalizeAttributeName(a.Name) == "SuppressWarning"
+			&& a.Arguments.Count > 0
+			&& a.Arguments[0] is StringLiteralExpressionSyntax literal
+			&& string.Equals(literal.Value, DiagnosticIds.UnsafeBodyNoEffect, StringComparison.OrdinalIgnoreCase));
+
+	/// <summary>
+	/// Normalizes a possibly namespace-qualified attribute name by dropping any qualifier and the
+	/// optional <c>Attribute</c> suffix.
+	/// </summary>
+	private static string NormalizeAttributeName(string name)
+	{
+		var simple = name.Contains('.') ? name[(name.LastIndexOf('.') + 1)..] : name;
+		return simple.EndsWith("Attribute", StringComparison.Ordinal) ? simple[..^"Attribute".Length] : simple;
 	}
 
 	/// <summary>
@@ -136,6 +207,9 @@ internal sealed class FunctionBodyValidator(
 			validation.UnsafeDepth = IsUnsafeFunction(method) ? 1 : 0;
 			var baseInUnboundP = validation.InUnbound;
 			validation.InUnbound = method.Modifier == SafetyTier.Unbound;
+			var baseCallableBodyP = validation.CurrentCallableBody;
+			validation.CurrentCallableBody = method;
+			var errorCountBeforeP = ErrorCount;
 			var protoScope = new SymbolTable(context.Globals);
 			foreach (var p in method.Parameters)
 			{
@@ -147,8 +221,10 @@ internal sealed class FunctionBodyValidator(
 			}
 
 			statements.CheckBlock(method.Body, protoScope, method);
+			CheckUnsafeBodyEffectiveness(method, errorCountBeforeP);
 			validation.UnsafeDepth = baseUnsafeDepth;
 			validation.InUnbound = baseInUnboundP;
+			validation.CurrentCallableBody = baseCallableBodyP;
 			return;
 		}
 
@@ -174,6 +250,9 @@ internal sealed class FunctionBodyValidator(
 		validation.UnsafeDepth = IsUnsafeFunction(method) ? 1 : 0;
 		var baseInUnbound2 = validation.InUnbound;
 		validation.InUnbound = method.Modifier == SafetyTier.Unbound;
+		var baseCallableBody2 = validation.CurrentCallableBody;
+		validation.CurrentCallableBody = method;
+		var errorCountBefore2 = ErrorCount;
 
 		var structType = extendedType as StructTypeSymbol;
 		bool isMutating;
@@ -307,9 +386,12 @@ internal sealed class FunctionBodyValidator(
 			, DiagnosticIds.MethodIsDeclaredToReturnButIsMissingAReturnStatement);
 		}
 
+		CheckUnsafeBodyEffectiveness(method, errorCountBefore2);
+
 		// Restore original depth context
 		validation.UnsafeDepth = baseUnsafeDepth2;
 		validation.InUnbound = baseInUnbound2;
+		validation.CurrentCallableBody = baseCallableBody2;
 	}
 
 	/// <summary>
@@ -345,6 +427,9 @@ internal sealed class FunctionBodyValidator(
 		validation.UnsafeDepth = IsUnsafeFunction(method) ? 1 : 0;
 		var baseInUnbound = validation.InUnbound;
 		validation.InUnbound = method.Modifier == SafetyTier.Unbound;
+		var baseCallableBody = validation.CurrentCallableBody;
+		validation.CurrentCallableBody = method;
+		var errorCountBefore = ErrorCount;
 
 		var localScope = new SymbolTable(context.Globals);
 		foreach (var param in method.Parameters)
@@ -372,8 +457,11 @@ internal sealed class FunctionBodyValidator(
 			, DiagnosticIds.FunctionIsDeclaredToReturnButIsMissingAReturnStatement);
 		}
 
+		CheckUnsafeBodyEffectiveness(method, errorCountBefore);
+
 		validation.UnsafeDepth = baseUnsafeDepth;
 		validation.InUnbound = baseInUnbound;
+		validation.CurrentCallableBody = baseCallableBody;
 		validation.AssociatedInstanceFields = previousAssociatedFields;
 	}
 

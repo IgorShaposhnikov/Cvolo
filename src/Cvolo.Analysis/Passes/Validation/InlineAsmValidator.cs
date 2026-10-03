@@ -49,12 +49,8 @@ internal sealed class InlineAsmValidator(
 	/// </summary>
 	public void Validate(AsmExpressionSyntax asm, SymbolTable scope)
 	{
-		if (validation.UnsafeDepth == 0)
-		{
-			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.Report(currentFileContext, asm.Span,
-				"`asm` can only be used inside `unsafe` contexts.", DiagnosticIds.AsmOutsideUnsafeContext);
-		}
+		validation.RequireUnsafe(context, asm, UnsafeUsageKind.InlineAsm,
+			"`asm` can only be used inside `unsafe` contexts.", DiagnosticIds.AsmOutsideUnsafeContext);
 
 		var outputs = asm.Operands.Where(o => o.IsOutput).ToList();
 		if (asm.ResultType is not null && outputs.Count != 1)

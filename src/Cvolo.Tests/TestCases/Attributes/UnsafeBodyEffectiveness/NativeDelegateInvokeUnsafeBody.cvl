@@ -1,0 +1,14 @@
+unsafe "C" delegate int Proc(int value);
+
+global var Proc Callback;
+
+[UnsafeBody]
+int InvokeIt(int x)
+{
+    return Callback(x);
+}
+
+int main()
+{
+    return 0;
+}

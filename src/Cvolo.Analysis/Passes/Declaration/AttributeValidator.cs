@@ -206,30 +206,6 @@ internal sealed class AttributeValidator(BindingContext context)
 	}
 
 	/// <summary>
-	/// Reports the existing suppressible warning when <c>[UnsafeBody]</c> is present but the body
-	/// contains no operation classified as unsafe.
-	/// </summary>
-	public void WarnIfUnsafeBodyUnused(
-		TextSpan declarationSpan,
-		SyntaxNode body,
-		FunctionSymbol symbol,
-		List<string> suppressedWarnings)
-	{
-		if (body is null)
-			return;
-		if (!symbol.IsUnsafeBody || suppressedWarnings.Contains(DiagnosticIds.UnsafeBodyNoEffect))
-			return;
-		if (UnsafeOperationScanner.ContainsUnsafeOperations(body))
-			return;
-
-		context.Diagnostics.ReportWarning(
-			context.FileContexts[context.CurrentUnit!],
-			declarationSpan,
-			"'[UnsafeBody]' attribute has no effect because function contains no unsafe operations.",
-			DiagnosticIds.UnsafeBodyNoEffect);
-	}
-
-	/// <summary>
 	/// Reports the existing advisory warning when an inline-marked function directly references
 	/// itself and the warning is not suppressed.
 	/// </summary>
