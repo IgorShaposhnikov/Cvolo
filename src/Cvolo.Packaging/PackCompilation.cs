@@ -311,14 +311,20 @@ internal static class PackCompilation
 				"Program does not contain a static 'main' method suitable for an entry point.");
 		}
 
-		// 7. Emit LLVM IR for the package's own units only. The standard library is
-		// present above for parsing/binding, but its definitions belong to the final
-		// consumer compilation. Emitting stdlib bodies into every .cvlib makes the
-		// linker see duplicate System.* symbols when package bitcode is combined with
-		// an application that also compiles the standard library.
+		// 7. Emit LLVM IR for the package's own bodies only. The standard library is
+		// present above for parsing/binding, and its signatures must still be declared
+		// because package code can call ordinary SDK functions. Mark non-project units
+		// external for emission so declarations are available but bodies stay with the
+		// final consumer compilation, avoiding duplicate System.* symbols.
 		var packagedProjectUnits = asts.Where(projectUnits.Contains).ToArray();
 		if (packagedProjectUnits.Length == 0)
 			throw new InvalidOperationException("No project compilation units remained after lowering.");
+
+		foreach (var ast in asts)
+		{
+			if (!projectUnits.Contains(ast))
+				binder.Context.ExternalPackageUnits.Add(ast);
+		}
 
 		var targetLayout = new TargetLayout();
 		var optimizer = new IrOptimizer(targetLayout, OptimizationLevel.Os);
@@ -335,7 +341,7 @@ internal static class PackCompilation
 		var emitContext = binder.Context.FileContexts.TryGetValue(packagedProjectUnits[0], out var projectContext)
 			? projectContext
 			: firstContext!;
-		var ir = emitter.Emit(packagedProjectUnits, emitContext, binder.Context);
+		var ir = emitter.Emit(asts, emitContext, binder.Context);
 
 		// 8. Materialize the scratch workspace.
 		var workspace = Directory.CreateTempSubdirectory("cvolopack-").FullName;
