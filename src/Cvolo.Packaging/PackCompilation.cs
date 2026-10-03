@@ -132,6 +132,9 @@ internal static class PackCompilation
 		var baseSourceSet = sdkResolution is null
 			? new HashSet<string>(pathComparer)
 			: new HashSet<string>(sdkResolution.BaseSources.Select(Path.GetFullPath), pathComparer);
+		var systemSourceSet = sdkResolution is null
+			? new HashSet<string>(pathComparer)
+			: new HashSet<string>(sdkResolution.SystemSources.Select(Path.GetFullPath), pathComparer);
 		if (verbose)
 		{
 			Console.WriteLine("Files selected for compilation:");
@@ -152,7 +155,10 @@ internal static class PackCompilation
 		{
 			var artifactPath = SourcePathRemapper.Map(file, manifest.ProjectDirectory);
 			var context = new CompilationContext(File.ReadAllText(file), artifactPath);
-			context.Origin = baseSourceSet.Contains(Path.GetFullPath(file)) ? SourceOrigin.BaseSdk : SourceOrigin.Project;
+			var fullPath = Path.GetFullPath(file);
+			context.Origin = baseSourceSet.Contains(fullPath)
+				? SourceOrigin.BaseSdk
+				: systemSourceSet.Contains(fullPath) ? SourceOrigin.SystemSdk : SourceOrigin.Project;
 			firstContext ??= context;
 
 			var ast = parser.Parse(context);
@@ -302,9 +308,7 @@ internal static class PackCompilation
 		}
 
 		// 6. Entry-point enforcement for executable packages.
-		if (!manifest.IsLibrary
-			&& binder.Context.Globals.Lookup("main") is null
-			&& binder.Context.Globals.Lookup("Main") is null)
+		if (!manifest.IsLibrary && !EntryPointDiscovery.HasEntryPoint(binder.Context, asts))
 		{
 			throw new PackageException(
 				"ENTRYPOINT",

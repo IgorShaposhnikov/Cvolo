@@ -51,7 +51,7 @@ public sealed class PackageApiMetadata
 
 			var structs = members
 				.OfType<StructDeclarationSyntax>()
-				.Where(type => type.Visibility == Visibility.Public && type.GenericParameters.Count == 0)
+				.Where(type => type.GenericParameters.Count == 0)
 				.Select(type => new PackageApiStruct
 				{
 					Name = type.Name,
@@ -63,7 +63,7 @@ public sealed class PackageApiMetadata
 
 			var unions = members
 				.OfType<UnionDeclarationSyntax>()
-				.Where(type => type.Visibility == Visibility.Public && type.GenericParameters.Count == 0)
+				.Where(type => type.GenericParameters.Count == 0)
 				.Select(type => new PackageApiUnion
 				{
 					Name = type.Name,

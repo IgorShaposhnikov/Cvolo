@@ -130,14 +130,31 @@ internal sealed class GenericFunctionInstantiator(
 			context.SymbolUnits[instName] = templateUnit;
 		}
 
-		// Bind the newly generated function body immediately!
-		var localScope = new SymbolTable(context.Globals);
-		foreach (var p in parameters)
+		// Bind the newly generated function body under the template's original unit so its
+		// namespace imports are visible even when instantiation is triggered from another file.
+		var previousUnit = context.CurrentUnit;
+		var previousNamespace = context.CurrentNamespace;
+		if (context.SymbolUnits.TryGetValue(instName, out var instUnit))
 		{
-			localScope.Declare(new VariableSymbol(p.Name, p.Type, p.Type is PointerTypeSymbol { IsMutable: true }) { IsInitialized = true, Origin = OriginKind.Parameter });
+			context.CurrentUnit = instUnit;
+			context.CurrentNamespace = instUnit.NamespaceDeclaration?.Name;
 		}
 
-		validateBlock(instBody, localScope, instDecl);
+		try
+		{
+			var localScope = new SymbolTable(context.Globals);
+			foreach (var p in parameters)
+			{
+				localScope.Declare(new VariableSymbol(p.Name, p.Type, p.Type is PointerTypeSymbol { IsMutable: true }) { IsInitialized = true, Origin = OriginKind.Parameter });
+			}
+
+			validateBlock(instBody, localScope, instDecl);
+		}
+		finally
+		{
+			context.CurrentUnit = previousUnit;
+			context.CurrentNamespace = previousNamespace;
+		}
 
 		return instSymbol;
 	}
@@ -503,13 +520,29 @@ internal sealed class GenericFunctionInstantiator(
 			context.SymbolUnits[instName] = templateUnit;
 		}
 
-		var localScope = new SymbolTable(context.Globals);
-		foreach (var p in parameters)
+		var previousUnit = context.CurrentUnit;
+		var previousNamespace = context.CurrentNamespace;
+		if (context.SymbolUnits.TryGetValue(instName, out var instUnit))
 		{
-			localScope.Declare(new VariableSymbol(p.Name, p.Type, p.Type is PointerTypeSymbol { IsMutable: true }) { IsInitialized = true, Origin = OriginKind.Parameter });
+			context.CurrentUnit = instUnit;
+			context.CurrentNamespace = instUnit.NamespaceDeclaration?.Name;
 		}
 
-		validateBlock(instBody, localScope, instDecl);
+		try
+		{
+			var localScope = new SymbolTable(context.Globals);
+			foreach (var p in parameters)
+			{
+				localScope.Declare(new VariableSymbol(p.Name, p.Type, p.Type is PointerTypeSymbol { IsMutable: true }) { IsInitialized = true, Origin = OriginKind.Parameter });
+			}
+
+			validateBlock(instBody, localScope, instDecl);
+		}
+		finally
+		{
+			context.CurrentUnit = previousUnit;
+			context.CurrentNamespace = previousNamespace;
+		}
 
 		return instSymbol;
 	}

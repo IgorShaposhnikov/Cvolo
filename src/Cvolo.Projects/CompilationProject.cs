@@ -16,8 +16,9 @@ public sealed class CompilationProject
 	public IReadOnlyList<string> RequiredSystemNamespaces { get; }
 	public IReadOnlyList<SdkNamespaceMismatch> NamespaceMismatches { get; }
 	public IReadOnlyList<string> BaseSourceFiles { get; }
+	public IReadOnlyList<string> SystemSourceFiles { get; }
 
-	private CompilationProject(IReadOnlyList<string> sourceFiles, string outputName, bool isShared, string projectDirectory, bool strictOption = false, IReadOnlyList<string>? projectReferences = null, bool isFreestanding = false, IReadOnlyList<string>? requiredSystemNamespaces = null, IReadOnlyList<SdkNamespaceMismatch>? namespaceMismatches = null, IReadOnlyList<string>? baseSourceFiles = null)
+	private CompilationProject(IReadOnlyList<string> sourceFiles, string outputName, bool isShared, string projectDirectory, bool strictOption = false, IReadOnlyList<string>? projectReferences = null, bool isFreestanding = false, IReadOnlyList<string>? requiredSystemNamespaces = null, IReadOnlyList<SdkNamespaceMismatch>? namespaceMismatches = null, IReadOnlyList<string>? baseSourceFiles = null, IReadOnlyList<string>? systemSourceFiles = null)
 	{
 		SourceFiles = sourceFiles;
 		OutputName = outputName;
@@ -29,9 +30,10 @@ public sealed class CompilationProject
 		RequiredSystemNamespaces = requiredSystemNamespaces ?? [];
 		NamespaceMismatches = namespaceMismatches ?? [];
 		BaseSourceFiles = baseSourceFiles ?? [];
+		SystemSourceFiles = systemSourceFiles ?? [];
 	}
 
-	public static CompilationProject Load(string inputPath, string? compilerBaseDir = null, bool forceShared = false, bool mergeProjectReferences = true, bool includeSystem = true, IReadOnlyDictionary<string, string>? sourceOverrides = null, bool freestanding = false)
+	public static CompilationProject Load(string inputPath, string? compilerBaseDir = null, bool forceShared = false, bool mergeProjectReferences = true, bool includeSystem = true, IReadOnlyDictionary<string, string>? sourceOverrides = null, bool freestanding = false, IReadOnlyList<string>? extraSystemNamespaces = null)
 	{
 		List<string> sourceFiles = [];
 		var outputName = "main";
@@ -168,7 +170,7 @@ public sealed class CompilationProject
 		SdkResolution? sdkResolution = null;
 		if (stdLibFullPath is not null && Directory.Exists(stdLibFullPath))
 		{
-			sdkResolution = SdkLibraryResolver.Resolve(stdLibFullPath, sourceFiles, includeSystem && !effectiveFreestanding, sourceOverrides);
+			sdkResolution = SdkLibraryResolver.Resolve(stdLibFullPath, sourceFiles, includeSystem && !effectiveFreestanding, sourceOverrides, extraSystemNamespaces);
 			sourceFiles.InsertRange(0, sdkResolution.Sources);
 		}
 
@@ -200,7 +202,8 @@ public sealed class CompilationProject
 			effectiveFreestanding,
 			sdkResolution?.RequiredSystemNamespaces,
 			sdkResolution?.NamespaceMismatches,
-			sdkResolution?.BaseSources);
+			sdkResolution?.BaseSources,
+			sdkResolution?.SystemSources);
 	}
 
 	public static void CreateNewProject(string projectName)

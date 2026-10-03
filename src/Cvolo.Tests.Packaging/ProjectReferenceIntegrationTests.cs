@@ -54,6 +54,68 @@ public sealed class ProjectReferenceIntegrationTests : IDisposable
 	}
 
 	[Fact]
+	public void CompilationProject_ProjectFileInput_IncludesNestedSources()
+	{
+		var appDirectory = Path.Combine(_root, "NestedSourceApp");
+		var appSourceDirectory = Path.Combine(appDirectory, "App");
+		Directory.CreateDirectory(appSourceDirectory);
+		var projectPath = Path.Combine(appDirectory, "NestedSourceApp.cvlproj");
+		var mainPath = Path.Combine(appSourceDirectory, "Main.cvl");
+
+		File.WriteAllText(projectPath, """
+<Project Sdk="Cvolo.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>NestedSourceApp</AssemblyName>
+  </PropertyGroup>
+</Project>
+""");
+		File.WriteAllText(mainPath, """
+namespace NestedSourceApp.App;
+
+int Main() {
+    return 0;
+}
+""");
+
+		var project = CompilationProject.Load(projectPath, compilerBaseDir: _root, mergeProjectReferences: false);
+
+		Assert.Contains(project.SourceFiles, source => string.Equals(source, Path.GetFullPath(mainPath), StringComparison.OrdinalIgnoreCase));
+	}
+
+	[Fact]
+	public void Build_ProjectFileInput_FindsNestedNamespacedMain()
+	{
+		RequireClang();
+		var appDirectory = Path.Combine(_root, "NestedMainApp");
+		var appSourceDirectory = Path.Combine(appDirectory, "App");
+		Directory.CreateDirectory(appSourceDirectory);
+
+		File.WriteAllText(Path.Combine(appDirectory, "NestedMainApp.cvlproj"), """
+<Project Sdk="Cvolo.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>NestedMainApp</AssemblyName>
+  </PropertyGroup>
+</Project>
+""");
+		File.WriteAllText(Path.Combine(appSourceDirectory, "Main.cvl"), """
+namespace NestedMainApp.App;
+
+int Main() {
+    return 0;
+}
+""");
+
+		var cache = new PackageCache(Path.Combine(_root, "nested-main-cache"));
+		var driverType = typeof(ICompilerDriver).Assembly.GetType("Cvolo.Drivers.CompilerDriver", throwOnError: true)!;
+		var driver = Assert.IsAssignableFrom<ICompilerDriver>(Activator.CreateInstance(driverType, cache));
+		var (exitCode, buildOutput) = CompileWithCapturedOutput(driver, Path.Combine(appDirectory, "NestedMainApp.cvlproj"));
+
+		Assert.True(exitCode == 0, buildOutput);
+	}
+
+	[Fact]
 	public void Build_AppWithDirectProjectReference_NeedsNoPackFeedCacheOrLock()
 	{
 		RequireClang();

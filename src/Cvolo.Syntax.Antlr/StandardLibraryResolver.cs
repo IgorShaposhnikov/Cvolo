@@ -17,6 +17,7 @@ public sealed record SdkNamespaceMismatch(string FilePath, string ExpectedNamesp
 internal sealed record SdkResolution(
 	IReadOnlyList<string> Sources,
 	IReadOnlyList<string> BaseSources,
+	IReadOnlyList<string> SystemSources,
 	IReadOnlyList<string> RequiredSystemNamespaces,
 	IReadOnlyList<SdkNamespaceMismatch> NamespaceMismatches);
 
@@ -38,7 +39,8 @@ internal static class SdkLibraryResolver
 		string libraryRoot,
 		IReadOnlyList<string> projectSources,
 		bool includeSystem,
-		IReadOnlyDictionary<string, string>? sourceOverrides = null)
+		IReadOnlyDictionary<string, string>? sourceOverrides = null,
+		IReadOnlyList<string>? extraSystemNamespaces = null)
 	{
 		var files = Directory.GetFiles(libraryRoot, "*.cvl", SearchOption.AllDirectories)
 			.Concat(Directory.GetFiles(libraryRoot, "*.cv", SearchOption.AllDirectories))
@@ -193,6 +195,15 @@ internal static class SdkLibraryResolver
 			}
 		}
 
+		if (extraSystemNamespaces is not null)
+		{
+			foreach (var namespaceName in extraSystemNamespaces)
+			{
+				Require(namespaceName);
+				Enqueue(namespaceName);
+			}
+		}
+
 		if (includeSystem)
 		{
 			while (pending.Count > 0)
@@ -213,11 +224,12 @@ internal static class SdkLibraryResolver
 		selected.Sort((left, right) => string.CompareOrdinal(left.RelativePath, right.RelativePath));
 		var sources = selected.Select(entry => entry.FilePath).ToList();
 		var baseSources = selected.Where(entry => entry.Tier == SdkTier.Base).Select(entry => entry.FilePath).ToList();
+		var systemSources = selected.Where(entry => entry.Tier == SdkTier.System).Select(entry => entry.FilePath).ToList();
 
 		var requiredList = required.ToList();
 		requiredList.Sort(StringComparer.Ordinal);
 
-		return new SdkResolution(sources, baseSources, requiredList, mismatches);
+		return new SdkResolution(sources, baseSources, systemSources, requiredList, mismatches);
 	}
 
 	private static bool TryClassifyTier(string libraryRoot, string filePath, out SdkTier tier, out string expectedNamespace)

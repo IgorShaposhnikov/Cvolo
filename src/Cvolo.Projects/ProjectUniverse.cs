@@ -80,6 +80,7 @@ public static class ProjectUniverseLoader
 	public static ProjectUniverse Load(ProjectUniverseRequest request)
 	{
 		ArgumentNullException.ThrowIfNull(request);
+		(ProjectManifest Manifest, LockFile LockFile)? packageState = null;
 
 		PackageCache? packageCache = request.PackageCache;
 		if (request.LoadPackages && request.RestorePackages && !request.IgnoreAncestorProject)
@@ -88,6 +89,11 @@ public static class ProjectUniverseLoader
 			var installer = new PackageInstaller(packageCache);
 			var restore = new PackageBuildRestoreService(new PackageRestoreService(installer));
 			_ = restore.RestoreIfRequired(request.InputPath, noRestore: false);
+		}
+
+		if (request.LoadPackages && !request.IgnoreAncestorProject)
+		{
+			packageState = TryResolvePackageState(request.InputPath);
 		}
 
 		var project = CompilationProject.Load(
@@ -103,7 +109,6 @@ public static class ProjectUniverseLoader
 
 		if (request.LoadPackages && !request.IgnoreAncestorProject)
 		{
-			var packageState = TryResolvePackageState(request.InputPath);
 			if (packageState is { } state)
 			{
 				var cache = packageCache ??= new PackageCache();
@@ -146,6 +151,20 @@ public static class ProjectUniverseLoader
 				.ToList();
 		}
 
+		var packageSystemNamespaces = CollectPackageSystemNamespaces(artifacts);
+		if (packageSystemNamespaces.Count > 0)
+		{
+			project = CompilationProject.Load(
+				request.InputPath,
+				request.CompilerBaseDir,
+				request.ForceShared,
+				mergeProjectReferences: !request.UseProjectReferencePackages,
+				includeSystem: request.IncludeSystem,
+				sourceOverrides: request.SourceOverrides,
+				freestanding: request.Freestanding,
+				extraSystemNamespaces: packageSystemNamespaces);
+		}
+
 		var externalUnits = new List<ExternalSemanticUnit>();
 		foreach (var artifact in artifacts)
 		{
@@ -167,6 +186,82 @@ public static class ProjectUniverseLoader
 		}
 
 		return new ProjectUniverse(project, artifacts, externalUnits);
+	}
+
+	private static IReadOnlyList<string> CollectPackageSystemNamespaces(IEnumerable<ResolvedPackageArtifacts> artifacts)
+	{
+		var namespaces = new HashSet<string>(StringComparer.Ordinal);
+		foreach (var artifact in artifacts)
+		{
+			foreach (var unit in artifact.ApiMetadata.Units)
+			{
+				AddSystemNamespaces(namespaces, unit.FileUsings);
+				AddSystemNamespaces(namespaces, unit.NamespaceUsings);
+			}
+
+			foreach (var unit in artifact.TemplateUnits.Concat(artifact.SourceFallbackUnits))
+			{
+				AddSystemNamespaces(namespaces, unit.Usings.Select(u => u.NamespaceName));
+				if (unit.NamespaceDeclaration is not null)
+					AddSystemNamespaces(namespaces, unit.NamespaceDeclaration.Usings.Select(u => u.NamespaceName));
+			}
+
+			if (artifact.SourceFiles is not null)
+			{
+				foreach (var sourceFile in artifact.SourceFiles)
+					AddSystemNamespaces(namespaces, ExtractSystemNamespaces(sourceFile.Source));
+			}
+		}
+
+		var result = namespaces.ToList();
+		result.Sort(StringComparer.Ordinal);
+		return result;
+	}
+
+	private static void AddSystemNamespaces(HashSet<string> target, IEnumerable<string> namespaces)
+	{
+		foreach (var namespaceName in namespaces)
+		{
+			if (namespaceName == "System" || namespaceName.StartsWith("System.", StringComparison.Ordinal))
+				target.Add(namespaceName);
+		}
+	}
+
+	private static IEnumerable<string> ExtractSystemNamespaces(string source)
+	{
+		using var reader = new StringReader(source);
+		string? line;
+		while ((line = reader.ReadLine()) is not null)
+		{
+			var trimmed = line.Trim();
+			if (trimmed.StartsWith("using ", StringComparison.Ordinal) && trimmed.EndsWith(';'))
+			{
+				var namespaceName = trimmed["using ".Length..^1].Trim();
+				if (!namespaceName.Contains('=') && namespaceName.Length > 0)
+					yield return namespaceName;
+			}
+
+			foreach (var namespaceName in ExtractQualifiedSystemPrefixes(line))
+				yield return namespaceName;
+		}
+	}
+
+	private static IEnumerable<string> ExtractQualifiedSystemPrefixes(string line)
+	{
+		var index = 0;
+		while ((index = line.IndexOf("System.", index, StringComparison.Ordinal)) >= 0)
+		{
+			var end = index + "System".Length;
+			while (end < line.Length && (char.IsLetterOrDigit(line[end]) || line[end] is '_' or '.'))
+				end++;
+
+			var qualifiedName = line[index..end].TrimEnd('.');
+			var parts = qualifiedName.Split('.', StringSplitOptions.RemoveEmptyEntries);
+			for (var length = 1; length <= parts.Length; length++)
+				yield return string.Join('.', parts.Take(length));
+
+			index = end;
+		}
 	}
 
 	private static IReadOnlyList<ResolvedPackageArtifacts> LoadExplicitLibraries(IReadOnlyList<string> libraryPaths)

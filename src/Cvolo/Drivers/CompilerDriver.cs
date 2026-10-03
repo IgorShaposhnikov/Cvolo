@@ -130,13 +130,19 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 		var baseSourceSet = new HashSet<string>(
 			project.BaseSourceFiles.Select(Path.GetFullPath),
 			OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+		var systemSourceSet = new HashSet<string>(
+			project.SystemSourceFiles.Select(Path.GetFullPath),
+			OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
 
 		foreach (var file in project.SourceFiles)
 		{
 			var sourceCode = File.ReadAllText(file);
 			var artifactPath = SourcePathRemapper.Map(file, project.ProjectDirectory, project.ProjectReferences);
 			var context = new CompilationContext(sourceCode, artifactPath);
-			context.Origin = baseSourceSet.Contains(Path.GetFullPath(file)) ? SourceOrigin.BaseSdk : SourceOrigin.Project;
+			var fullPath = Path.GetFullPath(file);
+			context.Origin = baseSourceSet.Contains(fullPath)
+				? SourceOrigin.BaseSdk
+				: systemSourceSet.Contains(fullPath) ? SourceOrigin.SystemSdk : SourceOrigin.Project;
 			firstContext ??= context;
 
 			var ast = parser.Parse(context);
@@ -294,7 +300,7 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 		}
 
 		// Enforce executable entry-point rules
-		if (!project.IsShared && binder.Context.Globals.Lookup("main") is null && binder.Context.Globals.Lookup("Main") is null)
+		if (!project.IsShared && !llvmOnly && !emitIr && !EntryPointDiscovery.HasEntryPoint(binder.Context, asts))
 		{
 			reporter.ReportSynthetic(
 				DiagnosticIds.MissingEntryPoint,
@@ -334,6 +340,7 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 		if (emitIr)
 		{
 			Console.WriteLine(ir);
+			return 0;
 		}
 
 		// 7. Resolve target linker path

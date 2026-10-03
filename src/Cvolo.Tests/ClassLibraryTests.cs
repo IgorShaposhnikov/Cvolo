@@ -14,6 +14,15 @@ public sealed class ClassLibraryTests : CompilerTestBase
 	}
 
 	[Fact]
+	public void ClassLibrary_NoMain_EmitIr_SkipsEntryPointCheck()
+	{
+		var (exitCode, stdout, stderr) = RunCompiler("ClassLibrary/NoMain.cvl", "--emit-ir");
+		Assert.Equal(0, exitCode);
+		Assert.Contains("ModuleID", stdout);
+		Assert.DoesNotContain("CVL5001", stderr);
+	}
+
+	[Fact]
 	public void ClassLibrary_NoMain_SkippedForSharedLibrary()
 	{
 		var (exitCode, stdout, stderr) = RunCompiler("ClassLibrary/NoMain.cvl", "--shared");

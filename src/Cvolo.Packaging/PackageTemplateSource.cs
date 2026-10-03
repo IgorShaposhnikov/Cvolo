@@ -20,12 +20,23 @@ public static class PackageTemplateSource
 			return [];
 
 		var contractNames = CollectPublicContractNames(parsedUnits.Select(item => item.Unit));
+		var hasSourceBackedDeclarations = parsedUnits
+			.SelectMany(item => GetMembers(item.Unit))
+			.Any(member => IsSourceBackedPublicDeclaration(member, contractNames));
 		var templates = new List<CompilationUnitSyntax>();
 		foreach (var (unit, context) in parsedUnits)
 		{
 			var ns = unit.NamespaceDeclaration;
-			var members = ns is null ? unit.Members : ns.Members;
+			var members = GetMembers(unit);
 			var sourceBackedMembers = members.Where(member => IsSourceBackedPublicDeclaration(member, contractNames)).ToArray();
+			if (hasSourceBackedDeclarations)
+			{
+				var helpers = members
+					.OfType<FunctionDeclarationSyntax>()
+					.Where(function => function.Visibility != Visibility.Public)
+					.Cast<SyntaxNode>();
+				sourceBackedMembers = sourceBackedMembers.Concat(helpers).Distinct().ToArray();
+			}
 			if (sourceBackedMembers.Length == 0)
 				continue;
 
@@ -43,6 +54,9 @@ public static class PackageTemplateSource
 
 		return templates;
 	}
+
+	private static IReadOnlyList<SyntaxNode> GetMembers(CompilationUnitSyntax unit) =>
+		unit.NamespaceDeclaration is null ? unit.Members : unit.NamespaceDeclaration.Members;
 
 	public static IReadOnlyList<CompilationUnitSyntax> ReadAll(CvlArchive archive, string packageId, string version) =>
 		ParseAll(archive, packageId, version).Select(item => item.Unit).ToArray();

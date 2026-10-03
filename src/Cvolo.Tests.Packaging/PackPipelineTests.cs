@@ -364,6 +364,26 @@ int Hidden(int value) { return value; }
 	}
 
 	[Fact]
+	public void Pack_ExecutableFindsNestedNamespacedMain()
+	{
+		RequireClang();
+		var projectDir = CreateProject(Fixture("nestedmain"));
+		var appDir = Path.Combine(projectDir, "App");
+		Directory.CreateDirectory(appDir);
+		File.WriteAllText(Path.Combine(appDir, "Main.cvl"), """
+namespace NestedMain.App;
+
+int Main() {
+    return 0;
+}
+""");
+
+		var result = PackPipeline.Execute(projectDir, DefaultOptions(Fixture(Path.Combine("out", "nestedmain.cvlib")), [TargetTriple.HostTriple()]));
+
+		Assert.True(File.Exists(result.OutputPath));
+	}
+
+	[Fact]
 	public void Pack_ProjectWithoutSources_Throws()
 	{
 		RequireClang();

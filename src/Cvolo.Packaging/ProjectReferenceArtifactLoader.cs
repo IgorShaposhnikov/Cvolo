@@ -74,6 +74,7 @@ public static class ProjectReferenceArtifactLoader
 				Sanitize(manifest.PackageId),
 				projectKey);
 			Directory.CreateDirectory(packageDirectory);
+			var sourceFiles = ExtractSourceFiles(archive, manifest.PackageId, manifest.Version, packageDirectory);
 
 			var bitcodePath = Path.Combine(packageDirectory, manifest.OutputName + ".bc");
 			ExtractSlice(archive, sectorIndex: 2, slice.Sector3, bitcodePath);
@@ -95,7 +96,8 @@ public static class ProjectReferenceArtifactLoader
 				apiMetadata.NativeLibraries,
 				templateUnits,
 				[],
-				UsesSourceFallback: false);
+				UsesSourceFallback: false,
+				sourceFiles);
 		}
 		catch (CvlFormatException ex)
 		{
@@ -132,6 +134,25 @@ public static class ProjectReferenceArtifactLoader
 			if (File.Exists(temporaryPath))
 				File.Delete(temporaryPath);
 		}
+	}
+
+	private static IReadOnlyList<PackageSourceFile> ExtractSourceFiles(
+		CvlArchive archive,
+		string packageId,
+		string version,
+		string packageDirectory)
+	{
+		var sourceFiles = new List<PackageSourceFile>();
+		var sourceRoot = Path.Combine(packageDirectory, "source");
+		Directory.CreateDirectory(sourceRoot);
+		foreach (var sourceFile in PackageSourceBundle.Parse(archive.ReadSourceBuffer()))
+		{
+			var relativePath = sourceFile.RelativePath.Replace('\\', '/');
+			var filePath = Path.GetFullPath(Path.Combine(sourceRoot, relativePath.Replace('/', Path.DirectorySeparatorChar)));
+			sourceFiles.Add(new PackageSourceFile(packageId, version, relativePath, filePath, sourceFile.Source));
+		}
+
+		return sourceFiles;
 	}
 
 	private static string Sanitize(string value)

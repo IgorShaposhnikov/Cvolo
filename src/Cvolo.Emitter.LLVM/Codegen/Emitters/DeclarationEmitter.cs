@@ -4,6 +4,7 @@ using Cvolo.Analysis.Symbols.Base;
 using Cvolo.Analysis.Symbols.Structs;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
+using Cvolo.Core.Diagnostics;
 using Cvolo.Emitter.LLVM.Codegen.TypeLowering;
 using LLVMSharp.Interop;
 
@@ -179,6 +180,8 @@ internal sealed class DeclarationEmitter(
 			BindingContext.CurrentUnit = unit;
 			BindingContext.CurrentNamespace = ns;
 			var isExternalPackageUnit = BindingContext.ExternalPackageUnits.Contains(unit);
+			var isSdkUnit = BindingContext.FileContexts.TryGetValue(unit, out var unitContext)
+				&& unitContext.Origin is SourceOrigin.BaseSdk or SourceOrigin.SystemSdk;
 			var members = ns != null ? unit.NamespaceDeclaration!.Members : unit.Members;
 
 			foreach (var member in members)
@@ -217,7 +220,7 @@ internal sealed class DeclarationEmitter(
 							? "main"
 							: BindingContext.GetMangledName(func.Name, ns);
 						var paramTypes = func.Parameters.Select(p => BindingContext.ResolveType(p.Type)!).ToList();
-						DeclareFunction(func, BindingContext.GetOverloadedMangledName(mangledName, paramTypes));
+						DeclareFunction(func, BindingContext.GetOverloadedMangledName(mangledName, paramTypes), isExternalPackageUnit, isSdkUnit);
 						break;
 					case ExposeExternBlockSyntax exportBlock:
 						DeclareExportBlock(exportBlock, ns);
@@ -388,7 +391,7 @@ internal sealed class DeclarationEmitter(
 	/// Declares one Cvolo function signature, attaches existing linkage/attribute policy, and records
 	/// semantic signature metadata required by later function and call emission.
 	/// </summary>
-	private void DeclareFunction(FunctionDeclarationSyntax declaration, string emitName)
+	private void DeclareFunction(FunctionDeclarationSyntax declaration, string emitName, bool isExternalDeclaration = false, bool forceExternalDefinition = false)
 	{
 		if (codegen.Globals.ContainsKey(emitName))
 			return;
@@ -429,7 +432,11 @@ internal sealed class DeclarationEmitter(
 		var functionType = LLVMTypeRef.CreateFunction(returnType, [.. parameterTypes]);
 		var llvmFunction = codegen.Module.AddFunction(emitName, functionType);
 
-		if (emitName != "main" && !declaration.HasBody)
+		if (emitName != "main" && (isExternalDeclaration || !declaration.HasBody))
+		{
+			llvmFunction.Linkage = LLVMLinkage.LLVMExternalLinkage;
+		}
+		else if (emitName != "main" && forceExternalDefinition)
 		{
 			llvmFunction.Linkage = LLVMLinkage.LLVMExternalLinkage;
 		}

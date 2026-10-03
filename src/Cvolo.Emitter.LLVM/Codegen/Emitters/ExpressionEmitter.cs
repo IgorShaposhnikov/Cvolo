@@ -1371,17 +1371,9 @@ internal sealed class ExpressionEmitter(
 	/// </summary>
 	private LLVMValueRef EmitBorrowExpression(BorrowExpressionSyntax expr)
 	{
-		if (expr.Expression is IdentifierExpressionSyntax id && Function.Locals.TryGetValue(id.Name, out var ptr))
+		if (expr.Expression is IdentifierExpressionSyntax id)
 		{
-			var type = Function.VariableTypes[id.Name];
-			var isReference = type is PointerTypeSymbol;
-			var isHeap = Function.HeapAllocatedVars.Contains(id.Name) && type is not SliceTypeSymbol;
-
-			if (isReference || isHeap)
-			{
-				return Builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), ptr, "borrow_ref");
-			}
-
+			var (ptr, _, _, _) = aggregates.GetFieldPointer(id);
 			return ptr;
 		}
 		else if (expr.Expression is MemberAccessExpressionSyntax m)
