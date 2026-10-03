@@ -99,7 +99,7 @@ internal sealed class RunCommand : Command
 			}
 			catch (PackageException ex)
 			{
-				Console.Error.WriteLine($"error {ex.Code}: {ex.Message}");
+				Console.Error.WriteLine($"error {ex.Code}: {FormatPackageExceptionMessage(ex)}");
 				if (!string.IsNullOrWhiteSpace(ex.Detail))
 					Console.Error.WriteLine(ex.Detail);
 				Environment.Exit(1);
@@ -110,5 +110,11 @@ internal sealed class RunCommand : Command
 				Environment.Exit(1);
 			}
 		});
+	}
+
+	private static string FormatPackageExceptionMessage(PackageException ex)
+	{
+		var prefix = ex.Code + ": ";
+		return ex.Message.StartsWith(prefix, StringComparison.Ordinal) ? ex.Message[prefix.Length..] : ex.Message;
 	}
 }

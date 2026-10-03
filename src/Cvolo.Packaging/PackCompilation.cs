@@ -267,7 +267,7 @@ internal static class PackCompilation
 		{
 			throw new PackageException(
 				"ANALYSIS",
-				"Analysis error.",
+				"Package analysis failed.",
 				string.Join(Environment.NewLine, FormatDiagnostics(binder.Diagnostics.Diagnostics)));
 		}
 
@@ -379,8 +379,12 @@ internal static class PackCompilation
 	{
 		foreach (var diagnostic in diagnostics)
 		{
-			var id = string.IsNullOrEmpty(diagnostic.Id) ? string.Empty : $"[{diagnostic.Id}] ";
-			yield return $"{id}{diagnostic.Message}";
+			var label = diagnostic.Id is null
+				? (diagnostic.Severity == DiagnosticSeverity.Warning ? "Analysis Warning" : "Compile Error")
+				: (diagnostic.Severity == DiagnosticSeverity.Warning ? $"Analysis Warning {diagnostic.Id}" : $"Compile Error {diagnostic.Id}");
+
+			foreach (var line in diagnostic.Context.FormatDiagnostic(label, diagnostic.Message, diagnostic.Span, compact: diagnostic.Severity == DiagnosticSeverity.Warning))
+				yield return line;
 		}
 	}
 }
