@@ -104,20 +104,36 @@ internal sealed class DestructorValidator(BindingContext context)
 	/// directly or through an owned aggregate field. Pointer and primitive/type-parameter values
 	/// do not contribute owned cleanup.
 	/// </summary>
-	private bool DestructorNeedsCleanup(TypeSymbol type)
+	private bool DestructorNeedsCleanup(TypeSymbol type) => DestructorNeedsCleanup(type, []);
+
+	/// <summary>
+	/// Aggregate payload graphs may be cyclic by value across declaration units, so the walk carries
+	/// the active aggregate path. A type already on that path contributes no further cleanup and the
+	/// branch is cut, which keeps the probe terminating instead of recursing until the stack is
+	/// exhausted. Mangled names are used so the guard cannot collide across namespaces.
+	/// </summary>
+	private bool DestructorNeedsCleanup(TypeSymbol type, HashSet<string> active)
 	{
 		switch (type)
 		{
 			case ArrayTypeSymbol arr:
-				return DestructorNeedsCleanup(arr.ElementType);
+				return DestructorNeedsCleanup(arr.ElementType, active);
 			case SliceTypeSymbol slice:
-				return DestructorNeedsCleanup(slice.ElementType);
+				return DestructorNeedsCleanup(slice.ElementType, active);
 			case StructTypeSymbol structType:
 				if (HasOwnDestructor(structType))
 					return true;
-				return structType.Fields.Any(f => DestructorNeedsCleanup(f.Type));
+				if (!active.Add(structType.Name))
+					return false;
+				var structOwned = structType.Fields.Any(f => DestructorNeedsCleanup(f.Type, active));
+				active.Remove(structType.Name);
+				return structOwned;
 			case UnionTypeSymbol unionType:
-				return unionType.Fields.Any(f => !f.IsVoidVariant && DestructorNeedsCleanup(f.Type));
+				if (!active.Add(unionType.Name))
+					return false;
+				var unionOwned = unionType.Fields.Any(f => !f.IsVoidVariant && DestructorNeedsCleanup(f.Type, active));
+				active.Remove(unionType.Name);
+				return unionOwned;
 			default:
 				return false;
 		}

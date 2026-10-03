@@ -1,0 +1,6 @@
+namespace DeclarationOrder;
+
+public struct Payload
+{
+    public int Value;
+}

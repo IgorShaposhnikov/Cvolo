@@ -1237,4 +1237,9 @@ public static class DiagnosticIds
 	/// <summary>'expose using' cannot declare a namespace alias.</summary>
 	public const string ExposeUsingCannotDeclareNamespaceAlias = "CVL4180";
 
+	// ==================== By-value aggregate layout (`struct A { A value; }`) ====================
+
+	/// <summary>Type 'X' contains itself by value and has no finite size. Use a pointer or reference field instead.</summary>
+	public const string TypeContainsItselfByValue = "CVL4181";
+
 }

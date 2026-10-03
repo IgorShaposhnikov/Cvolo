@@ -166,9 +166,18 @@ internal sealed class CleanupEmitter(CodegenContext codegen)
 	/// <summary>
 	/// Returns whether a union can hold a payload that carries a destruction obligation.
 	/// </summary>
-	public bool UnionNeedsTagCheckedCleanup(UnionTypeSymbol unionType)
+	public bool UnionNeedsTagCheckedCleanup(UnionTypeSymbol unionType) => UnionNeedsTagCheckedCleanup(unionType, []);
+
+	private bool UnionNeedsTagCheckedCleanup(UnionTypeSymbol unionType, HashSet<string> active)
 	{
-		return !unionType.IsUnsafe && unionType.Fields.Any(f => !f.IsVoidVariant && TypeNeedsDestruction(f.Type));
+		if (unionType.IsUnsafe)
+			return false;
+		if (!active.Add(unionType.Name))
+			return false;
+
+		var owned = unionType.Fields.Any(f => !f.IsVoidVariant && TypeNeedsDestruction(f.Type, active));
+		active.Remove(unionType.Name);
+		return owned;
 	}
 
 	/// <summary>
@@ -345,13 +354,32 @@ internal sealed class CleanupEmitter(CodegenContext codegen)
 	/// <summary>
 	/// Returns whether a semantic type carries a recursive destruction obligation.
 	/// </summary>
-	private bool TypeNeedsDestruction(TypeSymbol type) => type switch
+	/// <remarks>
+	/// Aggregate payloads may be cyclic by value (a struct holding itself, directly or through
+	/// another aggregate, is legal to declare), so the walk carries the aggregate path it is
+	/// currently inside. A type already on that path cannot introduce a new destruction obligation,
+	/// and cutting the branch keeps the probe terminating instead of exhausting the stack.
+	/// </remarks>
+	private bool TypeNeedsDestruction(TypeSymbol type) => TypeNeedsDestruction(type, []);
+
+	private bool TypeNeedsDestruction(TypeSymbol type, HashSet<string> active)
 	{
-		StructTypeSymbol structType =>
-			BindingContext.OverloadedFunctions.ContainsKey($"{structType.Name}.~{structType.Name}")
-			|| structType.Fields.Any(f => TypeNeedsDestruction(f.Type)),
-		UnionTypeSymbol unionType => UnionNeedsTagCheckedCleanup(unionType),
-		ArrayTypeSymbol arrayType => TypeNeedsDestruction(arrayType.ElementType),
-		_ => false
-	};
+		switch (type)
+		{
+			case StructTypeSymbol structType:
+				if (BindingContext.OverloadedFunctions.ContainsKey($"{structType.Name}.~{structType.Name}"))
+					return true;
+				if (!active.Add(structType.Name))
+					return false;
+				var structOwned = structType.Fields.Any(f => TypeNeedsDestruction(f.Type, active));
+				active.Remove(structType.Name);
+				return structOwned;
+			case UnionTypeSymbol unionType:
+				return UnionNeedsTagCheckedCleanup(unionType, active);
+			case ArrayTypeSymbol arrayType:
+				return TypeNeedsDestruction(arrayType.ElementType, active);
+			default:
+				return false;
+		}
+	}
 }

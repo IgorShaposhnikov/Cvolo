@@ -18,9 +18,9 @@ public sealed class DelegateTypeSymbol : TypeSymbol
 
 	/// <summary>The required uniform thunk signature parameter list (context pointer first).</summary>
 	private static readonly string[] ThunkContextPrefix = ["void*"];
+	public TypeSymbol ReturnType { get; private set; }
 
-	public TypeSymbol ReturnType { get; }
-	public IReadOnlyList<ParameterSymbol> Parameters { get; }
+	public IReadOnlyList<ParameterSymbol> Parameters { get; private set; }
 
 	/// <summary>True for the 'unsafe "C"' native function-pointer family.</summary>
 	public bool IsNative { get; }
@@ -56,6 +56,18 @@ public sealed class DelegateTypeSymbol : TypeSymbol
 		GenericTypeArguments = genericTypeArguments;
 		IsNative = isNative;
 		CallingConvention = callingConvention;
+	}
+
+	/// <summary>
+	/// Completes the signature of a placeholder registered by the declaration-order-independent
+	/// type predeclaration pass. The instance keeps its nominal identity and the exact object
+	/// references captured by forward resolution, so a mutually recursive delegate pair resolves
+	/// without ever swapping the symbol out from under an existing reference.
+	/// </summary>
+	public void CompleteSignature(TypeSymbol returnType, IReadOnlyList<ParameterSymbol> parameters)
+	{
+		ReturnType = returnType;
+		Parameters = parameters;
 	}
 
 	/// <summary>

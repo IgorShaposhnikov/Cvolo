@@ -1,0 +1,19 @@
+using System;
+
+namespace DeclarationOrder;
+
+/// <summary>
+/// Consumes a struct declared in the companion unit. Declaration order in the project must not
+/// matter: this unit is enumerated before the unit that declares <c>Payload</c>.
+/// </summary>
+public struct Envelope
+{
+    public Payload Payload;
+}
+
+int Main()
+{
+    Envelope envelope = Envelope { Payload: Payload { Value: 7 } };
+    Console.WriteLine($"Total: {envelope.Payload.Value}");
+    return 0;
+}

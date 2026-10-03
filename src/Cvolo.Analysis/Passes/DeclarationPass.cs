@@ -54,57 +54,28 @@ public sealed class DeclarationPass(BindingContext context)
 			}
 		}
 
-		// Pass 0a: Register all Struct/Union/Interface/Protocol raw symbols across all files
+		// Pass 0a-A (identity): publish the nominal identity of every Struct/Union/Interface/
+		// Protocol/Enum/Delegate across all files before any of them resolves a named type.
+		// Nothing below this pass may depend on unit enumeration order: a field, variant, or
+		// signature may name a type declared in any unit, forward or backward.
 		foreach (var unit in units)
 		{
 			context.CurrentUnit = unit;
 			context.CurrentNamespace = unit.NamespaceDeclaration?.Name;
 
-			var members = context.CurrentNamespace != null ? unit.NamespaceDeclaration!.Members : unit.Members;
-			foreach (var member in members)
-			{
-				if (member is StructDeclarationSyntax structDecl)
-					_types.DeclareStruct(structDecl);
-				else if (member is UnionDeclarationSyntax unionDecl)
-					_types.DeclareUnion(unionDecl);
-				else if (member is InterfaceDeclarationSyntax interfaceDecl)
-					_types.DeclareInterface(interfaceDecl);
-				else if (member is ProtocolDeclarationSyntax protocolDecl)
-					_types.DeclareProtocol(protocolDecl);
-				else if (member is EnumDeclarationSyntax enumDecl)
-					_types.DeclareEnum(enumDecl);
-				else if (member is DelegateDeclarationSyntax delegateDecl)
-					_types.DeclareDelegate(delegateDecl);
-				else if (member is DelegateBlockDeclarationSyntax delegateBlock)
-				{
-					// Delegate ABI blocks ('unsafe "C" { delegate ... }') are pure declaration
-					// scopes: they give the contained delegates one calling convention but are
-					// NOT executable unsafe blocks. Register each delegate with the block's
-					// convention spliced in when the declaration omits its own.
-					var blockConvention = delegateBlock.CallingConvention;
-					if (blockConvention is not ("C" or "system"))
-					{
-						var currentFileContext = context.FileContexts[context.CurrentUnit!];
-						context.Diagnostics.Report(currentFileContext, delegateBlock.Span,
-							$"Unknown calling convention '{delegateBlock.CallingConvention}'. Supported calling conventions are \"C\" and \"system\".",
-							DiagnosticIds.UnknownCallingConvention);
-						continue;
-					}
-
-					foreach (var d in delegateBlock.Delegates)
-					{
-						// If the inner delegate already declares a convention it wins; otherwise
-						// it inherits the block's. Emit as a fresh node so DeclareDelegate sees
-						// the effective convention without mutating syntax.
-						var effective = d.IsNative || d.CallingConvention is not null
-							? d
-							: new DelegateDeclarationSyntax(d.Span, d.ReturnType, d.Name, d.GenericParameters, d.Parameters,
-								d.Visibility, isNative: blockConvention is not null, callingConvention: blockConvention, d.NameSpan, d.ReturnTypeSpan);
-						_types.DeclareDelegate(effective);
-					}
-				}
-			}
+			_types.PredeclareTypes(unit);
 		}
+
+		// Pass 0a-B (storage): resolve struct fields and union variants into the published
+		// identities. Each declaration is completed under the lexical context of the unit that
+		// declared it, and the placeholder object is populated in place so references captured
+		// during forward resolution stay valid.
+		_types.CompleteStorage();
+
+		// Pass 0a-C (headers): resolve delegate signatures and protocol canonical members. This
+		// runs after storage because delegate native-ABI and provenance rules inspect aggregate
+		// contents transitively.
+		_types.CompleteHeaders();
 
 		// Pass 0a-post: Eagerly validate every type alias now that all real type names are
 		// registered — alias-vs-type conflicts, unresolvable targets (CVL1200), alias cycles

@@ -4,7 +4,21 @@ namespace Cvolo.Analysis.Symbols.Structs;
 
 public sealed class UnionTypeSymbol(string name, IReadOnlyList<UnionFieldSymbol> fields) : TypeSymbol(name)
 {
-	public IReadOnlyList<UnionFieldSymbol> Fields { get; } = fields;
+	private readonly List<UnionFieldSymbol> _fields = [.. fields];
+
+	public IReadOnlyList<UnionFieldSymbol> Fields => _fields;
+
+	/// <summary>
+	/// Populates variants into a placeholder symbol registered by the declaration-order-independent
+	/// type predeclaration pass. Completing in place keeps references captured during forward
+	/// resolution (a struct field or delegate parameter that already points at this instance)
+	/// observing the final variant list.
+	/// </summary>
+	public void PopulateFields(IEnumerable<UnionFieldSymbol> fields)
+	{
+		_fields.Clear();
+		_fields.AddRange(fields);
+	}
 
 	/// <summary>
 	/// True for raw C-compatible unions declared as 'unsafe union Name { ... }': overlapping storage
