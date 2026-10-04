@@ -64,6 +64,23 @@ public sealed class BindingContext
 	public Dictionary<BinaryExpressionSyntax, ResolvedBinaryExpression> ResolvedBinaryExpressions { get; } = [];
 
 	/// <summary>
+	/// Canonical fallback (<c>??</c>) expression bindings, keyed by syntax node. Populated by
+	/// validation once declaration registration is complete. Tooling and code generation read these
+	/// descriptors so the runtime lowering, the result type and the diagnostics all agree on one
+	/// resolution instead of each re-deriving the Option shape from source syntax.
+	/// </summary>
+	public Dictionary<CoalesceExpressionSyntax, ResolvedCoalesceExpression> ResolvedCoalesceExpressions { get; } = [];
+
+	/// <summary>
+	/// Records the verdict for each context-typed <c>Option.None</c> member access, keyed by the
+	/// expression node. A present entry with a <see langword="null"/> value is a diagnosed failure,
+	/// not an absent binding: <c>GetType</c> re-enters member-access validation from whichever path
+	/// asks for the type first, so caching both outcomes is what keeps the diagnostic from being
+	/// reported twice and keeps a second, less-informed query from overturning the first verdict.
+	/// </summary>
+	public Dictionary<MemberAccessExpressionSyntax, TypeSymbol?> ResolvedTargetTypedOptionNone { get; } = [];
+
+	/// <summary>
 	/// Registers a compiler-generated binary node created after ordinary semantic validation.
 	/// Post-binding lowerings (currently array/slice foreach expansion) must use this hook so codegen
 	/// never needs a private fallback typing engine for synthesized <see cref="BinaryExpressionSyntax"/> nodes.
@@ -1969,6 +1986,8 @@ public sealed class BindingContext
 
 				case TernaryExpressionSyntax t:
 					return new TernaryExpressionSyntax(t.Span, SubstituteExpressionGenerics(t.Condition), SubstituteExpressionGenerics(t.ThenExpression), SubstituteExpressionGenerics(t.ElseExpression));
+				case CoalesceExpressionSyntax c:
+					return new CoalesceExpressionSyntax(c.Span, SubstituteExpressionGenerics(c.Left), SubstituteExpressionGenerics(c.Right));
 
 				case DefaultExpressionSyntax def:
 					if (def.TypeName is null)

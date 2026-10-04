@@ -1,0 +1,26 @@
+using System;
+
+// Extract mode: both operands are plain payloads, so the result is the bare payload type T
+// and the Option layer is unwrapped.
+int main() {
+    var int? someValue = 42;
+    var int? noValue = Option.None;
+
+    var a = someValue ?? 7;
+    var b = noValue ?? 7;
+    Console.WriteLine($"a={a}");
+    Console.WriteLine($"b={b}");
+
+    // The right operand is only evaluated on the None path, so this fallback never runs.
+    var c = someValue ?? SideEffect();
+    Console.WriteLine($"c={c}");
+
+    var d = noValue ?? SideEffect();
+    Console.WriteLine($"d={d}");
+    return 0;
+}
+
+int SideEffect() {
+    Console.WriteLine("SIDE-EFFECT");
+    return -1;
+}

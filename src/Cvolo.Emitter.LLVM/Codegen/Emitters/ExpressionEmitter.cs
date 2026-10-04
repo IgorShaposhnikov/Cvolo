@@ -269,6 +269,22 @@ internal sealed class ExpressionEmitter(
 				return values.Load(id.Name);
 			case MemberAccessExpressionSyntax m:
 				{
+					// Context-typed `Option.None`: a zero-initialized Option is already the
+					// none state, because None is the first variant. The NPO representation
+					// gives the same answer for free — its None state is the null payload
+					// pointer — so both lower to an all-zero (or null) value of the Option type.
+					if (BindingContext.ResolvedTargetTypedOptionNone.TryGetValue(m, out var noneOptionType)
+						&& noneOptionType is not null)
+					{
+						var noneLayout = LowerType(noneOptionType);
+						var noneSlot = memory.BuildEntryAlloca(noneLayout, "option_none");
+						var noneInit = noneOptionType is UnionTypeSymbol { IsNpoEligible: true }
+							? LLVMValueRef.CreateConstPointerNull(noneLayout)
+							: LLVMValueRef.CreateConstNull(noneLayout);
+						Builder.BuildStore(noneInit, noneSlot);
+						return Builder.BuildLoad2(noneLayout, noneSlot, "option_none_val");
+					}
+
 					// Namespace-qualified global (e.g. 'System.Math.UInt.MaxValue'): the member
 					// access is the whole global slot, so load it directly instead of GEPing.
 					if (aggregates.TryExtractQualifiedGlobalKey(m) is { } globalMemberKey
@@ -343,6 +359,8 @@ internal sealed class ExpressionEmitter(
 				return EmitUnaryExpression(unary);
 			case TernaryExpressionSyntax t:
 				return EmitTernaryExpression(t);
+			case CoalesceExpressionSyntax coalesce:
+				return EmitCoalesceExpression(coalesce);
 			default:
 				throw new InvalidOperationException($"Unknown expression type: {expr.GetType()}");
 		}
@@ -1463,6 +1481,189 @@ internal sealed class ExpressionEmitter(
 		var loadedReg = Builder.BuildLoad2(llvmTy, resultAlloc, "ternary_val");
 
 		return loadedReg;
+	}
+
+	/// <summary>
+	/// Lowers the Option fallback operator <c>left ?? right</c>.
+	/// </summary>
+	/// <remarks>
+	/// <para>
+	/// The left operand is materialized exactly once into an entry slot and the discriminant is tested
+	/// there, so the None test cannot re-run left's side effects. The right operand is emitted inside
+	/// the None block only: an eager emission would evaluate the fallback even when the left Option is
+	/// already Some, which is the entire point of short-circuiting.
+	/// </para>
+	/// <para>
+	/// Tagged Options carry an <c>i8</c> discriminator compared against the None variant's field index;
+	/// NPO Options lower to a bare pointer where null means None. Both representations are handled
+	/// here so the caller never has to know which one it holds.
+	/// </para>
+	/// </remarks>
+	private LLVMValueRef EmitCoalesceExpression(CoalesceExpressionSyntax expr)
+	{
+		if (!BindingContext.ResolvedCoalesceExpressions.TryGetValue(expr, out var resolved) || !resolved.IsSuccess)
+		{
+			throw new InvalidOperationException(
+				"Fallback expression reached code generation without a canonical successful semantic binding.");
+		}
+
+		var optionType = resolved.OptionType!;
+		var payloadType = resolved.PayloadType!;
+		var optionLayout = LowerType(optionType);
+		var usesNpo = optionType.IsNpoEligible;
+		var preservesOption = resolved.Mode == CoalesceResultMode.PreserveOptionalOrFallback;
+		var resultLayout = LowerType(resolved.ResultType!);
+
+		// Materialize the left operand once. The discriminant is read from this slot, never by
+		// re-emitting the left expression.
+		var leftSlot = memory.BuildEntryAlloca(optionLayout, "coalesce_left");
+		Builder.BuildStore(Emit(expr.Left), leftSlot);
+
+		LLVMValueRef isNone;
+		if (usesNpo)
+		{
+			var flatValue = Builder.BuildLoad2(optionLayout, leftSlot, "coalesce_flat");
+			isNone = Builder.BuildICmp(
+				LLVMIntPredicate.LLVMIntEQ,
+				flatValue,
+				LLVMValueRef.CreateConstPointerNull(flatValue.TypeOf),
+				"coalesce_is_none");
+		}
+		else
+		{
+			var noneVariant = optionType.NoneVariant
+				?? throw new InvalidOperationException("A coalescing Option must expose a None variant.");
+			var noneIndex = (ulong)codegen.AggregateLayout.GetFieldIndex(optionType, noneVariant.Name);
+			var tagPtr = Builder.BuildGEP2(optionLayout, leftSlot, new LLVMValueRef[]
+			{
+				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
+				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0)
+			}, "coalesce_tag_ptr");
+			var tag = Builder.BuildLoad2(LLVMTypeRef.Int8, tagPtr, "coalesce_tag");
+			isNone = Builder.BuildICmp(
+				LLVMIntPredicate.LLVMIntEQ,
+				tag,
+				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, noneIndex),
+				"coalesce_is_none");
+		}
+
+		var currentFunc = Builder.InsertBlock.Parent;
+		var someBlock = currentFunc.AppendBasicBlock("coalesce_some");
+		var noneBlock = currentFunc.AppendBasicBlock("coalesce_none");
+		var mergeBlock = currentFunc.AppendBasicBlock("coalesce_merge");
+		var resultSlot = memory.BuildEntryAlloca(resultLayout, "coalesce_result");
+
+		Builder.BuildCondBr(isNone, noneBlock, someBlock);
+
+		// Some: the existing payload is the answer. Extracting mode hands the bare payload over;
+		// preserving mode must re-tag it, because the result still promises an Option.
+		Builder.PositionAtEnd(someBlock);
+		var leftPayload = LoadOptionPayload(leftSlot, optionType, optionLayout, payloadType, usesNpo);
+		Builder.BuildStore(
+			BuildCoalesceResult(optionType, optionLayout, resultLayout, payloadType, usesNpo, preservesOption, branchIsOption: false, leftPayload),
+			resultSlot);
+		if (Builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
+			Builder.BuildBr(mergeBlock);
+
+		// None: the fallback is evaluated here, and nowhere else.
+		Builder.PositionAtEnd(noneBlock);
+		var fallback = Emit(expr.Right);
+		Builder.BuildStore(
+			BuildCoalesceResult(optionType, optionLayout, resultLayout, payloadType, usesNpo, preservesOption, resolved.RightConversion == CoalesceRightConversion.Optional, fallback),
+			resultSlot);
+		if (Builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
+			Builder.BuildBr(mergeBlock);
+
+		Builder.PositionAtEnd(mergeBlock);
+		return Builder.BuildLoad2(resultLayout, resultSlot, "coalesce_val");
+	}
+
+	/// <summary>
+	/// Reads the payload out of a materialized Option slot.
+	/// </summary>
+	/// <remarks>
+	/// Under NPO the Option value already <em>is</em> the payload pointer, so the payload is the slot
+	/// itself; a tagged Option reads its payload slot at <c>{0,1}</c>.
+	/// </remarks>
+	private LLVMValueRef LoadOptionPayload(
+		LLVMValueRef optionSlot,
+		UnionTypeSymbol optionType,
+		LLVMTypeRef optionLayout,
+		TypeSymbol payloadType,
+		bool usesNpo)
+	{
+		if (usesNpo)
+			return Builder.BuildLoad2(optionLayout, optionSlot, "coalesce_payload");
+
+		var payloadVariant = optionType.PayloadVariant
+			?? throw new InvalidOperationException("A coalescing Option must expose a payload variant.");
+		var payloadPtr = Builder.BuildGEP2(optionLayout, optionSlot, new LLVMValueRef[]
+		{
+			LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
+			LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1)
+		}, "coalesce_payload_ptr");
+		var typedPayloadPtr = Builder.BuildBitCast(
+			payloadPtr,
+			LLVMTypeRef.CreatePointer(LowerType(payloadType), 0),
+			"coalesce_payload_cast");
+
+		return Builder.BuildLoad2(LowerType(payloadType), typedPayloadPtr, "coalesce_payload_val");
+	}
+
+	/// <summary>
+	/// Adapts a branch's payload-or-fallback value to the expression's result type.
+	/// </summary>
+	/// <remarks>
+	/// <para>
+	/// Extracting mode passes the value straight through. Preserving mode must produce a real
+	/// <c>Some</c>, but only when the branch supplied a bare payload: the <c>Some</c> path always
+	/// yields an extracted payload, while the <c>None</c> path yields whatever the fallback
+	/// expression produced. A fallback that already resolved to an Option of the same payload is
+	/// already the right shape and must be handed over untouched -- re-tagging it would splice the
+	/// Option's own discriminant into the payload slot.
+	/// </para>
+	/// <para>
+	/// Under NPO both cases are the identity, because a non-null payload pointer <em>is</em>
+	/// <c>Some</c>.
+	/// </para>
+	/// </remarks>
+	private LLVMValueRef BuildCoalesceResult(
+		UnionTypeSymbol optionType,
+		LLVMTypeRef optionLayout,
+		LLVMTypeRef resultLayout,
+		TypeSymbol payloadType,
+		bool usesNpo,
+		bool preservesOption,
+		bool branchIsOption,
+		LLVMValueRef branchValue)
+	{
+		if (!preservesOption || usesNpo || branchIsOption)
+			return branchValue;
+
+		var payloadVariant = optionType.PayloadVariant
+			?? throw new InvalidOperationException("A coalescing Option must expose a payload variant.");
+		var payloadIndex = codegen.AggregateLayout.GetFieldIndex(optionType, payloadVariant.Name);
+
+		var slot = memory.BuildEntryAlloca(resultLayout, "coalesce_some_tmp");
+		var tagPtr = Builder.BuildGEP2(optionLayout, slot, new LLVMValueRef[]
+		{
+			LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
+			LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0)
+		}, "coalesce_some_tag_ptr");
+		Builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, (ulong)payloadIndex), tagPtr);
+
+		var payloadPtr = Builder.BuildGEP2(optionLayout, slot, new LLVMValueRef[]
+		{
+			LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
+			LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1)
+		}, "coalesce_some_payload_ptr");
+		var typedPayloadPtr = Builder.BuildBitCast(
+			payloadPtr,
+			LLVMTypeRef.CreatePointer(LowerType(payloadType), 0),
+			"coalesce_some_payload_cast");
+		Builder.BuildStore(branchValue, typedPayloadPtr);
+
+		return Builder.BuildLoad2(resultLayout, slot, "coalesce_some_val");
 	}
 
 	/// <summary>

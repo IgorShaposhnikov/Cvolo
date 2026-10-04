@@ -67,7 +67,7 @@ public sealed class UnionTypeSymbol(string name, IReadOnlyList<UnionFieldSymbol>
 	{
 		get
 		{
-			var voidVariants = Fields.Where(f => !f.IsVoidVariant).ToList();
+			var voidVariants = Fields.Where(f => f.IsVoidVariant).ToList();
 			if (voidVariants.Count != 1) return null;
 			return Fields.Count(f => !f.IsVoidVariant) == 1 ? voidVariants[0] : null;
 		}

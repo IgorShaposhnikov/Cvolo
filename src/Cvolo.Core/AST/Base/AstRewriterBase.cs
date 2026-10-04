@@ -260,6 +260,13 @@ public abstract class AstRewriterBase
 			return new TernaryExpressionSyntax(ternary.Span, cond, then, elseExpr);
 		}
 
+		if (node is CoalesceExpressionSyntax coalesce)
+		{
+			var left = (ExpressionSyntax)Rewrite(coalesce.Left);
+			var right = (ExpressionSyntax)Rewrite(coalesce.Right);
+			return new CoalesceExpressionSyntax(coalesce.Span, left, right);
+		}
+
 		if (node is UnsafeBlockStatementSyntax unsafeBlock)
 		{
 			var rewrittenBody = (BlockStatementSyntax)Rewrite(unsafeBlock.Body);

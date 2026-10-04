@@ -1,0 +1,10 @@
+using System;
+
+// CVL4187: the fallback assignment operator is out of scope. `??=` lexes as `??` followed by
+// `=` under maximal munch, so it is diagnosed explicitly rather than as a generic parse error.
+int main() {
+    var int? value = Option.None;
+    value ??= 7;
+    Console.WriteLine(value ?? -1);
+    return 0;
+}

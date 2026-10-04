@@ -1,0 +1,10 @@
+using System;
+
+int main() {
+    // No expected type is available for 'var', so the payload-free 'Option.None'
+    // cannot be resolved. The fallback operator must not infer 'Option<T>' from its
+    // right operand.
+    var c = Option.None ?? 123;
+    Console.WriteLine($"{c}");
+    return 0;
+}

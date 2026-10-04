@@ -435,6 +435,10 @@ public sealed class DeferRewriter(DiagnosticBag diagnostics, CompilationContext 
 				CollectDeclaredNames(ternary.ThenExpression, declared);
 				CollectDeclaredNames(ternary.ElseExpression, declared);
 				break;
+			case CoalesceExpressionSyntax coalesce:
+				CollectDeclaredNames(coalesce.Left, declared);
+				CollectDeclaredNames(coalesce.Right, declared);
+				break;
 			case StructInitializationExpressionSyntax structInit:
 				foreach (var init in structInit.Initializers)
 					CollectDeclaredNames(init.Expression, declared);
@@ -684,6 +688,7 @@ public sealed class DeferRewriter(DiagnosticBag diagnostics, CompilationContext 
 			StructInitializationExpressionSyntax structInit => new StructInitializationExpressionSyntax(structInit.Span, structInit.StructTypeName, structInit.Initializers.Select(CloneMemberInit).ToList()),
 			ParenthesizedStructInitializerExpressionSyntax parenInit => new ParenthesizedStructInitializerExpressionSyntax(parenInit.Span, parenInit.Initializers.Select(CloneMemberInit).ToList()),
 			TernaryExpressionSyntax ternary => new TernaryExpressionSyntax(ternary.Span, CloneExpression(ternary.Condition), CloneExpression(ternary.ThenExpression), CloneExpression(ternary.ElseExpression)),
+			CoalesceExpressionSyntax coalesce => new CoalesceExpressionSyntax(coalesce.Span, CloneExpression(coalesce.Left), CloneExpression(coalesce.Right)),
 			InterpolatedStringExpressionSyntax interp => new InterpolatedStringExpressionSyntax(interp.Span, interp.RawText),
 			IsPatternExpressionSyntax isPat => new IsPatternExpressionSyntax(isPat.Span, CloneExpression(isPat.Operand), isPat.VariantName, isPat.BoundName),
 			DefaultExpressionSyntax def => new DefaultExpressionSyntax(def.Span, def.TypeName),

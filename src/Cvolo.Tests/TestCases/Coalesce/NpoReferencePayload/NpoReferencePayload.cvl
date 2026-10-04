@@ -1,0 +1,45 @@
+using System;
+
+// Option<ref T> uses the NPO (non-null pointer) representation: a bare `i8*` where null means
+// None. The fallback operator must therefore test the pointer against null rather than loading
+// a discriminant. The fallback itself still has to be a `ref int` or an `Option<ref int>`, so a
+// plain int literal does not qualify.
+int main() {
+    var int payload = 7;
+    var Option<ref int> someSlot = Option<ref int> { Some: ref payload };
+    var Option<ref int> noneSlot = Option<ref int> { None: void };
+
+    // Some path: the payload pointer is the answer, handed back as-is.
+    var viaSome = someSlot ?? noneSlot;
+    Console.WriteLine($"viaSome={Deref(viaSome)}");
+
+    // None path: the fallback Option is moved through.
+    var viaNone = noneSlot ?? someSlot;
+    Console.WriteLine($"viaNone={Deref(viaNone)}");
+
+    // The right operand is only evaluated on the None path.
+    var guarded = someSlot ?? NoneSlot();
+    Console.WriteLine($"guarded={Deref(guarded)}");
+
+    var lazy = noneSlot ?? NoneSlot();
+    Console.WriteLine($"lazy={Deref(lazy)}");
+    return 0;
+}
+
+Option<ref int> NoneSlot() {
+    Console.WriteLine("SIDE-EFFECT");
+    var int ignored = 0;
+    return Option<ref int> { None: void };
+}
+
+int Deref(Option<ref int> slot) {
+    var result = -1;
+    switch (ref slot) {
+        case Some x:
+            result = x;
+        case None:
+            Console.WriteLine("(none)");
+    }
+
+    return result;
+}

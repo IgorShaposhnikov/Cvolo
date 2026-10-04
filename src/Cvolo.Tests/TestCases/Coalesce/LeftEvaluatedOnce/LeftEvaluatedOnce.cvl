@@ -1,0 +1,24 @@
+using System;
+
+// The left operand must be evaluated exactly once, even though its value is needed both to test
+// the None discriminant and to read the payload. A call with a visible side effect must print its
+// marker exactly once per coalesce, proving the value is materialized into a slot rather than
+// re-emitted on each use.
+int main() {
+    var a = Counted() ?? 7;
+    Console.WriteLine($"a={a}");
+
+    var b = CountedNone() ?? 7;
+    Console.WriteLine($"b={b}");
+    return 0;
+}
+
+int? Counted() {
+    Console.WriteLine("COUNTED");
+    return Option<int> { Some: 5 };
+}
+
+int? CountedNone() {
+    Console.WriteLine("COUNTED-NONE");
+    return Option<int> { None: void };
+}

@@ -1,0 +1,24 @@
+using System;
+
+// Preserve mode: when the fallback resolves to an Option<T> rather than a bare T, the Option
+// layer is kept, so the whole expression is itself an Option<T> that must be unwrapped again.
+int main() {
+    var int? someValue = 42;
+    var int? noValue = Option.None;
+
+    // Some left operand: the payload is re-tagged into a real Some.
+    var a = someValue ?? noValue;
+    Console.WriteLine($"a={a ?? -1}");
+
+    // None left operand with an Option fallback: the fallback Option is moved through untouched.
+    var b = noValue ?? someValue;
+    Console.WriteLine($"b={b ?? -1}");
+
+    // A bare payload fallback takes priority over the Option fallback and so extracts instead.
+    var c = noValue ?? 7;
+    Console.WriteLine($"c={c}");
+
+    var d = someValue ?? 7;
+    Console.WriteLine($"d={d}");
+    return 0;
+}

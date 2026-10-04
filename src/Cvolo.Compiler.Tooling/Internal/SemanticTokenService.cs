@@ -34,16 +34,16 @@ internal static class SemanticTokenService
 		{
 			foreach (var node in Descendants(unit))
 			{
-			if (TryAddDirectToken(node, source, tokens, seen))
-				continue;
+				if (TryAddDirectToken(node, source, tokens, seen))
+					continue;
 
-			// A non-dotted call name is not resolved by the symbol resolver (a call has
-			// no callee child node), so a name that denotes a type would otherwise fall
-			// back to the lexical function colour. Resolve it as a type here.
-			if (node is CallExpressionSyntax calleeTypeCall)
-				TryAddCalleeTypeToken(analysis.BinderContext, unit, calleeTypeCall, source, tokens, seen);
+				// A non-dotted call name is not resolved by the symbol resolver (a call has
+				// no callee child node), so a name that denotes a type would otherwise fall
+				// back to the lexical function colour. Resolve it as a type here.
+				if (node is CallExpressionSyntax calleeTypeCall)
+					TryAddCalleeTypeToken(analysis.BinderContext, unit, calleeTypeCall, source, tokens, seen);
 
-			foreach (var position in CandidatePositions(node, source))
+				foreach (var position in CandidatePositions(node, source))
 				{
 					if (position < 0)
 						continue;
@@ -130,6 +130,9 @@ internal static class SemanticTokenService
 			case BinaryExpressionSyntax binary:
 				TryAddOperatorToken(binary, source, tokens, seen);
 				return false;
+			case CoalesceExpressionSyntax coalesce:
+				TryAddCoalesceOperatorToken(coalesce, source, tokens, seen);
+				return false;
 			case OperatorDeclarationSyntax operatorDeclaration:
 				// The declared operator token is the declaration's name; the `operator` keyword
 				// itself stays unclassified so it renders as ordinary punctuation-adjacent text.
@@ -206,6 +209,25 @@ internal static class SemanticTokenService
 			return;
 
 		AddDirectToken(tokens, seen, new Cvolo.Core.Diagnostics.TextSpan(index, binary.Operator.Length), ToolingSymbolKind.Operator);
+	}
+
+	/// <summary>
+	/// Classifies the fallback operator between the two operands. The operator is a dedicated token
+	/// rather than a stored string, so its extent is located in the gap between the operands exactly
+	/// as a binary operator's is.
+	/// </summary>
+	private static void TryAddCoalesceOperatorToken(CoalesceExpressionSyntax coalesce, string source, List<SemanticTokenInfo> tokens, HashSet<(int Start, int Length)> seen)
+	{
+		var start = coalesce.Left.Span.End;
+		var end = coalesce.Right.Span.Start;
+		if (start < 0 || end > source.Length || start > end)
+			return;
+
+		var index = source.IndexOf("??", start, end - start, StringComparison.Ordinal);
+		if (index < 0)
+			return;
+
+		AddDirectToken(tokens, seen, new Cvolo.Core.Diagnostics.TextSpan(index, 2), ToolingSymbolKind.Operator);
 	}
 
 	private static void AddDirectToken(List<SemanticTokenInfo> tokens, HashSet<(int Start, int Length)> seen, Cvolo.Core.Diagnostics.TextSpan span, ToolingSymbolKind kind)

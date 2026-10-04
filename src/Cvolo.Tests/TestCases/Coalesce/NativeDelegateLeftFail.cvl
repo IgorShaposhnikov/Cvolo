@@ -1,0 +1,12 @@
+using System;
+
+// A native delegate is a bare pointer and compares equal to null, but it is not an Option either.
+// `??` is not a null-coalescing operator for delegates; use an explicit comparison instead.
+unsafe "C" delegate int Callback(int value);
+
+[UnsafeBody]
+int main(Callback callback) {
+    var value = callback ?? 0;
+    Console.WriteLine(value);
+    return 0;
+}

@@ -1,0 +1,10 @@
+using System;
+
+// CVL4185: the left operand of the fallback operator must be an Option<T>.
+// Plain values are not implicitly lifted to Option, so `5 ?? 7` is rejected even though the
+// operands would otherwise be compatible.
+int main() {
+    var value = 5 ?? 7;
+    Console.WriteLine(value);
+    return 0;
+}

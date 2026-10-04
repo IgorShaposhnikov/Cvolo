@@ -43,6 +43,7 @@ public enum SyntaxKind
 	ParenthesizedStructInitializerExpression,
 	InterpolatedStringExpression,
 	TernaryExpression,
+	CoalesceExpression,
 	UsingDirective,
 	ExposeUsingDirective,
 	NamespaceDeclaration,

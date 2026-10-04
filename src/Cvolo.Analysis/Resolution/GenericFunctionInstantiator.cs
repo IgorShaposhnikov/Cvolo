@@ -6,8 +6,8 @@ using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
 using Cvolo.Core.AST.Expressions;
 using Cvolo.Core.AST.Statements;
-
 using Cvolo.Core.Diagnostics;
+
 namespace Cvolo.Analysis.Resolution;
 
 /// <summary>
@@ -830,6 +830,8 @@ internal sealed class GenericFunctionInstantiator(
 
 			case TernaryExpressionSyntax t:
 				return new TernaryExpressionSyntax(t.Span, SubstituteExpressionGenerics(t.Condition, substitutionMap), SubstituteExpressionGenerics(t.ThenExpression, substitutionMap), SubstituteExpressionGenerics(t.ElseExpression, substitutionMap));
+			case CoalesceExpressionSyntax c:
+				return new CoalesceExpressionSyntax(c.Span, SubstituteExpressionGenerics(c.Left, substitutionMap), SubstituteExpressionGenerics(c.Right, substitutionMap));
 
 			case DefaultExpressionSyntax def:
 				if (def.TypeName is null)

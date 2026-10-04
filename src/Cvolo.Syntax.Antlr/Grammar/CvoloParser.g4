@@ -251,6 +251,7 @@ type
 	| type LT typeList GT                               # genericInstantiationType
 	| type STAR                                         # pointerType
 	| type QMARK                                       # optionalType
+	| type COALESCE                                    # optionalTypeChain
 	| REFVAR type                                       # refVarType
 	| REF type                                          # readOnlyRefType
 	;
@@ -423,6 +424,7 @@ expression
 	| expression PIPE expression														# bitwiseOrExpression
 	| expression AND expression															# logicalAndExpression
 	| expression OR expression															# logicalOrExpression
+	| expression COALESCE expression														# optionCoalescingExpression
 	| expression CATCH expression # catchExpression
 	| expression CATCH LPAREN Identifier RPAREN FAT_ARROW blockStatement # catchLambdaExpression
 	| expression QMARK expression COLON expression										# ternaryExpression

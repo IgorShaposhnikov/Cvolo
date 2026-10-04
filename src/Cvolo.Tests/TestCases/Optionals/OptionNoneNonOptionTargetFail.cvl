@@ -1,0 +1,8 @@
+using System;
+
+int main() {
+    // The target is not an Option, so 'Option.None' has nothing to resolve to.
+    int x = Option.None;
+    Console.WriteLine($"{x}");
+    return 0;
+}

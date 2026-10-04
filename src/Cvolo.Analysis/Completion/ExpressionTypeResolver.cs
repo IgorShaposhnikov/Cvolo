@@ -53,6 +53,9 @@ internal static class ExpressionTypeResolver
 				? ResolveTypeOrNull(context, parenthesized.ResolvedStructTypeName)
 				: null,
 			TernaryExpressionSyntax ternary => Resolve(context, visible, ternary.ThenExpression),
+			CoalesceExpressionSyntax coalesce => context.ResolvedCoalesceExpressions.TryGetValue(coalesce, out var resolved)
+				? resolved.ResultType
+				: null,
 			VoidLiteralExpressionSyntax => TypeSymbol.Void,
 			DefaultExpressionSyntax defaultExpression => defaultExpression.TypeName is not null ? ResolveTypeOrNull(context, defaultExpression.TypeName) : null,
 			UnaryExpressionSyntax unary => ResolveUnary(context, visible, unary),

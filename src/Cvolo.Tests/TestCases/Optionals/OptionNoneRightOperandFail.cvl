@@ -1,0 +1,11 @@
+using System;
+
+int main() {
+    // The fallback operator is left-driven: only its LEFT operand receives the
+    // surrounding expected type. The nested 'Option.None' here sits in the RIGHT
+    // operand of the outer coalescing expression, so no target type reaches it and
+    // the payload-free 'None' name cannot be resolved.
+    var int? d = Option.None ?? Option.None ?? 9;
+    Console.WriteLine($"{d}");
+    return 0;
+}

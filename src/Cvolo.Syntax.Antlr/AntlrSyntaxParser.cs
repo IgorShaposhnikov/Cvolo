@@ -1364,6 +1364,8 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 						SpanOf(catchLambdaCtx),
 						catchLambdaCtx.Identifier().GetText(),
 						BuildBlockStatement(catchLambdaCtx.blockStatement())));
+			case CvoloParser.OptionCoalescingExpressionContext coalesceCtx:
+				return BuildCoalesceExpression(coalesceCtx);
 			case CvoloParser.TernaryExpressionContext ternaryCtx:
 				{
 					var cond = BuildExpression(ternaryCtx.expression(0));
@@ -1431,6 +1433,43 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 
 			return sb.ToString();
 		}
+	}
+
+	/// <summary>
+	/// Builds an Option fallback expression, enforcing the right-associativity the grammar cannot
+	/// express.
+	/// </summary>
+	/// <remarks>
+	/// <para>
+	/// <c>expression</c> is a single left-recursive rule, so its binary alternative for the fallback
+	/// operator is left-associative by construction. The operator is specified as
+	/// right-associative, so a left-nested fallback chain is rotated here: <c>a ?? b ?? c</c> becomes
+	/// <c>a ?? (b ?? c)</c>. The operand trees are otherwise untouched.
+	/// </para>
+	/// <para>
+	/// The rotation keys off the parse context, not the built tree, because both spellings of a
+	/// left-nested chain produce the same left node: an explicit <c>(a ?? b) ?? c</c> reaches this
+	/// method with its left operand wrapped in a parenthesized context, and that grouping is the
+	/// author's, so it must be preserved. Rotating on the built <c>CoalesceExpressionSyntax</c>
+	/// instead would silently rewrite the grouping.
+	/// </para>
+	/// </remarks>
+	private ExpressionSyntax BuildCoalesceExpression(CvoloParser.OptionCoalescingExpressionContext context)
+	{
+		var leftContext = context.expression(0);
+		var left = BuildExpression(leftContext);
+		var right = BuildExpression(context.expression(1));
+
+		// Only a chain the grammar nested on its own is rotated; a parenthesized grouping is not.
+		if (leftContext is CvoloParser.OptionCoalescingExpressionContext && left is CoalesceExpressionSyntax inner)
+		{
+			return new CoalesceExpressionSyntax(
+				SpanOf(context),
+				inner.Left,
+				new CoalesceExpressionSyntax(inner.Span, inner.Right, right));
+		}
+
+		return new CoalesceExpressionSyntax(SpanOf(context), left, right);
 	}
 
 	private static string DecodeRawString(string text)
@@ -1802,6 +1841,17 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			return $"{GetTypeName(optCtx.type())}?";
 		}
 
+		// `T??` in type position. The fallback operator owns a dedicated `??` token, so a chained
+		// optional type no longer lexes as two `?` tokens. The optional type chain is still rejected
+		// here, with the same diagnostic the parser used before `??` became its own token.
+		if (context is CvoloParser.OptionalTypeChainContext chainCtx)
+		{
+			_diagnostics.Report(_compilationContext!, SpanOf(context), "Multiple '?' in a row are not allowed. Use Option<Option<T>> for nested optional types.",
+				DiagnosticIds.OptionalTypeChainForbidden);
+
+			return GetTypeName(chainCtx.type());
+		}
+
 		return context.GetText();
 	}
 
@@ -1908,6 +1958,18 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				return;
 			}
 
+			// `??=` has no dedicated token: maximal munch splits it into `??` and `=`, so the parser
+			// only trips on the `=`. Recognising that shape here gives the unsupported fallback
+			// assignment its own diagnostic instead of a bare "unexpected token '='".
+			if (TryReportCoalesceAssign(offendingSymbol, span, out var coalesceAssignSpan))
+			{
+				diagnostics.Report(context, coalesceAssignSpan,
+					"The fallback assignment operator '??=' is not supported. Write 'target = target ?? value' instead.",
+					DiagnosticIds.CoalesceAssignIsNotSupported);
+				_cascadeLines.Add(line);
+				return;
+			}
+
 			var simplified = SimplifyMessage(offendingSymbol, msg);
 			var diagnosticId = offendingSymbol is { Type: TokenConstants.EOF }
 				? DiagnosticIds.UnexpectedEndOfFile
@@ -1917,6 +1979,25 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 						? DiagnosticIds.ExpectedToken
 						: DiagnosticIds.Diagnostic;
 			diagnostics.Report(context, span, $"({line},{charPositionInLine}): {simplified}", diagnosticId);
+		}
+
+		/// <summary>
+		/// Detects the <c>??=</c> shape: a rejected <c>=</c> immediately preceded by the fallback
+		/// operator token. Returns the combined <c>??=</c> span so the highlight covers the whole
+		/// unsupported operator rather than just its tail.
+		/// </summary>
+		private bool TryReportCoalesceAssign(IToken? offendingSymbol, TextSpan span, out TextSpan coalesceSpan)
+		{
+			coalesceSpan = span;
+			if (offendingSymbol is not { Type: CvoloLexer.ASSIGN } || offendingSymbol.TokenIndex <= 0)
+				return false;
+
+			var previous = tokenStream.Get(offendingSymbol.TokenIndex - 1);
+			if (previous.Type != CvoloLexer.COALESCE)
+				return false;
+
+			coalesceSpan = new TextSpan(previous.StartIndex, previous.Text!.Length + offendingSymbol.Text!.Length);
+			return true;
 		}
 
 		private static string SimplifyMessage(IToken? offendingSymbol, string message)

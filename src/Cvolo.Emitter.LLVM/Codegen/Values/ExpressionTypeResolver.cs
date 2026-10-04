@@ -79,6 +79,9 @@ internal sealed class ExpressionTypeResolver(CodegenContext codegen, Func<Functi
 			TypeofExpressionSyntax => BindingContext.ResolveType("Type") ?? TypeSymbol.String,
 			SizeofExpressionSyntax or AlignofExpressionSyntax or OffsetofExpressionSyntax => TypeSymbol.NUInt,
 			TernaryExpressionSyntax ternary => Resolve(ternary.ThenExpression),
+			CoalesceExpressionSyntax coalesce => BindingContext.ResolvedCoalesceExpressions.TryGetValue(coalesce, out var resolved)
+				? resolved.ResultType ?? TypeSymbol.Int
+				: TypeSymbol.Int,
 			CallExpressionSyntax call => ResolveCallReturn(call),
 			BinaryExpressionSyntax binary => ResolveBinary(binary),
 			HeapAllocationExpressionSyntax heap => Resolve(heap.Expression),

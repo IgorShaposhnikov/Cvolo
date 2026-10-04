@@ -1,0 +1,13 @@
+using System;
+
+// CVL4186: the right operand must convert to the Option's payload type or to an Option of that
+// same payload type. An Option<long> fallback does not match an Option<int> left operand, and no
+// implicit numeric widening applies here.
+int main() {
+    var int? noValue = Option.None;
+    var long? fallback = Option.None;
+
+    var result = noValue ?? fallback;
+    Console.WriteLine(result ?? -1);
+    return 0;
+}

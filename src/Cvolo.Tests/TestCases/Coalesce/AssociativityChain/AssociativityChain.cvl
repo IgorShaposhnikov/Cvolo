@@ -1,0 +1,19 @@
+using System;
+
+// The operator is right-associative, so a ?? b ?? c parses as a ?? (b ?? c).
+//
+// With extract mode and an int payload, `b ?? c` resolves to an int, which cannot itself be
+// the left operand of `??`. The chain therefore has to run in preserve mode: `b ?? c` stays
+// an Option<int>, and the result of the whole chain is an Option<int>.
+//
+// Right-associativity is what makes this compile at all. Left-associativity would parse it as
+// (a ?? b) ?? c, whose inner result is a bare int and therefore rejected with CVL4185.
+int main() {
+    var int? a = Option.None;
+    var int? b = Option.None;
+    var int? c = 99;
+
+    var chained = a ?? b ?? c;
+    Console.WriteLine($"chained={chained ?? -1}");
+    return 0;
+}

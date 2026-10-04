@@ -1,0 +1,28 @@
+using System;
+
+struct Point {
+    int X;
+    int Y;
+}
+
+// Struct payloads are stored inline in the tagged Option layout, so the fallback has to load
+// the whole aggregate rather than a scalar field.
+int main() {
+    var Point? somePoint = Point { X: 1, Y: 2 };
+    var Point? noPoint = Option.None;
+
+    var a = somePoint ?? MakePoint();
+    Console.WriteLine($"a={a.X},{a.Y}");
+
+    var b = noPoint ?? MakePoint();
+    Console.WriteLine($"b={b.X},{b.Y}");
+
+    var c = somePoint ?? MakePoint();
+    Console.WriteLine($"c={c.X},{c.Y}");
+    return 0;
+}
+
+Point MakePoint() {
+    Console.WriteLine("MAKE");
+    return Point { X: 40, Y: 50 };
+}

@@ -111,6 +111,10 @@ LTE: '<=';
 GTE: '>=';
 AND: '&&';
 OR: '||';
+// Option fallback operator. Its own token keeps it distinct from the optional type
+// suffix `T?` and the ternary `?:`; maximal munch means `T??` in type position
+// lexes as `Identifier COALESCE` and is diagnosed as an optional type chain.
+COALESCE: '??';
 PLUS_ASSIGN: '+=';
 MINUS_ASSIGN: '-=';
 STAR_ASSIGN: '*=';

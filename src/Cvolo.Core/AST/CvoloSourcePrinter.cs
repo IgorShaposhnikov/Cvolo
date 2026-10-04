@@ -95,13 +95,13 @@ public sealed class CvoloSourcePrinter
 					: "";
 				return $"{PrintAttributes(ctor.Attributes, indent)}\n{ind}{(ctor.IsBuiltin ? "builtin " : "")}{ctor.StructName}({string.Join(", ", ctor.Parameters.Select(Print))}){ctorInit}{(ctor.IsDeclarationOnly ? ";" : $" {Print(ctor.Body, indent)}")}";
 
-		case DestructorDeclarationSyntax dtor:
-			return $"{PrintAttributes(dtor.Attributes, indent)}\n{ind}{(dtor.IsBuiltin ? "builtin " : "")}~{dtor.StructName}(){(dtor.IsDeclarationOnly ? ";" : $" {Print(dtor.Body, indent)}")}";
+			case DestructorDeclarationSyntax dtor:
+				return $"{PrintAttributes(dtor.Attributes, indent)}\n{ind}{(dtor.IsBuiltin ? "builtin " : "")}~{dtor.StructName}(){(dtor.IsDeclarationOnly ? ";" : $" {Print(dtor.Body, indent)}")}";
 
-		case OperatorDeclarationSyntax op:
-			var opVis = op.SyntacticVisibility is null ? "" : $"{op.Visibility.ToString().ToLowerInvariant()} ";
-			var opBody = op.Body != null ? $" {Print(op.Body, indent)}" : ";\n";
-			return $"{PrintAttributes(op.Attributes, indent)}\n{ind}{opVis}{op.ReturnType} operator {op.Operator}({string.Join(", ", op.Parameters.Select(Print))}){opBody}";
+			case OperatorDeclarationSyntax op:
+				var opVis = op.SyntacticVisibility is null ? "" : $"{op.Visibility.ToString().ToLowerInvariant()} ";
+				var opBody = op.Body != null ? $" {Print(op.Body, indent)}" : ";\n";
+				return $"{PrintAttributes(op.Attributes, indent)}\n{ind}{opVis}{op.ReturnType} operator {op.Operator}({string.Join(", ", op.Parameters.Select(Print))}){opBody}";
 
 
 			case BlockStatementSyntax b:
@@ -216,6 +216,9 @@ public sealed class CvoloSourcePrinter
 
 			case TernaryExpressionSyntax tn:
 				return $"{Print(tn.Condition)} ? {Print(tn.ThenExpression)} : {Print(tn.ElseExpression)}";
+
+			case CoalesceExpressionSyntax co:
+				return $"{Print(co.Left)} ?? {Print(co.Right)}";
 
 			case IsPatternExpressionSyntax ip:
 				return $"{Print(ip.Operand)} is {ip.VariantName}{(ip.BoundName != null ? $" {ip.BoundName}" : "")}";

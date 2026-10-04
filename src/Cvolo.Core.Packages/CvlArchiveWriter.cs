@@ -103,9 +103,7 @@ public sealed class CvlArchiveWriter
 		var maxSectorId = _sectors.Keys.Max();
 		var sectorCount = (ulong)Math.Max(MinimumSectorCount, maxSectorId);
 
-		// =========================================================================
 		// Pass 1: Layout
-		// =========================================================================
 		var merkleIndexTableOffset = 4096UL;
 		var indexTableSize = sectorCount * 32UL;
 		var signatureOffset = merkleIndexTableOffset + AlignUp(indexTableSize, PageSize);
@@ -163,9 +161,7 @@ public sealed class CvlArchiveWriter
 		};
 		CvlArchiveHeader.ExpectedMagic.CopyTo(MemoryMarshal.CreateSpan(ref header.Magic[0], 6));
 
-		// =========================================================================
 		// Pass 2: Streaming BLAKE3 hash
-		// =========================================================================
 		var leaves = new List<byte[]>();
 
 		// leaf_0 = BLAKE3(header[0..80]) WITHOUT padding; MerkleRootHash (bytes 32..63)
@@ -201,9 +197,7 @@ public sealed class CvlArchiveWriter
 
 	private unsafe void WriteContainer(string outputPath, ContainerPlan plan, byte[]? publicKey, byte[]? signature)
 	{
-		// =========================================================================
 		// Pass 3: Write + atomic rename
-		// =========================================================================
 		var tempPath = $"{outputPath}.tmp_{Environment.ProcessId}";
 
 		try
@@ -256,7 +250,14 @@ public sealed class CvlArchiveWriter
 		{
 			if (File.Exists(tempPath))
 			{
-				try { File.Delete(tempPath); } catch { /* best-effort cleanup */ }
+				try
+				{
+					File.Delete(tempPath);
+				}
+				catch
+				{
+					/* best-effort cleanup */
+				}
 			}
 		}
 	}
@@ -310,12 +311,9 @@ public sealed class CvlArchiveWriter
 		return leaves[0];
 	}
 
-	private static byte[] HashBytes(byte[] bytes) =>
-		Hasher.Hash(bytes).AsSpan().ToArray();
+	private static byte[] HashBytes(byte[] bytes) => Hasher.Hash(bytes).AsSpan().ToArray();
 
-	private static byte[] HashBytes(ReadOnlySpan<byte> bytes) =>
-		Hasher.Hash(bytes).AsSpan().ToArray();
+	private static byte[] HashBytes(ReadOnlySpan<byte> bytes) => Hasher.Hash(bytes).AsSpan().ToArray();
 
-	private static ulong AlignUp(ulong value, uint alignment) =>
-		(value + (alignment - 1)) & ~(ulong)(alignment - 1);
+	private static ulong AlignUp(ulong value, uint alignment) => (value + (alignment - 1)) & ~(ulong)(alignment - 1);
 }

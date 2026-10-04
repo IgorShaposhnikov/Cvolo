@@ -1,0 +1,45 @@
+using System;
+
+struct Node {
+    int Value;
+}
+
+// Target-typed 'Option.None': the expected type at the return position supplies
+// the payload type, so the payload-free 'None' name resolves to 'Option<int>.None'.
+int? MakeMissing() {
+    return Option.None;
+}
+
+int main() {
+    // Assignment position: a '?'-declared target types the 'None' name.
+    var int? a = Option.None;
+    Console.WriteLine($"a is None: {a is None}");
+
+    // Return position: the function return type flows in as the expected type.
+    int? c = MakeMissing();
+    Console.WriteLine($"c is None: {c is None}");
+
+    // Target-typed coalescing: the expected 'Option<int>' flows into the coalescing
+    // expression, binds its left operand as 'Option<int>.None', and the 123 fallback
+    // is lifted into 'Some(123)' so the result stays assignable to 'Option<int>'.
+    var int? b = Option.None ?? 123;
+    Console.WriteLine($"b is None: {b is None}");
+    if (b is Some bv) {
+        Console.WriteLine($"b payload: {bv}");
+    } else {
+        Console.WriteLine("b payload: unreachable");
+    }
+
+    // The NPO (flat pointer) representation reaches the same lowering.
+    var Option<ref Node> npo = Option.None;
+    Console.WriteLine($"npo is None: {npo is None}");
+
+    // A '?'-typed target on the left, read through the is-pattern.
+    var int? e = Option.None;
+    if (e is Some ev) {
+        Console.WriteLine($"e payload: {ev}");
+    } else {
+        Console.WriteLine("e none");
+    }
+    return 0;
+}

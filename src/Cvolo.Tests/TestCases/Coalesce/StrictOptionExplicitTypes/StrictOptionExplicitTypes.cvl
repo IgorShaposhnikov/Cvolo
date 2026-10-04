@@ -1,0 +1,19 @@
+using System;
+
+// `--strict-option` disables only the `T?` type sugar; the fallback operator is an expression
+// operator in its own right and must remain available when every Option type is spelled out
+// explicitly. This file declares no `?` type at all, so it compiles under --strict-option.
+int main() {
+    Option<int> someValue = Option<int> { Some: 42 };
+    Option<int> noValue = Option<int> { None: void };
+
+    var a = someValue ?? 7;
+    Console.WriteLine($"a={a}");
+
+    var b = noValue ?? 7;
+    Console.WriteLine($"b={b}");
+
+    var c = someValue ?? noValue;
+    Console.WriteLine($"c={c ?? -1}");
+    return 0;
+}

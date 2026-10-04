@@ -26,8 +26,8 @@ internal sealed class StatementValidator(
 	ClassificationAnalyzer classification,
 	OverloadResolver overloads,
 	CallResolver calls,
-	Action<ExpressionSyntax, SymbolTable> validateExpression,
-	Func<ExpressionSyntax, SymbolTable, TypeSymbol?> getExpressionType,
+	Action<ExpressionSyntax, SymbolTable, TypeSymbol?> validateExpression,
+	Func<ExpressionSyntax, SymbolTable, TypeSymbol?, TypeSymbol?> getExpressionType,
 	Action<LambdaExpressionSyntax, DelegateTypeSymbol, SymbolTable> validateTargetTypedLambda,
 	Action<ExpressionSyntax, DelegateTypeSymbol, SymbolTable> validateFunctionGroupConversion,
 	Action<ExpressionSyntax, DelegateTypeSymbol, SymbolTable> validateDelegateValue,
@@ -42,10 +42,12 @@ internal sealed class StatementValidator(
 	private SwitchValidator Switches => getSwitchValidator();
 
 	/// <summary>Delegates expression validation to the shared expression validator.</summary>
-	private void CheckExpression(ExpressionSyntax expression, SymbolTable scope) => validateExpression(expression, scope);
+	private void CheckExpression(ExpressionSyntax expression, SymbolTable scope, TypeSymbol? expectedType = null)
+		=> validateExpression(expression, scope, expectedType);
 
 	/// <summary>Delegates semantic expression typing to the shared expression validator.</summary>
-	private TypeSymbol? GetExpressionType(ExpressionSyntax expression, SymbolTable scope) => getExpressionType(expression, scope);
+	private TypeSymbol? GetExpressionType(ExpressionSyntax expression, SymbolTable scope, TypeSymbol? expectedType = null)
+		=> getExpressionType(expression, scope, expectedType);
 
 	// A condition that gates execution (if/while/for) must be a boolean. An assignment
 	// expression, for example, is not a value a condition may consume, so it is reported
@@ -578,12 +580,19 @@ internal sealed class StatementValidator(
 
 		TypeSymbol? resolvedType = null;
 
+		// The declared type is resolved up front so it can act as the target type for the
+		// initializer. Context-typed forms — `Option.None` and friends — have no type of their own,
+		// so the declaration is the only thing that can supply one. This mirrors the return
+		// statement, which resolves its expected type before checking the expression too.
+		var isReferenceDeclaration = varDecl.Type is "ref" or "refvar";
+		var declaredType = isReferenceDeclaration || varDecl.Type is null
+			? null
+			: context.ResolveType(varDecl.Type);
+
 		// Delegate-typed declarations: a lambda or function/method-group initializer is
 		// target-typed against the declared delegate (§4.2 / §22). Without an expected
 		// delegate type a lambda has no standalone type and is rejected.
-		var declaredDelegateType = varDecl.Type is "ref" or "refvar"
-			? null
-			: varDecl.Type is null ? null : context.ResolveType(varDecl.Type) as DelegateTypeSymbol;
+		var declaredDelegateType = declaredType as DelegateTypeSymbol;
 
 		if (declaredDelegateType is not null)
 		{
@@ -618,8 +627,8 @@ internal sealed class StatementValidator(
 			}
 			else
 			{
-				CheckExpression(varDecl.Initializer, scope);
-				resolvedType = GetExpressionType(varDecl.Initializer, scope);
+				CheckExpression(varDecl.Initializer, scope, declaredType);
+				resolvedType = GetExpressionType(varDecl.Initializer, scope, declaredType);
 			}
 		}
 
@@ -639,7 +648,7 @@ internal sealed class StatementValidator(
 		}
 		else if (varDecl.Type is not null)
 		{
-			resolvedType = context.ResolveType(varDecl.Type);
+			resolvedType = declaredType;
 
 			// Array types with computed sizes (e.g. int[Color.Max + 1]) must fully resolve;
 			// a failure means the size expression referenced an unknown/invalid constant.
@@ -649,7 +658,7 @@ internal sealed class StatementValidator(
 				context.Diagnostics.Report(currentFileContext, varDecl.Span, $"Cannot resolve type '{varDecl.Type}'.", DiagnosticIds.CannotResolveType);
 			}
 
-			var initializerType = declaredDelegateType is null && varDecl.Initializer != null ? GetExpressionType(varDecl.Initializer, scope) : null;
+			var initializerType = declaredDelegateType is null && varDecl.Initializer != null ? GetExpressionType(varDecl.Initializer, scope, declaredType) : null;
 
 			// Implicit Dereference: If target is value but initializer is a pointer, unwrap it
 			if (initializerType is PointerTypeSymbol ptr && resolvedType is not PointerTypeSymbol)
@@ -786,9 +795,9 @@ internal sealed class StatementValidator(
 			}
 		}
 
-		CheckExpression(ret.Expression, scope);
+		CheckExpression(ret.Expression, scope, expectedType);
 
-		var actualType = GetExpressionType(ret.Expression, scope);
+		var actualType = GetExpressionType(ret.Expression, scope, expectedType);
 
 		if (actualType != null && expectedType != null)
 		{

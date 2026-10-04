@@ -1,0 +1,28 @@
+using System;
+
+// Descriptor matrix for the semantic cache. It contains exactly four fallback expressions --
+// two whose right operand is a bare payload and two whose right operand is an Option -- so the
+// resulting ResolvedCoalesceExpression set can be asserted exactly. The preserved options are read
+// with an is-pattern so the file adds no further `??` of its own.
+int main() {
+    Option<int> present = Option<int> { Some: 42 };
+    Option<int> absent = Option<int> { None: void };
+    Option<int> other = Option<int> { Some: 7 };
+
+    var extractFromSome = present ?? 7;
+    var extractFromNone = absent ?? 7;
+    var preserveFromSome = present ?? other;
+    var preserveFromNone = absent ?? other;
+
+    Console.WriteLine($"{extractFromSome} {extractFromNone}");
+
+    if (preserveFromSome is Some first) {
+        Console.WriteLine(first);
+    }
+
+    if (preserveFromNone is Some second) {
+        Console.WriteLine(second);
+    }
+
+    return 0;
+}

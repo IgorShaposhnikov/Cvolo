@@ -1,0 +1,11 @@
+using System;
+
+// The operator is defined only for Option<T>. A raw pointer is null-checkable with `==`, but that
+// does not make it an Option, and it is deliberately not lifted to one: `p ?? 0` would silently
+// invent pointer-versus-integer semantics the language does not have.
+[UnsafeBody]
+int main(int* p) {
+    var value = p ?? 0;
+    Console.WriteLine(value);
+    return 0;
+}

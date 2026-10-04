@@ -1237,12 +1237,12 @@ public static class DiagnosticIds
 	/// <summary>'expose using' cannot declare a namespace alias.</summary>
 	public const string ExposeUsingCannotDeclareNamespaceAlias = "CVL4180";
 
-	// ==================== By-value aggregate layout (`struct A { A value; }`) ====================
+	// ──  By-value aggregate layout (`struct A { A value; }`) ──
 
 	/// <summary>Type 'X' contains itself by value and has no finite size. Use a pointer or reference field instead.</summary>
 	public const string TypeContainsItselfByValue = "CVL4181";
 
-	// ==================== Raw-pointer indexing (`ptr[index]`) ====================
+	// ──  Raw-pointer indexing (`ptr[index]`) ──
 
 	/// <summary>Indexing a raw pointer requires an unsafe context.</summary>
 	public const string RawPointerIndexRequiresUnsafe = "CVL4182";
@@ -1252,5 +1252,24 @@ public static class DiagnosticIds
 
 	/// <summary>The pointee of a raw pointer is not an indexable element type.</summary>
 	public const string RawPointerIndexPointeeIsNotIndexable = "CVL4184";
+
+	// ── Option fallback / coalescing (`left ?? right`) ──
+
+	/// <summary>The left operand of the fallback operator is not an Option, so there is no payload to unwrap.</summary>
+	public const string CoalesceLeftOperandMustBeOptionFound = "CVL4185";
+
+	/// <summary>The right operand of the fallback operator matches neither the payload type nor Option&lt;T&gt;.</summary>
+	public const string CoalesceRightOperandNotCompatibleWithPayloadTypeOf = "CVL4186";
+
+	/// <summary>The fallback assignment operator is not supported; use `left ?? right` with an explicit assignment.</summary>
+	public const string CoalesceAssignIsNotSupported = "CVL4187";
+
+	// ── Context-typed `Option.None` ──
+
+	/// <summary>
+	/// <c>Option.None</c> was used where no surrounding <c>Option&lt;T&gt;</c> type supplies the payload
+	/// type, so its payload type cannot be determined.
+	/// </summary>
+	public const string OptionNoneRequiresTargetType = "CVL4188";
 
 }

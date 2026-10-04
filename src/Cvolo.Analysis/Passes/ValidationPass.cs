@@ -341,6 +341,17 @@ public sealed class ValidationPass(BindingContext context)
 	/// <summary>Returns the semantic type of an expression through the shared expression semantic service.</summary>
 	private TypeSymbol? GetExpressionType(ExpressionSyntax expr, SymbolTable scope) => Expressions.GetType(expr, scope);
 
+	/// <summary>
+	/// Validates one expression that sits in a position with a target type, forwarding it so
+	/// context-typed forms can bind against it.
+	/// </summary>
+	private void CheckExpression(ExpressionSyntax expr, SymbolTable scope, TypeSymbol? expectedType)
+		=> Expressions.Check(expr, scope, expectedType);
+
+	/// <summary>Returns the semantic type of an expression that sits in a position with a target type.</summary>
+	private TypeSymbol? GetExpressionType(ExpressionSyntax expr, SymbolTable scope, TypeSymbol? expectedType)
+		=> Expressions.GetType(expr, scope, expectedType);
+
 
 	/// <summary>Validates a lambda against an expected delegate type through the shared expression validator.</summary>
 	private void CheckTargetTypedLambda(LambdaExpressionSyntax lambda, DelegateTypeSymbol delegateType, SymbolTable scope)

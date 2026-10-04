@@ -53,7 +53,15 @@ internal sealed class ExpressionValidator(
 	/// <summary>
 	/// Validates one expression and records any semantic bindings required by later compiler phases.
 	/// </summary>
-	public void Check(ExpressionSyntax expr, SymbolTable scope)
+	/// <param name="expr">The expression to validate.</param>
+	/// <param name="scope">The scope the expression is evaluated in.</param>
+	/// <param name="expectedType">
+	/// The surrounding target type, when the expression appears in a position that has one (a
+	/// declared variable's initializer, a return expression, or the left operand of a fallback).
+	/// Only context-typed forms consume it today; most expressions are typed on their own. Passing it
+	/// does not relax any check, so a position that omits it simply rejects context-typed forms.
+	/// </param>
+	public void Check(ExpressionSyntax expr, SymbolTable scope, TypeSymbol? expectedType = null)
 	{
 		switch (expr)
 		{
@@ -89,7 +97,7 @@ internal sealed class ExpressionValidator(
 					break;
 				}
 			case MemberAccessExpressionSyntax memberAccess:
-				CheckMemberAccessExpression(memberAccess, scope);
+				CheckMemberAccessExpression(memberAccess, scope, expectedType);
 				break;
 			case BorrowExpressionSyntax borrow:
 				CheckBorrowExpression(borrow, scope);
@@ -144,6 +152,9 @@ internal sealed class ExpressionValidator(
 				break;
 			case TernaryExpressionSyntax ternary:
 				CheckTernaryExpression(ternary, scope);
+				break;
+			case CoalesceExpressionSyntax coalesce:
+				GetOrBindCoalesceExpression(coalesce, scope, expectedType);
 				break;
 			case CallExpressionSyntax call:
 				{
@@ -368,7 +379,7 @@ internal sealed class ExpressionValidator(
 						var diagnosticId = call.FunctionName.Contains('.', StringComparison.Ordinal)
 							? DiagnosticIds.NoOverloadOfFunctionMatchesArgumentTypes
 							: DiagnosticIds.UnresolvedFunctionCall;
-						context.Diagnostics.Report(currentFileContext, call.ArgumentListSpan, $"No overload of function '{call.FunctionName}' matches argument types ({sigString})", 						diagnosticId);
+						context.Diagnostics.Report(currentFileContext, call.ArgumentListSpan, $"No overload of function '{call.FunctionName}' matches argument types ({sigString})", diagnosticId);
 						return;
 					}
 
@@ -1193,8 +1204,22 @@ internal sealed class ExpressionValidator(
 	/// <summary>
 	/// Validates member access and returns the resolved semantic member type when available.
 	/// </summary>
-	private TypeSymbol? CheckMemberAccessExpression(MemberAccessExpressionSyntax expr, SymbolTable scope)
+	/// <param name="expr">The member access expression.</param>
+	/// <param name="scope">The scope the expression is evaluated in.</param>
+	/// <param name="expectedType">
+	/// The surrounding target type, consulted only for the context-typed <c>Option.None</c> form.
+	/// </param>
+	private TypeSymbol? CheckMemberAccessExpression(MemberAccessExpressionSyntax expr, SymbolTable scope, TypeSymbol? expectedType = null)
 	{
+		// Context-typed `Option.None`. The bare `Option` template has no payload type of its own, so
+		// the surrounding target type is the only thing that can supply `T`. Like the enum path below,
+		// the receiver is a *type name* here, so this must resolve before the receiver is checked as a
+		// value expression or `Option` would be reported as an undefined variable.
+		if (TryResolveOptionTemplateReceiver(expr) is { } optionTemplate)
+		{
+			return ResolveTargetTypedOptionNone(expr, optionTemplate, expectedType);
+		}
+
 		// Namespace-qualified global access: Ns.Sub.Member. Resolved before the receiver is
 		// checked as an expression so 'Math' is not reported as an undefined variable.
 		if (TryResolveNamespaceGlobal(expr, scope, out var globalSymbol))
@@ -1383,6 +1408,81 @@ internal sealed class ExpressionValidator(
 	}
 
 	/// <summary>
+	/// Resolves the receiver of a context-typed <c>Option.None</c> when it is the Option template
+	/// used as a type name. Returns the resolved union when <paramref name="m"/> is the
+	/// context-typed none-state constructor, and null otherwise.
+	/// </summary>
+	/// <remarks>
+	/// <para>
+	/// The two-token surface shape <c>Option.None</c> is what makes this a language form rather than
+	/// an ordinary member access, so the name is matched here exactly as the optional-syntax rewriter
+	/// matches it. Nothing is bound to the Option type itself: the payload type comes from the
+	/// surrounding target type at each use site.
+	/// </para>
+	/// <para>
+	/// The structural Option check is applied only when the template's variants are populated. An
+	/// unresolved generic template has no payload type to inspect, so demanding the full shape there
+	/// would reject every use of the form.
+	/// </para>
+	/// </remarks>
+	private UnionTypeSymbol? TryResolveOptionTemplateReceiver(MemberAccessExpressionSyntax m)
+	{
+		var dotted = GetDottedName(m.Expression);
+		if (dotted is null || m.MemberName != "None")
+			return null;
+
+		if (dotted != "Option" && !dotted.EndsWith(".Option", StringComparison.Ordinal))
+			return null;
+
+		if (context.ResolveType(dotted) is not UnionTypeSymbol optionUnion)
+			return null;
+
+		// A union that borrowed the Option name but does not have the Option shape is not
+		// constructible through this form.
+		if (optionUnion.NoneVariant is not null && !optionUnion.IsOption)
+			return null;
+
+		return optionUnion;
+	}
+
+	/// <summary>
+	/// Types a context-typed <c>Option.None</c> against the surrounding target type, or reports that no
+	/// target type is available to supply the payload type.
+	/// </summary>
+	/// <remarks>
+	/// The verdict is cached per expression node, including the diagnosed failure. <see cref="GetType"/>
+	/// re-runs member-access validation, so without the cache a failing <c>Option.None</c> would be
+	/// diagnosed once per query, and a later query that carries no target type would silently discard
+	/// an earlier successful binding.
+	/// </remarks>
+	private TypeSymbol? ResolveTargetTypedOptionNone(
+		MemberAccessExpressionSyntax expr,
+		UnionTypeSymbol optionTemplate,
+		TypeSymbol? expectedType)
+	{
+		if (context.ResolvedTargetTypedOptionNone.TryGetValue(expr, out var cached))
+			return cached;
+
+		if (expectedType is not UnionTypeSymbol { IsOption: true } targetOption)
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, expr.Span,
+				$"'Option.{expr.MemberName}' requires a target Option<T> type to determine the payload type. " +
+				"Declare the target as 'T?' or 'Option<T>', or name the type explicitly.",
+				DiagnosticIds.OptionNoneRequiresTargetType);
+
+			context.ResolvedTargetTypedOptionNone.Add(expr, null);
+			return null;
+		}
+
+		// The payload types must agree: a target Option<long> cannot accept an Option.None that the
+		// surrounding context reads as Option<long> only if they are the same type, which the target
+		// type already guarantees by being the single source of truth here.
+		context.ResolvedTargetTypedOptionNone.Add(expr, targetOption);
+		return targetOption;
+	}
+
+	/// <summary>
 	/// Reconstructs a dotted identifier/member-access chain when the expression is purely a qualified name.
 	/// </summary>
 	private static string? GetDottedName(ExpressionSyntax expr)
@@ -1399,7 +1499,7 @@ internal sealed class ExpressionValidator(
 	/// <paramref name="target"/> is expected. Beyond exact equality, permits the safe
 	/// refvar→ref downcast (dropping mutability of a reference to the same type).
 	/// </summary>
-private static bool TypesAssignable(TypeSymbol target, TypeSymbol source)
+	private static bool TypesAssignable(TypeSymbol target, TypeSymbol source)
 	{
 		if (target.Equals(source))
 			return true;
@@ -1740,6 +1840,86 @@ private static bool TypesAssignable(TypeSymbol target, TypeSymbol source)
 	}
 
 	/// <summary>
+	/// Validates an Option fallback expression and returns its canonical semantic descriptor.
+	/// </summary>
+	/// <remarks>
+	/// Both operands are always checked, so an error confined to the right operand is still reported
+	/// even though the right operand's code is only emitted on the runtime <c>None</c> path.
+	/// </remarks>
+	/// <param name="coalesce">The fallback expression.</param>
+	/// <param name="scope">The scope the expression is evaluated in.</param>
+	/// <param name="expectedType">
+	/// The surrounding target type, forwarded to the left operand only.
+	/// </param>
+	/// <remarks>
+	/// The operator stays strictly left-driven: the left operand must resolve to an <c>Option&lt;T&gt;</c>
+	/// on its own before the right operand is considered. That is what keeps
+	/// <c>val x = Option.None ?? 123;</c> an error — with no target type there is nothing to type the
+	/// left operand with, and the payload type must not be back-inferred from the right operand. The
+	/// target type is still allowed to flow in, because <c>int? b = Option.None ?? 123;</c> gets its
+	/// <c>Option&lt;int&gt;</c> from the declaration, not from the fallback.
+	/// </remarks>
+	private ResolvedCoalesceExpression GetOrBindCoalesceExpression(
+		CoalesceExpressionSyntax coalesce,
+		SymbolTable scope,
+		TypeSymbol? expectedType = null)
+	{
+		if (context.ResolvedCoalesceExpressions.TryGetValue(coalesce, out var existing))
+			return existing;
+
+		// The left operand is always evaluated, so it is checked first. The right operand is checked
+		// unconditionally too: short-circuiting defers its code emission to the None branch, not its
+		// validation.
+		Check(coalesce.Left, scope, expectedType);
+		Check(coalesce.Right, scope);
+
+		var leftType = GetType(coalesce.Left, scope, expectedType);
+		var rightType = GetType(coalesce.Right, scope);
+		var resolved = CoalesceExpressionBinder.Bind(coalesce, leftType, rightType, expectedType);
+
+		// An operand typing that is merely incomplete is not a verdict. Validation continues with a
+		// non-cached descriptor so a later, better-informed query can resolve it.
+		if (resolved.ErrorKind == CoalesceBindingErrorKind.UnresolvedOperand)
+			return resolved;
+
+		context.ResolvedCoalesceExpressions.Add(coalesce, resolved);
+
+		if (!resolved.IsSuccess)
+			ReportCoalesceBindingError(resolved);
+
+		return resolved;
+	}
+
+	/// <summary>Reports the primary diagnostic retained by an error-bound fallback operation.</summary>
+	private void ReportCoalesceBindingError(ResolvedCoalesceExpression resolved)
+	{
+		var currentFileContext = context.FileContexts[context.CurrentUnit!];
+
+		switch (resolved.ErrorKind)
+		{
+			case CoalesceBindingErrorKind.LeftOperandNotOption:
+				context.Diagnostics.Report(
+					currentFileContext,
+					resolved.Syntax.Left.Span,
+					$"Coalescing operator requires Option<T> on the left operand; found '{resolved.LeftType?.Name ?? "unknown"}'",
+					DiagnosticIds.CoalesceLeftOperandMustBeOptionFound);
+				break;
+
+			case CoalesceBindingErrorKind.RightOperandNotCompatible:
+				context.Diagnostics.Report(
+					currentFileContext,
+					resolved.Syntax.Right.Span,
+					$"Right operand is not compatible with coalescing payload type '{resolved.PayloadType?.Name ?? resolved.OptionType?.PayloadVariant?.Type.Name ?? "unknown"}'",
+					DiagnosticIds.CoalesceRightOperandNotCompatibleWithPayloadTypeOf);
+				break;
+
+			case CoalesceBindingErrorKind.UnresolvedOperand:
+			case null:
+				break;
+		}
+	}
+
+	/// <summary>
 	/// Returns the final canonical binary binding for the current validation context, creating it
 	/// exactly once after declaration registration is complete. Error bindings are cached as final
 	/// results as well, so repeated type queries cannot repeat overload search or diagnostics.
@@ -1805,7 +1985,13 @@ private static bool TypesAssignable(TypeSymbol target, TypeSymbol source)
 	/// <summary>
 	/// Returns the semantic result type used by validation for an already parsed expression.
 	/// </summary>
-	public TypeSymbol? GetType(ExpressionSyntax expr, SymbolTable scope)
+	/// <param name="expr">The expression to type.</param>
+	/// <param name="scope">The scope the expression is evaluated in.</param>
+	/// <param name="expectedType">
+	/// The surrounding target type, when the position supplies one. Forwarded only to the
+	/// context-typed forms; see <see cref="Check"/>.
+	/// </param>
+	public TypeSymbol? GetType(ExpressionSyntax expr, SymbolTable scope, TypeSymbol? expectedType = null)
 	{
 		return expr switch
 		{
@@ -1827,7 +2013,7 @@ private static bool TypesAssignable(TypeSymbol target, TypeSymbol source)
 				: context.ResolvedDelegateCalls.TryGetValue(call, out var resolvedDelegate) ? resolvedDelegate.ReturnType
 				: null,
 			LambdaExpressionSyntax lam => context.ResolvedLambdas.TryGetValue(lam, out var lamInfo) ? lamInfo.Delegate : null,
-			MemberAccessExpressionSyntax m => CheckMemberAccessExpression(m, scope),
+			MemberAccessExpressionSyntax m => CheckMemberAccessExpression(m, scope, expectedType),
 			BorrowExpressionSyntax b => new PointerTypeSymbol(GetType(b.Expression, scope) ?? TypeSymbol.Int, b.IsMutable),
 			StructInitializationExpressionSyntax s => CheckStructInitializationExpression(s, scope),
 			HeapAllocationExpressionSyntax h => GetType(h.Expression, scope),
@@ -1846,6 +2032,7 @@ private static bool TypesAssignable(TypeSymbol target, TypeSymbol source)
 			ArrayReplicationExpressionSyntax r => CheckArrayReplication(r, scope),
 			ParenthesizedStructInitializerExpressionSyntax p => p.ResolvedStructTypeName is not null ? context.ResolveType(p.ResolvedStructTypeName) : null,
 			TernaryExpressionSyntax t => CheckTernaryExpression(t, scope),
+			CoalesceExpressionSyntax co => GetOrBindCoalesceExpression(co, scope, expectedType).ResultType,
 			VoidLiteralExpressionSyntax => TypeSymbol.Void,
 			DefaultExpressionSyntax d => context.ResolveType(d.TypeName),
 			UnaryExpressionSyntax unary => GetUnaryExpressionType(unary, scope),
