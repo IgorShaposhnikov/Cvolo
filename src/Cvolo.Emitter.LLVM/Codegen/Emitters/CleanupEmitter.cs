@@ -353,13 +353,8 @@ internal sealed class CleanupEmitter(CodegenContext codegen)
 
 	/// <summary>
 	/// Returns whether a semantic type carries a recursive destruction obligation.
+	/// Aggregate graphs are cycle-safe: revisiting an aggregate on the active path cuts that branch.
 	/// </summary>
-	/// <remarks>
-	/// Aggregate payloads may be cyclic by value (a struct holding itself, directly or through
-	/// another aggregate, is legal to declare), so the walk carries the aggregate path it is
-	/// currently inside. A type already on that path cannot introduce a new destruction obligation,
-	/// and cutting the branch keeps the probe terminating instead of exhausting the stack.
-	/// </remarks>
 	private bool TypeNeedsDestruction(TypeSymbol type) => TypeNeedsDestruction(type, []);
 
 	private bool TypeNeedsDestruction(TypeSymbol type, HashSet<string> active)
@@ -382,4 +377,5 @@ internal sealed class CleanupEmitter(CodegenContext codegen)
 				return false;
 		}
 	}
+
 }

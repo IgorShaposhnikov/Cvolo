@@ -32,6 +32,7 @@ internal static class SdkLibraryResolver
 		public CompilationUnitSyntax? Unit;
 		public List<string> Usings = [];
 		public List<string> ReExports = [];
+		public Dictionary<string, string> Aliases = new(StringComparer.Ordinal);
 		public List<string> ReferencedNamespaces = [];
 	}
 
@@ -106,7 +107,7 @@ internal static class SdkLibraryResolver
 				continue;
 			}
 
-			entry.ReferencedNamespaces.AddRange(ReferencedCandidates(entry.Unit, entry.Usings, catalogNamespaces));
+			entry.ReferencedNamespaces.AddRange(ReferencedCandidates(entry.Unit, entry.Usings, entry.Aliases, catalogNamespaces));
 		}
 
 		var required = new HashSet<string>(StringComparer.Ordinal);
@@ -152,6 +153,12 @@ internal static class SdkLibraryResolver
 				Enqueue(reExport);
 			}
 
+			foreach (var aliasTarget in entry.Aliases.Values)
+			{
+				Require(aliasTarget);
+				Enqueue(aliasTarget);
+			}
+
 			foreach (var referenced in entry.ReferencedNamespaces)
 			{
 				Require(referenced);
@@ -182,13 +189,20 @@ internal static class SdkLibraryResolver
 			}
 
 			var active = ActiveUsings(unit);
+			var aliases = ActiveAliases(unit);
 			foreach (var usingName in active)
 			{
 				Require(usingName);
 				Enqueue(usingName);
 			}
 
-			foreach (var referenced in ReferencedCandidates(unit, active, catalogNamespaces))
+			foreach (var aliasTarget in aliases.Values)
+			{
+				Require(aliasTarget);
+				Enqueue(aliasTarget);
+			}
+
+			foreach (var referenced in ReferencedCandidates(unit, active, aliases, catalogNamespaces))
 			{
 				Require(referenced);
 				Enqueue(referenced);
@@ -300,9 +314,12 @@ internal static class SdkLibraryResolver
 		var unit = entry.Unit!;
 		foreach (var directive in unit.Usings)
 		{
-			// A namespace alias binds a namespace prefix only; it never imports members of its target.
+			// Alias targets still select SDK modules even though aliases do not import members.
 			if (directive.IsAlias)
+			{
+				entry.Aliases[directive.AliasName!] = directive.NamespaceName;
 				continue;
+			}
 
 			if (directive.IsExposed)
 			{
@@ -319,7 +336,10 @@ internal static class SdkLibraryResolver
 			foreach (var directive in unit.NamespaceDeclaration.Usings)
 			{
 				if (directive.IsAlias)
+				{
+					entry.Aliases[directive.AliasName!] = directive.NamespaceName;
 					continue;
+				}
 
 				if (directive.IsExposed)
 				{
@@ -358,7 +378,28 @@ internal static class SdkLibraryResolver
 		return active;
 	}
 
-	private static IEnumerable<string> ReferencedCandidates(CompilationUnitSyntax unit, IReadOnlyList<string> activeUsings, IReadOnlyCollection<string> namespaces)
+	private static IReadOnlyDictionary<string, string> ActiveAliases(CompilationUnitSyntax unit)
+	{
+		var aliases = new Dictionary<string, string>(StringComparer.Ordinal);
+		foreach (var directive in unit.Usings)
+		{
+			if (directive.IsAlias)
+				aliases[directive.AliasName!] = directive.NamespaceName;
+		}
+
+		if (unit.NamespaceDeclaration is not null)
+		{
+			foreach (var directive in unit.NamespaceDeclaration.Usings)
+			{
+				if (directive.IsAlias)
+					aliases[directive.AliasName!] = directive.NamespaceName;
+			}
+		}
+
+		return aliases;
+	}
+
+	private static IEnumerable<string> ReferencedCandidates(CompilationUnitSyntax unit, IReadOnlyList<string> activeUsings, IReadOnlyDictionary<string, string> aliases, IReadOnlyCollection<string> namespaces)
 	{
 		var results = new HashSet<string>(StringComparer.Ordinal);
 
@@ -376,6 +417,15 @@ internal static class SdkLibraryResolver
 				{
 					results.Add(candidate);
 				}
+			}
+
+			var separator = dotted.IndexOf('.');
+			var root = separator < 0 ? dotted : dotted[..separator];
+			if (aliases.TryGetValue(root, out var aliasTarget))
+			{
+				var expanded = separator < 0 ? aliasTarget : aliasTarget + dotted[separator..];
+				if (namespaces.Contains(expanded))
+					results.Add(expanded);
 			}
 		}
 

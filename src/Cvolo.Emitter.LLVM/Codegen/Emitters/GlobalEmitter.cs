@@ -67,13 +67,16 @@ internal sealed class GlobalEmitter
 			{
 				var importedPackageGlobal = globalSymbol.DeclaringUnit is not null
 					&& BindingContext.ExternalPackageUnits.Contains(globalSymbol.DeclaringUnit);
+				var isSdkGlobal = globalSymbol.DeclaringUnit is not null
+					&& BindingContext.FileContexts.TryGetValue(globalSymbol.DeclaringUnit, out var globalContext)
+					&& globalContext.Origin is Cvolo.Core.Diagnostics.SourceOrigin.BaseSdk or Cvolo.Core.Diagnostics.SourceOrigin.SystemSdk;
 				var defineHere = !importedPackageGlobal
 					&& (_definedGlobalNames is null || _definedGlobalNames.Contains(qualifiedName));
 
 				global.IsGlobalConstant = !globalSymbol.IsMutable;
 				if (defineHere)
 				{
-					global.Linkage = _definedGlobalNames is not null && globalSymbol.Visibility == Visibility.Public
+					global.Linkage = isSdkGlobal || (_definedGlobalNames is not null && globalSymbol.Visibility == Visibility.Public)
 						? LLVMLinkage.LLVMExternalLinkage
 						: LLVMLinkage.LLVMInternalLinkage;
 					global.Initializer = BuildInitializer(globalSymbol.Type, globalNode.Initializer, llvmType);

@@ -142,6 +142,77 @@ int Main() {
 		Assert.Equal(0, process.ExitCode);
 	}
 
+
+	[Fact]
+	public void Build_ProjectReferenceBitcode_ResolvesSdkUsedOnlyByPackageImplementation()
+	{
+		RequireClang();
+
+		var libraryProject = CreatePackageReadyLibrary(
+			"ArtifactSdkLib",
+			"""
+using Sdk = System;
+
+namespace ArtifactSdkLib;
+
+public float PackageRadians() {
+    Sdk.Console.WriteLine("package-sdk");
+    return System.Math.Float.ToRadians(90.0f);
+}
+""");
+
+		var appDirectory = Path.Combine(_root, "ArtifactSdkApp");
+		Directory.CreateDirectory(appDirectory);
+		WriteProject(Path.Combine(appDirectory, "App.cvlproj"), "App", libraryProject);
+		File.WriteAllText(Path.Combine(appDirectory, "Main.cvl"), """
+using ArtifactSdkLib;
+
+int main() {
+    float radians = PackageRadians();
+    return radians > 1.5f ? 0 : 1;
+}
+""");
+
+		var graph = ProjectBuildGraph.Load(appDirectory);
+		const string buildKey = "build-v2|configuration=Debug|package-sdk-dependency-test";
+		var plan = ProjectBuildPlan.Create(graph, buildKey);
+		var prepared = ProjectReferenceBuildPipeline.Prepare(graph, plan, buildKey);
+		Assert.True(prepared.UseArtifacts);
+		Assert.Single(prepared.ArtifactPaths);
+
+		// Prove the consumer resolves SDK dependencies from the .cvlib source bundle, not from the
+		// referenced checkout. The implementation source is gone before the executable build starts.
+		File.Delete(Path.Combine(Path.GetDirectoryName(libraryProject)!, "ArtifactSdkLib.cvl"));
+
+		var artifacts = ProjectReferenceArtifactLoader.Load(appDirectory, "Debug");
+		var artifact = Assert.Single(artifacts);
+		var source = Assert.Single(artifact.SourceFiles!);
+		Assert.Contains("System.Math.Float.ToRadians", source.Source, StringComparison.Ordinal);
+		Assert.Contains("using Sdk = System", source.Source, StringComparison.Ordinal);
+
+		var cache = new PackageCache(Path.Combine(_root, "artifact-sdk-cache"));
+		var driverType = typeof(ICompilerDriver).Assembly.GetType("Cvolo.Drivers.CompilerDriver", throwOnError: true)!;
+		var driver = Assert.IsAssignableFrom<ICompilerDriver>(Activator.CreateInstance(driverType, cache));
+		var (exitCode, buildOutput) = CompileWithCapturedOutput(driver, appDirectory, useProjectReferencePackages: true);
+		Assert.True(exitCode == 0, buildOutput);
+
+		var executable = Path.Combine(appDirectory, "bin", "Debug", OperatingSystem.IsWindows() ? "App.exe" : "App");
+		Assert.True(File.Exists(executable), executable);
+		using var process = Process.Start(new ProcessStartInfo
+		{
+			FileName = executable,
+			UseShellExecute = false,
+			RedirectStandardOutput = true,
+			RedirectStandardError = true
+		});
+		Assert.NotNull(process);
+		var stdout = process!.StandardOutput.ReadToEnd();
+		var stderr = process.StandardError.ReadToEnd();
+		Assert.True(process.WaitForExit(10_000), $"Compiled app '{executable}' did not exit within 10 seconds.");
+		Assert.True(process.ExitCode == 0, stderr);
+		Assert.Contains("package-sdk", stdout, StringComparison.Ordinal);
+	}
+
 	[Fact]
 	public void CompilationProject_LoadsTransitiveProjectReferencesOnce()
 	{

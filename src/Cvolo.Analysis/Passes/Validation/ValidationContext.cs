@@ -70,28 +70,12 @@ internal sealed class ValidationContext
 	/// attempt to touch instance state without a receiver and is reported specifically.
 	/// </summary>
 	public IReadOnlySet<string>? AssociatedInstanceFields { get; set; }
-
-	/// <summary>
-	/// Semantic callable body whose operations are currently being validated. This is the
-	/// <see cref="FunctionDeclarationSyntax"/> for ordinary/extension/constructor bodies and the
-	/// <see cref="Cvolo.Core.AST.Expressions.LambdaExpressionSyntax"/> for lambda bodies, so unsafe
-	/// usage is attributed to the body that actually owns the operation rather than a syntactically
-	/// enclosing function.
-	/// </summary>
+	/// <summary>Semantic callable body whose unsafe operations are currently being validated.</summary>
 	public object? CurrentCallableBody { get; set; }
 
-	/// <summary>
-	/// Canonical record of unsafe usages observed in each semantic callable body, keyed by
-	/// <see cref="CurrentCallableBody"/>. Populated by <see cref="RequireUnsafe"/> during validation
-	/// and consumed by the CVL1001 effectiveness check after the body has been fully validated.
-	/// </summary>
+	/// <summary>Canonical unsafe-operation usages recorded per callable body.</summary>
 	public Dictionary<object, HashSet<UnsafeUsageKind>> UnsafeUsagesByCallableBody { get; } = new();
 
-	/// <summary>
-	/// Records one unsafe usage for the current callable body. The usage is recorded regardless of
-	/// whether unsafe capability is currently available: being inside an unsafe context suppresses
-	/// the error, not the fact that an unsafe operation occurred.
-	/// </summary>
 	public void RecordUnsafeUsage(UnsafeUsageKind kind)
 	{
 		if (CurrentCallableBody is not { } body)
@@ -103,12 +87,7 @@ internal sealed class ValidationContext
 		usages.Add(kind);
 	}
 
-	/// <summary>
-	/// Single authority for operations that require unsafe capability. It records the usage for the
-	/// current callable body and reports the operation-specific diagnostic only when no unsafe
-	/// capability is available. Validator sites must route new unsafe operations through here so the
-	/// CVL1001 effectiveness check automatically sees them.
-	/// </summary>
+	/// <summary>Records an unsafe operation and reports its diagnostic when no unsafe capability is active.</summary>
 	public void RequireUnsafe(
 		BindingContext context,
 		SyntaxNode syntax,
@@ -117,14 +96,13 @@ internal sealed class ValidationContext
 		string diagnosticId)
 	{
 		RecordUnsafeUsage(kind);
-
 		if (UnsafeDepth > 0)
 			return;
 
 		context.Diagnostics.Report(context.FileContexts[context.CurrentUnit!], syntax.Span, message, diagnosticId);
 	}
 
-	/// <summary>Returns whether any unsafe usage was recorded for the given callable body.</summary>
 	public bool HasUnsafeUsage(object callableBody) =>
 		UnsafeUsagesByCallableBody.TryGetValue(callableBody, out var usages) && usages.Count > 0;
+
 }

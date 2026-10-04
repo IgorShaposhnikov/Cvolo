@@ -151,7 +151,7 @@ public static class ProjectUniverseLoader
 				.ToList();
 		}
 
-		var packageSystemNamespaces = CollectPackageSystemNamespaces(artifacts);
+		var packageSystemNamespaces = PackageSdkDependencyResolver.Collect(artifacts);
 		if (packageSystemNamespaces.Count > 0)
 		{
 			project = CompilationProject.Load(
@@ -186,82 +186,6 @@ public static class ProjectUniverseLoader
 		}
 
 		return new ProjectUniverse(project, artifacts, externalUnits);
-	}
-
-	private static IReadOnlyList<string> CollectPackageSystemNamespaces(IEnumerable<ResolvedPackageArtifacts> artifacts)
-	{
-		var namespaces = new HashSet<string>(StringComparer.Ordinal);
-		foreach (var artifact in artifacts)
-		{
-			foreach (var unit in artifact.ApiMetadata.Units)
-			{
-				AddSystemNamespaces(namespaces, unit.FileUsings);
-				AddSystemNamespaces(namespaces, unit.NamespaceUsings);
-			}
-
-			foreach (var unit in artifact.TemplateUnits.Concat(artifact.SourceFallbackUnits))
-			{
-				AddSystemNamespaces(namespaces, unit.Usings.Select(u => u.NamespaceName));
-				if (unit.NamespaceDeclaration is not null)
-					AddSystemNamespaces(namespaces, unit.NamespaceDeclaration.Usings.Select(u => u.NamespaceName));
-			}
-
-			if (artifact.SourceFiles is not null)
-			{
-				foreach (var sourceFile in artifact.SourceFiles)
-					AddSystemNamespaces(namespaces, ExtractSystemNamespaces(sourceFile.Source));
-			}
-		}
-
-		var result = namespaces.ToList();
-		result.Sort(StringComparer.Ordinal);
-		return result;
-	}
-
-	private static void AddSystemNamespaces(HashSet<string> target, IEnumerable<string> namespaces)
-	{
-		foreach (var namespaceName in namespaces)
-		{
-			if (namespaceName == "System" || namespaceName.StartsWith("System.", StringComparison.Ordinal))
-				target.Add(namespaceName);
-		}
-	}
-
-	private static IEnumerable<string> ExtractSystemNamespaces(string source)
-	{
-		using var reader = new StringReader(source);
-		string? line;
-		while ((line = reader.ReadLine()) is not null)
-		{
-			var trimmed = line.Trim();
-			if (trimmed.StartsWith("using ", StringComparison.Ordinal) && trimmed.EndsWith(';'))
-			{
-				var namespaceName = trimmed["using ".Length..^1].Trim();
-				if (!namespaceName.Contains('=') && namespaceName.Length > 0)
-					yield return namespaceName;
-			}
-
-			foreach (var namespaceName in ExtractQualifiedSystemPrefixes(line))
-				yield return namespaceName;
-		}
-	}
-
-	private static IEnumerable<string> ExtractQualifiedSystemPrefixes(string line)
-	{
-		var index = 0;
-		while ((index = line.IndexOf("System.", index, StringComparison.Ordinal)) >= 0)
-		{
-			var end = index + "System".Length;
-			while (end < line.Length && (char.IsLetterOrDigit(line[end]) || line[end] is '_' or '.'))
-				end++;
-
-			var qualifiedName = line[index..end].TrimEnd('.');
-			var parts = qualifiedName.Split('.', StringSplitOptions.RemoveEmptyEntries);
-			for (var length = 1; length <= parts.Length; length++)
-				yield return string.Join('.', parts.Take(length));
-
-			index = end;
-		}
 	}
 
 	private static IReadOnlyList<ResolvedPackageArtifacts> LoadExplicitLibraries(IReadOnlyList<string> libraryPaths)

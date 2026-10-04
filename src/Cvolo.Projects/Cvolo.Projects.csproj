@@ -12,4 +12,8 @@
 		<ProjectReference Include="..\Cvolo.Packaging\Cvolo.Packaging.csproj" />
 	</ItemGroup>
 
+	<ItemGroup>
+		<InternalsVisibleTo Include="Cvolo.Tests.Packaging" />
+	</ItemGroup>
+
 </Project>

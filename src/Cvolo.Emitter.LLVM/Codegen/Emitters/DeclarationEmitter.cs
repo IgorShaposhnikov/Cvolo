@@ -226,7 +226,7 @@ internal sealed class DeclarationEmitter(
 						DeclareExportBlock(exportBlock, ns);
 						break;
 					case ExtensionDeclarationSyntax extDecl:
-						DeclareExtension(extDecl, ns);
+						DeclareExtension(extDecl, ns, isExternalPackageUnit, isSdkUnit);
 						break;
 				}
 			}
@@ -245,19 +245,28 @@ internal sealed class DeclarationEmitter(
 			var originalUnit = (BindingContext.SymbolUnits.TryGetValue(baseMangledName, out var unit) ? unit : null) ?? units[0];
 			BindingContext.CurrentUnit = originalUnit;
 			BindingContext.CurrentNamespace = originalUnit?.NamespaceDeclaration?.Name;
-			DeclareFunction(instDecl, instDecl.Name);
+			var isExternalUnit = originalUnit is not null && BindingContext.ExternalPackageUnits.Contains(originalUnit);
+			var isSdkUnit = originalUnit is not null
+				&& BindingContext.FileContexts.TryGetValue(originalUnit, out var originalContext)
+				&& originalContext.Origin is SourceOrigin.BaseSdk or SourceOrigin.SystemSdk;
+			DeclareFunction(instDecl, instDecl.Name, isExternalUnit, isSdkUnit);
 		}
 
 		foreach (var decl in BindingContext.MonomorphizedExtensionDecls)
 		{
 			var emitName = BindingContext.MonomorphizedExtensionNames[decl];
+			var originalUnit = BindingContext.SymbolUnits.TryGetValue(emitName, out var declarationUnit) ? declarationUnit : null;
+			var isExternalUnit = originalUnit is not null && BindingContext.ExternalPackageUnits.Contains(originalUnit);
+			var isSdkUnit = originalUnit is not null
+				&& BindingContext.FileContexts.TryGetValue(originalUnit, out var originalContext)
+				&& originalContext.Origin is SourceOrigin.BaseSdk or SourceOrigin.SystemSdk;
 			if (decl is FunctionDeclarationSyntax function)
 			{
-				DeclareFunction(function, emitName);
+				DeclareFunction(function, emitName, isExternalUnit, isSdkUnit);
 			}
 			else if (decl is ConstructorDeclarationSyntax constructor)
 			{
-				DeclareFunction(constructor.ToFunctionDeclaration(), emitName);
+				DeclareFunction(constructor.ToFunctionDeclaration(), emitName, isExternalUnit, isSdkUnit);
 				if (constructor.HasConstructorInitializer)
 				{
 					_constructorInitializers[emitName] = constructor;
@@ -542,7 +551,7 @@ internal sealed class DeclarationEmitter(
 	/// Declares concrete extension methods, destructors, and constructors while skipping protocol
 	/// default implementations that are materialized only after substitution onto conforming types.
 	/// </summary>
-	private void DeclareExtension(ExtensionDeclarationSyntax extension, string? currentNamespace)
+	private void DeclareExtension(ExtensionDeclarationSyntax extension, string? currentNamespace, bool isExternalDeclaration, bool forceExternalDefinition)
 	{
 		if (BindingContext.ResolveType(extension.ExtendedTypeName) is ProtocolTypeSymbol)
 			return;
@@ -567,7 +576,7 @@ internal sealed class DeclarationEmitter(
 					if (method.IsAssociated != (candidate.CallableKind == CallableKind.Associated))
 						continue;
 
-					DeclareFunction(method, candidate.Name);
+					DeclareFunction(method, candidate.Name, isExternalDeclaration, forceExternalDefinition);
 				}
 			}
 		}
@@ -583,7 +592,7 @@ internal sealed class DeclarationEmitter(
 			foreach (var candidate in candidates)
 			{
 				var matchingDeclaration = FindConstructorDeclaration(extension.Constructors, candidate) ?? constructor;
-				DeclareFunction(matchingDeclaration.ToFunctionDeclaration(), candidate.Name);
+				DeclareFunction(matchingDeclaration.ToFunctionDeclaration(), candidate.Name, isExternalDeclaration, forceExternalDefinition);
 				if (matchingDeclaration.HasConstructorInitializer)
 					_constructorInitializers[candidate.Name] = matchingDeclaration;
 			}

@@ -104,6 +104,9 @@ public sealed class PackageDependencyLoader(PackageCache cache, PackageInstaller
 			if (slice is null || slice.Sector3.Length == 0 || archive.Sectors.Count < 3)
 			{
 				var fallbackUnits = PackageTemplateSource.ReadAll(archive, packageId, locked.Resolved);
+				var fallbackPackageDirectory = Path.Combine(extractionRoot, packageId.ToLowerInvariant(), locked.Resolved);
+				Directory.CreateDirectory(fallbackPackageDirectory);
+				var fallbackSourceFiles = ExtractSourceFiles(archive, packageId, locked.Resolved, fallbackPackageDirectory);
 				if (fallbackUnits.Count == 0)
 				{
 					var code = slice is null ? CvlFormatDiagnosticIds.MissingTargetSlice : PackageDiagnosticIds.BitcodeUnavailable;
@@ -115,7 +118,7 @@ public sealed class PackageDependencyLoader(PackageCache cache, PackageInstaller
 				}
 
 				return new ResolvedPackageArtifacts(
-					packageId, locked.Resolved, null, null, new PackageApiMetadata(), [], [], fallbackUnits, UsesSourceFallback: true);
+					packageId, locked.Resolved, null, null, new PackageApiMetadata(), [], [], fallbackUnits, UsesSourceFallback: true, fallbackSourceFiles);
 			}
 
 			var apiMetadata = PackageApiMetadata.Read(archive);

@@ -279,10 +279,13 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		foreach (var instDecl in bindingContext.MonomorphizedFunctionDecls)
 		{
 			var canonicalName = bindingContext.NormalizeGenericName(instDecl.Name);
+			var baseMangledName = instDecl.Name.Split('<')[0];
+			var originalUnit = (bindingContext.SymbolUnits.TryGetValue(baseMangledName, out var u) ? u : null) ?? units[0];
+			if (bindingContext.ExternalPackageUnits.Contains(originalUnit))
+				continue;
+
 			if (emittedFunctionNames.Add(canonicalName))
 			{
-				var baseMangledName = instDecl.Name.Split('<')[0];
-				var originalUnit = (bindingContext.SymbolUnits.TryGetValue(baseMangledName, out var u) ? u : null) ?? units[0];
 				bindingContext.CurrentUnit = originalUnit;
 				bindingContext.CurrentNamespace = originalUnit?.NamespaceDeclaration?.Name;
 				_codegen.CurrentUnit = originalUnit;
@@ -295,9 +298,12 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		foreach (var decl in bindingContext.MonomorphizedExtensionDecls)
 		{
 			var emitName = bindingContext.MonomorphizedExtensionNames[decl];
+			var originalUnit = (bindingContext.SymbolUnits.TryGetValue(emitName, out var u) ? u : null) ?? units[0];
+			if (bindingContext.ExternalPackageUnits.Contains(originalUnit))
+				continue;
+
 			if (emittedFunctionNames.Add(emitName))
 			{
-				var originalUnit = (bindingContext.SymbolUnits.TryGetValue(emitName, out var u) ? u : null) ?? units[0];
 				bindingContext.CurrentUnit = originalUnit;
 				bindingContext.CurrentNamespace = originalUnit?.NamespaceDeclaration?.Name;
 				_codegen.CurrentUnit = originalUnit;

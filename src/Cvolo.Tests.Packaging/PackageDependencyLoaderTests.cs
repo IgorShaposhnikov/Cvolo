@@ -2,6 +2,7 @@ using System.Buffers.Binary;
 using System.Text.Json;
 using Cvolo.Core.Packages;
 using Cvolo.Packaging;
+using Cvolo.Projects;
 using NSec.Cryptography;
 
 namespace Cvolo.Tests.Packaging;
@@ -202,7 +203,7 @@ public sealed class PackageDependencyLoaderTests : IDisposable
 		var project = CreateProject("source-fallback-app", [new PackageReference("Foo", "1.0.0")]);
 		var source = CreateArchive(
 			"Foo", "1.0.0", [0x10], bitcodeBytes: [],
-			sourceBuffer: "namespace Foo; public int Add(int a, int b) { return a + b; }");
+			sourceBuffer: "namespace Foo; public int Add(int a, int b) { System.Console.WriteLine(\"fallback\"); return a + b; }");
 		var cache = new PackageCache(Path.Combine(_root, "cache-source-fallback"));
 		new PackageInstaller(cache).InstallFromFile(source);
 		var lockFile = WriteLock(project, "Foo", "1.0.0", LocalFeed.ComputeHash(source));
@@ -214,6 +215,9 @@ public sealed class PackageDependencyLoaderTests : IDisposable
 		Assert.Null(artifact.NativeObjectPath);
 		Assert.Empty(artifact.TemplateUnits);
 		Assert.Single(artifact.SourceFallbackUnits);
+		var sourceFile = Assert.Single(artifact.SourceFiles!);
+		Assert.Contains("System.Console.WriteLine", sourceFile.Source, StringComparison.Ordinal);
+		Assert.Contains("System.Console", PackageSdkDependencyResolver.Collect([artifact]));
 	}
 
 	[Fact]

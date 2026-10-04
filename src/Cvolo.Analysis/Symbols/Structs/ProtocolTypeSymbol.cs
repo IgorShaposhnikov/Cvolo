@@ -49,12 +49,7 @@ public sealed class ProtocolTypeSymbol(
 	/// </summary>
 	public IReadOnlySet<string> CanonicalMembers { get; private set; } = canonicalMembers;
 
-	/// <summary>
-	/// Completes the canonical member token set of a placeholder registered by the
-	/// declaration-order-independent type predeclaration pass. The tokens are built once every
-	/// type identity exists, and completing them in place keeps the protocol's nominal identity
-	/// stable for references captured by earlier forward resolution.
-	/// </summary>
+	/// <summary>Completes canonical member tokens of a predeclared protocol identity in place.</summary>
 	public void CompleteCanonicalMembers(IReadOnlySet<string> canonicalMembers)
 	{
 		CanonicalMembers = canonicalMembers;
