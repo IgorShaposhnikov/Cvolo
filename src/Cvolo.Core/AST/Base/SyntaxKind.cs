@@ -44,6 +44,7 @@ public enum SyntaxKind
 	InterpolatedStringExpression,
 	TernaryExpression,
 	CoalesceExpression,
+	OptionalChainExpression,
 	UsingDirective,
 	ExposeUsingDirective,
 	NamespaceDeclaration,

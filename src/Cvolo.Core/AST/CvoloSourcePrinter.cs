@@ -220,6 +220,10 @@ public sealed class CvoloSourcePrinter
 			case CoalesceExpressionSyntax co:
 				return $"{Print(co.Left)} ?? {Print(co.Right)}";
 
+			case OptionalChainExpressionSyntax oc:
+				var ocArguments = oc.Arguments is null ? "" : $"({string.Join(", ", oc.Arguments.Select(Print))})";
+				return $"{Print(oc.Receiver)}?.{oc.MemberName}{ocArguments}";
+
 			case IsPatternExpressionSyntax ip:
 				return $"{Print(ip.Operand)} is {ip.VariantName}{(ip.BoundName != null ? $" {ip.BoundName}" : "")}";
 

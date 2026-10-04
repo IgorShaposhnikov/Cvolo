@@ -1,0 +1,35 @@
+using System;
+
+struct Box {
+    int value;
+}
+
+extension Box {
+    int Add(ref this, int amount) {
+        return value + amount;
+    }
+}
+
+int SideEffect() {
+    Console.WriteLine("ARG-EVALUATED");
+    return 5;
+}
+
+int main() {
+    Box? present = Box { value: 1 };
+    Box? absent = Option.None;
+
+    // Arguments are semantically checked unconditionally but only evaluated on the Some path.
+    var some = present?.Add(SideEffect());
+    if (some is Some v) {
+        Console.WriteLine($"some={v}");
+    }
+
+    var none = absent?.Add(SideEffect());
+    if (none is Some v) {
+        Console.WriteLine($"unexpected={v}");
+    } else {
+        Console.WriteLine("none=None");
+    }
+    return 0;
+}

@@ -1,4 +1,3 @@
-using Cvolo.Core.AST;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
 using Cvolo.Core.AST.Expressions;
@@ -439,6 +438,12 @@ public sealed class DeferRewriter(DiagnosticBag diagnostics, CompilationContext 
 				CollectDeclaredNames(coalesce.Left, declared);
 				CollectDeclaredNames(coalesce.Right, declared);
 				break;
+			case OptionalChainExpressionSyntax optionalChain:
+				CollectDeclaredNames(optionalChain.Receiver, declared);
+				if (optionalChain.Arguments is not null)
+					foreach (var optionalChainArgument in optionalChain.Arguments)
+						CollectDeclaredNames(optionalChainArgument, declared);
+				break;
 			case StructInitializationExpressionSyntax structInit:
 				foreach (var init in structInit.Initializers)
 					CollectDeclaredNames(init.Expression, declared);
@@ -689,6 +694,7 @@ public sealed class DeferRewriter(DiagnosticBag diagnostics, CompilationContext 
 			ParenthesizedStructInitializerExpressionSyntax parenInit => new ParenthesizedStructInitializerExpressionSyntax(parenInit.Span, parenInit.Initializers.Select(CloneMemberInit).ToList()),
 			TernaryExpressionSyntax ternary => new TernaryExpressionSyntax(ternary.Span, CloneExpression(ternary.Condition), CloneExpression(ternary.ThenExpression), CloneExpression(ternary.ElseExpression)),
 			CoalesceExpressionSyntax coalesce => new CoalesceExpressionSyntax(coalesce.Span, CloneExpression(coalesce.Left), CloneExpression(coalesce.Right)),
+			OptionalChainExpressionSyntax optionalChain => new OptionalChainExpressionSyntax(optionalChain.Span, CloneExpression(optionalChain.Receiver), optionalChain.MemberName, optionalChain.Arguments?.Select(CloneExpression).ToList()),
 			InterpolatedStringExpressionSyntax interp => new InterpolatedStringExpressionSyntax(interp.Span, interp.RawText),
 			IsPatternExpressionSyntax isPat => new IsPatternExpressionSyntax(isPat.Span, CloneExpression(isPat.Operand), isPat.VariantName, isPat.BoundName),
 			DefaultExpressionSyntax def => new DefaultExpressionSyntax(def.Span, def.TypeName),

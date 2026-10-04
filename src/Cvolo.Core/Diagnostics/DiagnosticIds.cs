@@ -1272,4 +1272,27 @@ public static class DiagnosticIds
 	/// </summary>
 	public const string OptionNoneRequiresTargetType = "CVL4188";
 
+	/// <summary>
+	/// The receiver of <c>?.</c> is not an <c>Option&lt;T&gt;</c>. Optional chaining is an
+	/// Option-presence operator, not null magic, so it cannot be applied to a plain value.
+	/// </summary>
+	public const string OptionalChainReceiverMustBeOptionFound = "CVL4189";
+
+	/// <summary>
+	/// The optional-chained member does not exist on the Option payload type.
+	/// </summary>
+	public const string OptionalChainPayloadDoesNotContainMember = "CVL4190";
+
+	/// <summary>
+	/// A user extension named <c>Invoke</c> targets a delegate type, shadowing the compiler-owned
+	/// synthesized <c>Delegate.Invoke</c> semantic member.
+	/// </summary>
+	public const string ExtensionInvokeOnDelegateTypeIsReserved = "CVL4191";
+
+	/// <summary>
+	/// An optional-chained member cannot be assigned to. Conditional writeback
+	/// (<c>user?.name = ...</c>) is deferred; mutation must go through a selected method.
+	/// </summary>
+	public const string OptionalChainIsNotAssignable = "CVL4192";
+
 }

@@ -1,0 +1,44 @@
+using System;
+
+struct User {
+    int id;
+}
+
+extension User {
+    int GetId(ref this) {
+        return id;
+    }
+}
+
+int main() {
+    User? user = User { id: 12 };
+
+    // A field read through the optional chain lifts the bare field type into an Option.
+    var field = user?.id;
+    if (field is Some v) {
+        Console.WriteLine($"field={v}");
+    }
+
+    // An extension method is resolved against the payload and invoked through it.
+    var method = user?.GetId();
+    if (method is Some v) {
+        Console.WriteLine($"method={v}");
+    }
+
+    // None short-circuits: neither the field nor the method is reached, and absence propagates.
+    User? absent = Option.None;
+    var noneField = absent?.id;
+    if (noneField is Some v) {
+        Console.WriteLine($"unexpected={v}");
+    } else {
+        Console.WriteLine("none=None");
+    }
+
+    var noneMethod = absent?.GetId();
+    if (noneMethod is Some v) {
+        Console.WriteLine($"unexpected={v}");
+    } else {
+        Console.WriteLine("noneMethod=None");
+    }
+    return 0;
+}

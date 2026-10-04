@@ -1,0 +1,12 @@
+using System;
+
+struct User {
+    int id;
+}
+
+// Conditional writeback is deferred: an optional-chained member is not an assignment target.
+int main() {
+    User? user = User { id: 12 };
+    user?.id = 5;
+    return 0;
+}

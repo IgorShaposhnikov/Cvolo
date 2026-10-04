@@ -833,6 +833,9 @@ internal sealed class GenericFunctionInstantiator(
 			case CoalesceExpressionSyntax c:
 				return new CoalesceExpressionSyntax(c.Span, SubstituteExpressionGenerics(c.Left, substitutionMap), SubstituteExpressionGenerics(c.Right, substitutionMap));
 
+			case OptionalChainExpressionSyntax oc:
+				return new OptionalChainExpressionSyntax(oc.Span, SubstituteExpressionGenerics(oc.Receiver, substitutionMap), oc.MemberName, oc.Arguments?.Select(a => SubstituteExpressionGenerics(a, substitutionMap)).ToList());
+
 			case DefaultExpressionSyntax def:
 				if (def.TypeName is null)
 					return def;

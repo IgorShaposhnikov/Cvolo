@@ -1,0 +1,27 @@
+using System;
+
+struct Box {
+    int value;
+}
+
+extension Box {
+    int Read(ref this) {
+        return value;
+    }
+}
+
+Box? Produce() {
+    Console.WriteLine("RECEIVER-CALLED");
+    Box? box = Box { value: 7 };
+    return box;
+}
+
+int main() {
+    // The receiver expression has a visible side effect; it must run once for the whole chain,
+    // not once for the discriminant and again for the payload.
+    var result = Produce()?.Read();
+    if (result is Some v) {
+        Console.WriteLine($"read={v}");
+    }
+    return 0;
+}

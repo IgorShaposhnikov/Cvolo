@@ -442,7 +442,12 @@ internal sealed class CallEmitter(
 		var one = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1);
 
 		LLVMValueRef delegatePtr;
-		var qualifiedGlobalKey = values.ResolveGlobalKey(call.FunctionName);
+		// Prefer the semantic value path resolved for this call. It differs from the written callee
+		// whenever the synthesized `Delegate.Invoke` member was bound (`handler.Invoke(42)` stores the
+		// delegate at `handler`), and it also gives nested paths (`state.Dispatch.Callback`) a single
+		// recursive walk instead of a last-segment split.
+		var storagePath = BindingContext?.ResolvedDelegateTargets.GetValueOrDefault(call) ?? call.FunctionName;
+		var qualifiedGlobalKey = values.ResolveGlobalKey(storagePath);
 		if (qualifiedGlobalKey is { } exactGlobalKey
 			&& codegen.GlobalVariables.TryGetValue(exactGlobalKey, out var exactGlobalSlot)
 			&& codegen.GlobalVariableTypes.TryGetValue(exactGlobalKey, out var exactGlobalType)
@@ -450,32 +455,14 @@ internal sealed class CallEmitter(
 		{
 			delegatePtr = exactGlobalSlot;
 		}
-		else if (call.FunctionName.Contains('.'))
+		else if (storagePath.Contains('.'))
 		{
-			var lastDot = call.FunctionName.LastIndexOf('.');
-			var receiverName = call.FunctionName[..lastDot];
-			var memberName = call.FunctionName[(lastDot + 1)..];
-
-			if (TryResolveReceiverPointer(receiverName, out var recvPtr, out var recvTy)
-				&& (recvTy is PointerTypeSymbol rpp && rpp.ReferencedType is StructTypeSymbol rstruct
-					? rstruct
-					: recvTy as StructTypeSymbol) is { } receiverStruct)
-			{
-				LLVMValueRef basePtr = recvPtr;
-				if (recvTy is PointerTypeSymbol)
-					basePtr = Builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), recvPtr, "receiver_loaded_ptr");
-				var fieldIdx = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)codegen.AggregateLayout.GetFieldIndex(receiverStruct, memberName));
-				delegatePtr = Builder.BuildGEP2(codegen.Types.Lower(receiverStruct), basePtr, new LLVMValueRef[] { zero, fieldIdx }, "delegate_field_ptr");
-			}
-			else
-			{
-				throw new InvalidOperationException($"Cannot resolve receiver '{receiverName}' for delegate invocation '{call.FunctionName}'.");
-			}
+			delegatePtr = ResolveDelegateStoragePointer(storagePath);
 		}
 		else
 		{
-			var calleeName = values.ResolveGlobalKey(call.FunctionName);
-			if (Function.Locals.TryGetValue(call.FunctionName, out var localSlot))
+			var calleeName = values.ResolveGlobalKey(storagePath);
+			if (Function.Locals.TryGetValue(storagePath, out var localSlot))
 			{
 				delegatePtr = localSlot;
 			}
@@ -486,16 +473,16 @@ internal sealed class CallEmitter(
 			else if (Function.Locals.TryGetValue("this", out var thisPtr)
 				&& Function.VariableTypes["this"] is PointerTypeSymbol thisPtrTy
 				&& thisPtrTy.ReferencedType is StructTypeSymbol thisStruct
-				&& thisStruct.FindField(call.FunctionName) is { } thisField
+				&& thisStruct.FindField(storagePath) is { } thisField
 				&& thisField.Type is DelegateTypeSymbol)
 			{
 				var actualThisPtr = Builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), thisPtr, "loaded_this_ptr");
-				var fieldIdx = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)codegen.AggregateLayout.GetFieldIndex(thisStruct, call.FunctionName));
+				var fieldIdx = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)codegen.AggregateLayout.GetFieldIndex(thisStruct, storagePath));
 				delegatePtr = Builder.BuildGEP2(codegen.Types.Lower(thisStruct), actualThisPtr, new LLVMValueRef[] { zero, fieldIdx }, "delegate_field_ptr");
 			}
 			else
 			{
-				throw new InvalidOperationException($"Cannot resolve delegate variable '{call.FunctionName}'.");
+				throw new InvalidOperationException($"Cannot resolve delegate variable '{storagePath}'.");
 			}
 		}
 
@@ -746,6 +733,30 @@ internal sealed class CallEmitter(
 
 		receiverType = null!;
 		return false;
+	}
+
+	/// <summary>
+	/// Resolves the address of a delegate stored at an arbitrarily nested value path such as
+	/// <c>state.Dispatch.Callback</c>.
+	/// </summary>
+	/// <remarks>
+	/// The path is rebuilt as a <see cref="MemberAccessExpressionSyntax"/> chain and handed to
+	/// <see cref="AggregateEmitter.GetFieldPointer"/>, so the same recursion, provenance, and receiver
+	/// handling that ordinary member reads use also applies to a delegate target.
+	/// </remarks>
+	private LLVMValueRef ResolveDelegateStoragePointer(string storagePath)
+	{
+		var segments = storagePath.Split('.');
+		ExpressionSyntax path = new IdentifierExpressionSyntax(default, segments[0]);
+		for (var i = 1; i < segments.Length; i++)
+			path = new MemberAccessExpressionSyntax(default, path, segments[i]);
+
+		var (ptr, _, _, _) = aggregates.GetFieldPointer(path);
+
+		// A root held by pointer is itself stored indirectly, so the aggregate base is one load away.
+		return Function.VariableTypes.GetValueOrDefault(segments[0]) is PointerTypeSymbol
+			? Builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), ptr, "delegate_path_root")
+			: ptr;
 	}
 
 	private TypeSymbol? GetParamType(string mangledFuncName, int index)

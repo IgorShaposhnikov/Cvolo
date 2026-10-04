@@ -1,0 +1,44 @@
+using System;
+
+// A member whose own type is already Option<int> must NOT be flattened: the optional chain adds
+// exactly one synthetic layer, so `present?.Maybe(...)` is Option<Option<int>>. The two helper
+// functions read each layer independently, which also avoids binding nested `is Some` patterns.
+struct Holder {
+    int value;
+}
+
+extension Holder {
+    Option<int> Maybe(ref this, int flag) {
+        if (flag == 1) {
+            return Option<int> { Some: value };
+        }
+        return Option.None;
+    }
+}
+
+int Inner(Option<int> value, int fallback) {
+    if (value is Some v) {
+        return v;
+    }
+    return fallback;
+}
+
+int Outer(Option<Option<int>> value, int fallback) {
+    if (value is Some inner) {
+        return Inner(inner, -1);
+    }
+    return fallback;
+}
+
+int main() {
+    Holder? present = Holder { value: 9 };
+
+    var some = present?.Maybe(1);
+    var none = present?.Maybe(0);
+
+    // Some-of-Some unwraps to the payload; Some-of-None reads the inner absence as -1, while a
+    // collapsed layer would have produced the outer absence sentinel -2 instead.
+    Console.WriteLine($"some={Outer(some, -2)}");
+    Console.WriteLine($"none={Outer(none, -2)}");
+    return 0;
+}

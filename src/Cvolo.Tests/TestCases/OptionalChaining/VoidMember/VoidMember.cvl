@@ -1,0 +1,24 @@
+using System;
+
+struct Box {
+    int value;
+}
+
+extension Box {
+    void Fire(ref this, int amount) {
+        Console.WriteLine($"fire {amount} value={value}");
+    }
+}
+
+int main() {
+    // A void member produces no value: the Some path runs its side effect and no Option is built.
+    Box? present = Box { value: 7 };
+    present?.Fire(3);
+
+    // None must skip the call entirely.
+    Box? absent = Option.None;
+    absent?.Fire(99);
+
+    Console.WriteLine("done");
+    return 0;
+}

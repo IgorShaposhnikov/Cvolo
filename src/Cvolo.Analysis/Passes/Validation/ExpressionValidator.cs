@@ -156,6 +156,9 @@ internal sealed class ExpressionValidator(
 			case CoalesceExpressionSyntax coalesce:
 				GetOrBindCoalesceExpression(coalesce, scope, expectedType);
 				break;
+			case OptionalChainExpressionSyntax optionalChain:
+				GetOrBindOptionalChain(optionalChain, scope);
+				break;
 			case CallExpressionSyntax call:
 				{
 					// First evaluate argument types at the call site. Lambda expressions and
@@ -474,6 +477,20 @@ internal sealed class ExpressionValidator(
 				{
 					if (bin.Operator == "=")
 					{
+						// Conditional writeback (`user?.name = ...`) is deferred. The desugared compound
+						// form (`state?.counter += 1`) also has an outer `=` whose left is the optional
+						// chain, so both are caught here.
+						if (bin.Left is OptionalChainExpressionSyntax writebackTarget)
+						{
+							var currentFileContext = context.FileContexts[context.CurrentUnit!];
+							context.Diagnostics.Report(currentFileContext, writebackTarget.Span,
+								"An optional-chained member is not an assignment target; conditional writeback is not supported.",
+								DiagnosticIds.OptionalChainIsNotAssignable);
+							Check(bin.Right, scope);
+							Check(bin.Left, scope);
+							break;
+						}
+
 						// Handle discard assignment: _ = Func();
 						if (bin.Left is IdentifierExpressionSyntax discardId && discardId.Name == "_")
 						{
@@ -609,6 +626,19 @@ internal sealed class ExpressionValidator(
 				ValidateOffsetof(offsetofExpr);
 				break;
 			case UnaryExpressionSyntax unary:
+				// Conditional writeback through an increment/decrement is deferred, exactly as the
+				// assignment form is (see the binary `=` case).
+				if (unary.Operator is "++_postfix" or "--_postfix" or "++_prefix" or "--_prefix"
+					&& unary.Operand is OptionalChainExpressionSyntax mutationTarget)
+				{
+					var currentFileContext = context.FileContexts[context.CurrentUnit!];
+					context.Diagnostics.Report(currentFileContext, mutationTarget.Span,
+						"An optional-chained member is not an assignment target; conditional writeback is not supported.",
+						DiagnosticIds.OptionalChainIsNotAssignable);
+					Check(unary.Operand, scope);
+					break;
+				}
+
 				if (unary.Operator == "&" && IsFunctionAddressOperand(unary.Operand, scope))
 				{
 					var currentFileContext = context.FileContexts[context.CurrentUnit!];
@@ -1920,6 +1950,241 @@ internal sealed class ExpressionValidator(
 	}
 
 	/// <summary>
+	/// Binds an optional-chaining expression, caching the resolved descriptor on success.
+	/// </summary>
+	/// <remarks>
+	/// <para>
+	/// The receiver is always checked, and so are the arguments: skipping an argument because the
+	/// receiver may be absent would leave it unvalidated. Only evaluation is conditional, never
+	/// binding (<c>bind always, evaluate conditionally</c>).
+	/// </para>
+	/// <para>
+	/// The member is resolved against the Option <em>payload</em> type, never the Option itself, so
+	/// <c>handler?.Invoke(42)</c> finds the synthesized <c>Delegate.Invoke</c> of the delegate type
+	/// stored inside the Option.
+	/// </para>
+	/// </remarks>
+	private ResolvedOptionalChainExpression GetOrBindOptionalChain(OptionalChainExpressionSyntax chain, SymbolTable scope)
+	{
+		if (context.ResolvedOptionalChains.TryGetValue(chain, out var cached))
+			return cached;
+
+		Check(chain.Receiver, scope);
+
+		var argumentTypes = new List<TypeSymbol>();
+		if (chain.Arguments is not null)
+		{
+			foreach (var argument in chain.Arguments)
+			{
+				Check(argument, scope);
+				argumentTypes.Add(GetType(argument, scope) ?? TypeSymbol.Int);
+			}
+		}
+
+		var receiverType = GetType(chain.Receiver, scope);
+		if (receiverType is null)
+			return ResolvedOptionalChainExpression.Error(chain, OptionalChainBindingErrorKind.UnresolvedOperand, null, null);
+
+		if (receiverType is PointerTypeSymbol receiverPointer)
+			receiverType = receiverPointer.ReferencedType;
+
+		// `?.` is Option semantics, not null magic: a plain value has no absence to propagate.
+		if (receiverType is not UnionTypeSymbol { IsOption: true } optionType || optionType.PayloadVariant is not { } payload)
+		{
+			return CacheOptionalChainError(chain, OptionalChainBindingErrorKind.ReceiverNotOption, receiverType, null);
+		}
+
+		var payloadType = payload.Type;
+		if (payloadType is PointerTypeSymbol payloadPointer)
+			payloadType = payloadPointer.ReferencedType;
+
+		FunctionSymbol? method = null;
+		DelegateTypeSymbol? delegateType = null;
+		TypeSymbol? memberType = null;
+		var memberKind = OptionalChainMemberKind.Field;
+
+		if (chain.IsInvocation)
+		{
+			// `Invoke` on a delegate receiver is the compiler-owned semantic member synthesized from
+			// the DelegateTypeSymbol. It is not a source declaration, not an extension method and not
+			// an emitted wrapper, so it shares the ordinary delegate-call lowering verbatim.
+			if (payloadType is DelegateTypeSymbol synthesizedDelegate && chain.MemberName == "Invoke")
+			{
+				delegateType = synthesizedDelegate;
+				memberKind = OptionalChainMemberKind.DelegateInvoke;
+				memberType = synthesizedDelegate.ReturnType;
+
+				if (argumentTypes.Count != synthesizedDelegate.Parameters.Count)
+				{
+					var currentFileContext = context.FileContexts[context.CurrentUnit!];
+					context.Diagnostics.Report(
+						currentFileContext,
+						chain.Span,
+						$"Delegate '{synthesizedDelegate.Name}' expects {synthesizedDelegate.Parameters.Count} argument(s) but received {argumentTypes.Count}",
+						DiagnosticIds.DelegateExpectsArgumentSButReceived);
+				}
+				else if (Overloads.CompareSignature(
+					synthesizedDelegate.Parameters.Select(parameter => parameter.Type).ToArray(),
+					argumentTypes,
+					isVariadic: false) < 0)
+				{
+					var currentFileContext = context.FileContexts[context.CurrentUnit!];
+					var actual = string.Join(", ", argumentTypes.Select(type => type.Name));
+					context.Diagnostics.Report(
+						currentFileContext,
+						chain.Span,
+						$"Delegate '{synthesizedDelegate.Name}' cannot be invoked with argument types ({actual}).",
+						DiagnosticIds.DelegateCannotBeInvokedWithArgumentTypes);
+				}
+
+				// `?.` tests only the outer Option state; the inner native function pointer keeps its
+				// existing unsafe requirement and receives no implicit null check.
+				if (synthesizedDelegate.IsNative)
+				{
+					_validation.RequireUnsafe(
+						context,
+						chain,
+						UnsafeUsageKind.NativeDelegateInvocation,
+						$"Invoking native delegate '{synthesizedDelegate.Name}' requires an unsafe context.",
+						DiagnosticIds.NativeDelegateInvokeRequiresUnsafe);
+				}
+			}
+			else
+			{
+				// Resolve against the payload type directly rather than through a dotted source name:
+				// there is no source-level `payload.Method` spelling to hand the overload resolver.
+				var candidates = context
+					.GetExtensionMethodCandidates(optionType.PayloadVariant!.Type, context.CurrentUnit, chain.MemberName)
+					.Select(candidate => candidate.Function)
+					.ToList();
+
+				var bestMatch = (FunctionSymbol?)null;
+				var bestScore = -1;
+				foreach (var candidate in candidates)
+				{
+					// Instance extensions take the payload as an implicit leading `this` argument, so the
+					// written argument types are scored one position later. Reusing the candidate's own
+					// receiver parameter makes that argument match by symbol identity, which preserves the
+					// `ref`/`refvar` mutability the declaration was registered with.
+					var scoredArgumentTypes = new List<TypeSymbol>(argumentTypes.Count + 1) { candidate.Parameters[0].Type };
+					scoredArgumentTypes.AddRange(argumentTypes);
+
+					var parameterTypes = candidate.Parameters.Select(parameter => parameter.Type).ToList();
+					var score = Overloads.CompareSignature(parameterTypes, scoredArgumentTypes, candidate.IsVariadic);
+					if (score > bestScore)
+					{
+						bestScore = score;
+						bestMatch = candidate;
+					}
+				}
+
+				if (bestMatch is null)
+					return CacheOptionalChainError(chain, OptionalChainBindingErrorKind.MemberNotFound, receiverType, payload.Type);
+
+				method = bestMatch;
+				memberKind = OptionalChainMemberKind.Method;
+				memberType = bestMatch.ReturnType;
+			}
+		}
+		else
+		{
+			var declaredPayload = optionType.PayloadVariant.Type;
+			var fieldType = declaredPayload switch
+			{
+				StructTypeSymbol structType => structType.FindField(chain.MemberName)?.Type,
+				UnionTypeSymbol unionType => unionType.FindField(chain.MemberName)?.Type,
+				_ => null,
+			};
+
+			if (fieldType is null)
+				return CacheOptionalChainError(chain, OptionalChainBindingErrorKind.MemberNotFound, receiverType, declaredPayload);
+
+			memberType = fieldType;
+		}
+
+		// A `void` member produces no value at all: no Option<void> is synthesized, so the None
+		// branch is a plain no-op.
+		if (memberType is null || memberType.Equals(TypeSymbol.Void))
+		{
+			var voidResult = ResolvedOptionalChainExpression.Void(chain, optionType, receiverType, payload.Type, memberKind, method, delegateType);
+			context.ResolvedOptionalChains[chain] = voidResult;
+			return voidResult;
+		}
+
+		// LiftOptional adds exactly one synthetic Option layer: a member already returning Option<U>
+		// keeps that single layer, and any other R becomes Option<R>.
+		var resultOption = ResolveLiftedOption(memberType);
+		if (resultOption is null)
+			return CacheOptionalChainError(chain, OptionalChainBindingErrorKind.MemberNotFound, receiverType, payload.Type);
+
+		var resolved = ResolvedOptionalChainExpression.Success(
+			chain,
+			optionType,
+			receiverType,
+			payload.Type,
+			memberType,
+			resultOption,
+			memberKind,
+			method,
+			delegateType,
+			lifts: true);
+		context.ResolvedOptionalChains[chain] = resolved;
+		return resolved;
+	}
+
+	/// <summary>
+	/// Returns <c>Option&lt;R&gt;</c> for a lifted member result of type <paramref name="memberType"/>.
+	/// </summary>
+	/// <remarks>
+	/// One synthetic layer is always added, so a member that already returns <c>Option&lt;U&gt;</c> is
+	/// typed <c>Option&lt;Option&lt;U&gt;&gt;</c> rather than collapsing back to <c>Option&lt;U&gt;</c>: the
+	/// chain's own presence and the member's presence are independent facts and both must survive.
+	/// </remarks>
+	private UnionTypeSymbol? ResolveLiftedOption(TypeSymbol memberType)
+		=> context.ResolveType($"Option<{memberType.Name}>") as UnionTypeSymbol;
+
+	private ResolvedOptionalChainExpression CacheOptionalChainError(
+		OptionalChainExpressionSyntax chain,
+		OptionalChainBindingErrorKind errorKind,
+		TypeSymbol? receiverType,
+		TypeSymbol? payloadType)
+	{
+		var error = ResolvedOptionalChainExpression.Error(chain, errorKind, receiverType, payloadType);
+		context.ResolvedOptionalChains[chain] = error;
+		ReportOptionalChainBindingError(error);
+		return error;
+	}
+
+	private void ReportOptionalChainBindingError(ResolvedOptionalChainExpression resolved)
+	{
+		var currentFileContext = context.FileContexts[context.CurrentUnit!];
+
+		switch (resolved.ErrorKind)
+		{
+			case OptionalChainBindingErrorKind.ReceiverNotOption:
+				context.Diagnostics.Report(
+					currentFileContext,
+					resolved.Syntax.Receiver.Span,
+					$"Optional chaining requires Option<T> as the receiver; found '{resolved.ReceiverType?.Name ?? "unknown"}'",
+					DiagnosticIds.OptionalChainReceiverMustBeOptionFound);
+				break;
+
+			case OptionalChainBindingErrorKind.MemberNotFound:
+				context.Diagnostics.Report(
+					currentFileContext,
+					resolved.Syntax.Span,
+					$"Type '{resolved.PayloadType?.Name ?? "unknown"}' does not contain member '{resolved.Syntax.MemberName}'",
+					resolved.Syntax.IsInvocation
+						? DiagnosticIds.NoOverloadOfFunctionMatchesArgumentTypes
+						: DiagnosticIds.OptionalChainPayloadDoesNotContainMember);
+				break;
+
+			case OptionalChainBindingErrorKind.UnresolvedOperand:
+				break;
+		}
+	}
+
+	/// <summary>
 	/// Returns the final canonical binary binding for the current validation context, creating it
 	/// exactly once after declaration registration is complete. Error bindings are cached as final
 	/// results as well, so repeated type queries cannot repeat overload search or diagnostics.
@@ -2033,6 +2298,7 @@ internal sealed class ExpressionValidator(
 			ParenthesizedStructInitializerExpressionSyntax p => p.ResolvedStructTypeName is not null ? context.ResolveType(p.ResolvedStructTypeName) : null,
 			TernaryExpressionSyntax t => CheckTernaryExpression(t, scope),
 			CoalesceExpressionSyntax co => GetOrBindCoalesceExpression(co, scope, expectedType).ResultType,
+			OptionalChainExpressionSyntax chain => GetOrBindOptionalChain(chain, scope).ResultType,
 			VoidLiteralExpressionSyntax => TypeSymbol.Void,
 			DefaultExpressionSyntax d => context.ResolveType(d.TypeName),
 			UnaryExpressionSyntax unary => GetUnaryExpressionType(unary, scope),

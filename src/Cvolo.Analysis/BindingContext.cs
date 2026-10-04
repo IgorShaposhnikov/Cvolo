@@ -81,6 +81,13 @@ public sealed class BindingContext
 	public Dictionary<MemberAccessExpressionSyntax, TypeSymbol?> ResolvedTargetTypedOptionNone { get; } = [];
 
 	/// <summary>
+	/// Optional chaining expressions (<c>receiver?.member</c>) that have been resolved. Validation,
+	/// tooling and codegen read the descriptor from here instead of re-deriving Option semantics
+	/// from the syntax tree.
+	/// </summary>
+	public Dictionary<OptionalChainExpressionSyntax, ResolvedOptionalChainExpression> ResolvedOptionalChains { get; } = [];
+
+	/// <summary>
 	/// Registers a compiler-generated binary node created after ordinary semantic validation.
 	/// Post-binding lowerings (currently array/slice foreach expansion) must use this hook so codegen
 	/// never needs a private fallback typing engine for synthesized <see cref="BinaryExpressionSyntax"/> nodes.
@@ -186,6 +193,18 @@ public sealed class BindingContext
 	/// Parallel to <see cref="ResolvedCalls"/> which only holds function-symbol calls.
 	/// </summary>
 	public Dictionary<CallExpressionSyntax, DelegateTypeSymbol> ResolvedDelegateCalls { get; } = [];
+
+	/// <summary>
+	/// The dotted value path that actually holds the delegate value behind each entry of
+	/// <see cref="ResolvedDelegateCalls"/>, for example <c>state.Dispatch.Callback</c>.
+	/// </summary>
+	/// <remarks>
+	/// This is the semantic counterpart of the synthesized <c>Delegate.Invoke</c> member: the emitter
+	/// walks this path to find the storage slot instead of re-deriving it from the written callee,
+	/// which keeps <c>handler.Invoke(42)</c> and <c>handler(42)</c> on one code path while still
+	/// preferring a real delegate-valued member that happens to be spelled <c>Invoke</c>.
+	/// </remarks>
+	public Dictionary<CallExpressionSyntax, string> ResolvedDelegateTargets { get; } = [];
 
 	/// <summary>
 	/// Function/method-group conversions against a target delegate (§22):
@@ -1988,6 +2007,9 @@ public sealed class BindingContext
 					return new TernaryExpressionSyntax(t.Span, SubstituteExpressionGenerics(t.Condition), SubstituteExpressionGenerics(t.ThenExpression), SubstituteExpressionGenerics(t.ElseExpression));
 				case CoalesceExpressionSyntax c:
 					return new CoalesceExpressionSyntax(c.Span, SubstituteExpressionGenerics(c.Left), SubstituteExpressionGenerics(c.Right));
+
+				case OptionalChainExpressionSyntax oc:
+					return new OptionalChainExpressionSyntax(oc.Span, SubstituteExpressionGenerics(oc.Receiver), oc.MemberName, oc.Arguments?.Select(SubstituteExpressionGenerics).ToList());
 
 				case DefaultExpressionSyntax def:
 					if (def.TypeName is null)

@@ -61,72 +61,149 @@ internal sealed class CallResolver(BindingContext context, OverloadResolver over
 	}
 
 	/// <summary>
-	/// Resolves invocation of a delegate-typed variable or delegate-typed struct/union field.
+	/// Resolves invocation of a delegate-typed variable or delegate-typed struct/union field,
+	/// including the synthesized <c>Delegate.Invoke</c> member.
 	/// </summary>
 	/// <remarks>
+	/// <para>
 	/// Arity diagnostics are preserved here because they are intrinsic to resolving the delegate
 	/// callable shape. Argument compatibility and target typing remain with validation.
+	/// </para>
+	/// <para>
+	/// The written callee is first interpreted as a complete delegate-valued path, so a real member
+	/// spelled <c>Invoke</c> still wins. Only when that fails, and only when the path ends in
+	/// <c>.Invoke</c>, does the trailing segment bind to the synthesized member of a delegate-typed
+	/// receiver, which makes <c>handler.Invoke(42)</c> and <c>handler(42)</c> equivalent.
+	/// </para>
 	/// </remarks>
 	public bool TryResolveDelegateInvocation(CallExpressionSyntax call, SymbolTable scope, out DelegateTypeSymbol? delegateType)
 	{
 		delegateType = null;
-		TypeSymbol? delegateMemberType = null;
-
-		// A fully-qualified global native/safe delegate (e.g. Native.Callback(...)) is
-		// itself the callable value. Resolve that exact value path before interpreting the
-		// final segment as a struct-field invocation. The call-site scope is handed down so a
-		// local named like a namespace alias keeps value-path precedence over alias expansion.
-		if (context.ResolveGlobalReference(call.FunctionName, scope, out _) is VariableSymbol qualifiedGlobal
-			&& qualifiedGlobal.Type is DelegateTypeSymbol qualifiedDelegate)
-		{
-			delegateMemberType = qualifiedDelegate;
-		}
-		else if (call.FunctionName.Contains('.'))
-		{
-			var lastDot = call.FunctionName.LastIndexOf('.');
-			var receiverName = call.FunctionName[..lastDot];
-			var memberName = call.FunctionName[(lastDot + 1)..];
-
-			var receiver = scope.Lookup(receiverName) as VariableSymbol
-				?? context.ResolveGlobalReference(receiverName, out _) as VariableSymbol;
-			if (receiver is null)
-				return false;
-
-			var receiverType = receiver.Type;
-			if (receiverType is PointerTypeSymbol pointer)
-				receiverType = pointer.ReferencedType;
-
-			delegateMemberType = receiverType switch
-			{
-				StructTypeSymbol structType => structType.FindField(memberName)?.Type,
-				UnionTypeSymbol unionType => unionType.FindField(memberName)?.Type,
-				_ => null,
-			};
-		}
-		else
-		{
-			var variable = scope.Lookup(call.FunctionName) as VariableSymbol
-				?? context.ResolveGlobalReference(call.FunctionName, out _) as VariableSymbol;
-			if (variable is null)
-				return false;
-			delegateMemberType = variable.Type;
-		}
-
-		if (delegateMemberType is not DelegateTypeSymbol callableDelegate)
+		if (!TryResolveDelegateTarget(call.FunctionName, scope, out var targetPath, out var delegateMemberType))
 			return false;
 
-		delegateType = callableDelegate;
-		if (call.Arguments.Count != callableDelegate.Parameters.Count)
+		delegateType = delegateMemberType;
+		context.ResolvedDelegateTargets[call] = targetPath;
+		if (call.Arguments.Count != delegateMemberType!.Parameters.Count)
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
 			context.Diagnostics.Report(
 				currentFileContext,
 				call.ArgumentListSpan,
-				$"Delegate '{callableDelegate.Name}' expects {callableDelegate.Parameters.Count} argument(s) but received {call.Arguments.Count}", DiagnosticIds.DelegateExpectsArgumentSButReceived);
+				$"Delegate '{delegateMemberType.Name}' expects {delegateMemberType.Parameters.Count} argument(s) but received {call.Arguments.Count}", DiagnosticIds.DelegateExpectsArgumentSButReceived);
 		}
 
 		return true;
 	}
+
+	/// <summary>
+	/// Resolves a dotted callee to the value path that holds a delegate value.
+	/// </summary>
+	/// <remarks>
+	/// Every segment of a nested path such as <c>state.Dispatch.Callback</c> is walked in order, and the
+	/// fully resolved path is returned so the emitter can locate the same storage slot.
+	/// </remarks>
+	private bool TryResolveDelegateTarget(
+		string calleePath,
+		SymbolTable scope,
+		out string targetPath,
+		out DelegateTypeSymbol? delegateType)
+	{
+		delegateType = null;
+		targetPath = string.Empty;
+
+		// A fully-qualified global native/safe delegate (e.g. Native.Callback(...)) is
+		// itself the callable value. Resolve that exact value path before interpreting the
+		// final segment as a struct-field invocation. The call-site scope is handed down so a
+		// local named like a namespace alias keeps value-path precedence over alias expansion.
+		if (context.ResolveGlobalReference(calleePath, scope, out _) is VariableSymbol qualifiedGlobal
+			&& qualifiedGlobal.Type is DelegateTypeSymbol qualifiedDelegate)
+		{
+			targetPath = calleePath;
+			delegateType = qualifiedDelegate;
+			return true;
+		}
+
+		var segments = calleePath.Split('.');
+		if (segments.Any(string.IsNullOrEmpty))
+			return false;
+
+		var first = segments[0];
+		var owner = scope.Lookup(first) as VariableSymbol
+			?? context.ResolveGlobalReference(first, out _) as VariableSymbol;
+		if (owner is null)
+			return false;
+
+		var lastIndex = segments.Length - 1;
+		if (lastIndex == 0)
+		{
+			// A bare `handler(...)` names the delegate value itself.
+			if (Dereference(owner.Type) is not DelegateTypeSymbol bareDelegate)
+				return false;
+
+			targetPath = first;
+			delegateType = bareDelegate;
+			return true;
+		}
+
+		var currentType = Dereference(owner.Type);
+		var currentPath = first;
+
+		for (var i = 1; i <= lastIndex; i++)
+		{
+			var isFinalSegment = i == lastIndex;
+			var isSynthesizedInvoke = isFinalSegment && segments[i] == "Invoke";
+			TypeSymbol? nextType = isSynthesizedInvoke
+				? SynthesizedInvokeMemberType(currentType)
+				: MemberType(currentType, segments[i]);
+
+			if (nextType is null)
+				return false;
+
+			if (isFinalSegment)
+			{
+				if (nextType is not DelegateTypeSymbol stepDelegate)
+					return false;
+
+				// A real member contributes its own storage segment, while the synthesized `Invoke`
+				// member has no storage of its own: the delegate lives at the receiver path.
+				targetPath = isSynthesizedInvoke ? currentPath : $"{currentPath}.{segments[i]}";
+				delegateType = stepDelegate;
+				return true;
+			}
+
+			// A non-final segment must be an aggregate to keep walking the path.
+			currentType = Dereference(nextType);
+			currentPath = $"{currentPath}.{segments[i]}";
+		}
+
+		return false;
+	}
+
+	/// <summary>
+	/// Returns the type of a named member of an aggregate, or <see langword="null"/> when absent.
+	/// </summary>
+	private static TypeSymbol? MemberType(TypeSymbol ownerType, string memberName)
+		=> ownerType switch
+		{
+			StructTypeSymbol structType => structType.FindField(memberName)?.Type,
+			UnionTypeSymbol unionType => unionType.FindField(memberName)?.Type,
+			_ => null,
+		};
+
+	/// <summary>
+	/// Returns the delegate type of the synthesized <c>Invoke</c> member, which exists on every
+	/// delegate type and carries that delegate's own signature.
+	/// </summary>
+	private static DelegateTypeSymbol? SynthesizedInvokeMemberType(TypeSymbol ownerType)
+		=> ownerType as DelegateTypeSymbol;
+
+	/// <summary>
+	/// Strips an optional <c>ref</c>/<c>refvar</c> pointer wrapper so members are looked up on the
+	/// aggregate a pointer refers to.
+	/// </summary>
+	private static TypeSymbol Dereference(TypeSymbol type)
+		=> type is PointerTypeSymbol pointer ? pointer.ReferencedType : type;
 
 	/// <summary>
 	/// Resolves the synthesized zero-argument <c>Enum.Name()</c> helper and reports invalid arity.

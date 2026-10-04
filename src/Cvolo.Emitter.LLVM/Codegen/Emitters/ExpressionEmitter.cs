@@ -41,6 +41,11 @@ internal sealed class ExpressionEmitter(
 	private readonly Dictionary<string, LLVMValueRef> _typeofGlobals = [];
 	private int _typeofCounter;
 
+	/// <summary>
+	/// Makes the synthetic payload local names of nested optional-chaining expressions unique.
+	/// </summary>
+	private int _optionalChainCounter;
+
 	private LLVMBuilderRef Builder => codegen.Builder;
 	private LLVMModuleRef Module => codegen.Module;
 	private FunctionCodegenContext Function => getFunction();
@@ -361,6 +366,8 @@ internal sealed class ExpressionEmitter(
 				return EmitTernaryExpression(t);
 			case CoalesceExpressionSyntax coalesce:
 				return EmitCoalesceExpression(coalesce);
+			case OptionalChainExpressionSyntax optionalChain:
+				return EmitOptionalChainExpression(optionalChain);
 			default:
 				throw new InvalidOperationException($"Unknown expression type: {expr.GetType()}");
 		}
@@ -1576,6 +1583,255 @@ internal sealed class ExpressionEmitter(
 
 		Builder.PositionAtEnd(mergeBlock);
 		return Builder.BuildLoad2(resultLayout, resultSlot, "coalesce_val");
+	}
+
+	/// <summary>
+	/// Lowers an optional-chaining expression.
+	/// </summary>
+	/// <remarks>
+	/// <para>
+	/// The receiver is materialized into one entry slot and its discriminant is read from there, so
+	/// it is evaluated exactly once. The member access or invocation — including every argument — is
+	/// emitted only in the <c>Some</c> block; the <c>None</c> block just materializes absence.
+	/// </para>
+	/// <para>
+	/// The payload is exposed to the existing member-access and call machinery as a synthetic local
+	/// whose slot is the <em>address</em> of the payload inside the Option. That keeps receiver
+	/// capability and provenance exactly those of the ordinary operation: <c>ref</c> payload
+	/// projections stay <c>ref</c>, the operator never upgrades a read-only receiver to
+	/// <c>refvar</c>, and no payload copy or move is introduced.
+	/// </para>
+	/// </remarks>
+	private LLVMValueRef EmitOptionalChainExpression(OptionalChainExpressionSyntax expr)
+	{
+		if (!BindingContext.ResolvedOptionalChains.TryGetValue(expr, out var resolved) || !resolved.IsSuccess)
+		{
+			throw new InvalidOperationException(
+				"Optional chaining reached code generation without a canonical successful semantic binding.");
+		}
+
+		var optionType = resolved.OptionType!;
+		var optionLayout = LowerType(optionType);
+		var usesNpo = optionType.IsNpoEligible;
+		var receiverSlot = memory.BuildEntryAlloca(optionLayout, "optional_chain_receiver");
+		Builder.BuildStore(Emit(expr.Receiver), receiverSlot);
+
+		LLVMValueRef isNone;
+		if (usesNpo)
+		{
+			var flatValue = Builder.BuildLoad2(optionLayout, receiverSlot, "optional_chain_flat");
+			isNone = Builder.BuildICmp(
+				LLVMIntPredicate.LLVMIntEQ,
+				flatValue,
+				LLVMValueRef.CreateConstPointerNull(flatValue.TypeOf),
+				"optional_chain_is_none");
+		}
+		else
+		{
+			var noneVariant = optionType.NoneVariant
+				?? throw new InvalidOperationException("An optional-chained Option must expose a None variant.");
+			var noneIndex = (ulong)codegen.AggregateLayout.GetFieldIndex(optionType, noneVariant.Name);
+			var tagPtr = Builder.BuildGEP2(optionLayout, receiverSlot, new LLVMValueRef[]
+			{
+				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
+				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0)
+			}, "optional_chain_tag_ptr");
+			var tag = Builder.BuildLoad2(LLVMTypeRef.Int8, tagPtr, "optional_chain_tag");
+			isNone = Builder.BuildICmp(
+				LLVMIntPredicate.LLVMIntEQ,
+				tag,
+				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, noneIndex),
+				"optional_chain_is_none");
+		}
+
+		var currentFunc = Builder.InsertBlock.Parent;
+		var someBlock = currentFunc.AppendBasicBlock("optional_chain_some");
+		var noneBlock = currentFunc.AppendBasicBlock("optional_chain_none");
+
+		// A `void` member produces no value, so there is nothing to join: the None branch is a plain
+		// no-op and no Option<void> is synthesized.
+		if (!resolved.Lifts)
+		{
+			Builder.BuildCondBr(isNone, noneBlock, someBlock);
+
+			Builder.PositionAtEnd(someBlock);
+			EmitChainedMemberThroughPayload(expr, resolved, receiverSlot, optionType, optionLayout, usesNpo);
+			if (Builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
+				Builder.BuildBr(noneBlock);
+
+			Builder.PositionAtEnd(noneBlock);
+			return LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0);
+		}
+
+		var resultOption = (UnionTypeSymbol)resolved.ResultType!;
+		var resultLayout = LowerType(resultOption);
+		var mergeBlock = currentFunc.AppendBasicBlock("optional_chain_merge");
+		var resultSlot = memory.BuildEntryAlloca(resultLayout, "optional_chain_result");
+
+		Builder.BuildCondBr(isNone, noneBlock, someBlock);
+
+		Builder.PositionAtEnd(someBlock);
+		var memberValue = EmitChainedMemberThroughPayload(expr, resolved, receiverSlot, optionType, optionLayout, usesNpo);
+		Builder.BuildStore(
+			BuildLiftedOptionalMemberResult(resultOption, resultLayout, memberValue),
+			resultSlot);
+		if (Builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
+			Builder.BuildBr(mergeBlock);
+
+		// None: absence propagates, and nothing else is evaluated.
+		Builder.PositionAtEnd(noneBlock);
+		Builder.BuildStore(BuildAbsentOptionalResult(resultOption, resultLayout), resultSlot);
+		if (Builder.InsertBlock.Terminator.Handle == IntPtr.Zero)
+			Builder.BuildBr(mergeBlock);
+
+		Builder.PositionAtEnd(mergeBlock);
+		return Builder.BuildLoad2(resultLayout, resultSlot, "optional_chain_val");
+	}
+
+	/// <summary>
+	/// Projects the payload out of the materialized receiver and emits the selected member through
+	/// it, returning the member's own (unlifted) value.
+	/// </summary>
+	private LLVMValueRef EmitChainedMemberThroughPayload(
+		OptionalChainExpressionSyntax expr,
+		ResolvedOptionalChainExpression resolved,
+		LLVMValueRef receiverSlot,
+		UnionTypeSymbol optionType,
+		LLVMTypeRef optionLayout,
+		bool usesNpo)
+	{
+		var declaredPayload = optionType.PayloadVariant!.Type;
+		var payloadPtr = GetOptionalChainPayloadPointer(receiverSlot, optionType, optionLayout, declaredPayload, usesNpo);
+
+		// The synthetic local holds the payload *address*, typed as the payload itself. Every existing
+		// consumer (field projection, receiver argument, delegate storage) then behaves exactly as it
+		// would for an ordinary receiver of that type.
+		var payloadName = $"$optional_chain_payload${_optionalChainCounter++}";
+		Function.Locals[payloadName] = payloadPtr;
+		Function.VariableTypes[payloadName] = declaredPayload;
+
+		var payloadReference = new IdentifierExpressionSyntax(expr.Receiver.Span, payloadName);
+		ExpressionSyntax member;
+
+		switch (resolved.MemberKind)
+		{
+			case OptionalChainMemberKind.Method:
+				{
+					var synthesizedCall = new CallExpressionSyntax(
+						expr.Span,
+						$"{payloadName}.{expr.MemberName}",
+						[],
+						expr.Arguments!.ToList());
+					BindingContext.ResolvedCalls[synthesizedCall] = resolved.Method!;
+					member = synthesizedCall;
+					break;
+				}
+
+			case OptionalChainMemberKind.DelegateInvoke:
+				{
+					// Reuses the ordinary safe/native delegate-call lowering verbatim: no `Invoke`
+					// wrapper is emitted, and the inner native function pointer gets no null check.
+					var synthesizedCall = new CallExpressionSyntax(
+						expr.Span,
+						payloadName,
+						[],
+						expr.Arguments!.ToList());
+					BindingContext.ResolvedDelegateCalls[synthesizedCall] = resolved.DelegateType!;
+					member = synthesizedCall;
+					break;
+				}
+
+			default:
+				member = new MemberAccessExpressionSyntax(expr.Span, payloadReference, expr.MemberName);
+				break;
+		}
+
+		return Emit(member);
+	}
+
+	/// <summary>
+	/// Returns the address of the payload inside a materialized Option slot.
+	/// </summary>
+	/// <remarks>
+	/// Under NPO the slot already holds the payload pointer; a tagged Option reads its payload slot at
+	/// <c>{0,1}</c> and reinterprets it, so the projection never copies or moves the payload.
+	/// </remarks>
+	private LLVMValueRef GetOptionalChainPayloadPointer(
+		LLVMValueRef receiverSlot,
+		UnionTypeSymbol optionType,
+		LLVMTypeRef optionLayout,
+		TypeSymbol declaredPayload,
+		bool usesNpo)
+	{
+		if (usesNpo)
+			return Builder.BuildLoad2(optionLayout, receiverSlot, "optional_chain_payload");
+
+		var declaredLayout = LowerType(declaredPayload);
+		var payloadPtr = Builder.BuildGEP2(optionLayout, receiverSlot, new LLVMValueRef[]
+		{
+			LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
+			LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1)
+		}, "optional_chain_payload_ptr");
+
+		return payloadPtr.TypeOf == LLVMTypeRef.CreatePointer(declaredLayout, 0)
+			? payloadPtr
+			: Builder.BuildBitCast(payloadPtr, LLVMTypeRef.CreatePointer(declaredLayout, 0), "optional_chain_payload_cast");
+	}
+
+	/// <summary>
+	/// Wraps a member value in exactly one synthetic Option layer for the <c>Some</c> path.
+	/// </summary>
+	/// <remarks>
+	/// The member value — including one that is itself an <c>Option&lt;U&gt;</c> — becomes the payload
+	/// of a freshly built outer <c>Some</c>. That is what makes <c>Option&lt;Option&lt;U&gt;&gt;</c>
+	/// distinct from <c>Option&lt;U&gt;</c>: the member's own discriminant lives inside the payload
+	/// slot, it is never merged with the outer discriminant. Under NPO the member value is already a
+	/// payload pointer, and a non-null pointer is precisely <c>Some</c>.
+	/// </remarks>
+	private LLVMValueRef BuildLiftedOptionalMemberResult(
+		UnionTypeSymbol resultOption,
+		LLVMTypeRef resultLayout,
+		LLVMValueRef memberValue)
+	{
+		if (resultOption.IsNpoEligible)
+			return memberValue;
+
+		var payloadVariant = resultOption.PayloadVariant
+			?? throw new InvalidOperationException("A lifted optional-chain result must expose a payload variant.");
+		var payloadIndex = (ulong)codegen.AggregateLayout.GetFieldIndex(resultOption, payloadVariant.Name);
+
+		var someSlot = memory.BuildEntryAlloca(resultLayout, "optional_chain_some");
+		Builder.BuildStore(
+			LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, payloadIndex),
+			Builder.BuildGEP2(resultLayout, someSlot, new LLVMValueRef[]
+			{
+				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
+				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0)
+			}, "optional_chain_some_tag_slot"));
+		Builder.BuildStore(
+			memberValue,
+			Builder.BuildGEP2(resultLayout, someSlot, new LLVMValueRef[]
+			{
+				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
+				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1)
+			}, "optional_chain_some_payload_slot"));
+
+		return Builder.BuildLoad2(resultLayout, someSlot, "optional_chain_some_val");
+	}
+
+	/// <summary>
+	/// Builds the <c>None</c> value for an optional-chain result. Under NPO absence is the null
+	/// payload pointer; a tagged Option gets a zero-initialized slot, which is <c>None</c> because
+	/// the void variant is declared first.
+	/// </summary>
+	private LLVMValueRef BuildAbsentOptionalResult(UnionTypeSymbol resultOption, LLVMTypeRef resultLayout)
+	{
+		if (resultOption.IsNpoEligible)
+			return LLVMValueRef.CreateConstPointerNull(resultLayout);
+
+		var noneSlot = memory.BuildEntryAlloca(resultLayout, "optional_chain_none");
+		Builder.BuildStore(LLVMValueRef.CreateConstNull(resultLayout), noneSlot);
+		return Builder.BuildLoad2(resultLayout, noneSlot, "optional_chain_none_val");
 	}
 
 	/// <summary>

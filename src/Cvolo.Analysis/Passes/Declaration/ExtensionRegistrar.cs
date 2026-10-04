@@ -149,6 +149,18 @@ internal sealed class ExtensionRegistrar(
 				continue;
 			}
 
+			// RESERVED: `Invoke` is the compiler-owned synthesized invocation member of every
+			// delegate type (including native delegates). A user extension of that name would
+			// shadow it, so it is rejected rather than registered.
+			if (method.Name == "Invoke" && extendedType is DelegateTypeSymbol)
+			{
+				ReportDeclarationDiagnostic(
+					method,
+					$"Extension method 'Invoke' cannot be declared on delegate type '{extDecl.ExtendedTypeName}': 'Invoke' is the compiler-owned delegate invocation member.",
+					DiagnosticIds.ExtensionInvokeOnDelegateTypeIsReserved);
+				continue;
+			}
+
 			// Mangled name represents the scoped path, e.g., "MyNamespace.Point.Move"
 			var baseMangledName = context.GetMangledName($"{extDecl.ExtendedTypeName}.{method.Name}", context.CurrentNamespace);
 

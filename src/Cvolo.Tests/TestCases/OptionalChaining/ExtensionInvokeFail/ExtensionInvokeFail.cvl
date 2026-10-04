@@ -1,0 +1,14 @@
+using System;
+
+delegate int Handler(int value);
+
+// `Invoke` is the compiler-owned delegate invocation member; a user extension may not shadow it.
+extension Handler {
+    int Invoke(int value) {
+        return value;
+    }
+}
+
+int main() {
+    return 0;
+}

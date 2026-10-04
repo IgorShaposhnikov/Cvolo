@@ -250,8 +250,8 @@ type
 	| type LBRACK expression RBRACK                     # arrayType
 	| type LT typeList GT                               # genericInstantiationType
 	| type STAR                                         # pointerType
-	| type QMARK                                       # optionalType
-	| type COALESCE                                    # optionalTypeChain
+	| type QMARK										# optionalType
+	| type COALESCE										# optionalTypeChain
 	| REFVAR type                                       # refVarType
 	| REF type                                          # readOnlyRefType
 	;
@@ -340,9 +340,9 @@ finallyClause
 	;
 
 catchClause
-	: CATCH LPAREN qualifiedName RPAREN blockStatement                # catchValueOrTypeClause
-	| CATCH LPAREN qualifiedName Identifier RPAREN blockStatement     # catchTypedClause
-	| CATCH blockStatement                                           # catchBareClause
+	: CATCH LPAREN qualifiedName RPAREN blockStatement					# catchValueOrTypeClause
+	| CATCH LPAREN qualifiedName Identifier RPAREN blockStatement		# catchTypedClause
+	| CATCH blockStatement												# catchBareClause
 	;
 
 unsafeBlockStatement
@@ -396,76 +396,77 @@ controlExitStatement
 	;
 
 expression
-	: expression DOT Identifier                             							# memberAccessExpression
-	| expression ARROW Identifier                          							# arrowMemberAccessExpression
-	| expression LBRACK expression RBRACK												# indexExpression
+	: expression QMARK DOT Identifier (LPAREN argumentList? RPAREN)?								# optionalChainExpression
+	| expression DOT Identifier                             										# memberAccessExpression
+	| expression ARROW Identifier                          											# arrowMemberAccessExpression
+	| expression LBRACK expression RBRACK															# indexExpression
 	| lambdaCaptureMode? LPAREN lambdaParameterList? RPAREN FAT_ARROW (expression | blockStatement)	# lambdaExpression
-	| (REF | REFVAR) expression                                        					# borrowExpression
-	| expression INC                                        							# postfixIncrementExpression
-	| expression DEC                                        							# postfixDecrementExpression
-	| LPAREN type RPAREN expression                         							# castExpression
-	| STAR expression                                       							# dereferenceExpression
-	| AMPERSAND expression                                  							# addressOfExpression
-	| MINUS expression                                      							# unaryMinusExpression
-	| EXCLAMATION expression                                							# logicalNotExpression
-	| TILDE expression																	# bitwiseNotExpression
-	| INC expression                                        							# prefixIncrementExpression
-	| DEC expression                                        							# prefixDecrementExpression
-	| expression (STAR | DIV | PERCENT) expression          							# multiplicativeExpression
-	| expression (PLUS | MINUS) expression                  							# additiveExpression
-	| expression LSHIFT expression														# leftShiftExpression
-	| expression GT GT GT expression													# arithmeticRightShiftExpression
-	| expression GT GT expression														# rightShiftExpression
-	| expression (LT | GT | LTE | GTE) expression										# relationalExpression
-	| expression (EQ | NEQ) expression													# equalityExpression
-	| expression IS Identifier (Identifier)?											# isPatternExpression
-	| expression AMPERSAND expression													# bitwiseAndExpression
-	| expression CARET expression														# bitwiseXorExpression
-	| expression PIPE expression														# bitwiseOrExpression
-	| expression AND expression															# logicalAndExpression
-	| expression OR expression															# logicalOrExpression
-	| expression COALESCE expression														# optionCoalescingExpression
-	| expression CATCH expression # catchExpression
-	| expression CATCH LPAREN Identifier RPAREN FAT_ARROW blockStatement # catchLambdaExpression
+	| (REF | REFVAR) expression                                        								# borrowExpression
+	| expression INC                                        										# postfixIncrementExpression
+	| expression DEC                                        										# postfixDecrementExpression
+	| LPAREN type RPAREN expression                         										# castExpression
+	| STAR expression                                       										# dereferenceExpression
+	| AMPERSAND expression                                  										# addressOfExpression
+	| MINUS expression                                      										# unaryMinusExpression
+	| EXCLAMATION expression                                										# logicalNotExpression
+	| TILDE expression																				# bitwiseNotExpression
+	| INC expression                                        										# prefixIncrementExpression
+	| DEC expression                                        										# prefixDecrementExpression
+	| expression (STAR | DIV | PERCENT) expression          										# multiplicativeExpression
+	| expression (PLUS | MINUS) expression                  										# additiveExpression
+	| expression LSHIFT expression																	# leftShiftExpression
+	| expression GT GT GT expression																# arithmeticRightShiftExpression
+	| expression GT GT expression																	# rightShiftExpression
+	| expression (LT | GT | LTE | GTE) expression													# relationalExpression
+	| expression (EQ | NEQ) expression																# equalityExpression
+	| expression IS Identifier (Identifier)?														# isPatternExpression
+	| expression AMPERSAND expression																# bitwiseAndExpression
+	| expression CARET expression																	# bitwiseXorExpression
+	| expression PIPE expression																	# bitwiseOrExpression
+	| expression AND expression																		# logicalAndExpression
+	| expression OR expression																		# logicalOrExpression
+	| expression COALESCE expression																# optionCoalescingExpression
+	| expression CATCH expression																	# catchExpression
+	| expression CATCH LPAREN Identifier RPAREN FAT_ARROW blockStatement							# catchLambdaExpression
 	| expression QMARK expression COLON expression										# ternaryExpression
 	| expression ASSIGN expression														# assignmentExpression
 	| expression (PLUS_ASSIGN | MINUS_ASSIGN | STAR_ASSIGN | DIV_ASSIGN | AND_ASSIGN | OR_ASSIGN | XOR_ASSIGN | LSHIFT_ASSIGN | RSHIFT_ASSIGN | URSHIFT_ASSIGN) expression		# compoundAssignmentExpression
-	| qualifiedName (LT typeList GT)? LPAREN argumentList? RPAREN						# callExpression
+	| qualifiedName (LT typeList GT)? LPAREN argumentList? RPAREN									# callExpression
 	| qualifiedName LT typeList GT DOT builtinCapableIdentifier (LT typeList GT)? LPAREN argumentList? RPAREN	# genericTypeQualifiedCallExpression
-	| ASM asmOption* (LT type GT)? LPAREN StringLiteral (COMMA asmArgument)* RPAREN	# asmExpression
-	| NAMEOF LPAREN expression RPAREN												# nameofExpression
-	| TYPEOF LPAREN type RPAREN														# typeofExpression
-	| SIZEOF LT type GT LPAREN RPAREN												# sizeofExpression
-	| ALIGNOF LT type GT LPAREN RPAREN												# alignofExpression
-	| OFFSETOF LT type GT LPAREN memberDesignator RPAREN							# offsetofExpression
-	| HEAP expression                                       							# heapAllocationExpression
-	| HEAP type LBRACK expression RBRACK                                                # heapArrayAllocationExpression
-	| LBRACE (expression (COMMA expression)*)? RBRACE									# arrayInitializationExpression
-	| Identifier (LT typeList GT)? LBRACE structInitializerList? RBRACE					# structInitializationExpression
-	| LPAREN structInitializerList RPAREN												# parenthesizedStructInitializer
-	| Identifier                                            							# identifierExpression
-	| IntegerLiteral                                        							# integerLiteralExpression
-	| DoubleLiteral                                         							# doubleLiteralExpression
-	| StringLiteral                                         							# stringLiteralExpression
-	| RawStringLiteral										# rawStringExpression
-	| BadRawStringLiteral									# badRawStringExpression
-	| BadInterpolatedRawStringLiteral						# badRawStringExpression
-	| InterpolatedStringLiteral															# interpolatedStringExpression
-	| InterpolatedRawStringLiteral							# interpolatedRawStringExpression
-	| CharLiteral																		# charLiteralExpression
-	| BadEmptyCharLiteral																# badEmptyCharLiteralExpression
-	| BadCharLiteral																	# badCharLiteralExpression
-	| BadIntegerSuffix																	# badIntegerSuffixExpression
-	| BadLeadingUnderscoreNumber															# badLeadingUnderscoreExpression
-	| TrailingUnderInteger																# badIntegerSeparatorExpression
-	| BadDoubleLiteral																	# badDoubleLiteralExpression
-	| TRUE																				# booleanLiteralExpression
-	| FALSE																				# booleanLiteralExpression
-	| NULL																				# nullLiteralExpression
-	| VOID																				# voidLiteralExpression
-	| DEFAULT LPAREN type RPAREN															# defaultExpression
-	| DEFAULT																				# defaultExpression
-	| LPAREN expression RPAREN															# parenthesizedExpression
+	| ASM asmOption* (LT type GT)? LPAREN StringLiteral (COMMA asmArgument)* RPAREN					# asmExpression
+	| NAMEOF LPAREN expression RPAREN																# nameofExpression
+	| TYPEOF LPAREN type RPAREN																		# typeofExpression
+	| SIZEOF LT type GT LPAREN RPAREN																# sizeofExpression
+	| ALIGNOF LT type GT LPAREN RPAREN																# alignofExpression
+	| OFFSETOF LT type GT LPAREN memberDesignator RPAREN											# offsetofExpression
+	| HEAP expression                                       										# heapAllocationExpression
+	| HEAP type LBRACK expression RBRACK															# heapArrayAllocationExpression
+	| LBRACE (expression (COMMA expression)*)? RBRACE												# arrayInitializationExpression
+	| Identifier (LT typeList GT)? LBRACE structInitializerList? RBRACE								# structInitializationExpression
+	| LPAREN structInitializerList RPAREN															# parenthesizedStructInitializer
+	| Identifier                                            										# identifierExpression
+	| IntegerLiteral                                        										# integerLiteralExpression
+	| DoubleLiteral                                         										# doubleLiteralExpression
+	| StringLiteral                                         										# stringLiteralExpression
+	| RawStringLiteral																				# rawStringExpression
+	| BadRawStringLiteral																			# badRawStringExpression
+	| BadInterpolatedRawStringLiteral																# badRawStringExpression
+	| InterpolatedStringLiteral																		# interpolatedStringExpression
+	| InterpolatedRawStringLiteral																	# interpolatedRawStringExpression
+	| CharLiteral																					# charLiteralExpression
+	| BadEmptyCharLiteral																			# badEmptyCharLiteralExpression
+	| BadCharLiteral																				# badCharLiteralExpression
+	| BadIntegerSuffix																				# badIntegerSuffixExpression
+	| BadLeadingUnderscoreNumber																	# badLeadingUnderscoreExpression
+	| TrailingUnderInteger																			# badIntegerSeparatorExpression
+	| BadDoubleLiteral																				# badDoubleLiteralExpression
+	| TRUE																							# booleanLiteralExpression
+	| FALSE																							# booleanLiteralExpression
+	| NULL																							# nullLiteralExpression
+	| VOID																							# voidLiteralExpression
+	| DEFAULT LPAREN type RPAREN																	# defaultExpression
+	| DEFAULT																						# defaultExpression
+	| LPAREN expression RPAREN																		# parenthesizedExpression
 	;
 
 lambdaCaptureMode

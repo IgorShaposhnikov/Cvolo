@@ -1366,6 +1366,29 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 						BuildBlockStatement(catchLambdaCtx.blockStatement())));
 			case CvoloParser.OptionCoalescingExpressionContext coalesceCtx:
 				return BuildCoalesceExpression(coalesceCtx);
+			case CvoloParser.OptionalChainExpressionContext chainCtx:
+				{
+					var chainReceiver = BuildExpression(chainCtx.expression());
+
+					// The invocation form is identified by its parentheses, not by the presence of an
+					// argument list: `x?.M()` is a call with zero arguments, not a field read.
+					List<ExpressionSyntax>? chainArguments = null;
+					if (chainCtx.LPAREN() is not null)
+					{
+						chainArguments = [];
+						if (chainCtx.argumentList() is { } chainArgList)
+						{
+							foreach (var arg in chainArgList.expression())
+								chainArguments.Add(BuildExpression(arg));
+						}
+					}
+
+					return new OptionalChainExpressionSyntax(
+						SpanOf(chainCtx),
+						chainReceiver,
+						chainCtx.Identifier().GetText(),
+						chainArguments);
+				}
 			case CvoloParser.TernaryExpressionContext ternaryCtx:
 				{
 					var cond = BuildExpression(ternaryCtx.expression(0));

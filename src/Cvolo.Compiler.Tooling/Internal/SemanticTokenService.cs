@@ -133,6 +133,9 @@ internal static class SemanticTokenService
 			case CoalesceExpressionSyntax coalesce:
 				TryAddCoalesceOperatorToken(coalesce, source, tokens, seen);
 				return false;
+			case OptionalChainExpressionSyntax optionalChain:
+				TryAddOptionalChainOperatorToken(optionalChain, source, tokens, seen);
+				return false;
 			case OperatorDeclarationSyntax operatorDeclaration:
 				// The declared operator token is the declaration's name; the `operator` keyword
 				// itself stays unclassified so it renders as ordinary punctuation-adjacent text.
@@ -224,6 +227,25 @@ internal static class SemanticTokenService
 			return;
 
 		var index = source.IndexOf("??", start, end - start, StringComparison.Ordinal);
+		if (index < 0)
+			return;
+
+		AddDirectToken(tokens, seen, new Cvolo.Core.Diagnostics.TextSpan(index, 2), ToolingSymbolKind.Operator);
+	}
+
+	/// <summary>
+	/// Classifies the optional-chaining operator between the receiver and the member. `?` and `.` are
+	/// separate tokens, but the operator is rendered as the contiguous `?.` glyph, so its extent is
+	/// located in the gap between the receiver and the member rather than being stored on the node.
+	/// </summary>
+	private static void TryAddOptionalChainOperatorToken(OptionalChainExpressionSyntax optionalChain, string source, List<SemanticTokenInfo> tokens, HashSet<(int Start, int Length)> seen)
+	{
+		var start = optionalChain.Receiver.Span.End;
+		var end = optionalChain.Span.End;
+		if (start < 0 || end > source.Length || start > end)
+			return;
+
+		var index = source.IndexOf("?.", start, end - start, StringComparison.Ordinal);
 		if (index < 0)
 			return;
 

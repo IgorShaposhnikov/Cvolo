@@ -1,0 +1,29 @@
+using System;
+
+delegate int Handler(int value);
+
+int main() {
+    Handler handler = (int value) => {
+        return value * 2;
+    };
+
+    // `?.Invoke` on a Some delegate invokes the synthesized delegate member: no wrapper, and the
+    // delegate's own return value is lifted exactly one layer.
+    Handler? present = Option<Handler>(handler);
+    var ran = present?.Invoke(21);
+    if (ran is Some v) {
+        Console.WriteLine($"invoke={v}");
+    } else {
+        Console.WriteLine("invoke=None");
+    }
+
+    // None short-circuits the invocation entirely.
+    Handler? absent = Option.None;
+    var skipped = absent?.Invoke(21);
+    if (skipped is Some v) {
+        Console.WriteLine($"unexpected={v}");
+    } else {
+        Console.WriteLine("absent=None");
+    }
+    return 0;
+}

@@ -1,0 +1,28 @@
+using System;
+
+// `--strict-option` disables only the `T?` type sugar. Optional chaining is an expression operator
+// in its own right, so it must remain available when every Option type is spelled out explicitly.
+struct User {
+    int id;
+}
+
+extension User {
+    int GetId(ref this) {
+        return id;
+    }
+}
+
+int main() {
+    Option<User> user = Option<User> { Some: User { id: 12 } };
+
+    var field = user?.id;
+    if (field is Some v) {
+        Console.WriteLine($"field={v}");
+    }
+
+    var method = user?.GetId();
+    if (method is Some v) {
+        Console.WriteLine($"method={v}");
+    }
+    return 0;
+}

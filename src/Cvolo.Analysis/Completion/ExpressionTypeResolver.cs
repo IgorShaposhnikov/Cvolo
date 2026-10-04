@@ -1,5 +1,3 @@
-using System;
-using System.Collections.Generic;
 using Cvolo.Analysis.Symbols;
 using Cvolo.Analysis.Symbols.Base;
 using Cvolo.Analysis.Symbols.Collections;
@@ -55,6 +53,9 @@ internal static class ExpressionTypeResolver
 			TernaryExpressionSyntax ternary => Resolve(context, visible, ternary.ThenExpression),
 			CoalesceExpressionSyntax coalesce => context.ResolvedCoalesceExpressions.TryGetValue(coalesce, out var resolved)
 				? resolved.ResultType
+				: null,
+			OptionalChainExpressionSyntax optionalChain => context.ResolvedOptionalChains.TryGetValue(optionalChain, out var resolvedChain)
+				? resolvedChain.ResultType
 				: null,
 			VoidLiteralExpressionSyntax => TypeSymbol.Void,
 			DefaultExpressionSyntax defaultExpression => defaultExpression.TypeName is not null ? ResolveTypeOrNull(context, defaultExpression.TypeName) : null,

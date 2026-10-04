@@ -1,0 +1,9 @@
+using System;
+
+// Optional chaining is scoped to Option<T>: a plain value is not implicitly lifted, so the
+// receiver is rejected with CVL4189 rather than given a null check it does not otherwise have.
+int main() {
+    var plain = 5;
+    var value = plain?.ToString();
+    return 0;
+}

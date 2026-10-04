@@ -267,6 +267,15 @@ public abstract class AstRewriterBase
 			return new CoalesceExpressionSyntax(coalesce.Span, left, right);
 		}
 
+		if (node is OptionalChainExpressionSyntax chain)
+		{
+			var receiver = (ExpressionSyntax)Rewrite(chain.Receiver);
+			IReadOnlyList<ExpressionSyntax>? arguments = chain.Arguments is null
+				? null
+				: chain.Arguments.Select(argument => (ExpressionSyntax)Rewrite(argument)).ToArray();
+			return new OptionalChainExpressionSyntax(chain.Span, receiver, chain.MemberName, arguments);
+		}
+
 		if (node is UnsafeBlockStatementSyntax unsafeBlock)
 		{
 			var rewrittenBody = (BlockStatementSyntax)Rewrite(unsafeBlock.Body);

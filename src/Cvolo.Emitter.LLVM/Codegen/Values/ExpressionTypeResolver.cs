@@ -82,6 +82,9 @@ internal sealed class ExpressionTypeResolver(CodegenContext codegen, Func<Functi
 			CoalesceExpressionSyntax coalesce => BindingContext.ResolvedCoalesceExpressions.TryGetValue(coalesce, out var resolved)
 				? resolved.ResultType ?? TypeSymbol.Int
 				: TypeSymbol.Int,
+			OptionalChainExpressionSyntax optionalChain => BindingContext.ResolvedOptionalChains.TryGetValue(optionalChain, out var resolvedChain)
+				? resolvedChain.ResultType ?? TypeSymbol.Int
+				: TypeSymbol.Int,
 			CallExpressionSyntax call => ResolveCallReturn(call),
 			BinaryExpressionSyntax binary => ResolveBinary(binary),
 			HeapAllocationExpressionSyntax heap => Resolve(heap.Expression),
