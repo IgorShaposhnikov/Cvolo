@@ -1,0 +1,12 @@
+/// <summary>
+/// Parser fixture proving an optional-chain invocation with empty parentheses is distinguished from a
+/// field projection.
+/// </summary>
+/// <remarks>
+/// Test: OptionalChainingTests.Parser_DistinguishesFieldAndInvocationForms.
+/// Compiler Target: AntlrSyntaxParser / CvoloSourcePrinter.
+/// </remarks>
+int Read(Option<int> o) {
+    var v = o?.Bump();
+    return 0;
+}

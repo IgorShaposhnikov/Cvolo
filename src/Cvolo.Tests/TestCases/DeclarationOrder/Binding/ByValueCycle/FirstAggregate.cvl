@@ -1,0 +1,19 @@
+/// <summary>
+/// Negative fixture: a cross-file by-value aggregate cycle must report CVL4181 instead of recursing
+/// indefinitely.
+/// </summary>
+/// <remarks>
+/// Test: CrossFileTypeDeclarationOrderTests.ByValueLayoutCycle_IsRejected_WithoutRecursion.
+/// Fixture Role: First aggregate in the cycle.
+/// Compiler Target: DeclarationPass / TypeDeclarationRegistrar.
+/// Expected Diagnostic: CVL4181.
+/// </remarks>
+namespace Fwd;
+
+public struct A {
+    public B Value;
+}
+
+int main() {
+    return 0;
+}

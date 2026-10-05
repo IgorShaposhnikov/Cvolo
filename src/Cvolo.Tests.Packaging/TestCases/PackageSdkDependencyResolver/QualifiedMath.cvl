@@ -1,0 +1,12 @@
+/// <summary>
+/// Scanner fixture for a fully-qualified SDK math reference with no using directive; verifies qualified
+/// references are discovered.
+/// </summary>
+/// <remarks>
+/// Test: PackageSdkDependencyResolverTests.SourceScan_FindsSdkNamespaceDependencies.
+/// Fixture Role: QualifiedMath.
+/// Compiler Target: PackageSdkDependencyResolver.
+/// </remarks>
+int F() {
+    return System.Math.Int.Abs(-1);
+}

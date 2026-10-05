@@ -1,0 +1,15 @@
+/// <summary>
+/// Scanner fixture for an alias of the SDK root; verifies alias-qualified implementation references
+/// select the corresponding SDK namespace.
+/// </summary>
+/// <remarks>
+/// Test: PackageSdkDependencyResolverTests.SourceScan_FindsSdkNamespaceDependencies.
+/// Fixture Role: AliasSystem.
+/// Compiler Target: PackageSdkDependencyResolver.
+/// </remarks>
+using Sdk = System;
+
+int F() {
+    Sdk.Console.WriteLine("x");
+    return 0;
+}

@@ -1,0 +1,14 @@
+/// <summary>
+/// Nested source file used to verify project-file loading discovers .cvl files below the project
+/// directory.
+/// </summary>
+/// <remarks>
+/// Test: ProjectReferenceIntegrationTests.CompilationProject_ProjectFileInput_IncludesNestedSources.
+/// Fixture Role: Main.
+/// Compiler Target: ProjectReference build graph / artifact pipeline.
+/// </remarks>
+namespace NestedSourceApp.App;
+
+int Main() {
+    return 0;
+}

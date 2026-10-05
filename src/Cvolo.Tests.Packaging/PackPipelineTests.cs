@@ -3,6 +3,7 @@ using Cvolo.Core.AST.Base;
 using Cvolo.Core.Packages;
 using Cvolo.Core.Diagnostics;
 using Cvolo.Packaging;
+using Cvolo.Tests.Shared;
 
 namespace Cvolo.Tests.Packaging;
 
@@ -48,38 +49,10 @@ public sealed class PackPipelineTests : IDisposable
 
 	private static void RequireClang()
 	{
-		if (FindClang() is null)
+		if (NativeToolchain.FindClang() is null)
 			Assert.Skip("clang not available; cvolo pack requires clang for object/bitcode emission.");
 	}
 
-	private static string? FindClang()
-	{
-		var names = OperatingSystem.IsWindows() ? new[] { "clang.exe", "clang" } : new[] { "clang" };
-		foreach (var baseDir in new[] { AppContext.BaseDirectory })
-		{
-			foreach (var name in names)
-			{
-				var candidate = Path.Combine(baseDir, name);
-				if (File.Exists(candidate))
-					return candidate;
-			}
-		}
-
-		foreach (var directory in Environment.GetEnvironmentVariable("PATH")?.Split(Path.PathSeparator) ?? [])
-		{
-			if (string.IsNullOrEmpty(directory) || !Directory.Exists(directory))
-				continue;
-
-			foreach (var name in names)
-			{
-				var candidate = Path.Combine(directory, name);
-				if (File.Exists(candidate))
-					return candidate;
-			}
-		}
-
-		return null;
-	}
 
 	private static PackOptions DefaultOptions(string outputPath, string[] targets, bool stripSource = false, string? signingKeyPath = null, bool noSign = false) => new()
 	{

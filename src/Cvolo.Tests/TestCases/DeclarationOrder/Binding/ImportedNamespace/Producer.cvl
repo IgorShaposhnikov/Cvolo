@@ -1,0 +1,13 @@
+/// <summary>
+/// Proves that a deferred field type uses the consumer unit importing the producer namespace.
+/// </summary>
+/// <remarks>
+/// Test: CrossFileTypeDeclarationOrderTests.StructField_ForwardReference_ImportedNamespace_Resolves.
+/// Fixture Role: Producer.
+/// Compiler Target: DeclarationPass / TypeDeclarationRegistrar.
+/// </remarks>
+namespace Graphics;
+
+public struct ShaderProgram {
+    public int Id;
+}

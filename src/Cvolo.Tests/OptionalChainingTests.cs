@@ -164,7 +164,7 @@ public sealed class OptionalChainingTests : CompilerTestBase
 
 	/// <summary>
 	/// Every chain in the basic fixture binds successfully, and each result is an <c>Option</c> of the
-	/// bare member type — a field and an extension method, each on Some and None.
+	/// bare member type - a field and an extension method, each on Some and None.
 	/// </summary>
 	[Fact]
 	public void Descriptor_SuccessfulChainsLiftIntoSingleOption()
@@ -212,18 +212,18 @@ public sealed class OptionalChainingTests : CompilerTestBase
 	[Fact]
 	public void Parser_DistinguishesFieldAndInvocationForms()
 	{
-		var field = ParseFirstOptionalChain("int Read(Option<int> o) { var v = o?.value; return 0; }");
+		var field = ParseFirstOptionalChain(ReadTestCaseSource($"{Category}/Syntax/Field.cvl"));
 		Assert.NotNull(field);
 		Assert.Equal("value", field!.MemberName);
 		Assert.False(field.IsInvocation);
 		Assert.Null(field.Arguments);
 
-		var empty = ParseFirstOptionalChain("int Read(Option<int> o) { var v = o?.Bump(); return 0; }");
+		var empty = ParseFirstOptionalChain(ReadTestCaseSource($"{Category}/Syntax/EmptyInvocation.cvl"));
 		Assert.NotNull(empty);
 		Assert.True(empty!.IsInvocation);
 		Assert.Empty(empty.Arguments!);
 
-		var withArgs = ParseFirstOptionalChain("int Read(Option<int> o) { var v = o?.Bump(1, 2); return 0; }");
+		var withArgs = ParseFirstOptionalChain(ReadTestCaseSource($"{Category}/Syntax/InvocationArgs.cvl"));
 		Assert.NotNull(withArgs);
 		Assert.True(withArgs!.IsInvocation);
 		Assert.Equal(2, withArgs.Arguments!.Count);
@@ -232,7 +232,7 @@ public sealed class OptionalChainingTests : CompilerTestBase
 	[Fact]
 	public void SourcePrinter_RoundTripsBothForms()
 	{
-		var (_, unit) = Parse("int Read(Option<int> o) { var a = o?.value; var b = o?.Bump(1); return 0; }");
+		var (_, unit) = Parse(ReadTestCaseSource($"{Category}/Syntax/FieldAndMethod.cvl"));
 		var printed = CvoloSourcePrinter.Print(unit);
 
 		Assert.Contains("o?.value", printed);

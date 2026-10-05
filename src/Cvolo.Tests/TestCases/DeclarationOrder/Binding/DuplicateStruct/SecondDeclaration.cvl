@@ -1,0 +1,15 @@
+/// <summary>
+/// Negative fixture: duplicate struct declarations must report CVL4054 in either file order and must
+/// not silently replace one another.
+/// </summary>
+/// <remarks>
+/// Test: CrossFileTypeDeclarationOrderTests.DuplicateDeclaration_FailsInBothFileOrders_WithoutSilentlyReplacing.
+/// Fixture Role: Second.
+/// Compiler Target: DeclarationPass / TypeDeclarationRegistrar.
+/// Expected Diagnostic: CVL4054.
+/// </remarks>
+namespace Fwd;
+
+public struct State {
+    public long Y;
+}

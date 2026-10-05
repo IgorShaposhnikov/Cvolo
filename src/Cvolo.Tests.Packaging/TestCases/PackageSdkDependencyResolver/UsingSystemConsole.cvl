@@ -1,0 +1,14 @@
+/// <summary>
+/// Scanner fixture for an ordinary SDK namespace import; verifies the imported SDK namespace is
+/// collected.
+/// </summary>
+/// <remarks>
+/// Test: PackageSdkDependencyResolverTests.SourceScan_FindsSdkNamespaceDependencies.
+/// Fixture Role: UsingSystemConsole.
+/// Compiler Target: PackageSdkDependencyResolver.
+/// </remarks>
+using System.Console;
+
+int F() {
+    return 0;
+}

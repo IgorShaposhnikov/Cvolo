@@ -1,0 +1,11 @@
+/// <summary>
+/// Parser fixture proving optional chaining without parentheses binds as a field projection.
+/// </summary>
+/// <remarks>
+/// Test: OptionalChainingTests.Parser_DistinguishesFieldAndInvocationForms.
+/// Compiler Target: AntlrSyntaxParser / CvoloSourcePrinter.
+/// </remarks>
+int Read(Option<int> o) {
+    var v = o?.value;
+    return 0;
+}

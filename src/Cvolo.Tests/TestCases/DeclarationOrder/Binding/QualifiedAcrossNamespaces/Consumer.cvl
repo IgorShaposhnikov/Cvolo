@@ -1,0 +1,18 @@
+/// <summary>
+/// Proves that a fully-qualified cross-namespace field type resolves before the declaring file is
+/// processed.
+/// </summary>
+/// <remarks>
+/// Test: CrossFileTypeDeclarationOrderTests.StructField_ForwardReference_QualifiedAcrossNamespaces_Resolves.
+/// Fixture Role: Consumer.
+/// Compiler Target: DeclarationPass / TypeDeclarationRegistrar.
+/// </remarks>
+namespace Consumer;
+
+public struct Renderer {
+    public Graphics.ShaderProgram Shader;
+}
+
+int main() {
+    return 0;
+}

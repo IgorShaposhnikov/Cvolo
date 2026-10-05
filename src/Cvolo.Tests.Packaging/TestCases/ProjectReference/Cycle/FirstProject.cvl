@@ -1,0 +1,13 @@
+/// <summary>
+/// First library in a deliberate project-reference cycle used to verify cycle-chain diagnostics.
+/// </summary>
+/// <remarks>
+/// Test: ProjectReferenceIntegrationTests.CompilationProject_ProjectReferenceCycle_FailsWithCycleChain.
+/// Fixture Role: First project in the reference cycle.
+/// Compiler Target: ProjectReference build graph / artifact pipeline.
+/// </remarks>
+namespace A;
+
+public int AValue() {
+    return 1;
+}

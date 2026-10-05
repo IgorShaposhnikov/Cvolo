@@ -1,0 +1,13 @@
+/// <summary>
+/// Leaf library in a transitive project-reference graph.
+/// </summary>
+/// <remarks>
+/// Test: ProjectReferenceIntegrationTests transitive project-reference cases.
+/// Fixture Role: LibB.
+/// Compiler Target: ProjectReference build graph / artifact pipeline.
+/// </remarks>
+namespace LibB;
+
+public int BaseValue() {
+    return 40;
+}

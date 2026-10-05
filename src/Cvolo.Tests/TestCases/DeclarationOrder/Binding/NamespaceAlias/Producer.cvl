@@ -1,0 +1,13 @@
+/// <summary>
+/// Proves that a namespace alias is active while a deferred cross-file field type is resolved.
+/// </summary>
+/// <remarks>
+/// Test: CrossFileTypeDeclarationOrderTests.StructField_ForwardReference_ThroughNamespaceAlias_Resolves.
+/// Fixture Role: Producer.
+/// Compiler Target: DeclarationPass / TypeDeclarationRegistrar.
+/// </remarks>
+namespace Graphics.Shaders;
+
+public struct ShaderProgram {
+    public int Id;
+}

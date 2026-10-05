@@ -1,0 +1,15 @@
+/// <summary>
+/// Negative fixture: duplicate delegate declarations must report CVL4054 in either file order.
+/// </summary>
+/// <remarks>
+/// Test: CrossFileTypeDeclarationOrderTests.DuplicateDelegateDeclaration_FailsInBothFileOrders.
+/// Fixture Role: First.
+/// Compiler Target: DeclarationPass / TypeDeclarationRegistrar.
+/// Expected Diagnostic: CVL4054.
+/// </remarks>
+namespace Fwd;
+
+public delegate void Handler(int value);
+int main() {
+    return 0;
+}

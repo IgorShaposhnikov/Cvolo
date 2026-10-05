@@ -1,0 +1,13 @@
+/// <summary>
+/// Shared dependency in the diamond project graph; verifies the common project/source is deduplicated.
+/// </summary>
+/// <remarks>
+/// Test: ProjectReferenceIntegrationTests.CompilationProject_DiamondProjectReference_DeduplicatesSharedDependency.
+/// Fixture Role: Common.
+/// Compiler Target: ProjectReference build graph / artifact pipeline.
+/// </remarks>
+namespace Common;
+
+public int Value() {
+    return 42;
+}

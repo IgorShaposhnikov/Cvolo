@@ -1,0 +1,15 @@
+/// <summary>
+/// Proves that a delegate return type may be declared in another file and resolves in either file
+/// order.
+/// </summary>
+/// <remarks>
+/// Test: CrossFileTypeDeclarationOrderTests.DelegateReturnType_ForwardReference_ResolvesAcrossFiles.
+/// Fixture Role: Delegate.
+/// Compiler Target: DeclarationPass / TypeDeclarationRegistrar.
+/// </remarks>
+namespace Fwd;
+
+public delegate B Factory();
+int main() {
+    return 0;
+}

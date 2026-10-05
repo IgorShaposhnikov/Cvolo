@@ -1,0 +1,12 @@
+/// <summary>
+/// Parser fixture proving an unparenthesized fallback chain is represented with the expected nested
+/// coalesce tree.
+/// </summary>
+/// <remarks>
+/// Test: CoalesceExpressionTests.Parser_BuildsRightNestedTree.
+/// Compiler Target: AntlrSyntaxParser / CvoloSourcePrinter.
+/// </remarks>
+int Read(Option<int> a, Option<int> b, Option<int> c) {
+    var chained = a ?? b ?? c;
+    return 0;
+}

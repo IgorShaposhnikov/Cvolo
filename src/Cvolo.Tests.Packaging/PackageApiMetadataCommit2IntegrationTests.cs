@@ -2,6 +2,7 @@ using System.Diagnostics;
 using Cvolo.Core.Packages;
 using Cvolo.Drivers;
 using Cvolo.Packaging;
+using Cvolo.Tests.Shared;
 
 namespace Cvolo.Tests.Packaging;
 
@@ -161,35 +162,10 @@ int main() {
 
 	private static void RequireClang()
 	{
-		if (FindClang() is null)
+		if (NativeToolchain.FindClang() is null)
 			Assert.Skip("clang not available; Commit 2 package integration requires clang/LLVM.");
 	}
 
-	private static string? FindClang()
-	{
-		var local = Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "clang.exe" : "clang");
-		if (File.Exists(local))
-			return local;
-
-		var executable = OperatingSystem.IsWindows() ? "clang.exe" : "clang";
-		foreach (var directory in Environment.GetEnvironmentVariable("PATH")?.Split(Path.PathSeparator) ?? [])
-		{
-			if (string.IsNullOrWhiteSpace(directory))
-				continue;
-			try
-			{
-				var candidate = Path.Combine(directory, executable);
-				if (File.Exists(candidate))
-					return candidate;
-			}
-			catch (Exception ex) when (ex is ArgumentException or PathTooLongException or UnauthorizedAccessException)
-			{
-				// Ignore malformed or unreadable PATH entries while probing the test toolchain.
-			}
-		}
-
-		return null;
-	}
 
 	public void Dispose()
 	{

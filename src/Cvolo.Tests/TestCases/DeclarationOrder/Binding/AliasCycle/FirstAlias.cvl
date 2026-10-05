@@ -1,0 +1,11 @@
+/// <summary>
+/// Negative fixture: a cross-file alias cycle must still report CVL1201 in either unit order.
+/// </summary>
+/// <remarks>
+/// Test: CrossFileTypeDeclarationOrderTests.AliasCycle_StillProducesCVL1201_InEitherOrder.
+/// Fixture Role: First alias in the cycle.
+/// Compiler Target: DeclarationPass / TypeDeclarationRegistrar.
+/// Expected Diagnostic: CVL1201.
+/// </remarks>
+namespace Fwd;
+alias X = Y;

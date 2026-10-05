@@ -1,0 +1,12 @@
+/// <summary>
+/// Negative scanner fixture: an identifier whose name merely ends with System must not be treated as
+/// the SDK root.
+/// </summary>
+/// <remarks>
+/// Test: PackageSdkDependencyResolverTests.SourceScan_DoesNotTreatIdentifierSuffixAsRootedSystemNamespace.
+/// Fixture Role: MySystemSuffix.
+/// Compiler Target: PackageSdkDependencyResolver.
+/// </remarks>
+int F() {
+    return MySystem.Math.Int.Abs(-1);
+}

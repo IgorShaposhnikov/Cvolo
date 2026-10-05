@@ -1,4 +1,5 @@
 using Cvolo.Projects;
+using Cvolo.Tests.Shared;
 
 namespace Cvolo.Tests.Packaging;
 
@@ -22,8 +23,8 @@ public sealed class CompilationProjectSdkDependencyTests : IDisposable
 
 		var baseSource = Path.Combine(baseDirectory, "Core.cvl");
 		var systemSource = Path.Combine(consoleDirectory, "Console.cvl");
-		File.WriteAllText(baseSource, "struct BaseMarker { int Value; }");
-		File.WriteAllText(systemSource, "namespace System.Console; public void Touch() { }");
+		TestCases.CopyFile("CompilationProjectSdkDependency/Base/Core.cvl", baseSource);
+		TestCases.CopyFile("CompilationProjectSdkDependency/System.Console/Console.cvl", systemSource);
 
 		var projectDirectory = Path.Combine(_root, "App");
 		Directory.CreateDirectory(projectDirectory);
@@ -36,14 +37,7 @@ public sealed class CompilationProjectSdkDependencyTests : IDisposable
 </Project>
 """);
 		var appSource = Path.Combine(projectDirectory, "Main.cvl");
-		File.WriteAllText(appSource, """
-using Sdk = System;
-
-int Main() {
-    Sdk.Console.Touch();
-    return 0;
-}
-""");
+		TestCases.CopyFile("CompilationProjectSdkDependency/App/Main.cvl", appSource);
 
 		var project = CompilationProject.Load(projectDirectory, compilerBaseDir: _root);
 

@@ -1,0 +1,15 @@
+/// <summary>
+/// Consumer for the package-SDK dependency integration test; it calls the package API without importing
+/// the SDK dependencies used by the package implementation.
+/// </summary>
+/// <remarks>
+/// Test: ProjectReferenceIntegrationTests.Build_ProjectReferenceBitcode_ResolvesSdkUsedOnlyByPackageImplementation.
+/// Fixture Role: App.
+/// Compiler Target: ProjectReference build graph / artifact pipeline.
+/// </remarks>
+using ArtifactSdkLib;
+
+int main() {
+    float radians = PackageRadians();
+    return radians> 1.5f ? 0: 1;
+}

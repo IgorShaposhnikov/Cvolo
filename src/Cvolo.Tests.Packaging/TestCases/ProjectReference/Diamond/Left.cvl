@@ -1,0 +1,13 @@
+/// <summary>
+/// Left branch of the diamond project-reference graph.
+/// </summary>
+/// <remarks>
+/// Test: ProjectReferenceIntegrationTests.CompilationProject_DiamondProjectReference_DeduplicatesSharedDependency.
+/// Fixture Role: Left.
+/// Compiler Target: ProjectReference build graph / artifact pipeline.
+/// </remarks>
+namespace Left;
+
+public int LeftValue() {
+    return 1;
+}

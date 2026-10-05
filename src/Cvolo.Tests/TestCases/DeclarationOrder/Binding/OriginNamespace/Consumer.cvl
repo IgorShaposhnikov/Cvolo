@@ -1,0 +1,17 @@
+/// <summary>
+/// Proves that deferred type resolution restores the namespace of the unit that declared the type.
+/// </summary>
+/// <remarks>
+/// Test: CrossFileTypeDeclarationOrderTests.DeferredResolution_UsesOriginatingUnitNamespace_NotPreviousUnit.
+/// Fixture Role: Consumer.
+/// Compiler Target: DeclarationPass / TypeDeclarationRegistrar.
+/// </remarks>
+namespace Beta;
+
+public struct Holder {
+    public Alpha.Token Token;
+}
+
+int main() {
+    return 0;
+}

@@ -1,0 +1,9 @@
+/// <summary>
+/// Declares the raw pointer used by the unsafe-capability diagnostic fixture.
+/// </summary>
+/// <remarks>
+/// Test: RawPointerIndexTests.RawPointerIndex_RequiresUnsafeCapability_DiagnosticIdIsReported.
+/// Compiler Target: ExpressionValidator raw-pointer index semantics.
+/// Expected Diagnostic: CVL4182 on the indexing operation.
+/// </remarks>
+global var int* gptr;

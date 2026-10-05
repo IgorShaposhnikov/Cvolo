@@ -1,0 +1,14 @@
+/// <summary>
+/// Proves that deferred type resolution restores the using directives of the originating unit and does
+/// not inherit another unit context.
+/// </summary>
+/// <remarks>
+/// Test: CrossFileTypeDeclarationOrderTests.DeferredResolution_UsesOriginatingUnitUsings.
+/// Fixture Role: Producer.
+/// Compiler Target: DeclarationPass / TypeDeclarationRegistrar.
+/// </remarks>
+namespace Graphics;
+
+public struct ShaderProgram {
+    public int Id;
+}

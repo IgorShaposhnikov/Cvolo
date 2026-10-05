@@ -1,0 +1,15 @@
+/// <summary>
+/// Implementation-only package source used to prove SDK dependencies are collected from source metadata
+/// even when API metadata has no matching import.
+/// </summary>
+/// <remarks>
+/// Test: PackageSdkDependencyResolverTests.ArtifactCollection_UsesImplementationSourceBundleEvenWhenApiHasNoSdkImport.
+/// Fixture Role: ArtifactImplementation.
+/// Compiler Target: PackageSdkDependencyResolver.
+/// </remarks>
+namespace Hidden;
+
+int F() {
+    System.Console.WriteLine("package");
+    return 0;
+}

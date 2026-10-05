@@ -2,6 +2,7 @@ using System.Diagnostics;
 using Cvolo.Drivers;
 using Cvolo.Packaging;
 using Cvolo.Projects;
+using Cvolo.Tests.Shared;
 
 namespace Cvolo.Tests.Packaging;
 
@@ -70,13 +71,7 @@ public sealed class ProjectReferenceIntegrationTests : IDisposable
   </PropertyGroup>
 </Project>
 """);
-		File.WriteAllText(mainPath, """
-namespace NestedSourceApp.App;
-
-int Main() {
-    return 0;
-}
-""");
+		TestCases.CopyFile("ProjectReference/NestedSource/Main.cvl", mainPath);
 
 		var project = CompilationProject.Load(projectPath, compilerBaseDir: _root, mergeProjectReferences: false);
 
@@ -99,13 +94,7 @@ int Main() {
   </PropertyGroup>
 </Project>
 """);
-		File.WriteAllText(Path.Combine(appSourceDirectory, "Main.cvl"), """
-namespace NestedMainApp.App;
-
-int Main() {
-    return 0;
-}
-""");
+		TestCases.CopyFile("ProjectReference/NestedMain/Main.cvl", Path.Combine(appSourceDirectory, "Main.cvl"));
 
 		var cache = new PackageCache(Path.Combine(_root, "nested-main-cache"));
 		var driverType = typeof(ICompilerDriver).Assembly.GetType("Cvolo.Drivers.CompilerDriver", throwOnError: true)!;
@@ -150,28 +139,12 @@ int Main() {
 
 		var libraryProject = CreatePackageReadyLibrary(
 			"ArtifactSdkLib",
-			"""
-using Sdk = System;
-
-namespace ArtifactSdkLib;
-
-public float PackageRadians() {
-    Sdk.Console.WriteLine("package-sdk");
-    return System.Math.Float.ToRadians(90.0f);
-}
-""");
+			"ProjectReference/PackageSdk/ArtifactSdkLib.cvl");
 
 		var appDirectory = Path.Combine(_root, "ArtifactSdkApp");
 		Directory.CreateDirectory(appDirectory);
 		WriteProject(Path.Combine(appDirectory, "App.cvlproj"), "App", libraryProject);
-		File.WriteAllText(Path.Combine(appDirectory, "Main.cvl"), """
-using ArtifactSdkLib;
-
-int main() {
-    float radians = PackageRadians();
-    return radians > 1.5f ? 0 : 1;
-}
-""");
+		TestCases.CopyFile("ProjectReference/PackageSdk/App.cvl", Path.Combine(appDirectory, "Main.cvl"));
 
 		var graph = ProjectBuildGraph.Load(appDirectory);
 		const string buildKey = "build-v2|configuration=Debug|package-sdk-dependency-test";
@@ -256,16 +229,16 @@ int main() {
 	public void Build_PackageReadyTransitiveProjectReferences_UsesIndependentCvlibArtifacts()
 	{
 		RequireClang();
-		var libB = CreatePackageReadyLibrary("ArtifactLibB", "namespace ArtifactLibB; public int BaseValue() { return 40; }");
+		var libB = CreatePackageReadyLibrary("ArtifactLibB", "ProjectReference/Artifacts/ArtifactLibB.cvl");
 		var libA = CreatePackageReadyLibrary(
 			"ArtifactLibA",
-			"using ArtifactLibB; namespace ArtifactLibA; public int Combined() { return BaseValue() + 2; }",
+			"ProjectReference/Artifacts/ArtifactLibA.cvl",
 			libB);
 
 		var appDirectory = Path.Combine(_root, "ArtifactApp");
 		Directory.CreateDirectory(appDirectory);
 		WriteProject(Path.Combine(appDirectory, "App.cvlproj"), "App", libA);
-		File.WriteAllText(Path.Combine(appDirectory, "Main.cvl"), "using ArtifactLibA; int main() { return Combined() - 42; }");
+		TestCases.CopyFile("ProjectReference/Artifacts/App.cvl", Path.Combine(appDirectory, "Main.cvl"));
 
 		var graph = ProjectBuildGraph.Load(appDirectory);
 		const string buildKey = "build-v2|configuration=Debug|project-artifacts-test";
@@ -309,9 +282,9 @@ int main() {
 	[Fact]
 	public void CompilationProject_DiamondProjectReference_DeduplicatesSharedDependency()
 	{
-		var commonDirectory = CreateLibrary("Common", "namespace Common; public int Value() { return 42; }");
-		var leftDirectory = CreateLibrary("Left", "namespace Left; public int LeftValue() { return 1; }");
-		var rightDirectory = CreateLibrary("Right", "namespace Right; public int RightValue() { return 1; }");
+		var commonDirectory = CreateLibrary("Common", "ProjectReference/Diamond/Common.cvl");
+		var leftDirectory = CreateLibrary("Left", "ProjectReference/Diamond/Left.cvl");
+		var rightDirectory = CreateLibrary("Right", "ProjectReference/Diamond/Right.cvl");
 		AddProjectReference(leftDirectory, Path.Combine(commonDirectory, "Common.cvlproj"));
 		AddProjectReference(rightDirectory, Path.Combine(commonDirectory, "Common.cvlproj"));
 
@@ -319,7 +292,7 @@ int main() {
 		Directory.CreateDirectory(appDirectory);
 		WriteProject(Path.Combine(appDirectory, "DiamondApp.cvlproj"), "DiamondApp",
 			Path.Combine(leftDirectory, "Left.cvlproj"), Path.Combine(rightDirectory, "Right.cvlproj"));
-		File.WriteAllText(Path.Combine(appDirectory, "Main.cvl"), "int main() { return 0; }");
+		TestCases.CopyFile("ProjectReference/EmptyMain.cvl", Path.Combine(appDirectory, "Main.cvl"));
 
 		var project = CompilationProject.Load(appDirectory, compilerBaseDir: _root);
 		var commonProject = Path.GetFullPath(Path.Combine(commonDirectory, "Common.cvlproj"));
@@ -332,13 +305,13 @@ int main() {
 	[Fact]
 	public void CompilationProject_ProjectReferenceCycle_FailsWithCycleChain()
 	{
-		var aDirectory = CreateLibrary("A", "namespace A; public int AValue() { return 1; }");
-		var bDirectory = CreateLibrary("B", "namespace B; public int BValue() { return 2; }");
-		AddProjectReference(aDirectory, Path.Combine(bDirectory, "B.cvlproj"));
-		AddProjectReference(bDirectory, Path.Combine(aDirectory, "A.cvlproj"));
+		var firstProjectDirectory = CreateLibrary("A", "ProjectReference/Cycle/FirstProject.cvl");
+		var secondProjectDirectory = CreateLibrary("B", "ProjectReference/Cycle/SecondProject.cvl");
+		AddProjectReference(firstProjectDirectory, Path.Combine(secondProjectDirectory, "B.cvlproj"));
+		AddProjectReference(secondProjectDirectory, Path.Combine(firstProjectDirectory, "A.cvlproj"));
 
 		var ex = Assert.Throws<InvalidOperationException>(() =>
-			CompilationProject.Load(Path.Combine(aDirectory, "A.cvlproj"), compilerBaseDir: _root));
+			CompilationProject.Load(Path.Combine(firstProjectDirectory, "A.cvlproj"), compilerBaseDir: _root));
 
 		Assert.Contains("ProjectReference cycle detected", ex.Message);
 		Assert.Contains("A -> B -> A", ex.Message);
@@ -360,7 +333,7 @@ int main() {
   </ItemGroup>
 </Project>
 """);
-		File.WriteAllText(Path.Combine(appDirectory, "Main.cvl"), "int main() { return 0; }");
+		TestCases.CopyFile("ProjectReference/EmptyMain.cvl", Path.Combine(appDirectory, "Main.cvl"));
 
 		var ex = Assert.Throws<FileNotFoundException>(() => CompilationProject.Load(appDirectory, compilerBaseDir: _root));
 		Assert.Contains("ProjectReference", ex.Message);
@@ -369,14 +342,14 @@ int main() {
 
 	private (string AppDirectory, string LibAProject, string LibBProject, string LibBSource) CreateTransitiveProjectGraph()
 	{
-		var libBDirectory = CreateLibrary("LibB", "namespace LibB; public int BaseValue() { return 40; }");
-		var libADirectory = CreateLibrary("LibA", "using LibB; namespace LibA; public int Combined() { return BaseValue() + 2; }");
+		var libBDirectory = CreateLibrary("LibB", "ProjectReference/Transitive/LibB.cvl");
+		var libADirectory = CreateLibrary("LibA", "ProjectReference/Transitive/LibA.cvl");
 		AddProjectReference(libADirectory, Path.Combine(libBDirectory, "LibB.cvlproj"));
 
 		var appDirectory = Path.Combine(_root, "TransitiveApp");
 		Directory.CreateDirectory(appDirectory);
 		WriteProject(Path.Combine(appDirectory, "App.cvlproj"), "App", Path.Combine(libADirectory, "LibA.cvlproj"));
-		File.WriteAllText(Path.Combine(appDirectory, "Main.cvl"), "using LibA; int main() { return Combined() - 42; }");
+		TestCases.CopyFile("ProjectReference/Transitive/App.cvl", Path.Combine(appDirectory, "Main.cvl"));
 
 		return (
 			appDirectory,
@@ -385,7 +358,7 @@ int main() {
 			Path.Combine(libBDirectory, "LibB.cvl"));
 	}
 
-	private string CreatePackageReadyLibrary(string name, string source, params string[] projectReferences)
+	private string CreatePackageReadyLibrary(string name, string sourceFixture, params string[] projectReferences)
 	{
 		var directory = Path.Combine(_root, name);
 		Directory.CreateDirectory(directory);
@@ -404,16 +377,16 @@ int main() {
   </PropertyGroup>{references}
 </Project>
 """);
-		File.WriteAllText(Path.Combine(directory, name + ".cvl"), source);
+		TestCases.CopyFile(sourceFixture, Path.Combine(directory, name + ".cvl"));
 		return projectPath;
 	}
 
-	private string CreateLibrary(string name, string source)
+	private string CreateLibrary(string name, string sourceFixture)
 	{
 		var directory = Path.Combine(_root, name);
 		Directory.CreateDirectory(directory);
 		WriteProject(Path.Combine(directory, $"{name}.cvlproj"), name);
-		File.WriteAllText(Path.Combine(directory, $"{name}.cvl"), source);
+		TestCases.CopyFile(sourceFixture, Path.Combine(directory, $"{name}.cvl"));
 		return directory;
 	}
 
@@ -460,26 +433,7 @@ int main() {
 """);
 
 		var librarySource = Path.Combine(libraryDirectory, "MathLib.cvl");
-		File.WriteAllText(librarySource, """
-namespace MathLib;
-
-public struct Pair {
-    public int X;
-    public int Y;
-}
-
-public int Sum(Pair value) {
-    return value.X + value.Y;
-}
-
-public struct Box<T> {
-    public T Value;
-}
-
-public T Identity<T>(T value) {
-    return value;
-}
-""");
+		TestCases.CopyFile("ProjectReference/ProjectPair/MathLib.cvl", librarySource);
 
 		File.WriteAllText(Path.Combine(appDirectory, "App.cvlproj"), """
 <Project Sdk="Cvolo.Sdk">
@@ -492,15 +446,7 @@ public T Identity<T>(T value) {
   </ItemGroup>
 </Project>
 """);
-		File.WriteAllText(Path.Combine(appDirectory, "Main.cvl"), """
-using MathLib;
-
-int main() {
-    Pair pair = Pair { X: 20, Y: 22 };
-    Box<int> box = Box<int> { Value: Sum(pair) };
-    return Identity<int>(box.Value) - 42;
-}
-""");
+		TestCases.CopyFile("ProjectReference/ProjectPair/App.cvl", Path.Combine(appDirectory, "Main.cvl"));
 
 		return (appDirectory, libraryProject, librarySource);
 	}
@@ -527,25 +473,10 @@ int main() {
 
 	private static void RequireClang()
 	{
-		if (FindClang() is null)
+		if (NativeToolchain.FindClang() is null)
 			Assert.Skip("clang not available; project-reference build integration requires clang/LLVM.");
 	}
 
-	private static string? FindClang()
-	{
-		var local = Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "clang.exe" : "clang");
-		if (File.Exists(local))
-			return local;
-
-		var executable = OperatingSystem.IsWindows() ? "clang.exe" : "clang";
-		foreach (var directory in (Environment.GetEnvironmentVariable("PATH") ?? string.Empty).Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
-		{
-			var candidate = Path.Combine(directory, executable);
-			if (File.Exists(candidate))
-				return candidate;
-		}
-		return null;
-	}
 
 	public void Dispose()
 	{

@@ -21,6 +21,7 @@
 
 	<ItemGroup>
 		<ProjectReference Include="..\Cvolo.Compiler.Tooling\Cvolo.Compiler.Tooling.csproj" />
+		<ProjectReference Include="..\Cvolo.Tests.Shared\Cvolo.Tests.Shared.csproj" />
 		<ProjectReference Include="..\Cvolo.Packaging\Cvolo.Packaging.csproj" />
 		<ProjectReference Include="..\Cvolo.Projects\Cvolo.Projects.csproj" />
 	</ItemGroup>
@@ -28,4 +29,8 @@
 	<ItemGroup>
 		<AssemblyMetadata Include="ToolingVersion" Value="$(ToolingVersion)" />
 	</ItemGroup>
+	<ItemGroup>
+		<None Include="TestCases\**\*" CopyToOutputDirectory="PreserveNewest" />
+	</ItemGroup>
+
 </Project>

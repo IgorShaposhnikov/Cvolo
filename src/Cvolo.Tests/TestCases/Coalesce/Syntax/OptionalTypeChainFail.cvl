@@ -1,0 +1,13 @@
+/// <summary>
+/// Negative parser fixture proving chained question marks in type position remain the
+/// optional-type-chain diagnostic case rather than fallback syntax.
+/// </summary>
+/// <remarks>
+/// Test: CoalesceExpressionTests.ChainedQuestionMarksInTypePosition_StillReportOptionalTypeChain.
+/// Compiler Target: AntlrSyntaxParser / CvoloSourcePrinter.
+/// Expected Diagnostic: CVL1101.
+/// </remarks>
+int main() {
+    var int?? x = 5;
+    return 0;
+}

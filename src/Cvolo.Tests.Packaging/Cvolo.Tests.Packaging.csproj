@@ -24,8 +24,13 @@
 
 	<ItemGroup>
 		<ProjectReference Include="..\Cvolo.CLI.Packages\Cvolo.CLI.Packages.csproj" />
+		<ProjectReference Include="..\Cvolo.Tests.Shared\Cvolo.Tests.Shared.csproj" />
 		<ProjectReference Include="..\Cvolo.Packaging\Cvolo.Packaging.csproj" />
 		<ProjectReference Include="..\Cvolo\Cvolo.csproj" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<None Include="TestCases\**\*" CopyToOutputDirectory="Always" />
 	</ItemGroup>
 
 	<ItemGroup Condition="'$(OS)' == 'Windows_NT' And Exists('..\Cvolo\tooling\win-x64\clang.exe')">

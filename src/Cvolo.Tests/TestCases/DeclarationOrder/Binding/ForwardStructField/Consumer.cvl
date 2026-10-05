@@ -1,0 +1,23 @@
+/// <summary>
+/// Proves that a struct field may reference a struct declared in another file regardless of file
+/// enumeration order.
+/// </summary>
+/// <remarks>
+/// Test: CrossFileTypeDeclarationOrderTests.StructField_ForwardReference_ResolvesInEitherFileOrder.
+/// Fixture Role: Consumer.
+/// Compiler Target: DeclarationPass / TypeDeclarationRegistrar.
+/// </remarks>
+namespace Fwd;
+
+public struct A {
+    public B Value;
+}
+
+int main() {
+    A a = A {
+        Value: B {
+            X: 1
+        }
+    };
+    return a.Value.X;
+}

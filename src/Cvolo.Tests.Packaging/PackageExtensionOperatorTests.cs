@@ -3,6 +3,7 @@ using Cvolo.Core.AST.Declarations;
 using Cvolo.Core.Packages;
 using Cvolo.Drivers;
 using Cvolo.Packaging;
+using Cvolo.Tests.Shared;
 
 namespace Cvolo.Tests.Packaging;
 
@@ -55,7 +56,7 @@ public sealed class PackageExtensionOperatorTests : IDisposable
 	[Fact]
 	public void PackagedOperatorsAndAssociatedFunctions_StayCallableFromAConsumerApp()
 	{
-		if (FindClang() is null)
+		if (NativeToolchain.FindClang() is null)
 			Assert.Skip("clang not available; the consuming app needs clang/LLVM to link.");
 
 		var (packagePath, libraryDirectory) = PackGeometry();
@@ -127,7 +128,7 @@ int main() {
 	[Fact]
 	public void Consumer_Adding_An_Operator_To_A_Packaged_Type_Is_Rejected()
 	{
-		if (FindClang() is null)
+		if (NativeToolchain.FindClang() is null)
 			Assert.Skip("clang not available; the consuming app needs clang/LLVM to link.");
 
 		var (packagePath, _) = PackGeometry();
@@ -266,25 +267,6 @@ public extension Vec2 {
 		}
 	}
 
-	private static string? FindClang()
-	{
-		var local = Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "clang.exe" : "clang");
-		if (File.Exists(local))
-			return local;
-
-		var executable = OperatingSystem.IsWindows() ? "clang.exe" : "clang";
-		foreach (var directory in Environment.GetEnvironmentVariable("PATH")?.Split(Path.PathSeparator) ?? [])
-		{
-			if (string.IsNullOrWhiteSpace(directory))
-				continue;
-
-			var candidate = Path.Combine(directory, executable);
-			if (File.Exists(candidate))
-				return candidate;
-		}
-
-		return null;
-	}
 
 	public void Dispose()
 	{

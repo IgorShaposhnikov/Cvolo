@@ -1,56 +1,30 @@
-using System.Text;
+using Cvolo.Tests.Shared;
 
 namespace Cvolo.Tests.Tooling;
 
+/// <summary>
+/// Tooling-test compatibility wrapper over the shared <see cref="TestProject"/> workspace.
+/// New tests should prefer <see cref="FromFixtureDirectory"/> so Cvolo source stays in TestCases.
+/// </summary>
 internal sealed class TempProject : IDisposable
 {
-	private readonly string _root;
-	public string ProjectFilePath { get; }
+	private readonly TestProject _project;
 
+	private TempProject(TestProject project) => _project = project;
 
-	private TempProject(string root, string projectFilePath)
-	{
-		_root = root;
-		ProjectFilePath = projectFilePath;
-	}
+	public string ProjectFilePath => _project.ProjectFilePath;
 
-	public static TempProject Create(params (string FileName, string Source)[] sources)
-	{
-		var root = Path.Combine(Path.GetTempPath(), "cvolo-tooling-tests", Guid.NewGuid().ToString("N"));
-		Directory.CreateDirectory(root);
+	/// <summary>
+	/// Transitional API for tests that still synthesize source dynamically. Do not use it for fixed
+	/// test programs; those belong in TestCases and should use <see cref="FromFixtureDirectory"/>.
+	/// </summary>
+	public static TempProject Create(params (string FileName, string Source)[] sources) =>
+		new(TestProject.FromSources(sources, tempCategory: "cvolo-tooling-tests"));
 
-		var projectFile = Path.Combine(root, "Fixture.cvlproj");
-		File.WriteAllText(
-			projectFile,
-			"<Project Sdk=\"Cvolo.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <AssemblyName>Fixture</AssemblyName>\n  </PropertyGroup>\n</Project>\n",
-			new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+	public static TempProject FromFixtureDirectory(string relativeDirectory) =>
+		new(TestProject.FromFixtureDirectory(relativeDirectory, tempCategory: "cvolo-tooling-tests"));
 
-		foreach (var (fileName, source) in sources)
-		{
-			// A fixture may declare a file inside a subdirectory (for example a project-owned
-			// "libraries" folder), so the containing directory has to exist first.
-			var path = Path.Combine(root, fileName);
-			var directory = Path.GetDirectoryName(path);
-			if (!string.IsNullOrEmpty(directory))
-				Directory.CreateDirectory(directory);
+	public string GetPath(string fileName) => _project.GetPath(fileName);
 
-			File.WriteAllText(path, source, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
-		}
-
-		return new TempProject(root, projectFile);
-	}
-
-	public string GetPath(string fileName) => Path.Combine(_root, fileName);
-
-	public void Dispose()
-	{
-		try
-		{
-			Directory.Delete(_root, recursive: true);
-		}
-		catch
-		{
-			// Best-effort cleanup of ephemeral fixtures.
-		}
-	}
+	public void Dispose() => _project.Dispose();
 }

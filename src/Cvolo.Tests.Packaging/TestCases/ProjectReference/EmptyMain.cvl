@@ -1,0 +1,12 @@
+/// <summary>
+/// Minimal executable source used by project-graph tests where only project-reference graph behavior is
+/// under test.
+/// </summary>
+/// <remarks>
+/// Test: ProjectReferenceIntegrationTests project-graph negative/control cases.
+/// Fixture Role: EmptyMain.
+/// Compiler Target: ProjectReference build graph / artifact pipeline.
+/// </remarks>
+int main() {
+    return 0;
+}

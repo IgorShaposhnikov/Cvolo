@@ -1,0 +1,20 @@
+/// <summary>
+/// Executable fixture for direct project-reference tests; consumes library types and generic functions
+/// and returns zero on the expected result.
+/// </summary>
+/// <remarks>
+/// Test: ProjectReferenceIntegrationTests direct project-reference cases.
+/// Fixture Role: App.
+/// Compiler Target: ProjectReference build graph / artifact pipeline.
+/// </remarks>
+using MathLib;
+
+int main() {
+    Pair pair = Pair {
+        X: 20, Y: 22
+    };
+    Box<int> box = Box<int> {
+        Value: Sum(pair)
+    };
+    return Identity<int>(box.Value) - 42;
+}

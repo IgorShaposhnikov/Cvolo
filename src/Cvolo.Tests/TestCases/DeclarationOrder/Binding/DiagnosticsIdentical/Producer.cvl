@@ -1,0 +1,14 @@
+/// <summary>
+/// Proves that reversing compilation-unit order produces identical diagnostics and a clean bind for a
+/// valid forward reference.
+/// </summary>
+/// <remarks>
+/// Test: CrossFileTypeDeclarationOrderTests.ForwardReference_DiagnosticsIdenticalInReversedOrder.
+/// Fixture Role: Producer.
+/// Compiler Target: DeclarationPass / TypeDeclarationRegistrar.
+/// </remarks>
+namespace Fwd;
+
+public struct B {
+    public int X;
+}

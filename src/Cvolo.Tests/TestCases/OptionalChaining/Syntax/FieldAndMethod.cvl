@@ -1,0 +1,13 @@
+/// <summary>
+/// Source-printer fixture proving both optional field access and optional method invocation round-trip
+/// correctly.
+/// </summary>
+/// <remarks>
+/// Test: OptionalChainingTests.SourcePrinter_RoundTripsBothForms.
+/// Compiler Target: AntlrSyntaxParser / CvoloSourcePrinter.
+/// </remarks>
+int Read(Option<int> o) {
+    var a = o?.value;
+    var b = o?.Bump(1);
+    return 0;
+}

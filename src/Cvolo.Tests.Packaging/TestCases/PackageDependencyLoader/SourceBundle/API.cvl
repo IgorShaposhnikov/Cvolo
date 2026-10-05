@@ -1,0 +1,14 @@
+/// <summary>
+/// Public package source stored in Sector 5; verifies source-bundle extraction preserves source text
+/// and relative paths.
+/// </summary>
+/// <remarks>
+/// Test: PackageDependencyLoaderTests.Load_BitcodePackage_ExtractsVerifiedSourceFiles.
+/// Fixture Role: API.
+/// Compiler Target: PackageDependencyLoader / PackageSourceBundle.
+/// </remarks>
+namespace Foo;
+
+public int Add(int a, int b) {
+    return a + b;
+}

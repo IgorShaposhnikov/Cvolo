@@ -1,0 +1,18 @@
+/// <summary>
+/// Negative fixture: a by-value self cycle through an array element must report CVL4181.
+/// </summary>
+/// <remarks>
+/// Test: CrossFileTypeDeclarationOrderTests.ByValueCycleThroughArray_IsRejected_WithoutRecursion.
+/// Fixture Role: Main.
+/// Compiler Target: DeclarationPass / TypeDeclarationRegistrar.
+/// Expected Diagnostic: CVL4181.
+/// </remarks>
+namespace Fwd;
+
+public struct A {
+    public A[1] Items;
+}
+
+int main() {
+    return 0;
+}

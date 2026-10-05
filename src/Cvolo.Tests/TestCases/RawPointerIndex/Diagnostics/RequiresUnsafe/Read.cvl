@@ -1,0 +1,12 @@
+/// <summary>
+/// Performs raw-pointer indexing outside an unsafe context; must report the dedicated unsafe-capability
+/// diagnostic.
+/// </summary>
+/// <remarks>
+/// Test: RawPointerIndexTests.RawPointerIndex_RequiresUnsafeCapability_DiagnosticIdIsReported.
+/// Compiler Target: ExpressionValidator raw-pointer index semantics.
+/// Expected Diagnostic: CVL4182 on the indexing operation.
+/// </remarks>
+int Read() {
+    return gptr[0];
+}

@@ -1,0 +1,11 @@
+/// <summary>
+/// Entry point for the raw-pointer unsafe-capability diagnostic fixture.
+/// </summary>
+/// <remarks>
+/// Test: RawPointerIndexTests.RawPointerIndex_RequiresUnsafeCapability_DiagnosticIdIsReported.
+/// Compiler Target: ExpressionValidator raw-pointer index semantics.
+/// Expected Diagnostic: CVL4182 on the indexing operation.
+/// </remarks>
+int Main() {
+    return Read();
+}

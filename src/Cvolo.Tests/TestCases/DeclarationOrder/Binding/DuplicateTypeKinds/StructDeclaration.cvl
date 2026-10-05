@@ -1,0 +1,19 @@
+/// <summary>
+/// Negative fixture: two different type kinds with the same name must be rejected as a duplicate
+/// declaration.
+/// </summary>
+/// <remarks>
+/// Test: CrossFileTypeDeclarationOrderTests.DuplicateDeclaration_AcrossTypeKinds_Fails.
+/// Fixture Role: Struct.
+/// Compiler Target: DeclarationPass / TypeDeclarationRegistrar.
+/// Expected Diagnostic: CVL4054.
+/// </remarks>
+namespace Fwd;
+
+public struct Thing {
+    public int X;
+}
+
+int main() {
+    return 0;
+}

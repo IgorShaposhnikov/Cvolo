@@ -1,0 +1,11 @@
+/// <summary>
+/// Parser fixture proving optional-chain invocation arguments are retained in the syntax node.
+/// </summary>
+/// <remarks>
+/// Test: OptionalChainingTests.Parser_DistinguishesFieldAndInvocationForms.
+/// Compiler Target: AntlrSyntaxParser / CvoloSourcePrinter.
+/// </remarks>
+int Read(Option<int> o) {
+    var v = o?.Bump(1, 2);
+    return 0;
+}

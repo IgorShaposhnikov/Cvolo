@@ -1,0 +1,27 @@
+/// <summary>
+/// Library fixture for direct project-reference tests; exposes struct, generic and function APIs
+/// consumed by the application.
+/// </summary>
+/// <remarks>
+/// Test: ProjectReferenceIntegrationTests direct project-reference cases.
+/// Fixture Role: MathLib.
+/// Compiler Target: ProjectReference build graph / artifact pipeline.
+/// </remarks>
+namespace MathLib;
+
+public struct Pair {
+    public int X;
+    public int Y;
+}
+
+public int Sum(Pair value) {
+    return value.X + value.Y;
+}
+
+public struct Box<T> {
+    public T Value;
+}
+
+public T Identity<T>(T value) {
+    return value;
+}

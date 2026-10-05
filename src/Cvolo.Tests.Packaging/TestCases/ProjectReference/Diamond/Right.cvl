@@ -1,0 +1,13 @@
+/// <summary>
+/// Right branch of the diamond project-reference graph.
+/// </summary>
+/// <remarks>
+/// Test: ProjectReferenceIntegrationTests.CompilationProject_DiamondProjectReference_DeduplicatesSharedDependency.
+/// Fixture Role: Right.
+/// Compiler Target: ProjectReference build graph / artifact pipeline.
+/// </remarks>
+namespace Right;
+
+public int RightValue() {
+    return 1;
+}

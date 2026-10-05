@@ -1,0 +1,14 @@
+/// <summary>
+/// Namespaced nested entry point used to verify executable entry-point discovery works outside the
+/// project root.
+/// </summary>
+/// <remarks>
+/// Test: ProjectReferenceIntegrationTests.Build_ProjectFileInput_FindsNestedNamespacedMain.
+/// Fixture Role: Main.
+/// Compiler Target: ProjectReference build graph / artifact pipeline.
+/// </remarks>
+namespace NestedMainApp.App;
+
+int Main() {
+    return 0;
+}

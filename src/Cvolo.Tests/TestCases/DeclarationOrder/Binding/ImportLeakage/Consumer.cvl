@@ -1,0 +1,19 @@
+/// <summary>
+/// Negative fixture: a type from another namespace must remain unresolved when the consumer does not
+/// import that namespace.
+/// </summary>
+/// <remarks>
+/// Test: CrossFileTypeDeclarationOrderTests.FieldType_WithoutUsingDirective_StaysUnresolved_NoImportLeakage.
+/// Fixture Role: Consumer.
+/// Compiler Target: DeclarationPass / TypeDeclarationRegistrar.
+/// Expected Diagnostic: CVL4135.
+/// </remarks>
+namespace Consumer;
+
+public struct Renderer {
+    public ShaderProgram Shader;
+}
+
+int main() {
+    return 0;
+}

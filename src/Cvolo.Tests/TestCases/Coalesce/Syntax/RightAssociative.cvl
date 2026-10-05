@@ -1,0 +1,11 @@
+/// <summary>
+/// Source-printer fixture proving fallback syntax survives parse/print round-tripping.
+/// </summary>
+/// <remarks>
+/// Test: CoalesceExpressionTests.SourcePrinter_RoundTripsTheOperator.
+/// Compiler Target: AntlrSyntaxParser / CvoloSourcePrinter.
+/// </remarks>
+int Read(Option<int> a, Option<int> b) {
+    var value = a ?? b;
+    return value ?? -1;
+}

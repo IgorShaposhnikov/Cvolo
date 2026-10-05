@@ -4,6 +4,7 @@ using Cvolo.Core.Packages;
 using Cvolo.Packaging;
 using Cvolo.Projects;
 using NSec.Cryptography;
+using Cvolo.Tests.Shared;
 
 namespace Cvolo.Tests.Packaging;
 
@@ -70,8 +71,8 @@ public sealed class PackageDependencyLoaderTests : IDisposable
 		var project = CreateProject("source-app", [new PackageReference("Foo", "1.0.0")]);
 		var sourceDirectory = Path.Combine(_root, "source-app-src");
 		Directory.CreateDirectory(Path.Combine(sourceDirectory, "Native"));
-		File.WriteAllText(Path.Combine(sourceDirectory, "API.cvl"), "namespace Foo; public int Add(int a, int b) { return a + b; }");
-		File.WriteAllText(Path.Combine(sourceDirectory, "Native", "Impl.cvl"), "namespace Foo.Native; internal int Add(int a, int b) { return a + b; }");
+		TestCases.CopyFile("PackageDependencyLoader/SourceBundle/API.cvl", Path.Combine(sourceDirectory, "API.cvl"));
+		TestCases.CopyFile("PackageDependencyLoader/SourceBundle/Native/Impl.cvl", Path.Combine(sourceDirectory, "Native", "Impl.cvl"));
 		var sourceBuffer = PackageSourceBundle.Build(
 			[Path.Combine(sourceDirectory, "API.cvl"), Path.Combine(sourceDirectory, "Native", "Impl.cvl")],
 			sourceDirectory);
@@ -87,7 +88,7 @@ public sealed class PackageDependencyLoaderTests : IDisposable
 		var api = Assert.Single(artifact.SourceFiles, file => file.RelativePath == "API.cvl");
 		Assert.Equal("Foo", api.PackageId);
 		Assert.Equal("1.0.0", api.Version);
-		Assert.Equal("namespace Foo; public int Add(int a, int b) { return a + b; }", api.Source);
+		Assert.Equal(TestCases.ReadText("PackageDependencyLoader/SourceBundle/API.cvl"), api.Source);
 		Assert.Equal(api.Source, File.ReadAllText(api.FilePath));
 		Assert.StartsWith(Path.Combine(project.ProjectDirectory, ".cvolo", "build"), api.FilePath, StringComparison.OrdinalIgnoreCase);
 		Assert.Contains(Path.Combine("foo", "1.0.0", "source"), api.FilePath, StringComparison.OrdinalIgnoreCase);
@@ -101,7 +102,7 @@ public sealed class PackageDependencyLoaderTests : IDisposable
 		var projectDirectory = Path.Combine(_root, "escaping-project");
 		Directory.CreateDirectory(projectDirectory);
 		var outsideSource = Path.Combine(_root, "outside.cvl");
-		File.WriteAllText(outsideSource, "namespace Foo; public int Add(int a, int b) { return a + b; }");
+		TestCases.CopyFile("PackageDependencyLoader/Escaping/Outside.cvl", outsideSource);
 		var sourceBuffer = PackageSourceBundle.Build([outsideSource], projectDirectory);
 		var source = CreateArchive("Foo", "1.0.0", [0x10], sourceBuffer: sourceBuffer);
 		var cache = new PackageCache(Path.Combine(_root, "cache-escaping-source"));
@@ -203,7 +204,7 @@ public sealed class PackageDependencyLoaderTests : IDisposable
 		var project = CreateProject("source-fallback-app", [new PackageReference("Foo", "1.0.0")]);
 		var source = CreateArchive(
 			"Foo", "1.0.0", [0x10], bitcodeBytes: [],
-			sourceBuffer: "namespace Foo; public int Add(int a, int b) { System.Console.WriteLine(\"fallback\"); return a + b; }");
+			sourceBuffer: TestCases.ReadText("PackageDependencyLoader/SourceFallback/Implementation.cvl"));
 		var cache = new PackageCache(Path.Combine(_root, "cache-source-fallback"));
 		new PackageInstaller(cache).InstallFromFile(source);
 		var lockFile = WriteLock(project, "Foo", "1.0.0", LocalFeed.ComputeHash(source));
@@ -227,7 +228,7 @@ public sealed class PackageDependencyLoaderTests : IDisposable
 		var foreignTriple = TargetTriple.HostTriple() + "-foreign";
 		var source = CreateArchive(
 			"Foo", "1.0.0", [0x10], bitcodeBytes: [0x42],
-			sourceBuffer: "namespace Foo; public int Add(int a, int b) { return a + b; }",
+			sourceBuffer: TestCases.ReadText("PackageDependencyLoader/ForeignFallback/Implementation.cvl"),
 			triple: foreignTriple);
 		var cache = new PackageCache(Path.Combine(_root, "cache-foreign-source-fallback"));
 		new PackageInstaller(cache).InstallFromFile(source);

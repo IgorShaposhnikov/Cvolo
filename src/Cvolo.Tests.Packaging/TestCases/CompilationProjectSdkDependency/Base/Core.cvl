@@ -1,0 +1,12 @@
+/// <summary>
+/// Synthetic Base SDK source used as the control file when verifying that Base and System SDK source
+/// sets are tracked separately.
+/// </summary>
+/// <remarks>
+/// Test: CompilationProjectSdkDependencyTests.Load_TracksBaseAndSystemSdkSourcesSeparately_WhenSystemIsReferencedThroughAlias.
+/// Fixture Role: Core.
+/// Compiler Target: CompilationProject.Load / SdkLibraryResolver.
+/// </remarks>
+struct BaseMarker {
+    int Value;
+}

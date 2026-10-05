@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using Cvolo.Drivers;
 using Cvolo.Packaging;
+using Cvolo.Tests.Shared;
 
 namespace Cvolo.Tests.Packaging;
 
@@ -329,26 +330,10 @@ public sealed class BuildPackageGraphRegressionTests : IDisposable
 
 	private static void RequireClang()
 	{
-		if (FindClang() is null)
+		if (NativeToolchain.FindClang() is null)
 			Assert.Skip("clang not available; build/package graph integration requires clang/LLVM.");
 	}
 
-	private static string? FindClang()
-	{
-		var local = Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "clang.exe" : "clang");
-		if (File.Exists(local))
-			return local;
-
-		var executable = OperatingSystem.IsWindows() ? "clang.exe" : "clang";
-		foreach (var directory in (Environment.GetEnvironmentVariable("PATH") ?? string.Empty)
-			.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
-		{
-			var candidate = Path.Combine(directory, executable);
-			if (File.Exists(candidate))
-				return candidate;
-		}
-		return null;
-	}
 
 	public void Dispose()
 	{

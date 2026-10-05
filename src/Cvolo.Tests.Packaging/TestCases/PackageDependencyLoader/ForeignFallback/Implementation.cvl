@@ -1,0 +1,14 @@
+/// <summary>
+/// Fallback implementation for a foreign target slice; verifies the cache can rewrite to host source
+/// fallback.
+/// </summary>
+/// <remarks>
+/// Test: PackageDependencyLoaderTests.Install_ForeignSlice_WithSector5_RewritesCacheForHostSourceFallback.
+/// Fixture Role: Implementation.
+/// Compiler Target: PackageDependencyLoader / PackageSourceBundle.
+/// </remarks>
+namespace Foo;
+
+public int Add(int a, int b) {
+    return a + b;
+}

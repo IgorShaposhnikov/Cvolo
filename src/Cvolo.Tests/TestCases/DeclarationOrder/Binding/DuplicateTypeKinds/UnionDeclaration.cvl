@@ -1,0 +1,15 @@
+/// <summary>
+/// Negative fixture: two different type kinds with the same name must be rejected as a duplicate
+/// declaration.
+/// </summary>
+/// <remarks>
+/// Test: CrossFileTypeDeclarationOrderTests.DuplicateDeclaration_AcrossTypeKinds_Fails.
+/// Fixture Role: Union.
+/// Compiler Target: DeclarationPass / TypeDeclarationRegistrar.
+/// Expected Diagnostic: CVL4054.
+/// </remarks>
+namespace Fwd;
+
+public union Thing {
+    public int Y;
+}

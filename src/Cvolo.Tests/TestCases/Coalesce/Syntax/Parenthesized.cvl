@@ -1,0 +1,11 @@
+/// <summary>
+/// Parser fixture proving parentheses override the default fallback-operator association.
+/// </summary>
+/// <remarks>
+/// Test: CoalesceExpressionTests.Parser_ParenthesesOverrideAssociativity.
+/// Compiler Target: AntlrSyntaxParser / CvoloSourcePrinter.
+/// </remarks>
+int Read(Option<int> a, Option<int> b, Option<int> c) {
+    var chained = (a ?? b) ?? c;
+    return 0;
+}

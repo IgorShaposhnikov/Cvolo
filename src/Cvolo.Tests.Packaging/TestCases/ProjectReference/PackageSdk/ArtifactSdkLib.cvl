@@ -1,0 +1,16 @@
+/// <summary>
+/// Package-ready library whose implementation alone uses SDK console and math functionality; the
+/// consumer does not import those SDK namespaces.
+/// </summary>
+/// <remarks>
+/// Test: ProjectReferenceIntegrationTests.Build_ProjectReferenceBitcode_ResolvesSdkUsedOnlyByPackageImplementation.
+/// Fixture Role: ArtifactSdkLib.
+/// Compiler Target: ProjectReference build graph / artifact pipeline.
+/// </remarks>
+using Sdk = System;
+namespace ArtifactSdkLib;
+
+public float PackageRadians() {
+    Sdk.Console.WriteLine("package-sdk");
+    return System.Math.Float.ToRadians(90.0f);
+}

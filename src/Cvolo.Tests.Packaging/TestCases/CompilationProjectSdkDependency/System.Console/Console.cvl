@@ -1,0 +1,12 @@
+/// <summary>
+/// Synthetic SDK console module selected by the application fixture through a namespace alias.
+/// </summary>
+/// <remarks>
+/// Test: CompilationProjectSdkDependencyTests.Load_TracksBaseAndSystemSdkSourcesSeparately_WhenSystemIsReferencedThroughAlias.
+/// Fixture Role: Console.
+/// Compiler Target: CompilationProject.Load / SdkLibraryResolver.
+/// </remarks>
+namespace System.Console;
+
+public void Touch() {
+}

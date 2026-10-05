@@ -1,0 +1,13 @@
+/// <summary>
+/// Second library in a deliberate project-reference cycle used to verify cycle-chain diagnostics.
+/// </summary>
+/// <remarks>
+/// Test: ProjectReferenceIntegrationTests.CompilationProject_ProjectReferenceCycle_FailsWithCycleChain.
+/// Fixture Role: Second project in the reference cycle.
+/// Compiler Target: ProjectReference build graph / artifact pipeline.
+/// </remarks>
+namespace B;
+
+public int BValue() {
+    return 2;
+}

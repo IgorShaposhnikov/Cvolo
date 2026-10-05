@@ -1,0 +1,14 @@
+/// <summary>
+/// Middle library in a transitive project-reference graph; depends on LibB.
+/// </summary>
+/// <remarks>
+/// Test: ProjectReferenceIntegrationTests transitive project-reference cases.
+/// Fixture Role: LibA.
+/// Compiler Target: ProjectReference build graph / artifact pipeline.
+/// </remarks>
+using LibB;
+namespace LibA;
+
+public int Combined() {
+    return BaseValue() + 2;
+}

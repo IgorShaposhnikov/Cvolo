@@ -1,17 +1,18 @@
 using Cvolo.Packaging;
 using Cvolo.Projects;
+using Cvolo.Tests.Shared;
 
 namespace Cvolo.Tests.Packaging;
 
 public sealed class PackageSdkDependencyResolverTests
 {
 	[Theory]
-	[InlineData("using System.Console;\nint F() { return 0; }", "System.Console")]
-	[InlineData("using Sdk = System;\nint F() { Sdk.Console.WriteLine(\"x\"); return 0; }", "System.Console")]
-	[InlineData("int F() { return System.Math.Int.Abs(-1); }", "System.Math")]
-	public void SourceScan_FindsSdkNamespaceDependencies(string source, string expectedNamespace)
+	[InlineData("PackageSdkDependencyResolver/UsingSystemConsole.cvl", "System.Console")]
+	[InlineData("PackageSdkDependencyResolver/AliasSystem.cvl", "System.Console")]
+	[InlineData("PackageSdkDependencyResolver/QualifiedMath.cvl", "System.Math")]
+	public void SourceScan_FindsSdkNamespaceDependencies(string fixture, string expectedNamespace)
 	{
-		var namespaces = PackageSdkDependencyResolver.ExtractSystemNamespaces(source);
+		var namespaces = PackageSdkDependencyResolver.ExtractSystemNamespaces(TestCases.ReadText(fixture));
 
 		Assert.Contains(expectedNamespace, namespaces);
 	}
@@ -20,7 +21,7 @@ public sealed class PackageSdkDependencyResolverTests
 	public void SourceScan_DoesNotTreatIdentifierSuffixAsRootedSystemNamespace()
 	{
 		var namespaces = PackageSdkDependencyResolver.ExtractSystemNamespaces(
-			"int F() { return MySystem.Math.Int.Abs(-1); }");
+			TestCases.ReadText("PackageSdkDependencyResolver/MySystemSuffix.cvl"));
 
 		Assert.DoesNotContain("System.Math", namespaces);
 	}
@@ -45,7 +46,7 @@ public sealed class PackageSdkDependencyResolverTests
 					"1.0.0",
 					"Implementation.cvl",
 					"/package/Implementation.cvl",
-					"namespace Hidden; int F() { System.Console.WriteLine(\"package\"); return 0; }")
+					TestCases.ReadText("PackageSdkDependencyResolver/ArtifactImplementation.cvl"))
 			]);
 
 		var namespaces = PackageSdkDependencyResolver.Collect([artifact]);

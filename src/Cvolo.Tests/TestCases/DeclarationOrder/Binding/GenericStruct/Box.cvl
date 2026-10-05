@@ -1,0 +1,14 @@
+/// <summary>
+/// Proves that a generic struct template may be referenced before its declaration and instantiated
+/// after predeclaration.
+/// </summary>
+/// <remarks>
+/// Test: CrossFileTypeDeclarationOrderTests.GenericStruct_ForwardReference_Instantiation_Resolves.
+/// Fixture Role: Box.
+/// Compiler Target: DeclarationPass / TypeDeclarationRegistrar.
+/// </remarks>
+namespace Fwd;
+
+public struct Box<T> {
+    public T Value;
+}

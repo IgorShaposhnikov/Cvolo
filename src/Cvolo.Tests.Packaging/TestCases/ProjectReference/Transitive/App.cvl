@@ -1,0 +1,13 @@
+/// <summary>
+/// Executable at the root of a transitive project-reference graph.
+/// </summary>
+/// <remarks>
+/// Test: ProjectReferenceIntegrationTests transitive project-reference cases.
+/// Fixture Role: App.
+/// Compiler Target: ProjectReference build graph / artifact pipeline.
+/// </remarks>
+using LibA;
+
+int main() {
+    return Combined() - 42;
+}

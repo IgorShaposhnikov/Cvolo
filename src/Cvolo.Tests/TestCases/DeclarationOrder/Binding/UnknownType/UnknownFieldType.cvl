@@ -1,0 +1,19 @@
+/// <summary>
+/// Negative fixture: an actually missing field type must still report CVL4135 after declaration-order
+/// predeclaration.
+/// </summary>
+/// <remarks>
+/// Test: CrossFileTypeDeclarationOrderTests.UnknownType_StillProducesCVL4135_InEitherOrder.
+/// Fixture Role: Main.
+/// Compiler Target: DeclarationPass / TypeDeclarationRegistrar.
+/// Expected Diagnostic: CVL4135.
+/// </remarks>
+namespace Fwd;
+
+public struct A {
+    public NoSuchType Value;
+}
+
+int main() {
+    return 0;
+}

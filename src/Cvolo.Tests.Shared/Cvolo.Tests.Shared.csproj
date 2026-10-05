@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<IsPackable>false</IsPackable>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<PackageReference Include="xunit.v3.assert" />
+		<PackageReference Include="xunit.v3.extensibility.core" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\Cvolo.Analysis\Cvolo.Analysis.csproj" />
+		<ProjectReference Include="..\Cvolo.Core\Cvolo.Core.csproj" />
+		<ProjectReference Include="..\Cvolo.Projects\Cvolo.Projects.csproj" />
+		<ProjectReference Include="..\Cvolo.Syntax.Antlr\Cvolo.Syntax.Antlr.csproj" />
+	</ItemGroup>
+
+</Project>

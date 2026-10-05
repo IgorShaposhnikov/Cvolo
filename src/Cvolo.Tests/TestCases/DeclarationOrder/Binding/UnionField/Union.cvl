@@ -1,0 +1,18 @@
+/// <summary>
+/// Proves that a union payload type may be declared in another file and resolves in either file order.
+/// </summary>
+/// <remarks>
+/// Test: CrossFileTypeDeclarationOrderTests.UnionField_ForwardReference_ResolvesAcrossFiles.
+/// Fixture Role: Union.
+/// Compiler Target: DeclarationPass / TypeDeclarationRegistrar.
+/// </remarks>
+namespace Fwd;
+
+public union U {
+    public B Payload;
+    public int Tag;
+}
+
+int main() {
+    return 0;
+}

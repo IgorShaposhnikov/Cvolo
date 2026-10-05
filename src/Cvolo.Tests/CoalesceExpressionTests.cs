@@ -283,8 +283,7 @@ public sealed class CoalesceExpressionTests : CompilerTestBase
 	[Fact]
 	public void Parser_BuildsRightNestedTree()
 	{
-		var coalesce = ParseFirstCoalesce(
-			"int Read(Option<int> a, Option<int> b, Option<int> c) { var chained = a ?? b ?? c; return 0; }");
+		var coalesce = ParseFirstCoalesce(ReadTestCaseSource($"{Category}/Syntax/RightNested.cvl"));
 
 		Assert.NotNull(coalesce);
 		Assert.IsNotType<CoalesceExpressionSyntax>(coalesce!.Left);
@@ -303,8 +302,7 @@ public sealed class CoalesceExpressionTests : CompilerTestBase
 	[Fact]
 	public void Parser_ParenthesesOverrideAssociativity()
 	{
-		var coalesce = ParseFirstCoalesce(
-			"int Read(Option<int> a, Option<int> b, Option<int> c) { var chained = (a ?? b) ?? c; return 0; }");
+		var coalesce = ParseFirstCoalesce(ReadTestCaseSource($"{Category}/Syntax/Parenthesized.cvl"));
 
 		Assert.NotNull(coalesce);
 		Assert.IsType<CoalesceExpressionSyntax>(coalesce!.Left);
@@ -314,7 +312,7 @@ public sealed class CoalesceExpressionTests : CompilerTestBase
 	[Fact]
 	public void SourcePrinter_RoundTripsTheOperator()
 	{
-		var (_, unit) = Parse("int Read(Option<int> a, Option<int> b) { var value = a ?? b; return value ?? -1; }");
+		var (_, unit) = Parse(ReadTestCaseSource($"{Category}/Syntax/RightAssociative.cvl"));
 		var printed = CvoloSourcePrinter.Print(unit);
 
 		Assert.Contains("a ?? b", printed);
@@ -328,7 +326,7 @@ public sealed class CoalesceExpressionTests : CompilerTestBase
 	[Fact]
 	public void ChainedQuestionMarksInTypePosition_StillReportOptionalTypeChain()
 	{
-		var diagnostics = ParseDiagnostics("int main() { var int?? x = 5; return 0; }");
+		var diagnostics = ParseDiagnostics(ReadTestCaseSource($"{Category}/Syntax/OptionalTypeChainFail.cvl"));
 
 		Assert.Contains(diagnostics, d => d.Id == DiagnosticIds.OptionalTypeChainForbidden);
 	}

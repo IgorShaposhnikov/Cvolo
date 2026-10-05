@@ -1,0 +1,15 @@
+/// <summary>
+/// Proves that deferred type resolution restores the using directives of the originating unit and does
+/// not inherit another unit context.
+/// </summary>
+/// <remarks>
+/// Test: CrossFileTypeDeclarationOrderTests.DeferredResolution_UsesOriginatingUnitUsings.
+/// Fixture Role: Unrelated.
+/// Compiler Target: DeclarationPass / TypeDeclarationRegistrar.
+/// </remarks>
+namespace Other;
+using Graphics;
+
+public struct Unrelated {
+    public int Id;
+}

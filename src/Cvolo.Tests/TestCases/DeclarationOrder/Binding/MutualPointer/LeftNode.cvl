@@ -1,0 +1,18 @@
+/// <summary>
+/// Proves that mutually recursive struct identities through pointer fields resolve in either file order
+/// without forming a by-value layout cycle.
+/// </summary>
+/// <remarks>
+/// Test: CrossFileTypeDeclarationOrderTests.StructField_MutualForwardReference_ThroughPointers_Resolves.
+/// Fixture Role: Left node declaration.
+/// Compiler Target: DeclarationPass / TypeDeclarationRegistrar.
+/// </remarks>
+namespace Fwd;
+
+public struct A {
+    public B* Other;
+}
+
+int main() {
+    return 0;
+}

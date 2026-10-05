@@ -1,0 +1,12 @@
+/// <summary>
+/// Semantic fixture proving a long integer index is accepted for raw-pointer indexing just like
+/// raw-pointer arithmetic.
+/// </summary>
+/// <remarks>
+/// Test: RawPointerIndexTests.NonIntIntegerIndex_IsAccepted_LikeRawPointerArithmetic.
+/// Compiler Target: ExpressionValidator raw-pointer index semantics.
+/// </remarks>
+[UnsafeBody]
+int Read(int* ptr, long index) {
+    return ptr[index];
+}

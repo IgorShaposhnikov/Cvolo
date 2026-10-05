@@ -112,9 +112,9 @@ public sealed class RawPointerIndexTests : CompilerTestBase
 	public void RawPointerIndex_RequiresUnsafeCapability_DiagnosticIdIsReported()
 	{
 		var diagnostics = BindDiagnostics(
-			"global var int* gptr;",
-			"int Read() { return gptr[0]; }",
-			"int Main() { return Read(); }");
+			$"{Category}/Diagnostics/RequiresUnsafe/Globals.cvl",
+			$"{Category}/Diagnostics/RequiresUnsafe/Read.cvl",
+			$"{Category}/Diagnostics/RequiresUnsafe/Main.cvl");
 
 		Assert.Contains(diagnostics, d => d.Id == DiagnosticIds.RawPointerIndexRequiresUnsafe);
 		Assert.DoesNotContain(diagnostics, d => d.Id == DiagnosticIds.RawPointerIndexMustBeAnInteger);
@@ -127,27 +127,20 @@ public sealed class RawPointerIndexTests : CompilerTestBase
 	[Fact]
 	public void NonIntIntegerIndex_IsAccepted_LikeRawPointerArithmetic()
 	{
-		var diagnostics = BindDiagnostics(
-			"""
-			[UnsafeBody]
-			int Read(int* ptr, long index)
-			{
-				return ptr[index];
-			}
-			""");
+		var diagnostics = BindDiagnostics($"{Category}/Diagnostics/LongIndex.cvl");
 
 		Assert.DoesNotContain(diagnostics, d => d.Id == DiagnosticIds.RawPointerIndexMustBeAnInteger);
 		Assert.DoesNotContain(diagnostics, d => d.Id == DiagnosticIds.RawPointerIndexRequiresUnsafe);
 	}
 
-	private static List<Diagnostic> BindDiagnostics(params string[] sources)
+	private static List<Diagnostic> BindDiagnostics(params string[] fixturePaths)
 	{
 		var binder = new Binder();
 		var units = new List<CompilationUnitSyntax>();
 
-		for (var i = 0; i < sources.Length; i++)
+		for (var i = 0; i < fixturePaths.Length; i++)
 		{
-			var context = new CompilationContext(sources[i], $"Unit{i}.cvl");
+			var context = new CompilationContext(ReadTestCaseSource(fixturePaths[i]), $"Unit{i}.cvl");
 			var ast = new AntlrSyntaxParser().Parse(context);
 			Assert.NotNull(ast);
 			binder.Context.FileContexts[ast!] = context;

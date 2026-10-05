@@ -1,0 +1,18 @@
+/// <summary>
+/// Proves that a type alias, its target type, and a consumer can be split across files without
+/// order-dependent binding.
+/// </summary>
+/// <remarks>
+/// Test: CrossFileTypeDeclarationOrderTests.TypeAlias_ForwardReference_ResolvesAcrossFiles.
+/// Fixture Role: Consumer.
+/// Compiler Target: DeclarationPass / TypeDeclarationRegistrar.
+/// </remarks>
+namespace Fwd;
+
+public struct State {
+    public Handle Value;
+}
+
+int main() {
+    return 0;
+}

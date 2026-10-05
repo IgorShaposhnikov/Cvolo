@@ -1,0 +1,15 @@
+/// <summary>
+/// Application fixture that reaches an SDK console module through an alias of the SDK root; verifies
+/// alias-aware SDK source selection.
+/// </summary>
+/// <remarks>
+/// Test: CompilationProjectSdkDependencyTests.Load_TracksBaseAndSystemSdkSourcesSeparately_WhenSystemIsReferencedThroughAlias.
+/// Fixture Role: Main.
+/// Compiler Target: CompilationProject.Load / SdkLibraryResolver.
+/// </remarks>
+using Sdk = System;
+
+int Main() {
+    Sdk.Console.Touch();
+    return 0;
+}
