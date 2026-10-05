@@ -1,10 +1,5 @@
-using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
 using Cvolo.Projects;
 using Cvolo.Tests.Core;
-using Xunit;
 
 namespace Cvolo.Tests;
 
@@ -184,14 +179,6 @@ public sealed class StandardLibraryResolutionTests : CompilerTestBase
 			if (Directory.Exists(root))
 				Directory.Delete(root, recursive: true);
 		}
-	}
-
-	[Fact]
-	public void Freestanding_SystemImport_IsRejected()
-	{
-		var (exitCode, _, stderr) = RunCompilerCheck("StandardLibraryResolution/FreestandingSystemUse.cvl", "--freestanding");
-		Assert.Equal(1, exitCode);
-		Assert.Contains("CVL1097", stderr);
 	}
 
 	[Fact]

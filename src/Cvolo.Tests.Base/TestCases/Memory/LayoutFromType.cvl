@@ -1,0 +1,26 @@
+/// <summary>
+/// Verifies that Base Memory Layout.FromType<T>() reports the same size and alignment as the compiler
+/// layout operators for an aggregate type.
+/// </summary>
+/// <remarks>
+/// Test: MemoryTests.Layout_FromType_MatchesCompileTimeLayoutOperators.
+/// Fixture Role: Base Layout runtime contract.
+/// Compiler Target: Base/Memory/Layout, sizeof<T>() and alignof<T>().
+/// Execution Mode: --freestanding; no System module is available.
+/// </remarks>
+struct Pair
+{
+    byte Kind;
+    int Value;
+}
+
+int main()
+{
+    Layout pairLayout = Layout.FromType<Pair>();
+    if (pairLayout.Size != sizeof<Pair>())
+        return 1;
+    if (pairLayout.Alignment != alignof<Pair>())
+        return 2;
+
+    return 0;
+}

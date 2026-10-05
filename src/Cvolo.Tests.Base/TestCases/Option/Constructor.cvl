@@ -1,0 +1,14 @@
+/// <summary>
+/// Verifies that the Base SDK Option constructor creates the Some variant and preserves its payload.
+/// </summary>
+/// <remarks>
+/// Test: CoreTypesTests.BaseCoreType_RuntimeContract.
+/// Fixture Role: Option constructor runtime contract.
+/// Compiler Target: Base/Option and generic union construction.
+/// Execution Mode: --freestanding; no System module is available.
+/// </remarks>
+int main()
+{
+    Option<int> value = Option<int>(42);
+    return value.Some == 42 ? 0 : 1;
+}

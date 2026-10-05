@@ -1,0 +1,24 @@
+/// <summary>
+/// Verifies that the Base SDK Option None variant participates in union pattern matching without a
+/// System dependency.
+/// </summary>
+/// <remarks>
+/// Test: CoreTypesTests.BaseCoreType_RuntimeContract.
+/// Fixture Role: Option None pattern-match runtime contract.
+/// Compiler Target: Base/Option and union switch lowering.
+/// Execution Mode: --freestanding; no System module is available.
+/// </remarks>
+int main()
+{
+    Option<int> value = Option<int> { None: void };
+
+    switch (value)
+    {
+        case Some payload:
+            return payload == 0 ? 2 : 3;
+        case None:
+            return 0;
+    }
+
+    return 4;
+}

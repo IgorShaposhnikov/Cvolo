@@ -1,0 +1,39 @@
+/// <summary>
+/// Verifies the Base SDK Result constructors, active variants and IsOk/IsErr predicates for both the
+/// success and error paths.
+/// </summary>
+/// <remarks>
+/// Test: CoreTypesTests.BaseCoreType_RuntimeContract.
+/// Fixture Role: Result Ok/Err runtime contract.
+/// Compiler Target: Base/Result constructors and Result predicates.
+/// Execution Mode: --freestanding; no System module is available.
+/// </remarks>
+[Error]
+struct TestError
+{
+    public int Code;
+}
+
+int main()
+{
+    val ok = Result<int, TestError>(42);
+    if (!ok.IsOk())
+        return 1;
+    if (ok.IsErr())
+        return 2;
+    if (ok.Ok != 42)
+        return 3;
+
+    val error = TestError {
+        Code: 7
+    };
+    val err = Result<int, TestError>(error);
+    if (err.IsOk())
+        return 4;
+    if (!err.IsErr())
+        return 5;
+    if (err.Err.Code != 7)
+        return 6;
+
+    return 0;
+}

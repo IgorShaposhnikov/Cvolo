@@ -1,0 +1,22 @@
+/// <summary>
+/// Verifies that the Base SDK Type value returned by typeof carries distinct runtime identity for a
+/// user-defined aggregate and a primitive type.
+/// </summary>
+/// <remarks>
+/// Test: CoreTypesTests.BaseCoreType_RuntimeContract.
+/// Fixture Role: Type identity runtime contract.
+/// Compiler Target: Base/Type and typeof lowering.
+/// Execution Mode: --freestanding; no System module is available.
+/// </remarks>
+struct Point
+{
+    int X;
+    int Y;
+}
+
+int main()
+{
+    Type pointType = typeof(Point);
+    Type intType = typeof(int);
+    return pointType.id != intType.id ? 0 : 1;
+}

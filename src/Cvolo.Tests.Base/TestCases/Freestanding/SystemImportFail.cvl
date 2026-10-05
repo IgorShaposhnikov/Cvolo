@@ -1,0 +1,15 @@
+/// <summary>
+/// Negative boundary fixture: a Base-only compilation must reject any System import.
+/// </summary>
+/// <remarks>
+/// Test: FreestandingTests.SystemImport_IsRejectedInBaseOnlyCompilation.
+/// Fixture Role: System import rejection.
+/// Compiler Target: SDK tier resolution / --freestanding boundary.
+/// Expected Diagnostic: CVL1097.
+/// </remarks>
+using System;
+
+int main()
+{
+    return 0;
+}

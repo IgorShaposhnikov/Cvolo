@@ -1,0 +1,40 @@
+/// <summary>
+/// Negative Base SDK fixture proving Option preserves move semantics of a payload with a destructor.
+/// After the option is consumed by value, reading it again must be rejected.
+/// </summary>
+/// <remarks>
+/// Test: CoreTypesTests.Option_WithMoveOnlyPayload_RemainsMoveOnly.
+/// Fixture Role: Move-only Option payload rejection.
+/// Compiler Target: Base/Option plus ownership/move analysis.
+/// Expected Diagnostic: use of moved variable 'first'.
+/// Execution Mode: --freestanding; no System module is available.
+/// </remarks>
+struct Resource
+{
+    int Handle;
+}
+
+extension Resource
+{
+    ~Resource()
+    {
+        // A custom destructor gives Resource move-only ownership semantics.
+    }
+}
+
+void Consume(Option<Resource> value)
+{
+}
+
+int main()
+{
+    var Option<Resource> first = Option<Resource> {
+        Some: Resource {
+            Handle: 42
+        }
+    };
+
+    Consume(first);
+    var Option<Resource> second = first;
+    return second.Some.Handle;
+}
