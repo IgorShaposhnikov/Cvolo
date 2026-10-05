@@ -5,8 +5,10 @@ namespace Cvolo.Strategies;
 
 internal sealed class IrOnlyStrategy : ICompilationStrategy
 {
-	public int Execute(string llPath, CompilationProject project, string? linkerPath, string? linkerName, string optLevel = "Os", bool verbose = false, IEnumerable<NativeLibraryInfo>? nativeLibraries = null, string? targetOs = null, IEnumerable<string>? additionalInputs = null)
+	public int Execute(string llPath, CompilationProject project, string? linkerPath, string? linkerName, string optLevel = "Os", bool verbose = false, IEnumerable<NativeLibraryInfo>? nativeLibraries = null, string? targetOs = null, IEnumerable<string>? additionalInputs = null, DebugLinkOptions? debug = null)
 	{
+		// No linker runs in IR-only mode, so the module keeps its debug metadata in the .ll file and
+		// nothing needs to be finalized here.
 		if (verbose)
 		{
 			Console.WriteLine($"Generated LLVM IR: {llPath}");

@@ -46,6 +46,22 @@ public static class BuildOutputLayout
 		return Path.Combine(GetBinDirectory(projectDirectory, configuration), ValidateOutputName(outputName) + extension);
 	}
 
+	/// <summary>
+	/// Returns the Windows program database produced next to the executable when a build links with
+	/// debug information. The path is the one recorded in the PE debug directory, so it must match the
+	/// linker invocation exactly.
+	/// </summary>
+	public static string GetNativePdbPath(
+		string projectDirectory,
+		string outputName,
+		string configuration = DefaultConfiguration) =>
+		Path.Combine(GetBinDirectory(projectDirectory, configuration), ValidateOutputName(outputName) + ".pdb");
+
+	/// <summary>
+	/// Returns the Mach-O debug symbol bundle produced by <c>dsymutil</c> for a linked executable.
+	/// </summary>
+	public static string GetNativeDsymPath(string nativeOutputPath) => nativeOutputPath + ".dSYM";
+
 	public static string GetPackageOutputPath(
 		string projectDirectory,
 		string outputName,

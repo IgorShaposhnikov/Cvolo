@@ -654,6 +654,23 @@ public static class DiagnosticIds
 	/// <summary>A global variable initializer is not a compile-time constant expression.</summary>
 	public const string GlobalInitializerNotConstant = "CVL2405";
 
+	// ── Debug Information (CVL30xx) ──
+
+	/// <summary>LLVM rejected the module's debug metadata while it was being finalized.</summary>
+	public const string DebugMetadataFinalizationFailed = "CVL3000";
+
+	/// <summary>Debug information was requested before a target data layout was applied to the module.</summary>
+	public const string DebugInfoRequiresDataLayout = "CVL3001";
+
+	/// <summary>`--debug` was requested but the selected linker cannot emit debug symbols for the target.</summary>
+	public const string DebugLinkerUnsupported = "CVL3002";
+
+	/// <summary>The link produced no debug symbol bundle for the requested target platform.</summary>
+	public const string DebugSymbolBundleMissing = "CVL3003";
+
+	/// <summary>`--debug` was combined with an option profile that cannot carry debug information.</summary>
+	public const string DebugOptionConflict = "CVL3004";
+
 	// ── Operator Overloads (CVL22xx) ──
 
 	/// <summary>`operator =` is declared; assignment is compiler-owned and not overloadable.</summary>

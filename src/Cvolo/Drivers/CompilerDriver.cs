@@ -26,7 +26,7 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 {
 	private static readonly string[] _linkerCandidates = ["clang", "gcc", "g++"];
 
-	public int Compile(string path, bool llvmOnly, bool isShared, bool emitIr, string optLevel, bool checkOnly = false, bool runAfterCompile = false, bool verbose = false, bool emitLowered = false, string? noWarn = null, bool suppressWarnings = false, bool legacyVisibility = false, bool strictOption = false, bool noTbaa = false, string? targetOs = null, bool checkedFfiBounds = false, string format = "text", string configuration = BuildOutputLayout.DefaultConfiguration, 	bool useProjectReferencePackages = false, bool freestanding = false)
+	public int Compile(string path, bool llvmOnly, bool isShared, bool emitIr, string optLevel, bool checkOnly = false, bool runAfterCompile = false, bool verbose = false, bool emitLowered = false, string? noWarn = null, bool suppressWarnings = false, bool legacyVisibility = false, bool strictOption = false, bool noTbaa = false, string? targetOs = null, bool checkedFfiBounds = false, string format = "text", string configuration = BuildOutputLayout.DefaultConfiguration, 	bool useProjectReferencePackages = false, bool freestanding = false, bool debug = false)
 	{
 		configuration = BuildOutputLayout.NormalizeConfiguration(configuration);
 
@@ -324,17 +324,41 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 
 		var llPath = BuildOutputLayout.GetIntermediateIrPath(project.ProjectDirectory, project.OutputName, configuration);
 
-		// Resolve optimization level flag
+// Resolve optimization level flag
 		if (!Enum.TryParse<OptimizationLevel>(optLevel, true, out var parsedLevel))
 		{
 			parsedLevel = OptimizationLevel.Os; // Fallback to size profile
 		}
 
+		// The compile unit is anchored on the first project source file rather than on whatever
+		// source happened to be parsed first, which may be a Base or System SDK file. SDK code still
+		// gets its own DIFile nodes, it just does not name the unit.
+		string? primarySourcePath = null;
+		foreach (var context in binder.Context.FileContexts.Values)
+		{
+			if (context.Origin is SourceOrigin.Project or SourceOrigin.Package)
+			{
+				primarySourcePath = context.FilePath;
+				break;
+			}
+		}
+		primarySourcePath ??= firstContext?.FilePath;
+
+		var debugInfo = debug
+			? new DebugInfoOptions
+			{
+				Enabled = true,
+				Producer = BuildProducerString(),
+				IsOptimized = parsedLevel != OptimizationLevel.O0,
+				PrimarySourcePath = primarySourcePath
+			}
+			: null;
+
 		// 6. Programmatic LLVM Code Generation pass (Triggers optimization passes internally)
 		var targetLayout = new TargetLayout();
 		var optimizer = new IrOptimizer(targetLayout, parsedLevel);
 		var irVerifier = new IRVerifier(compilationFailuresDirectory);
-		using var emitter = new CodeGenerator("cvolo_module", targetLayout, optimizer, irVerifier, enableTbaa: !noTbaa, checkedFfiBounds: checkedFfiBounds);
+		using var emitter = new CodeGenerator("cvolo_module", targetLayout, optimizer, irVerifier, enableTbaa: !noTbaa, checkedFfiBounds: checkedFfiBounds, debugInfo: debugInfo);
 		var ir = emitter.Emit(asts, firstContext!, binder.Context);
 
 		File.WriteAllText(llPath, ir);
@@ -400,7 +424,8 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 			verbose,
 			nativeLibraries,
 			targetOs,
-			packageArtifacts.Where(a => a.BitcodePath is not null).Select(a => a.BitcodePath!));
+			packageArtifacts.Where(a => a.BitcodePath is not null).Select(a => a.BitcodePath!),
+			new DebugLinkOptions(debug, targetLayout.ResolveTriple(targetOs), targetOs));
 		if (linkResult != 0)
 		{
 			return linkResult;
@@ -431,6 +456,23 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 		}
 
 		return 0;
+	}
+
+	/// <summary>
+	/// Builds the <c>DICompileUnit</c> producer string recorded in debug information, so a debugger
+	/// can report which compiler produced a module.
+	/// </summary>
+	private static string BuildProducerString()
+	{
+		var version = System.Reflection.Assembly.GetEntryAssembly()?
+			.GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), inherit: false)
+			.OfType<System.Reflection.AssemblyInformationalVersionAttribute>()
+			.FirstOrDefault()?
+			.InformationalVersion;
+
+		return string.IsNullOrWhiteSpace(version)
+			? "Cvolo"
+			: $"Cvolo {version.Split('+')[0]}";
 	}
 
 	// The single point where a format string becomes a reporting strategy.

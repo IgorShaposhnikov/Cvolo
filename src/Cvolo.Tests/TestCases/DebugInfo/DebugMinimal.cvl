@@ -1,0 +1,7 @@
+using System;
+
+int main()
+{
+    Console.WriteLine("no debug info here");
+    return 0;
+}

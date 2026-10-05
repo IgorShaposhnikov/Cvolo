@@ -427,6 +427,13 @@ internal sealed class DelegateEmitter(
 		var entry = function.AppendBasicBlock("entry");
 		Builder.PositionAtEnd(entry);
 
+		// A thunk has no source-callable provenance of its own, so it must never carry a !dbg
+		// reference into the enclosing function's subprogram. Drop any inherited location for the
+		// duration of the body and restore it once the caller's frame is reactivated.
+		var savedLocation = Builder.CurrentDebugLocation;
+		if (codegen.Debug is { } debug)
+			debug.ClearLocation(Builder);
+
 		for (var i = 0; i < visibleParameters.Count; i++)
 		{
 			var parameterName = visibleParameters[i].Name;
@@ -438,6 +445,10 @@ internal sealed class DelegateEmitter(
 		}
 
 		emitBody(function.GetParam(0));
+
+		// With debug emission off no location was ever set, so only the debug path needs to restore.
+		if (codegen.Debug is { } restoreDebug)
+			restoreDebug.RestoreLocation(Builder, savedLocation);
 
 		Builder.PositionAtEnd(savedBlock);
 		setFunction(savedFunction);

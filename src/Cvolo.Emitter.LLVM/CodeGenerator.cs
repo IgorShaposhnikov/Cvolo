@@ -31,6 +31,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 	private readonly ExpressionEmitter _expressions;
 	private readonly ILLVMOptimizer? _optimizer;
 	private readonly IRVerifier? _irVerifier;
+	private readonly DebugMetadata? _debug;
 
 
 	private FunctionCodegenContext _function = new();
@@ -45,13 +46,21 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		LLVMSharp.Interop.LLVM.InitializeAllAsmPrinters();
 	}
 
-	public CodeGenerator(string moduleName, TargetLayout targetLayout, ILLVMOptimizer? optimizer = null, IRVerifier? irVerifier = null, bool enableTbaa = true, bool checkedFfiBounds = false, IReadOnlySet<string>? definedGlobalNames = null)
+	public CodeGenerator(string moduleName, TargetLayout targetLayout, ILLVMOptimizer? optimizer = null, IRVerifier? irVerifier = null, bool enableTbaa = true, bool checkedFfiBounds = false, IReadOnlySet<string>? definedGlobalNames = null, DebugInfoOptions? debugInfo = null)
 	{
 		var llvmContext = LLVMContextRef.Global;
 		var module = llvmContext.CreateModuleWithName(moduleName);
 		var builder = llvmContext.CreateBuilder();
 		targetLayout.Apply(module, LLVMTargetRef.DefaultTriple);
-		_codegen = new CodegenContext(llvmContext, module, builder, targetLayout);
+
+		// Debug metadata sizes types against the active data layout, so its builder may only be
+		// created once TargetLayout.Apply has stamped the module. Nothing is allocated when the
+		// caller did not ask for debug information.
+		_debug = debugInfo is { Enabled: true }
+			? new DebugMetadata(llvmContext, module, debugInfo, TargetLayout.ResolvePointerBits(module.DataLayout))
+			: null;
+
+		_codegen = new CodegenContext(llvmContext, module, builder, targetLayout, _debug);
 		_declarations = new DeclarationEmitter(_codegen, GetFFIType, definedGlobalNames);
 		_globalEmitter = new GlobalEmitter(_codegen, definedGlobalNames);
 		_cleanup = new CleanupEmitter(_codegen);
@@ -319,6 +328,10 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			}
 		}
 
+		// 0. Finalize debug metadata before the module is cloned, optimized, or verified: finalize
+		// completes every DISubprogram and must not observe a module the optimizer has rewritten.
+		_debug?.Complete();
+
 		// 1. Create a deep clone of the unoptimized module state for diagnostic fallback
 		var noOptimizedModule = _codegen.Module.Clone();
 
@@ -383,10 +396,13 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 
 	/// <summary>
-	/// Releases the LLVM builder and module owned by this code generator.
+	/// Releases the debug builder, LLVM builder, and module owned by this code generator. The debug
+	/// builder is released first: finalizing debug metadata while the module it describes is already
+	/// freed would read torn-down metadata nodes.
 	/// </summary>
 	public void Dispose()
 	{
+		_debug?.Dispose();
 		_codegen.Builder.Dispose();
 		_codegen.Module.Dispose();
 	}

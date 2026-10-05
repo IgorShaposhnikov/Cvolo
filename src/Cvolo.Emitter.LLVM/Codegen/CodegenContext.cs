@@ -28,29 +28,22 @@ internal sealed class CodegenContext
 	/// <param name="module">LLVM module receiving generated declarations and definitions.</param>
 	/// <param name="builder">Shared LLVM instruction builder used during emission.</param>
 	/// <param name="targetLayout">Target layout already selected for this emission session.</param>
-	public CodegenContext(LLVMContextRef llvmContext, LLVMModuleRef module, LLVMBuilderRef builder, TargetLayout targetLayout)
+	/// <param name="debug">Debug-information helper for this module, or null when <c>--debug</c> was
+	/// not requested. Must be created only after the module's data layout is applied.</param>
+	public CodegenContext(LLVMContextRef llvmContext, LLVMModuleRef module, LLVMBuilderRef builder, TargetLayout targetLayout, DebugMetadata? debug = null)
 	{
 		LLVMContext = llvmContext;
 		Module = module;
 		Builder = builder;
 		TargetLayout = targetLayout;
+		Debug = debug;
 
 		// The lowering/layout services share the active target pointer width.  Raw-union
 		// size/alignment and native-delegate storage must not retain the old 64-bit-only
 		// assumptions when a 32-bit target data layout is selected.
-		NativePointerBits = ResolveNativePointerBits(module);
+		NativePointerBits = TargetLayout.ResolvePointerBits(module.DataLayout);
 		Types = new LlvmTypeLowering(LlvmStructTypes, NativePointerBits);
 		AggregateLayout = new AggregateLayout(NativePointerBits);
-	}
-
-	private static int ResolveNativePointerBits(LLVMModuleRef module)
-	{
-		var dataLayout = module.DataLayout;
-		if (string.IsNullOrEmpty(dataLayout))
-			return 64;
-		return dataLayout.Contains("p:64", StringComparison.Ordinal)
-			? 64
-			: dataLayout.Contains("p:32", StringComparison.Ordinal) ? 32 : 64;
 	}
 
 	/// <summary>Native pointer width for the active LLVM data layout.</summary>
@@ -74,6 +67,42 @@ internal sealed class CodegenContext
 	/// Target data-layout information associated with the current module.
 	/// </summary>
 	public TargetLayout TargetLayout { get; }
+	/// <summary>
+	/// Debug-information helper for this module, or null when <c>--debug</c> was not requested. Every
+	/// emitter must treat null as "no debug information" and skip location assignment entirely.
+	/// </summary>
+	public DebugMetadata? Debug { get; }
+	/// <summary>True when this emission session produces debug information.</summary>
+	public bool DebugEnabled => Debug is not null;
+	/// <summary>
+	/// Returns the <see cref="CompilationContext"/> owning the unit currently being emitted, so source
+	/// spans can be resolved against the right file. Falls back to the session's primary context.
+	/// </summary>
+	public CompilationContext? CurrentSource() =>
+		CurrentUnit is not null
+			&& BindingContext is not null
+			&& BindingContext.FileContexts.TryGetValue(CurrentUnit, out var unitContext)
+			? unitContext
+			: CompilationContext;
+	/// <summary>
+	/// Converts a source span into the 1-based line and column DWARF expects. Returns false when no
+	/// source context is available, in which case the caller must not attach a debug location.
+	/// </summary>
+	public bool TryGetCoordinates(TextSpan span, out uint line, out uint column)
+	{
+		var source = CurrentSource();
+		if (source is null)
+		{
+			line = 0;
+			column = 0;
+			return false;
+		}
+
+		var (resolvedLine, resolvedColumn) = source.GetCoordinates(span.Start);
+		line = (uint)Math.Max(1, resolvedLine);
+		column = (uint)Math.Max(1, resolvedColumn);
+		return true;
+	}
 	/// <summary>
 	/// Semantic binding context for the compilation currently being emitted.
 	/// It is assigned when emission is supplied with semantic analysis state.

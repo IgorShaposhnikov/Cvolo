@@ -1,0 +1,19 @@
+using System;
+
+int Add(int a, int b)
+{
+    var sum = a + b;
+    return sum;
+}
+
+double Scale(double value)
+{
+    return value * 2.0;
+}
+
+int main()
+{
+    Console.WriteLine($"Sum: {Add(2, 3)}");
+    Console.WriteLine($"Scaled: {Scale(1.5)}");
+    return 0;
+}

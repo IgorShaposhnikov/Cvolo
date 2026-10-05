@@ -27,11 +27,13 @@ public interface ICompilerDriver
 	/// <param name="configuration">Build configuration controlling bin/obj output roots (Debug or Release).</param>
 	/// <param name="useProjectReferencePackages">Consume prebuilt ProjectReference .cvlib artifacts instead of source-merging referenced projects.</param>
 	/// <param name="freestanding">Compile with only the Base SDK layer, rejecting System library dependencies.</param>
+	/// <param name="debug">When <c>true</c>, emit debug information into the IR and ask the linker to
+	/// produce debug symbols (a <c>.pdb</c> on Windows, DWARF on ELF, a <c>.dSYM</c> on macOS).</param>
 	/// <returns>The exit status code of the compilation pass (0 for success, non-zero for failures).</returns>
 	/// /// <param name="format">
 	/// Selects the diagnostic output transport.
 	/// <c>"text"</c> (default) emits human-readable ANSI-colored diagnostics on stderr,
 	/// preserving the interactive compiler UX. Unknown values fall back to <c>"text"</c>.
 	/// </param>
-	int Compile(string path, bool llvmOnly, bool isShared, bool emitIr, string optLevel, bool checkOnly = false, bool runAfterCompile = false, bool verbose = false, bool emitLowered = false, string? noWarn = null, bool suppressWarnings = false, bool legacyVisibility = false, bool strictOption = false, bool noTbaa = false, string? targetOs = null, bool checkedFfiBounds = false, string format = "text", string configuration = "Debug", 	bool useProjectReferencePackages = false, bool freestanding = false);
+	int Compile(string path, bool llvmOnly, bool isShared, bool emitIr, string optLevel, bool checkOnly = false, bool runAfterCompile = false, bool verbose = false, bool emitLowered = false, string? noWarn = null, bool suppressWarnings = false, bool legacyVisibility = false, bool strictOption = false, bool noTbaa = false, string? targetOs = null, bool checkedFfiBounds = false, string format = "text", string configuration = "Debug", 	bool useProjectReferencePackages = false, bool freestanding = false, bool debug = false);
 }

@@ -28,6 +28,7 @@ internal sealed class RunCommand : Command
 		var checkedFfiBoundsOption = new Option<bool>("--checked-ffi-bounds") { Description = "Generate explicit null-check prologues in expose extern functions for debug builds" };
 		var configurationOption = new Option<string>("--configuration", "-c", BuildOutputLayout.DefaultConfiguration) { Description = "Build configuration (Debug or Release)." };
 		var noRestoreOption = new Option<bool>("--no-restore") { Description = "Do not restore package dependencies before running; require an existing in-sync lock and cache." };
+		var debugOption = new Option<bool>("--debug", "-g") { Description = "Emit debug information (PDB on Windows, DWARF on ELF/Mach-O). Implies -O0 and --configuration Debug." };
 
 		Add(pathArg);
 		Add(optOption);
@@ -43,6 +44,7 @@ internal sealed class RunCommand : Command
 		Add(checkedFfiBoundsOption);
 		Add(configurationOption);
 		Add(noRestoreOption);
+		Add(debugOption);
 
 		SetAction(parseResult =>
 		{
@@ -60,10 +62,19 @@ internal sealed class RunCommand : Command
 			var checkedFfiBoundsVal = parseResult.GetValue(checkedFfiBoundsOption);
 			var configurationVal = BuildOutputLayout.NormalizeConfiguration(parseResult.GetValue(configurationOption) ?? BuildOutputLayout.DefaultConfiguration);
 			var noRestoreVal = parseResult.GetValue(noRestoreOption);
+			var debugVal = parseResult.GetValue(debugOption);
 			if (verboseVal)
 			{
 				warnVal = true;
 			}
+
+			if (!DebugOptionResolver.TryResolve(debugVal, parseResult, optOption, optLevel, configurationVal, out var resolvedOptLevel, out var debugOptionError))
+			{
+				DebugOptionResolver.Report(debugOptionError!);
+				Environment.Exit(1);
+			}
+
+			optLevel = resolvedOptLevel;
 
 			try
 			{
@@ -86,13 +97,14 @@ internal sealed class RunCommand : Command
 						$"noTbaa={noTbaaVal}",
 						$"freestanding={freestandingVal}",
 						$"target={targetOsVal ?? "host"}",
-						$"checkedFfiBounds={checkedFfiBoundsVal}");
+						$"checkedFfiBounds={checkedFfiBoundsVal}",
+						$"debug={debugVal}");
 					var plan = ProjectBuildPlan.Create(projectGraph, projectBuildKey, configurationVal);
 					var projectReferences = ProjectReferenceBuildPipeline.Prepare(projectGraph, plan, projectBuildKey, configurationVal, verboseVal);
 					useProjectReferenceArtifacts = projectReferences.UseArtifacts;
 				}
 
-				var exitCode = _compilerDriver.Compile(path, llvmOnly: false, isShared: false, emitIr: false, optLevel, checkOnly: false, runAfterCompile: true, verbose: verboseVal, emitLowered: emitLoweredVal, noWarn: noWarnVal, suppressWarnings: !warnVal, legacyVisibility: legacyVisibilityVal, strictOption: strictOptionVal, noTbaa: noTbaaVal, targetOs: targetOsVal, checkedFfiBounds: checkedFfiBoundsVal, configuration: configurationVal, useProjectReferencePackages: useProjectReferenceArtifacts, freestanding: freestandingVal);
+				var exitCode = _compilerDriver.Compile(path, llvmOnly: false, isShared: false, emitIr: false, optLevel, checkOnly: false, runAfterCompile: true, verbose: verboseVal, emitLowered: emitLoweredVal, noWarn: noWarnVal, suppressWarnings: !warnVal, legacyVisibility: legacyVisibilityVal, strictOption: strictOptionVal, noTbaa: noTbaaVal, targetOs: targetOsVal, checkedFfiBounds: checkedFfiBoundsVal, configuration: configurationVal, useProjectReferencePackages: useProjectReferenceArtifacts, freestanding: freestandingVal, debug: debugVal);
 				if (exitCode == 0 && projectGraph is not null && projectBuildKey is not null)
 					ProjectBuildPlan.RecordSuccessful(projectGraph, projectBuildKey, configurationVal);
 				Environment.Exit(exitCode);

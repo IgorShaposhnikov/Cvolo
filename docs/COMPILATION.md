@@ -30,6 +30,7 @@ All modes accept a `.cv` source file as the first argument.
 | `--llvm` | `.ll` | none | Generate LLVM IR only, skip linking |
 | `--shared` | `.dll` / `.so` | clang | Build as shared library instead of executable |
 | `--emit-ir` | stdout | none | Print LLVM IR to console (combinable) |
+| `--debug` / `-g` | `.exe` + `.pdb` | clang | Emit debug information alongside the binary (see *Debug Information*) |
 | `--emit-native` | `.exe` | libLLVM + clang | Use LLVMSharp native codegen instead of text IR |
 
 **Examples:**
@@ -46,9 +47,74 @@ dotnet run --project src\Cvolo -- program.cv --llvm --emit-ir
 
 # Shared library
 dotnet run --project src\Cvolo -- program.cv --shared
+
+# Debug build: .exe + .pdb on Windows, DWARF sections on ELF/Mach-O
+dotnet run --project src\Cvolo -- program.cv --debug
 ```
 
 Flags can be combined (e.g. `--llvm --emit-ir`).
+
+## Debug Information
+
+`--debug` (alias `-g`) is available on both `cvolo build` and `cvolo run`. It is opt-in: without
+the flag no debug metadata is produced at all, and the emitted IR is byte-for-byte identical to a
+normal build.
+
+### What it emits
+
+At the IR level the compiler emits a `DICompileUnit` (`!llvm.dbg.cu`), the matching module flags, a
+`DISubprogram` for every emitted function definition, and `!dbg` locations on instructions at
+statement granularity:
+
+```bash
+cvolo build program.cvl --debug --llvm --emit-ir
+```
+
+```
+!llvm.module.flags = !{!0, !1}
+!llvm.dbg.cu = !{!2, !2}
+!0 = !{i32 2, !"Debug Info Version", i32 3}
+!1 = !{i32 2, !"Dwarf Version", i32 5}
+```
+
+`Dwarf Version` is replaced by `CodeView` = 1 when targeting `*-windows-msvc`.
+
+At the binary level the linker is invoked with debug symbols enabled, which is what actually
+produces the debug container:
+
+| Target | Linker flags | Result |
+|---|---|---|
+| `*-windows-msvc` | `-g -Xlinker /DEBUG -Xlinker /PDB:<name>.pdb` | `<name>.exe` + `<name>.pdb` |
+| ELF (Linux, BSD) | `-g` | `.debug_info` / `.debug_line` sections |
+| Mach-O (macOS) | `-g` + `dsymutil` | `<name>.dSYM` bundle |
+
+On Windows the compiler does not create the PDB itself: it emits a CodeView debug directory into
+the object, and the linker creates the program database and records its GUID, age, and absolute path
+in the PE debug directory.
+
+### Option constraints
+
+Debug builds are only useful while the generated code still matches the source, so:
+
+- `--debug` implies `-O0` when no profile was requested explicitly.
+- `--debug -O<n>` for `n != 0` is rejected (`CVL3004`) — the line table would not match the source.
+- `--debug --configuration Release` is rejected (`CVL3004`).
+- `--debug` with a linker that cannot emit debug symbols is rejected (`CVL3002`).
+
+### Scope
+
+The MVP covers subprogram and line information only. Local variable inspection, struct/pointer debug
+types, Source Link, symbol servers, and minidump analysis are not implemented.
+
+### Diagnostics
+
+| ID | Severity | Meaning |
+|---|---|---|
+| **CVL3000** | error | Debug metadata finalization failed. |
+| **CVL3001** | error | Debug info requires a target data layout. |
+| **CVL3002** | error | The selected linker cannot emit debug symbols for the target. |
+| **CVL3003** | error | The macOS `.dSYM` bundle could not be produced. |
+| **CVL3004** | error | `--debug` was combined with an incompatible option. |
 
 ## ANTLR Parser Generation
 

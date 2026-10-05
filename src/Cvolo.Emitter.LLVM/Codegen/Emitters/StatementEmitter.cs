@@ -101,9 +101,43 @@ internal sealed class StatementEmitter(
 	}
 
 	/// <summary>
+	/// Lowers one statement at its own source granularity: the instruction builder is pointed at the
+	/// statement's line/column within the enclosing <c>DISubprogram</c> for the duration of the
+	/// statement, and the location is dropped again afterwards.
+	/// </summary>
+	/// <remarks>
+	/// The location is cleared before and after every statement, not only when one is set. That keeps
+	/// compiler-generated bodies that have no enclosing subprogram — delegate thunks — from inheriting
+	/// an unrelated <c>!dbg</c> reference for the instructions they emit from a statement's syntax tree.
+	/// </remarks>
+	private void EmitStatement(SyntaxNode stmt)
+	{
+		var debug = codegen.Debug;
+		if (debug is null)
+		{
+			EmitStatementCore(stmt);
+			return;
+		}
+
+		debug.ClearLocation(Builder);
+		var subprogram = Function.DebugSubprogram;
+		if (subprogram is not null && codegen.TryGetCoordinates(stmt.Span, out var line, out var column))
+			debug.SetLocation(Builder, line, column, subprogram.Value);
+
+		try
+		{
+			EmitStatementCore(stmt);
+		}
+		finally
+		{
+			debug.ClearLocation(Builder);
+		}
+	}
+
+	/// <summary>
 	/// Dispatches a single statement to the concrete lowering path owned by this emitter.
 	/// </summary>
-	private void EmitStatement(SyntaxNode stmt)
+	private void EmitStatementCore(SyntaxNode stmt)
 	{
 		switch (stmt)
 		{

@@ -53,6 +53,12 @@ internal sealed class FunctionCodegenContext
 	/// <summary>Resolved native ABI signature plan for the current function, when it crosses a native boundary.</summary>
 	public TypeLowering.NativeAbiFunctionPlan? NativeAbiPlan { get; set; }
 	/// <summary>
+	/// The <c>DISubprogram</c> describing the function currently being defined, or null when the
+	/// function has no source-callable provenance (compiler-generated thunks) or when debug
+	/// information is disabled. Null means no <c>!dbg</c> may be attached in this function.
+	/// </summary>
+	public IntPtr? DebugSubprogram { get; set; }
+	/// <summary>
 	/// Active loop targets, ordered from the innermost loop outward.
 	/// </summary>
 	public Stack<LoopCodegenFrame> LoopContexts { get; } = [];

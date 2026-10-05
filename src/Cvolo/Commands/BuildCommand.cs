@@ -30,6 +30,7 @@ internal sealed class BuildCommand : Command
 		var checkedFfiBoundsOption = new Option<bool>("--checked-ffi-bounds") { Description = "Generate explicit null-check prologues in expose extern functions for debug builds" };
 		var configurationOption = new Option<string>("--configuration", "-c", BuildOutputLayout.DefaultConfiguration) { Description = "Build configuration (Debug or Release)." };
 		var noRestoreOption = new Option<bool>("--no-restore") { Description = "Do not restore package dependencies before building; require an existing in-sync lock and cache." };
+		var debugOption = new Option<bool>("--debug", "-g") { Description = "Emit debug information (PDB on Windows, DWARF on ELF/Mach-O). Implies -O0 and --configuration Debug." };
 
 		Add(pathArg);
 		Add(llvmOption);
@@ -47,6 +48,7 @@ internal sealed class BuildCommand : Command
 		Add(checkedFfiBoundsOption);
 		Add(configurationOption);
 		Add(noRestoreOption);
+		Add(debugOption);
 
 		SetAction((ParseResult parseResult) =>
 		{
@@ -65,6 +67,14 @@ internal sealed class BuildCommand : Command
 			var checkedFfiBoundsVal = parseResult.GetValue(checkedFfiBoundsOption);
 			var configurationVal = BuildOutputLayout.NormalizeConfiguration(parseResult.GetValue(configurationOption) ?? BuildOutputLayout.DefaultConfiguration);
 			var noRestoreVal = parseResult.GetValue(noRestoreOption);
+			var debugVal = parseResult.GetValue(debugOption);
+			if (!DebugOptionResolver.TryResolve(debugVal, parseResult, optOption, optLevel, configurationVal, out var resolvedOptLevel, out var debugOptionError))
+			{
+				DebugOptionResolver.Report(debugOptionError!);
+				Environment.Exit(1);
+			}
+
+			optLevel = resolvedOptLevel;
 
 			try
 			{
@@ -73,7 +83,7 @@ internal sealed class BuildCommand : Command
 
 				var incremental = TryPrepareIncrementalBuild(
 					path, isShared, llvmOnly, emitIrVal, emitLoweredVal, optLevel, noWarnVal,
-					legacyVisibilityVal, strictOptionVal, noTbaaVal, freestandingVal, targetOsVal, checkedFfiBoundsVal, configurationVal);
+					legacyVisibilityVal, strictOptionVal, noTbaaVal, freestandingVal, targetOsVal, checkedFfiBoundsVal, configurationVal, debugVal);
 				var buildPlan = incremental is { } prepared
 					? ProjectBuildPlan.Create(prepared.Graph, prepared.BuildKey, prepared.Configuration)
 					: null;
@@ -114,7 +124,7 @@ internal sealed class BuildCommand : Command
 					return;
 				}
 
-				var exitCode = _compilerDriver.Compile(path, llvmOnly, isShared, emitIrVal, optLevel, emitLowered: emitLoweredVal, noWarn: noWarnVal, verbose: parseResult.GetValue(verboseOption), legacyVisibility: legacyVisibilityVal, strictOption: strictOptionVal, noTbaa: noTbaaVal, targetOs: targetOsVal, checkedFfiBounds: checkedFfiBoundsVal, configuration: configurationVal, useProjectReferencePackages: useProjectReferenceArtifacts, freestanding: freestandingVal);
+				var exitCode = _compilerDriver.Compile(path, llvmOnly, isShared, emitIrVal, optLevel, emitLowered: emitLoweredVal, noWarn: noWarnVal, verbose: parseResult.GetValue(verboseOption), legacyVisibility: legacyVisibilityVal, strictOption: strictOptionVal, noTbaa: noTbaaVal, targetOs: targetOsVal, checkedFfiBounds: checkedFfiBoundsVal, configuration: configurationVal, useProjectReferencePackages: useProjectReferenceArtifacts, freestanding: freestandingVal, debug: debugVal);
 				if (exitCode == 0 && incremental is { } compiledBuild)
 				{
 					IncrementalBuildState.Record(compiledBuild.Graph, compiledBuild.BuildKey, compiledBuild.OutputPath, compiledBuild.Configuration);
@@ -198,7 +208,8 @@ internal sealed class BuildCommand : Command
 		bool freestanding,
 		string? targetOs,
 		bool checkedFfiBounds,
-		string configuration)
+		string configuration,
+		bool debug)
 	{
 		// Output-only modes intentionally bypass the build cache. They are commonly used
 		// for diagnostics or tooling and have no stable binary artifact to reuse.
@@ -223,7 +234,8 @@ internal sealed class BuildCommand : Command
 			$"noTbaa={noTbaa}",
 			$"freestanding={freestanding}",
 			$"target={targetOs ?? "host"}",
-			$"checkedFfiBounds={checkedFfiBounds}");
+			$"checkedFfiBounds={checkedFfiBounds}",
+			$"debug={debug}");
 		return new IncrementalBuild(graph, buildKey, outputPath, configuration);
 	}
 

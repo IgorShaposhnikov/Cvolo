@@ -106,4 +106,21 @@ public sealed class TargetLayout
 		module.DataLayout = dl;
 		return new Info(triple, dl);
 	}
+
+	/// <summary>
+	/// Reads the native pointer width, in bits, out of an ABI data-layout string. Empty or
+	/// unrecognized layouts fall back to the 64-bit default.
+	/// </summary>
+	public static int ResolvePointerBits(string? dataLayout)
+	{
+		if (string.IsNullOrEmpty(dataLayout))
+			return 64;
+		if (dataLayout.Contains("p:64", StringComparison.Ordinal))
+			return 64;
+		if (dataLayout.Contains("p:32", StringComparison.Ordinal))
+			return 32;
+		if (dataLayout.Contains("p:16", StringComparison.Ordinal))
+			return 16;
+		return 64;
+	}
 }

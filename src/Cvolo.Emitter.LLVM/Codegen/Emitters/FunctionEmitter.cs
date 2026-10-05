@@ -63,6 +63,7 @@ internal sealed class FunctionEmitter(
 		Builder.PositionAtEnd(entry);
 
 		setFunction(CreateFunctionContext(mangledName));
+		BeginDebugScope(function, mangledName, llvmFunction);
 		SeedVisibleGlobals();
 
 		var functionSymbol = BindingContext.Globals.Lookup(mangledName) as FunctionSymbol;
@@ -98,6 +99,80 @@ internal sealed class FunctionEmitter(
 		}
 
 		Function.UnsafeDepth = 0;
+		EndDebugScope();
+	}
+
+	/// <summary>
+	/// Establishes the function's debug scope before any instruction is emitted: creates the
+	/// <c>DISubprogram</c> for this definition from the declaration's source position and semantic
+	/// signature, attaches it to the LLVM function, and points the instruction builder at the
+	/// declaration line so prologue instructions carry a location as well.
+	/// </summary>
+	/// <remarks>
+	/// A null subprogram means this function must not carry <c>!dbg</c>: either debug emission is
+	/// disabled, or the function is compiler-generated and has no source-callable provenance. In both
+	/// cases the builder's location is cleared so no instruction can inherit an unrelated one.
+	/// </remarks>
+	private void BeginDebugScope(FunctionDeclarationSyntax function, string mangledName, LLVMValueRef llvmFunction)
+	{
+		var debug = codegen.Debug;
+		if (debug is null)
+			return;
+
+		var subprogram = CreateDebugSubprogram(debug, function, mangledName, llvmFunction);
+		Function.DebugSubprogram = subprogram;
+
+		if (subprogram is null
+			|| !codegen.TryGetCoordinates(function.NameSpan, out var line, out var column))
+		{
+			debug.ClearLocation(Builder);
+			return;
+		}
+
+		debug.SetLocation(Builder, line, column, subprogram.Value);
+	}
+
+	/// <summary>
+	/// Creates and attaches the <c>DISubprogram</c> for one function definition, or returns null when
+	/// no source context can be resolved for the enclosing unit.
+	/// </summary>
+	private IntPtr? CreateDebugSubprogram(
+		DebugMetadata debug,
+		FunctionDeclarationSyntax function,
+		string mangledName,
+		LLVMValueRef llvmFunction)
+	{
+		var source = codegen.CurrentSource();
+		if (source is null)
+			return null;
+
+		codegen.FunctionReturnTypes.TryGetValue(mangledName, out var returnType);
+		codegen.FunctionParameterTypes.TryGetValue(mangledName, out var parameterTypes);
+
+		var file = debug.GetOrCreateFile(source.FilePath);
+		var subroutineType = debug.GetOrCreateSubroutineType(file, returnType, parameterTypes);
+		var line = codegen.TryGetCoordinates(function.NameSpan, out var declarationLine, out _)
+			? declarationLine
+			: 1u;
+
+		var subprogram = debug.CreateFunction(
+			function.Name,
+			mangledName,
+			file,
+			line,
+			subroutineType,
+			llvmFunction.Linkage is LLVMLinkage.LLVMInternalLinkage or LLVMLinkage.LLVMPrivateLinkage);
+		debug.AttachSubprogram(llvmFunction, subprogram);
+		return subprogram;
+	}
+
+	/// <summary>
+	/// Drops the function's debug scope so later module emission cannot keep extending it.
+	/// </summary>
+	private void EndDebugScope()
+	{
+		codegen.Debug?.ClearLocation(Builder);
+		Function.DebugSubprogram = null;
 	}
 
 	/// <summary>

@@ -8,7 +8,7 @@ namespace Cvolo.Strategies;
 
 internal sealed class LinkStrategy(string binDirectory) : ICompilationStrategy
 {
-	public int Execute(string llPath, CompilationProject project, string? linkerPath, string? linkerName, string optLevel = "Os", bool verbose = false, IEnumerable<NativeLibraryInfo>? nativeLibraries = null, string? targetOs = null, IEnumerable<string>? additionalInputs = null)
+	public int Execute(string llPath, CompilationProject project, string? linkerPath, string? linkerName, string optLevel = "Os", bool verbose = false, IEnumerable<NativeLibraryInfo>? nativeLibraries = null, string? targetOs = null, IEnumerable<string>? additionalInputs = null, DebugLinkOptions? debug = null)
 	{
 		if (linkerPath is null)
 		{
@@ -37,6 +37,27 @@ internal sealed class LinkStrategy(string binDirectory) : ICompilationStrategy
 		var subsystemFlag = isClang && OperatingSystem.IsWindows() && !project.IsShared
 			? " -Xlinker /subsystem:console"
 			: "";
+
+		// Debug symbols are a link-time product: the module only carries the CodeView or DWARF
+		// metadata, and the linker decides where the resulting program database or .debug_* sections
+		// land. Without this switch a Windows link silently produces no .pdb at all.
+		var debugFlag = "";
+		if (debug is { Enabled: true })
+		{
+			if (!isClang)
+			{
+				Console.Error.WriteLine(
+					$"error {DiagnosticIds.DebugLinkerUnsupported}: linker for triple '{debug.Triple ?? "unknown"}' has no debug-symbol support; " +
+					"select the bundled clang or a system clang to use --debug.");
+				return 1;
+			}
+
+			// PE targets need MSVC's /DEBUG (via the -Xlinker pass-through) plus an explicit program
+			// database path; ELF and Mach-O only need -g.
+			debugFlag = debug.IsWindowsMsvcTarget
+				? $" -g -Xlinker /DEBUG -Xlinker /PDB:\"{Path.GetFullPath(Path.Combine(binDirectory, project.OutputName + ".pdb"))}\""
+				: " -g";
+		}
 
 		// Local Package Manager Phase 4 links the installed package's Sector 3 LLVM
 		// bitcode directly with the application's IR. Preserve deterministic id@version order.
@@ -107,7 +128,7 @@ internal sealed class LinkStrategy(string binDirectory) : ICompilationStrategy
 		var psi = new ProcessStartInfo
 		{
 			FileName = linkerPath,
-			Arguments = $"-o \"{binaryPath}\" \"{llPath}\"{packageInputFlags}{typeFlag}{visibilityFlag}{optFlag}{libraryFlags}{subsystemFlag}",
+			Arguments = $"-o \"{binaryPath}\" \"{llPath}\"{packageInputFlags}{typeFlag}{visibilityFlag}{optFlag}{libraryFlags}{subsystemFlag}{debugFlag}",
 			RedirectStandardOutput = true,
 			RedirectStandardError = true,
 			UseShellExecute = false,
@@ -140,6 +161,15 @@ internal sealed class LinkStrategy(string binDirectory) : ICompilationStrategy
 
 		if (linkResult.ExitCode == 0)
 		{
+			// Mach-O keeps debug information in an external bundle that the link itself does not
+			// produce; dsymutil must run before the binary can be symbolicated.
+			if (debug is { ExpectsDsymBundle: true } && !CreateDsymBundle(binaryPath, verbose))
+			{
+				Console.Error.WriteLine(
+					$"error {DiagnosticIds.DebugSymbolBundleMissing}: dsymutil did not produce '{BuildOutputLayout.GetNativeDsymPath(binaryPath)}' for the debug build.");
+				return 1;
+			}
+
 			if (verbose)
 			{
 				if (!string.IsNullOrWhiteSpace(linkerStdout))
@@ -162,6 +192,68 @@ internal sealed class LinkStrategy(string binDirectory) : ICompilationStrategy
 		Console.Error.WriteLine(linkerStderr);
 
 		return 1;
+	}
+
+	/// <summary>
+	/// Runs <c>dsymutil</c> over a freshly linked Mach-O binary and reports whether the expected
+	/// <c>.dSYM</c> bundle now exists. A missing tool is treated the same as a missing bundle: either
+	/// way the debug build cannot be symbolicated.
+	/// </summary>
+	private static bool CreateDsymBundle(string binaryPath, bool verbose)
+	{
+		var dsymutilPath = FindOnPath("dsymutil");
+		if (dsymutilPath is null)
+		{
+			Console.Error.WriteLine("error: dsymutil was not found on PATH; a Mach-O debug build cannot emit a .dSYM bundle.");
+			return false;
+		}
+
+		if (verbose)
+			Console.WriteLine($"Creating debug symbol bundle for {binaryPath}...");
+
+		using var bundle = Process.Start(new ProcessStartInfo
+		{
+			FileName = dsymutilPath,
+			Arguments = $"\"{binaryPath}\"",
+			RedirectStandardOutput = true,
+			RedirectStandardError = true,
+			UseShellExecute = false,
+			CreateNoWindow = !verbose
+		});
+
+		if (bundle is null)
+			return false;
+
+		bundle.WaitForExit(60_000);
+		if (verbose && !bundle.HasExited)
+		{
+			try { bundle.Kill(entireProcessTree: true); } catch { }
+		}
+
+		return Directory.Exists(BuildOutputLayout.GetNativeDsymPath(binaryPath));
+	}
+
+	private static string? FindOnPath(string toolName)
+	{
+		var pathVariable = Environment.GetEnvironmentVariable("PATH");
+		if (string.IsNullOrEmpty(pathVariable))
+			return null;
+
+		var extensions = OperatingSystem.IsWindows()
+			? (Environment.GetEnvironmentVariable("PATHEXT") ?? ".EXE;.CMD;.BAT").Split(';', StringSplitOptions.RemoveEmptyEntries)
+			: [string.Empty];
+
+		foreach (var directory in pathVariable.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+		{
+			foreach (var extension in extensions)
+			{
+				var candidate = Path.Combine(directory.Trim(), toolName + extension);
+				if (File.Exists(candidate))
+					return candidate;
+			}
+		}
+
+		return null;
 	}
 
 	private static bool LooksLikeMissingNativeLibrary(string stderr)
