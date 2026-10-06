@@ -92,6 +92,8 @@ internal sealed class ExpressionTypeResolver(CodegenContext codegen, Func<Functi
 				new SliceTypeSymbol(BindingContext.ResolveType(heapArray.ElementTypeName)!),
 			ArrayInitializationExpressionSyntax array =>
 				new ArrayTypeSymbol(array.Elements.Count > 0 ? Resolve(array.Elements[0]) : TypeSymbol.Int, array.Elements.Count),
+			DefaultExpressionSyntax defaultExpr =>
+				defaultExpr.TypeName is null ? TypeSymbol.Int : BindingContext.ResolveType(defaultExpr.TypeName) ?? TypeSymbol.Int,
 			_ => TypeSymbol.Int,
 		};
 	}

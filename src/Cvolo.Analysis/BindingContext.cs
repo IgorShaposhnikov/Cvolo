@@ -56,6 +56,20 @@ public sealed class BindingContext
 	public Dictionary<CallExpressionSyntax, FunctionSymbol> ResolvedCalls { get; } = [];
 
 	/// <summary>
+	/// Canonical formatting operations bound for formatting-context calls (Console.Write/WriteLine
+	/// falls back and formatter.Write values with no applicable ordinary overload). Populated by
+	/// validation; the emitter consumes these descriptors instead of re-running conformance checks.
+	/// </summary>
+	public Dictionary<CallExpressionSyntax, Formatting.ResolvedFormattingOperation> ResolvedFormattingOperations { get; } = [];
+
+	/// <summary>
+	/// Bound formatter-directed interpolations for <c>formatter.Write($"...")</c> calls. The
+	/// interpolation is never materialized as a string; the emitter writes literal segments and
+	/// per-segment formatting operations straight to the target formatter.
+	/// </summary>
+	public Dictionary<CallExpressionSyntax, Formatting.ResolvedFormatterInterpolationOperation> ResolvedFormatterInterpolations { get; } = [];
+
+	/// <summary>
 	/// Final canonical binary-expression bindings for this semantic binding context. Source entries are
 	/// populated by validation after declaration/header registration is complete; post-binding compiler
 	/// synthesized nodes are registered explicitly. Successful and failed source bindings are retained

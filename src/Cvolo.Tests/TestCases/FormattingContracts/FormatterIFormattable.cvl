@@ -1,0 +1,38 @@
+using System;
+
+// Verifies IFormattable conformance drives the canonical formatting pipeline:
+// a Formatter.Write call binds to the extension's Format(refvar Formatter), interpolated
+// writes run through the pipeline without materializing a string, and a Console-bound
+// formatter writes through its sink.
+// Expected output:
+//   (3, 4)
+//   42
+//   (3, 4)
+//   42
+//   center=(3, 4)
+
+struct Point
+{
+    int X;
+    int Y;
+}
+
+extension Point : IFormattable
+{
+    void Format(refvar Formatter formatter)
+    {
+        formatter.Write($"({X}, {Y})");
+    }
+}
+
+int main()
+{
+    Point p = Point { X: 3, Y: 4 };
+    Formatter f;
+    f.Write(p);
+    f.Write(42);
+    Console.WriteLine(p);
+    Console.WriteLine(42);
+    Console.WriteLine($"center={p}");
+    return 0;
+}

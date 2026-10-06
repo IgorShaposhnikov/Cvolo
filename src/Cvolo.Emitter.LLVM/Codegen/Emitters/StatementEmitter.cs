@@ -369,6 +369,29 @@ internal sealed class StatementEmitter(
 				Builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, (ulong)zeroNone), zeroTagPtr);
 			}
 
+			// A bare Formatter local is not bound to any destination until it is configured by the
+			// compiler. Null out the sink pair so writes through an unbound formatter are no-ops
+			// instead of dereferencing uninitialized memory. The formatter pipeline guards every
+			// write against the null sink pointer.
+			if (typeSymbol is StructTypeSymbol { Name: "Formatter" } formatterStruct)
+			{
+				var formatterLayout = codegen.Types.Lower(formatterStruct);
+				Builder.BuildStore(
+					LLVMValueRef.CreateConstPointerNull(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0)),
+					Builder.BuildGEP2(formatterLayout, alloca, new LLVMValueRef[]
+					{
+						LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
+						LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0)
+					}, "fmt_ctx_ptr"));
+				Builder.BuildStore(
+					LLVMValueRef.CreateConstPointerNull(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0)),
+					Builder.BuildGEP2(formatterLayout, alloca, new LLVMValueRef[]
+					{
+						LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
+						LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1)
+					}, "fmt_sink_ptr"));
+			}
+
 
 			if (varDecl.Initializer is not null)
 			{

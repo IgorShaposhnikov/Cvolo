@@ -1312,4 +1312,9 @@ public static class DiagnosticIds
 	/// </summary>
 	public const string OptionalChainIsNotAssignable = "CVL4192";
 
+	/// <summary>
+	/// The type '&lt;x&gt;' cannot be formatted: it is not formattable in this formatting context.
+	/// </summary>
+	public const string TypeIsNotFormattable = "CVL4193";
+
 }

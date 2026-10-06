@@ -35,6 +35,12 @@ internal sealed class LlvmTypeLowering(IReadOnlyDictionary<string, LLVMTypeRef> 
 	private LLVMTypeRef _delegateWordType = default;
 
 	/// <summary>
+	/// Cached Formatter storage type: <c>{ void* sinkContext, void (*sinkWrite)(void*, i8*, i64) }</c>.
+	/// The compiler owns this representation; source code never observes the fields.
+	/// </summary>
+	private LLVMTypeRef _formatterType = default;
+
+	/// <summary>
 	/// Lowers a semantic type to its current internal LLVM representation.
 	/// </summary>
 	/// <param name="t">Semantic type produced by analysis.</param>
@@ -90,6 +96,20 @@ internal sealed class LlvmTypeLowering(IReadOnlyDictionary<string, LLVMTypeRef> 
 		// Declared aggregates are resolved through the module's named-type registry.
 		if (t is StructTypeSymbol || t is UnionTypeSymbol)
 		{
+			// The canonical Base Formatter builtin is the compiler-owned sink carrier. Its LLVM
+			// representation is fixed here (never materialized from a source-declared layout) so
+			// every formatting path shares one sink word layout.
+			if (t is StructTypeSymbol { Name: "Formatter" })
+			{
+				if (_formatterType.Handle == 0)
+				{
+					var opaquePtr = LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0);
+					_formatterType = LLVMTypeRef.CreateStruct([opaquePtr, opaquePtr], false);
+				}
+
+				return _formatterType;
+			}
+
 			if (_llvmStructTypes.TryGetValue(t.Name, out var typeRef))
 				return typeRef;
 		}

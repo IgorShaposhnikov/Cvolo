@@ -1,0 +1,24 @@
+using System;
+
+// Verifies a type with only IStringable conformance is formattable via its ToString()
+// extension method. Expected output: Ada
+
+struct Person
+{
+    string Name;
+}
+
+extension Person : IStringable
+{
+    string ToString()
+    {
+        return Name;
+    }
+}
+
+int main()
+{
+    Person p = Person { Name: "Ada" };
+    Console.WriteLine(p);
+    return 0;
+}

@@ -1,3 +1,4 @@
+using Cvolo.Analysis.Formatting;
 using Cvolo.Analysis.Resolution;
 using Cvolo.Analysis.Semantics;
 using Cvolo.Analysis.Symbols;
@@ -36,6 +37,15 @@ internal sealed class ExpressionValidator(
 	Func<SyntaxNode, bool> endsWithReturn)
 {
 	private readonly ValidationContext _validation = validation;
+	private FormattingResolver? _formattingInstance;
+	private FormattingResolver Formatting
+	{
+		get
+		{
+			return _formattingInstance ??= new(context, overloads, NamesNamespace, (expr, scope) => Check(expr, scope), (expr, scope) => GetType(expr, scope));
+		}
+	}
+
 	private ClassificationAnalyzer Classification => classification;
 	private OverloadResolver Overloads => overloads;
 	private CallResolver Calls => calls;
@@ -43,12 +53,21 @@ internal sealed class ExpressionValidator(
 	private IntrinsicValidator Intrinsics => intrinsics;
 	private GenericFunctionInstantiator Generics => generics;
 
-	/// <summary>Delegates lambda block validation back to the single validation traversal.</summary>
+	/// <summary>
+	/// Delegates lambda block validation back to the single validation traversal.
+	/// </summary>
 	private void CheckBlock(BlockStatementSyntax? block, SymbolTable scope, FunctionDeclarationSyntax currentFunction)
-		=> validateBlock(block, scope, currentFunction);
+	{
+		validateBlock(block, scope, currentFunction);
+	}
 
-	/// <summary>Uses the validation pass's existing terminal-return classification for lambda block bodies.</summary>
-	private bool EndsWithReturn(SyntaxNode node) => endsWithReturn(node);
+	/// <summary>
+	/// Uses the validation pass's existing terminal-return classification for lambda block bodies.
+	/// </summary>
+	private bool EndsWithReturn(SyntaxNode node)
+	{
+		return endsWithReturn(node);
+	}
 
 	/// <summary>
 	/// Validates one expression and records any semantic bindings required by later compiler phases.
@@ -161,6 +180,12 @@ internal sealed class ExpressionValidator(
 				break;
 			case CallExpressionSyntax call:
 				{
+					// §7.1 formatter-directed interpolation binds BEFORE ordinary overload resolution.
+					// A formatter.Write with a single interpolated string argument is a sequence of
+					// sink writes, never a materialized string passed to Write(string).
+					if (TryBindFormatterInterpolation(call, scope))
+						return;
+
 					// First evaluate argument types at the call site. Lambda expressions and
 					// function/method-group references have no type of their own: they are
 					// deferred and target-typed once the callee is resolved.
@@ -212,6 +237,15 @@ internal sealed class ExpressionValidator(
 					// overload resolution can continue. Its own diagnostic is authoritative; suppress the
 					// secondary "no overload" cascade for this call shape.
 					if (argTypes.Any(type => ReferenceEquals(type, OverloadResolver.UnresolvedArgument)))
+						return;
+
+					// Canonical Base Formatter.Write is the sink surface of the formatting pipeline: its
+					// declared overloads are empty stubs whose bodies never execute, so every value call
+					// (primitive, string, IFormattable, IStringable, Option/Result) must bind a canonical
+					// formatting operation BEFORE ordinary overload resolution. Console keeps ordinary
+					// overloads (they are the printf backend) and falls back to the pipeline only when
+					// ordinary resolution finds nothing (§7.2 in the Func-is-null block below).
+					if (TryBindFormatterValueCall(call, scope, argTypes))
 						return;
 
 					FunctionSymbol? func = null;
@@ -334,6 +368,15 @@ internal sealed class ExpressionValidator(
 
 					if (func is null)
 					{
+						// §7.2 Canonical formatting fallback: Console.Write/WriteLine(value) and
+						// formatter.Write(value) with no applicable ordinary overload bind a
+						// formatting operation (or the dedicated 'not formattable' diagnostic).
+						// Formatting contexts take priority over the generic receiver/member
+						// diagnostics below so Console.Write(someStruct) reports the formatting
+						// finding, not CVL4084.
+						if (TryBindFormattingFallback(call, scope, argTypes))
+							return;
+
 						// A dotted call that picked the wrong receiver form gets a dedicated
 						// diagnostic so the fix ('call it through the type' / 'call it on a value')
 						// is explicit instead of hidden behind a generic arity/type mismatch.
@@ -905,7 +948,91 @@ internal sealed class ExpressionValidator(
 
 
 	/// <summary>
-	/// Reports the "wrong receiver form" diagnostic for a dotted call and returns whether one was
+	/// §7.1 binding hook: <c>formatter.Write($"...")</c> on a canonical Base <c>Formatter</c> value.
+	/// Runs before ordinary overload resolution so the interpolation is never typed or materialized
+	/// as a string. Returns whether the call was fully handled by the formatter pipeline.
+	/// </summary>
+	private bool TryBindFormatterInterpolation(CallExpressionSyntax call, SymbolTable scope)
+	{
+		if (call.Arguments.Count != 1)
+			return false;
+
+		if (call.Arguments[0] is not InterpolatedStringExpressionSyntax)
+			return false;
+
+		if (!Formatting.TryClassifyContext(call, scope, out var kind) || kind != FormattingContextKind.FormatterWrite)
+			return false;
+
+		var interpolated = (InterpolatedStringExpressionSyntax)call.Arguments[0];
+		if (Formatting.TryBindFormatterInterpolation(call, scope, out var operation))
+			context.ResolvedFormatterInterpolations[call] = operation;
+
+		// Handled either way: an empty interpolation binds a zero-segment operation, and a failed
+		// expression segment already received the dedicated diagnostic. The call must not fall
+		// through to ordinary Write(string) resolution.
+		return true;
+	}
+
+	/// <summary>
+	/// §7.2 interception for canonical <c>Formatter.Write(value)</c> calls. Runs before ordinary
+	/// overload resolution because the Base stub overloads have empty bodies and must never be
+	/// selected; every value reaches the canonical formatting pipeline. Returns whether the call
+	/// was fully handled (bound, or reported "not formattable"). Console contexts return false so
+	/// ordinary Console overloads keep winning and the fallback below handles the rest.
+	/// </summary>
+	private bool TryBindFormatterValueCall(CallExpressionSyntax call, SymbolTable scope, IReadOnlyList<TypeSymbol> argTypes)
+	{
+		if (call.Arguments.Count != 1 || argTypes.Count == 0)
+			return false;
+
+		if (!Formatting.TryClassifyContext(call, scope, out var kind) || kind != FormattingContextKind.FormatterWrite)
+			return false;
+
+		var argumentType = argTypes[0];
+		if (ReferenceEquals(argumentType, OverloadResolver.DeferredCallableArgument))
+			return false;
+
+		var operation = Formatting.TryBind(argumentType, scope);
+		if (operation is null)
+		{
+			Formatting.ReportTypeIsNotFormattable(call, argumentType, call.ArgumentListSpan);
+			return true;
+		}
+
+		context.ResolvedFormattingOperations[call] = operation with { Context = kind };
+		return true;
+	}
+
+	/// <summary>
+	/// §7.2 fallback hook at the head of the 'no overload' block: when ordinary resolution found no
+	/// applicable overload for a formatting-context call, bind the canonical formatting operation.
+	/// Returns whether the call was fully handled (bound, or reported "not formattable").
+	/// </summary>
+	private bool TryBindFormattingFallback(CallExpressionSyntax call, SymbolTable scope, IReadOnlyList<TypeSymbol> argTypes)
+	{
+		if (call.Arguments.Count != 1 || argTypes.Count == 0)
+			return false;
+
+		if (!Formatting.TryClassifyContext(call, scope, out var kind))
+			return false;
+
+		var argumentType = argTypes[0];
+		if (ReferenceEquals(argumentType, OverloadResolver.DeferredCallableArgument)
+			|| ReferenceEquals(argumentType, OverloadResolver.UnresolvedArgument))
+		{
+			return false;
+		}
+
+		var operation = Formatting.TryBind(argumentType, scope);
+		if (operation is null)
+		{
+			Formatting.ReportTypeIsNotFormattable(call, argumentType, call.ArgumentListSpan);
+			return true;
+		}
+
+		context.ResolvedFormattingOperations[call] = operation with { Context = kind };
+		return true;
+	}
 	/// reported. A leading-dot associated function is receiverless, so it can only be reached through
 	/// its owner type; a receiver-backed method is the mirror image.
 	/// </summary>

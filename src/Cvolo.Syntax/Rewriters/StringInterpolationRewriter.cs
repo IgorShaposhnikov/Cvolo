@@ -10,17 +10,39 @@ public sealed class StringInterpolationRewriter(ISyntaxParser parser) : AstRewri
 {
 	public override SyntaxNode Rewrite(SyntaxNode node)
 	{
+		if (node is InterpolatedStringExpressionSyntax interpolated && interpolated.Segments.Count == 0)
+		{
+			PopulateSegments(interpolated);
+			return interpolated;
+		}
+
 		if (node is ExpressionStatementSyntax exprStmt &&
 			exprStmt.Expression is CallExpressionSyntax call &&
 			(call.FunctionName == "Console.WriteLine" || call.FunctionName == "Console.Write" ||
 			 call.FunctionName == "System.Console.WriteLine" || call.FunctionName == "System.Console.Write") &&
 			call.Arguments.Count == 1 &&
-			call.Arguments[0] is InterpolatedStringExpressionSyntax interpolated)
+			call.Arguments[0] is InterpolatedStringExpressionSyntax interpolatedArg)
 		{
-			return LowerInterpolatedConsoleCall(call, interpolated);
+			return LowerInterpolatedConsoleCall(call, interpolatedArg);
 		}
 
 		return base.Rewrite(node);
+	}
+
+	/// <summary>
+	/// Parses every segment of an interpolated string and stores the parsed expressions on the node.
+	/// Runs for every interpolated string the rewriter encounters (not only Console calls) so the
+	/// semantic layer can bind formatter-directed interpolation without maintaining a second parser.
+	/// </summary>
+	private void PopulateSegments(InterpolatedStringExpressionSyntax interpolated)
+	{
+		foreach (var (text, isExpression) in ParseInterpolatedString(interpolated.RawText))
+		{
+			interpolated.Segments.Add(new InterpolatedStringSegment(
+				text,
+				isExpression,
+				isExpression ? ParseExpressionSegment(text) : null));
+		}
 	}
 
 	private SyntaxNode LowerInterpolatedConsoleCall(CallExpressionSyntax originalCall, InterpolatedStringExpressionSyntax interpolated)
@@ -100,6 +122,7 @@ public sealed class StringInterpolationRewriter(ISyntaxParser parser) : AstRewri
 					i += 2;
 					continue;
 				}
+
 				i++;
 			}
 			else

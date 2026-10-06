@@ -7,6 +7,7 @@ public enum BuiltinId
 	AlignOf,
 	OffsetOf,
 	Type,
+	Formatter,
 	UnsafeBodyAttribute,
 	NoAliasAttribute,
 	SuppressWarningAttribute,
@@ -41,11 +42,7 @@ public enum BuiltinDeclarationKind
 	Enum
 }
 
-public sealed record BuiltinEntry(
-	BuiltinId Id,
-	string Name,
-	BuiltinDeclarationKind Kind,
-	BuiltinImplementationPolicy Policy);
+public sealed record BuiltinEntry(BuiltinId Id, string Name, BuiltinDeclarationKind Kind, BuiltinImplementationPolicy Policy);
 
 public static class BuiltinCatalog
 {
@@ -55,6 +52,7 @@ public static class BuiltinCatalog
 		["alignof"] = new(BuiltinId.AlignOf, "alignof", BuiltinDeclarationKind.Function, BuiltinImplementationPolicy.ConstantFolded),
 		["offsetof"] = new(BuiltinId.OffsetOf, "offsetof", BuiltinDeclarationKind.Function, BuiltinImplementationPolicy.ConstantFolded),
 		["Type"] = new(BuiltinId.Type, "Type", BuiltinDeclarationKind.Struct, BuiltinImplementationPolicy.RuntimeType),
+		["Formatter"] = new(BuiltinId.Formatter, "Formatter", BuiltinDeclarationKind.Struct, BuiltinImplementationPolicy.RuntimeType),
 		["UnsafeBodyAttribute"] = new(BuiltinId.UnsafeBodyAttribute, "UnsafeBodyAttribute", BuiltinDeclarationKind.Struct, BuiltinImplementationPolicy.CompileTimeOnly),
 		["NoAliasAttribute"] = new(BuiltinId.NoAliasAttribute, "NoAliasAttribute", BuiltinDeclarationKind.Struct, BuiltinImplementationPolicy.CompileTimeOnly),
 		["SuppressWarningAttribute"] = new(BuiltinId.SuppressWarningAttribute, "SuppressWarningAttribute", BuiltinDeclarationKind.Struct, BuiltinImplementationPolicy.CompileTimeOnly),

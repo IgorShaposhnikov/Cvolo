@@ -1,0 +1,21 @@
+using System;
+
+// Verifies Option and Result are formattable without conforming to either interface.
+// Expected output:
+//   Some(42)
+//   None
+//   Ok(7)
+//   Err(boom)
+
+int main()
+{
+    Option<int> some = Option<int>(42);
+    Option<int> none = Option.None;
+    Result<int, string> ok = Result<int, string> { Ok: 7 };
+    Result<int, string> err = Result<int, string> { Err: "boom" };
+    Console.WriteLine(some);
+    Console.WriteLine(none);
+    Console.WriteLine(ok);
+    Console.WriteLine(err);
+    return 0;
+}

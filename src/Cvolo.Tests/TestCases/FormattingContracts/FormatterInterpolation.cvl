@@ -1,0 +1,14 @@
+using System;
+
+// Verifies StringInterpolation with primitive segments resolves through the formatter
+// pipeline (expressions evaluated once, %f-compatible doubles).
+// Expected output:
+//   sum=5
+//   pi=3.500000
+
+int main()
+{
+    Console.WriteLine($"sum={2 + 3}");
+    Console.WriteLine($"pi={3.5}");
+    return 0;
+}

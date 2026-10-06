@@ -1,0 +1,108 @@
+/// <summary>
+/// The formatting sink handed to <see cref="IFormattable.Format"/> implementations and used by
+/// <c>Formatter.Write</c>. The runtime representation and the output destination are fully
+/// compiler-owned: user code only ever holds a Formatter and calls Write on it, and cannot observe
+/// or modify the sink state. Base itself carries no dependency on any concrete output backend
+/// (no printf, no CRT, no stdout, no System reference), so this declaration remains valid in
+/// freestanding builds.
+/// </summary>
+public builtin struct Formatter { }
+
+/// <summary>
+/// Explicit formatting capability: renders the receiver directly into the supplied Formatter.
+/// Takes precedence over <see cref="IStringable"/> when both are declared.
+/// </summary>
+public interface IFormattable {
+    void Format(refvar Formatter formatter);
+}
+
+/// <summary>
+/// Explicit string conversion capability used when a type has no IFormattable conformance.
+/// </summary>
+public interface IStringable {
+    string ToString();
+}
+
+/// <summary>
+/// Every <c>Formatter.Write(value)</c> call is bound by the compiler's canonical formatting
+/// pipeline and lowered directly against the formatter's sink; none of the declarations below are
+/// executed as ordinary function bodies. They exist so the Formatter always exposes a closed,
+/// overload-complete member set to source-level tooling and so the canonical pipeline has concrete
+/// value-type targets to resolve.
+/// </summary>
+public extension Formatter {
+    /// <summary>
+    /// Writes the specified string value to the sink without a line terminator.
+    /// </summary>
+    public void Write(string value) { }
+
+    /// <summary>
+    /// Writes the specified 32-bit signed integer to the sink without a line terminator.
+    /// </summary>
+    public void Write(int value) { }
+
+    /// <summary>
+    /// Writes the specified 32-bit float to the sink without a line terminator.
+    /// </summary>
+    public void Write(float value) { }
+
+    /// <summary>
+    /// Writes the specified 64-bit double to the sink without a line terminator.
+    /// </summary>
+    public void Write(double value) { }
+
+    /// <summary>
+    /// Writes the specified native signed integer to the sink without a line terminator.
+    /// </summary>
+    public void Write(nint value) { }
+
+    /// <summary>
+    /// Writes the specified native unsigned integer to the sink without a line terminator.
+    /// </summary>
+    public void Write(nuint value) { }
+
+    /// <summary>
+    /// Writes the specified boolean value (1 for true, 0 for false) to the sink without a line terminator.
+    /// </summary>
+    public void Write(bool value) { }
+
+    /// <summary>
+    /// Writes the specified character to the sink without a line terminator.
+    /// </summary>
+    public void Write(char value) { }
+
+    /// <summary>
+    /// Writes the specified 8-bit unsigned integer to the sink without a line terminator.
+    /// </summary>
+    public void Write(byte value) { }
+
+    /// <summary>
+    /// Writes the specified 8-bit signed integer to the sink without a line terminator.
+    /// </summary>
+    public void Write(sbyte value) { }
+
+    /// <summary>
+    /// Writes the specified 16-bit signed integer to the sink without a line terminator.
+    /// </summary>
+    public void Write(short value) { }
+
+    /// <summary>
+    /// Writes the specified 16-bit unsigned integer to the sink without a line terminator.
+    /// </summary>
+    public void Write(ushort value) { }
+
+    /// <summary>
+    /// Writes the specified 32-bit unsigned integer to the sink without a line terminator.
+    /// </summary>
+    public void Write(uint value) { }
+
+    /// <summary>
+    /// Writes the specified 64-bit signed integer to the sink without a line terminator.
+    /// </summary>
+    public void Write(long value) { }
+
+    /// <summary>
+    /// Writes the specified 64-bit unsigned integer to the sink without a line terminator.
+    /// </summary>
+    public void Write(ulong value) { }
+}

@@ -1,0 +1,32 @@
+using System;
+
+// Verifies precedence when a type conforms to both interfaces: IFormattable wins over
+// IStringable. Expected output: fmt-widget
+
+struct Widget
+{
+    string Id;
+}
+
+extension Widget : IFormattable
+{
+    void Format(refvar Formatter formatter)
+    {
+        formatter.Write("fmt-widget");
+    }
+}
+
+extension Widget : IStringable
+{
+    string ToString()
+    {
+        return "str-widget";
+    }
+}
+
+int main()
+{
+    Widget w = Widget { Id: "w1" };
+    Console.WriteLine(w);
+    return 0;
+}

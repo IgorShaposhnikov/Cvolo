@@ -43,6 +43,7 @@ internal sealed class CallEmitter(
 	private FunctionCodegenContext Function => getFunction();
 	private BindingContext BindingContext => codegen.BindingContext ?? throw new InvalidOperationException("Call emission requires an active binding context.");
 	private readonly NativeAbiAggregateLowering _nativeAggregates = new(codegen, lowerFfiType);
+	private readonly FormattingEmitter _formatting = new(codegen, aggregates, getFunction, emitExpression, expressionTypes, values);
 
 	/// <summary>
 	/// Emits a call expression using the currently active function frame.
@@ -57,6 +58,12 @@ internal sealed class CallEmitter(
 
 	private LLVMValueRef EmitCore(CallExpressionSyntax call, LLVMValueRef? implicitThisPtr, int paramOffset)
 	{
+		// Formatting-bound calls are consumed by the formatter pipeline before any ordinary call
+		// machinery applies. The binding context tables are the only authority on whether a call is
+		// formatting-bound; no resolution or conformance work is repeated here.
+		if (_formatting.TryEmit(call))
+			return default;
+
 		// Safe delegates are represented as { invoke thunk, context }. Invocation is uniform
 		// regardless of whether the value originated from a free function, bound method, or closure.
 		if (BindingContext.ResolvedDelegateCalls.TryGetValue(call, out var delegateType))

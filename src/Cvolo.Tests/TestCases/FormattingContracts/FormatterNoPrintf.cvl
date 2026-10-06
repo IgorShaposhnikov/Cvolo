@@ -1,0 +1,27 @@
+// Verifies the formatting pipeline is destination-agnostic: with no System reference there
+// is no stdout backend, so unbound formatter writes are dropped and the emitted binary must
+// not reference "printf" at all (asserted by FormattingContractsTests).
+
+struct Point
+{
+    int X;
+    int Y;
+}
+
+extension Point : IFormattable
+{
+    void Format(refvar Formatter formatter)
+    {
+        formatter.Write($"({X}, {Y})");
+    }
+}
+
+int main()
+{
+    Formatter f;
+    Point p = Point { X: 1, Y: 2 };
+    f.Write(p);
+    f.Write(42);
+    f.Write($"x={3}");
+    return 0;
+}
