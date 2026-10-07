@@ -1,0 +1,24 @@
+// Compound <<= on a byte element: NextIndex() and NextCount() each evaluate once, the old
+// element load happens once, and the invalid runtime count (12 >= byte width 8) traps before
+// the shift or store. The global counter proves exactly-once evaluation on the trap path.
+
+global var int counter = 0;
+
+int NextIndex()
+{
+    counter = counter + 1;
+    return 0;
+}
+
+int NextCount()
+{
+    counter = counter + 10;
+    return 12;
+}
+
+int main()
+{
+    byte[4] arr;
+    arr[NextIndex()] <<= NextCount();
+    return counter;
+}

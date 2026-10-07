@@ -1317,4 +1317,20 @@ public static class DiagnosticIds
 	/// </summary>
 	public const string TypeIsNotFormattable = "CVL4193";
 
+	/// <summary>
+	/// A division or remainder by a statically known zero divisor is rejected before code generation.
+	/// </summary>
+	public const string DivisionByZeroConstant = "CVL4210";
+
+	/// <summary>
+	/// A signed division or remainder of the minimum value by a statically known -1 is rejected
+	/// before code generation (signed division overflow).
+	/// </summary>
+	public const string SignedMinDivisionOverflow = "CVL4211";
+
+	/// <summary>
+	/// A shift whose statically known count is negative or outside <c>[0, W)</c> is rejected before
+	/// code generation, where W is the semantic width of the shifted value.
+	/// </summary>
+	public const string InvalidShiftCountConstant = "CVL4212";
 }

@@ -133,7 +133,8 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 			_coercion,
 			() => _function,
 			_expressionTypes,
-			_values);
+			_values,
+			EmitEnumSwitchTrapDefault);
 
 		_optimizer = optimizer;
 		_irVerifier = irVerifier;

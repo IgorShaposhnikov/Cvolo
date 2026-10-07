@@ -1,0 +1,10 @@
+// A runtime shift count equal to the width (32) must compile and then trap at runtime
+// instead of being masked or shifting into poison.
+
+int main()
+{
+    val int value = 1;
+    val int shift = 32;
+    val int result = value << shift;
+    return result;
+}

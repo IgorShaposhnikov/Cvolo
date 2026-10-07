@@ -1,0 +1,10 @@
+// A runtime shift count above the LEFT operand's semantic width must trap: value is int
+// (width 32) even though the count is long via widening (count 40 >= 32).
+
+int main()
+{
+    val int value = 1;
+    val long shift = 40;
+    val int result = value << shift;
+    return result;
+}

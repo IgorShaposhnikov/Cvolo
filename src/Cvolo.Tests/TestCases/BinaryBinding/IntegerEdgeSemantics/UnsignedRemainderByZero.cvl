@@ -1,0 +1,12 @@
+// Unsigned remainder by a runtime zero divisor must compile and then trap at runtime.
+
+uint URemainder(uint a, uint b)
+{
+    return a % b;
+}
+
+int main()
+{
+    val uint q = URemainder(10U, 0U);
+    return (int)q;
+}

@@ -1,0 +1,22 @@
+// Valid edges must still compute ordinary results (exit code 0, fails == 0) at every
+// optimization level: MIN/1, MIN%1, shift 0, shift W-1 for int and byte.
+
+int main()
+{
+    int fails = 0;
+
+    val int min = -2147483647;
+    val int minValue = min - 1;
+    if (minValue / 1 != minValue) fails++;
+    if (minValue % 1 != 0) fails++;
+
+    val int v = 5;
+    if ((v << 0) != 5) fails++;
+    if ((v << 31) != -2147483648) fails++;
+    if ((v >> 31) != 0) fails++;
+
+    val byte b = 5;
+    if ((b << 7) != 640) fails++;
+
+    return fails;
+}

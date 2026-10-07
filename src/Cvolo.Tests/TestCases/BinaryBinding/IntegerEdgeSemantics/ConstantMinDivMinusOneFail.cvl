@@ -1,0 +1,8 @@
+// A compile-time constant signed-min / -1 must be rejected (CVL4211). The minimum long is
+// spelled as (-9223372036854775807L - 1) because signed literals clamp.
+
+int main()
+{
+    val long result = (-9223372036854775807L - 1) / -1L;
+    return result == 0 ? 0 : 1;
+}

@@ -1,0 +1,9 @@
+// A runtime negative shift count must compile and then trap at runtime.
+
+int main()
+{
+    val int value = 1;
+    val int shift = -1;
+    val int result = value << shift;
+    return result;
+}

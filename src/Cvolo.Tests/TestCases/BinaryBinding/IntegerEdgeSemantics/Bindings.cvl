@@ -1,0 +1,54 @@
+// Binder-level fixture for integer edge semantics. No System reference -- this file is analyzed
+// in-process (without Base library binding) so the recorded ResolvedBinaryExpression guard-policy
+// shapes can be asserted exactly. All operands are runtime-shaped, so the compile-time edge
+// classifier never rejects them.
+
+struct Vec
+{
+    int X;
+    int Y;
+}
+
+public extension Vec
+{
+    public bool operator <(Vec left, Vec right)
+    {
+        return left.X < right.X;
+    }
+}
+
+void Probe()
+{
+    val int left = 1;
+    val int right = 1;
+    val int signedDiv = left / right;
+    val int signedRem = left % right;
+
+    val uint ul = 1U;
+    val uint ur = 1U;
+    val uint unsignedDiv = ul / ur;
+
+    val long lw = 1;
+    val uint uw = 1U;
+    val long mixedDiv = lw / uw;
+
+    val byte bx = 200;
+    val ushort uy = 100;
+    val ushort mixedSmallDiv = bx / uy;
+
+    val byte sb = 5;
+    val int si = 12;
+    val byte smallShift = sb << si;
+
+    val long ll = 1;
+    val long lr = 1;
+    val long longShift = ll >> lr;
+
+    val uint lus = 1U;
+    val int s = 2;
+    val uint logicalShift = lus >>> s;
+
+    val Vec ml(X: 1, Y: 2);
+    val Vec mr(X: 3, Y: 4);
+    bool userDefined = ml < mr;
+}

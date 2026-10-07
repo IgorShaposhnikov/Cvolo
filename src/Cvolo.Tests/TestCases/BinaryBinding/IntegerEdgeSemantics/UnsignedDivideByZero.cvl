@@ -1,0 +1,12 @@
+// Unsigned division by a runtime zero divisor must compile and then trap at runtime.
+
+uint UDivide(uint a, uint b)
+{
+    return a / b;
+}
+
+int main()
+{
+    val uint q = UDivide(10U, 0U);
+    return (int)q;
+}

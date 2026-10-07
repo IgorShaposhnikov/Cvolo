@@ -1,0 +1,17 @@
+// Compound /= evaluates NextDivisor() exactly once, then traps on the runtime zero divisor
+// before any division occurs. The global counter proves single evaluation on the trap path.
+
+global var int counter = 0;
+
+int NextDivisor()
+{
+    counter = counter + 5;
+    return 0;
+}
+
+int main()
+{
+    var int x = 10;
+    x /= NextDivisor();
+    return counter;
+}

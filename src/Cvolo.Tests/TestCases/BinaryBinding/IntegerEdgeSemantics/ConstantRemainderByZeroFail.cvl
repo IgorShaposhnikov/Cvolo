@@ -1,0 +1,7 @@
+// A compile-time constant zero remainder divisor must be rejected (CVL4210).
+
+int main()
+{
+    val int x = 10 % 0;
+    return x;
+}

@@ -1,0 +1,11 @@
+// int.MinValue / -1 with runtime-shaped MIN must compile and then trap at runtime
+// (the guard never lets sdiv produce poison).
+
+int main()
+{
+    val int value = -2147483647;
+    val int min = value - 1;
+    val int divisor = -1;
+    val int result = min / divisor;
+    return result;
+}

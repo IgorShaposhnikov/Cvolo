@@ -1,0 +1,12 @@
+// Signed remainder by a runtime zero divisor must compile and then trap at runtime.
+
+int Remainder(int a, int b)
+{
+    return a % b;
+}
+
+int main()
+{
+    val int q = Remainder(10, 0);
+    return q;
+}

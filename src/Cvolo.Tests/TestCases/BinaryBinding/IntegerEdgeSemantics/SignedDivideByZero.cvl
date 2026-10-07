@@ -1,0 +1,13 @@
+// Signed division by a runtime zero divisor must compile and then trap at runtime
+// (nonzero exit code) at every optimization level.
+
+int Divide(int a, int b)
+{
+    return a / b;
+}
+
+int main()
+{
+    val int q = Divide(10, 0);
+    return q;
+}

@@ -1,0 +1,9 @@
+// A compile-time constant shift count must respect the operand's SEMANTIC width: byte is
+// width 8, so 12 >= 8 is rejected (CVL4212) even though the value may lower as an i32.
+
+int main()
+{
+    val byte y = 5;
+    val byte z = y << 12;
+    return 0;
+}

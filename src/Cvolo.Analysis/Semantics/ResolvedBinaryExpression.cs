@@ -142,4 +142,59 @@ public sealed class ResolvedBinaryExpression
 		&& OperationType is { } operationType
 		&& TypeSymbol.IsNumericIntegerType(operationType)
 		&& !TypeSymbol.IsSignedIntegerType(operationType);
+
+	/// <summary>
+	/// Whether this builtin division/remainder must guard against a zero divisor at runtime.
+	/// True only for the builtin numeric-integer domain (never user-defined operators, never
+	/// floating-point, never char/enum/pointer operands). See the integer-edge semantics INC.
+	/// </summary>
+	public bool IntegerEdgeCheckDivisorNonZero =>
+		BuiltinOperatorKind == BuiltinBinaryOperatorKind.IntegerArithmetic
+		&& Operator is "/" or "%"
+		&& OperationType is { } arithmeticType
+		&& TypeSymbol.IsNumericIntegerType(arithmeticType)
+		&& !IsUserDefined;
+
+	/// <summary>
+	/// Whether this signed division/remainder must also guard against the <c>MIN / -1</c> overflow
+	/// pair. Composable with <see cref="IntegerEdgeCheckDivisorNonZero"/>: signed operations carry
+	/// both guards on the one bound operation.
+	/// </summary>
+	public bool IntegerEdgeCheckSignedMinMinusOne =>
+		IntegerEdgeCheckDivisorNonZero
+		&& !UseUnsignedIntegerSemantics
+		&& OperationType is { } signedArithmeticType
+		&& TypeSymbol.IsSignedIntegerType(signedArithmeticType);
+
+	/// <summary>
+	/// Whether this builtin shift must guard its count against the <c>[0, W)</c> domain. Applies to
+	/// all three shift flavors over the builtin numeric-integer domain only.
+	/// </summary>
+	public bool IntegerEdgeCheckShiftCountDomain =>
+		BuiltinOperatorKind is
+			BuiltinBinaryOperatorKind.ShiftLeft
+			or BuiltinBinaryOperatorKind.ShiftRightArithmetic
+			or BuiltinBinaryOperatorKind.ShiftRightLogical
+		&& OperationType is { } shiftType
+		&& TypeSymbol.IsNumericIntegerType(shiftType)
+		&& !IsUserDefined;
+
+	/// <summary>
+	/// Semantic bit width against which edge validity is measured. For division/remainder this is the
+	/// width of the canonical common integer type. For shifts it is the width of the bound left-value
+	/// contract (a <c>byte</c> operand stays 8 bits wide even when a backend temporarily widens it).
+	/// Returns 0 when no integer-edge guard applies.
+	/// </summary>
+	public int IntegerEdgeValueBitWidth =>
+		IntegerEdgeCheckShiftCountDomain
+			? LeftConversion is { } shiftConversion
+				? TypeSymbol.IntegerBitWidth(shiftConversion.ValueType)
+				: 0
+			: IntegerEdgeCheckDivisorNonZero && OperationType is { } edgeType
+				? TypeSymbol.IntegerBitWidth(edgeType)
+				: 0;
+
+	/// <summary>Whether any integer-edge runtime guard applies to this bound operation.</summary>
+	public bool HasIntegerEdgeGuards =>
+		IntegerEdgeCheckDivisorNonZero || IntegerEdgeCheckShiftCountDomain;
 }

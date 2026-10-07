@@ -1,0 +1,10 @@
+// byte shift width is SEMANTIC (8), not the promoted backend width: a runtime count of 8
+// must trap even though the value may be lowered as an i32.
+
+int main()
+{
+    val byte value = 5;
+    val int shift = 8;
+    val byte result = value << shift;
+    return 0;
+}

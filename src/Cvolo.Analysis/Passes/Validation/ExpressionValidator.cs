@@ -641,6 +641,11 @@ internal sealed class ExpressionValidator(
 						// themselves been validated. The final descriptor is then reused by overload
 						// resolution, tooling, and code generation.
 						_ = GetOrBindBinaryExpression(bin, scope, final: true);
+
+						// Statically-known invalid integer edges (zero divisor, signed MIN / -1,
+						// out-of-domain shift count) are rejected before code generation by the shared
+						// integer-edge classifier over that same canonical descriptor.
+						ReportIntegerEdgeConstantFailure(bin, scope);
 					}
 
 					// Assignment is compiler-owned rather than overloadable, but it is still a
@@ -2372,6 +2377,34 @@ internal sealed class ExpressionValidator(
 		context.Diagnostics.Report(currentFileContext, resolved.Syntax.Span,
 			$"Operator '{resolved.Operator}' is not valid/applicable for '{resolved.LeftType?.Name ?? "?"}' and '{resolved.RightType?.Name ?? "?"}'.",
 			DiagnosticIds.OperatorNoMatch);
+	}
+
+	/// <summary>
+	/// Reports a compile-time-known invalid integer edge (division/remainder by zero, signed
+	/// division overflow, or out-of-domain shift count) using the shared integer-edge classifier.
+	/// </summary>
+	private void ReportIntegerEdgeConstantFailure(BinaryExpressionSyntax binary, SymbolTable scope)
+	{
+		var resolved = GetOrBindBinaryExpression(binary, scope, final: true);
+		var failure = IntegerEdgeSemantics.ClassifyConstantEdge(resolved);
+		if (failure == IntegerEdgeConstantFailure.None)
+			return;
+
+		var (message, diagnosticId) = failure switch
+		{
+			IntegerEdgeConstantFailure.DivisionByZero => (
+				"Division by zero is not allowed: the divisor is a compile-time constant zero.",
+				DiagnosticIds.DivisionByZeroConstant),
+			IntegerEdgeConstantFailure.SignedMinDivMinusOne => (
+				"Signed division/remainder overflow is not allowed: the dividend is the minimum value of its type and the divisor is a compile-time constant -1.",
+				DiagnosticIds.SignedMinDivisionOverflow),
+			IntegerEdgeConstantFailure.InvalidShiftCount => (
+				$"Invalid shift count: the shift count must be within [0, {resolved.IntegerEdgeValueBitWidth}) but is a compile-time constant.",
+				DiagnosticIds.InvalidShiftCountConstant),
+			_ => ("", ""),
+		};
+
+		context.Diagnostics.Report(context.FileContexts[context.CurrentUnit!], binary.Span, message, diagnosticId);
 	}
 
 	/// <summary>

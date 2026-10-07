@@ -36,7 +36,8 @@ internal sealed class ExpressionEmitter(
 	ValueCoercion coercion,
 	Func<FunctionCodegenContext> getFunction,
 	ExpressionTypeResolver expressionTypes,
-	ValueLoader values)
+	ValueLoader values,
+	Action emitRuntimeTrap)
 {
 	private readonly Dictionary<string, LLVMValueRef> _typeofGlobals = [];
 	private int _typeofCounter;
@@ -553,9 +554,10 @@ internal sealed class ExpressionEmitter(
 	{
 		// Assignment owns storage/lifetime semantics rather than operator semantics. Validation still
 		// records a canonical Assignment descriptor for the syntax node, but lowering stays on the
-		// dedicated store path.
+		// dedicated store path. Frontend-desugared compound operations (*=, /=, <<=, ...) share the
+		// exact left syntax node with the outer assignment and get a dedicated single-evaluation path.
 		if (bin.Operator == "=")
-			return EmitAssignStore(bin);
+			return EmitAssignment(bin);
 
 		if (!BindingContext.ResolvedBinaryExpressions.TryGetValue(bin, out var resolved)
 			|| resolved.State != BinaryBindingState.Success)
@@ -578,6 +580,19 @@ internal sealed class ExpressionEmitter(
 		var right = ApplyBinaryConversion(Emit(bin.Right), resolved.RightConversion
 			?? throw new InvalidOperationException("Canonical binary binding is missing the right operand conversion."), "right");
 
+		return EmitResolvedPrimitiveBinary(resolved, left, right);
+	}
+
+	/// <summary>
+	/// Lowers one already-bound builtin primitive operation over its exactly-once evaluated,
+	/// canonically converted operands. Integer-edge guards (zero divisor, signed MIN / -1, and the
+	/// shift-count domain) are inserted here from the bound operation's composable guard policy and
+	/// consume the very same converted operands emitted by the arithmetic instruction.
+	/// </summary>
+	private LLVMValueRef EmitResolvedPrimitiveBinary(ResolvedBinaryExpression resolved, LLVMValueRef left, LLVMValueRef right)
+	{
+		EmitIntegerEdgeGuards(resolved, left, right);
+
 		return resolved.BuiltinOperatorKind switch
 		{
 			BuiltinBinaryOperatorKind.RawPointerAdd =>
@@ -586,35 +601,86 @@ internal sealed class ExpressionEmitter(
 				Builder.BuildGEP2(LowerType(((RawPointerTypeSymbol)resolved.ResultType!).ElementType), right, new[] { left }, "ptr_add"),
 			BuiltinBinaryOperatorKind.RawPointerSubtract =>
 				Builder.BuildGEP2(LowerType(((RawPointerTypeSymbol)resolved.ResultType!).ElementType), left, new[] { Builder.BuildNeg(right, "ptr_sub_neg") }, "ptr_sub"),
-			BuiltinBinaryOperatorKind.FloatingArithmetic => EmitFloatingArithmetic(bin.Operator, left, right),
-			BuiltinBinaryOperatorKind.FloatingComparison => EmitFloatingComparison(bin.Operator, left, right),
-			BuiltinBinaryOperatorKind.IntegerArithmetic => EmitIntegerArithmetic(bin.Operator, left, right, resolved.UseUnsignedIntegerSemantics),
-			BuiltinBinaryOperatorKind.IntegerComparison => EmitIntegerComparison(bin.Operator, left, right, resolved.IsUnsignedIntegerComparison),
-			BuiltinBinaryOperatorKind.BooleanComparison => EmitIntegerComparison(bin.Operator, left, right),
-			BuiltinBinaryOperatorKind.StringComparison => EmitIntegerComparison(bin.Operator, left, right),
-			BuiltinBinaryOperatorKind.NativeDelegateEquality => EmitIntegerComparison(bin.Operator, left, right),
-			BuiltinBinaryOperatorKind.EnumComparison => EmitIntegerComparison(bin.Operator, left, right),
-			BuiltinBinaryOperatorKind.RawPointerComparison => EmitIntegerComparison(bin.Operator, left, right),
-			BuiltinBinaryOperatorKind.IntegerBitwise => bin.Operator switch
+			BuiltinBinaryOperatorKind.FloatingArithmetic => EmitFloatingArithmetic(resolved.Operator, left, right),
+			BuiltinBinaryOperatorKind.FloatingComparison => EmitFloatingComparison(resolved.Operator, left, right),
+			BuiltinBinaryOperatorKind.IntegerArithmetic => EmitIntegerArithmetic(resolved.Operator, left, right, resolved.UseUnsignedIntegerSemantics),
+			BuiltinBinaryOperatorKind.IntegerComparison => EmitIntegerComparison(resolved.Operator, left, right, resolved.IsUnsignedIntegerComparison),
+			BuiltinBinaryOperatorKind.BooleanComparison => EmitIntegerComparison(resolved.Operator, left, right),
+			BuiltinBinaryOperatorKind.StringComparison => EmitIntegerComparison(resolved.Operator, left, right),
+			BuiltinBinaryOperatorKind.NativeDelegateEquality => EmitIntegerComparison(resolved.Operator, left, right),
+			BuiltinBinaryOperatorKind.EnumComparison => EmitIntegerComparison(resolved.Operator, left, right),
+			BuiltinBinaryOperatorKind.RawPointerComparison => EmitIntegerComparison(resolved.Operator, left, right),
+			BuiltinBinaryOperatorKind.IntegerBitwise => resolved.Operator switch
 			{
 				"&" => Builder.BuildAnd(left, right),
 				"|" => Builder.BuildOr(left, right),
 				"^" => Builder.BuildXor(left, right),
-				_ => throw new InvalidOperationException($"Unexpected bitwise operator '{bin.Operator}'."),
+				_ => throw new InvalidOperationException($"Unexpected bitwise operator '{resolved.Operator}'."),
 			},
-			BuiltinBinaryOperatorKind.FlagsBitwise => bin.Operator switch
+			BuiltinBinaryOperatorKind.FlagsBitwise => resolved.Operator switch
 			{
 				"&" => Builder.BuildAnd(left, right),
 				"|" => Builder.BuildOr(left, right),
 				"^" => Builder.BuildXor(left, right),
-				_ => throw new InvalidOperationException($"Unexpected flags operator '{bin.Operator}'."),
+				_ => throw new InvalidOperationException($"Unexpected flags operator '{resolved.Operator}'."),
 			},
 			BuiltinBinaryOperatorKind.ShiftLeft => Builder.BuildShl(left, right),
 			BuiltinBinaryOperatorKind.ShiftRightArithmetic => Builder.BuildAShr(left, right),
 			BuiltinBinaryOperatorKind.ShiftRightLogical => Builder.BuildLShr(left, right),
 			_ => throw new InvalidOperationException(
-				$"Unsupported canonical builtin binary operation '{resolved.BuiltinOperatorKind}' for '{bin.Operator}'."),
+				$"Unsupported canonical builtin binary operation '{resolved.BuiltinOperatorKind}' for '{resolved.Operator}'."),
 		};
+	}
+
+	/// <summary>
+	/// Emits the composable integer-edge runtime guards declared by the bound operation. Each guard
+	/// traps through the canonical fatal runtime path so the invalid LLVM instruction never executes.
+	/// </summary>
+	private void EmitIntegerEdgeGuards(ResolvedBinaryExpression resolved, LLVMValueRef left, LLVMValueRef right)
+	{
+		if (resolved.IntegerEdgeCheckDivisorNonZero)
+		{
+			GuardTrap(
+				Builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, right, LLVMValueRef.CreateConstInt(right.TypeOf, 0), "edge_div_zero"),
+				"divzero");
+
+			if (resolved.IntegerEdgeCheckSignedMinMinusOne)
+			{
+				var width = resolved.IntegerEdgeValueBitWidth;
+				var isMin = Builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, left,
+					LLVMValueRef.CreateConstInt(left.TypeOf, 1UL << (width - 1)), "edge_lhs_is_min");
+				var isMinusOne = Builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, right,
+					LLVMValueRef.CreateConstInt(right.TypeOf, ulong.MaxValue), "edge_rhs_is_minus_one");
+				GuardTrap(Builder.BuildAnd(isMin, isMinusOne, "edge_min_pair"), "min");
+			}
+		}
+		else if (resolved.IntegerEdgeCheckShiftCountDomain)
+		{
+			var width = resolved.IntegerEdgeValueBitWidth;
+			if (resolved.RightConversion is { } rightConversion
+				&& TypeSymbol.IsSignedIntegerType(rightConversion.ValueType))
+			{
+				GuardTrap(
+					Builder.BuildICmp(LLVMIntPredicate.LLVMIntSLT, right, LLVMValueRef.CreateConstInt(right.TypeOf, 0), "edge_shift_neg"),
+					"shiftneg");
+			}
+
+			GuardTrap(
+				Builder.BuildICmp(LLVMIntPredicate.LLVMIntUGE, right, LLVMValueRef.CreateConstInt(right.TypeOf, (ulong)width), "edge_shift_width"),
+				"shiftwidth");
+		}
+	}
+
+	/// <summary>Branches to the canonical trap on <paramref name="condition"/>, otherwise continues.</summary>
+	private void GuardTrap(LLVMValueRef condition, string label)
+	{
+		var currentBlock = Builder.InsertBlock.Parent;
+		var trapBlock = currentBlock.AppendBasicBlock($"edge_{label}_trap");
+		var okBlock = currentBlock.AppendBasicBlock($"edge_{label}_ok");
+		Builder.BuildCondBr(condition, trapBlock, okBlock);
+		Builder.PositionAtEnd(trapBlock);
+		emitRuntimeTrap();
+		Builder.PositionAtEnd(okBlock);
 	}
 
 	/// <summary>Applies exactly the operand conversion selected by semantic binary binding.</summary>
@@ -735,6 +801,129 @@ internal sealed class ExpressionEmitter(
 			">=" => Builder.BuildICmp(useUnsigned ? LLVMIntPredicate.LLVMIntUGE : LLVMIntPredicate.LLVMIntSGE, left, right),
 			_ => throw new InvalidOperationException($"Unknown integer comparison operator '{op}'."),
 		};
+
+	/// <summary>Returns whether <paramref name="op"/> is a frontend-desugared compound assignment operator.</summary>
+	private static bool IsCompoundBinaryOperator(string op)
+		=> op is "+" or "-" or "*" or "/" or "%" or "<<" or ">>" or ">>>" or "&" or "|" or "^";
+
+	/// <summary>
+	/// Routes a plain assignment to its store path, or to the dedicated single-evaluation path when the
+	/// right side is a frontend-desugared compound operation that reuses this exact left syntax node.
+	/// </summary>
+	private LLVMValueRef EmitAssignment(BinaryExpressionSyntax bin)
+	{
+		if (bin.Right is BinaryExpressionSyntax compound
+			&& ReferenceEquals(compound.Left, bin.Left)
+			&& IsCompoundBinaryOperator(compound.Operator))
+		{
+			return EmitCompoundStore(bin, compound);
+		}
+
+		return EmitAssignStore(bin);
+	}
+
+	/// <summary>
+	/// Lowers desugared compound assignments (x /= y, a[i] <<= n, ...) with exactly-once evaluation of
+	/// the left storage, the old value, and every right-side operand. The bound compound operation is
+	/// reused so integer-edge guards fire on the same values the arithmetic consumes, and the result is
+	/// coerced back to the target storage width before a single store.
+	/// </summary>
+	private LLVMValueRef EmitCompoundStore(BinaryExpressionSyntax bin, BinaryExpressionSyntax compound)
+	{
+		if (!BindingContext.ResolvedBinaryExpressions.TryGetValue(compound, out var resolved)
+			|| resolved.State != BinaryBindingState.Success
+			|| resolved.OperatorOverload is not null)
+		{
+			return EmitAssignStore(bin);
+		}
+
+		var target = ResolveCompoundTarget(bin.Left);
+		if (target is null)
+			return EmitAssignStore(bin);
+
+		var (address, targetType, tbaa) = target.Value;
+
+		var oldValue = Builder.BuildLoad2(LowerType(targetType), address, "compound_old");
+		var rhs = Emit(compound.Right);
+
+		var left = ApplyBinaryConversion(oldValue, resolved.LeftConversion
+			?? throw new InvalidOperationException("Compound binary binding is missing the left operand conversion."), "left");
+		var right = ApplyBinaryConversion(rhs, resolved.RightConversion
+			?? throw new InvalidOperationException("Compound binary binding is missing the right operand conversion."), "right");
+
+		var result = EmitResolvedPrimitiveBinary(resolved, left, right);
+
+		var coerced = coercion.CoerceIntegerWidth(result, resolved.ResultType!, targetType);
+		coerced = coercion.CoerceFloatWidth(coerced, resolved.ResultType!, targetType);
+		var store = Builder.BuildStore(coerced, address);
+		if (tbaa is not null)
+			aggregates.ApplyTbaa(tbaa, store);
+
+		return result;
+	}
+
+	/// <summary>
+	/// Resolves the storage address, semantic type, and TBAA metadata of a compound-assignment target.
+	/// Returns null for shapes the single-evaluation path does not yet handle (pointer-typed locals,
+	/// union targets, unrecognized identifiers), causing the caller to fall back to the general store path.
+	/// </summary>
+	private (LLVMValueRef Address, TypeSymbol Type, LLVMValueRef? Tbaa)? ResolveCompoundTarget(ExpressionSyntax left)
+	{
+		switch (left)
+		{
+			case IdentifierExpressionSyntax id:
+			{
+				if (Function.Locals.TryGetValue(id.Name, out var localPtr))
+				{
+					var type = Function.VariableTypes[id.Name];
+					if (type is PointerTypeSymbol or UnionTypeSymbol)
+						return null;
+					return (localPtr, type, null);
+				}
+
+				if (values.ResolveGlobalKey(id.Name) is { } globalKey
+					&& codegen.GlobalVariables.TryGetValue(globalKey, out var globalPtr))
+				{
+					var type = codegen.GlobalVariableTypes[globalKey];
+					if (type is UnionTypeSymbol)
+						return null;
+					return (globalPtr, type, null);
+				}
+
+				if (Function.Locals.TryGetValue("this", out var thisPtr)
+					&& Function.VariableTypes["this"] is PointerTypeSymbol thisPointer
+					&& thisPointer.ReferencedType is StructTypeSymbol thisStruct
+					&& thisStruct.FindField(id.Name) is not null)
+				{
+					var (fieldPtr, fieldType, _, tbaa) = aggregates.GetFieldPointer(id);
+					return (fieldPtr, fieldType, tbaa);
+				}
+
+				return null;
+			}
+
+			case MemberAccessExpressionSyntax member:
+			{
+				var (fieldPtr, fieldType, _, tbaa) = aggregates.GetFieldPointer(member);
+				return (fieldPtr, fieldType, tbaa);
+			}
+
+			case IndexExpressionSyntax index:
+			{
+				var (elementPtr, elementType, _, tbaa) = aggregates.GetFieldPointer(index);
+				return (elementPtr, elementType, tbaa);
+			}
+
+			case UnaryExpressionSyntax { Operator: "*" } deref:
+				return (Emit(deref.Operand), expressionTypes.Resolve(left), null);
+
+			case CallExpressionSyntax callLeft:
+				return (calls.Emit(callLeft), expressionTypes.Resolve(left), null);
+
+			default:
+				return null;
+		}
+	}
 
 	/// <summary>
 	/// Stores an assignment result into its bound destination while preserving cleanup, coercion, and ownership semantics.

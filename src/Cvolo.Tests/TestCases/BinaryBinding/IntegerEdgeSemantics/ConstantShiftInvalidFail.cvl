@@ -1,0 +1,7 @@
+// A compile-time constant shift count equal to or above the width must be rejected (CVL4212).
+
+int main()
+{
+    val int x = 1 << 32;
+    return x;
+}

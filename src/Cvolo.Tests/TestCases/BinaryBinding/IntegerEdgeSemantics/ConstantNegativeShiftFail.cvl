@@ -1,0 +1,7 @@
+// A compile-time constant negative shift count must be rejected (CVL4212).
+
+int main()
+{
+    val int x = 1 << -1;
+    return x;
+}

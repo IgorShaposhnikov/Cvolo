@@ -1,0 +1,20 @@
+// IR gauge: runtime div/rem and shift edges emit llvm.trap guards at -O0. The division guard
+// is `icmp eq` against the divisor, the shift-width guard is `icmp uge` against the width.
+
+int Divide(int a, int b)
+{
+    return a / b;
+}
+
+int ShiftCount()
+{
+    return 32;
+}
+
+int main()
+{
+    val int q = Divide(10, 0);
+    val int v = 1;
+    val int r = v << ShiftCount();
+    return q + r;
+}
