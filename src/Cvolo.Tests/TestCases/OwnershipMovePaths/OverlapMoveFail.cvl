@@ -1,0 +1,22 @@
+struct Resource
+{
+	int Id;
+}
+
+extension Resource
+{
+	~Resource() { }
+}
+
+struct Box
+{
+	Resource A;
+	int B;
+}
+
+int main()
+{
+	var Box p = Box { A: Resource { Id: 1 }, B: 0 };
+	p.A = p;
+	return 0;
+}

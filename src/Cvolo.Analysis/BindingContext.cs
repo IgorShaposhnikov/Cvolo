@@ -78,6 +78,21 @@ public sealed class BindingContext
 	public Dictionary<BinaryExpressionSyntax, ResolvedBinaryExpression> ResolvedBinaryExpressions { get; } = [];
 
 	/// <summary>
+	/// Semantic ownership decisions for assignments whose destination may contain an owned
+	/// resource-move value, keyed by the assignment (<c>=</c>) syntax node. Populated by the
+	/// ownership pass and consumed by code generation, which must never rediscover ownership
+	/// legality, cleanup plans, or overlap.
+	/// </summary>
+	public Dictionary<BinaryExpressionSyntax, Ownership.ResolvedAssignmentOperation> ResolvedAssignments { get; } = [];
+
+	/// <summary>
+	/// Source move paths for local declarations whose initializer transfers ownership out of an
+	/// owned projection (e.g. <c>var Resource x = pair.First;</c>). Keyed by declaration syntax.
+	/// Projection-aware cleanup consults these so the moved-from field is not destroyed twice.
+	/// </summary>
+	public Dictionary<VariableDeclarationSyntax, Ownership.MovePath> ResolvedDeclarationMoves { get; } = [];
+
+	/// <summary>
 	/// Canonical fallback (<c>??</c>) expression bindings, keyed by syntax node. Populated by
 	/// validation once declaration registration is complete. Tooling and code generation read these
 	/// descriptors so the runtime lowering, the result type and the diagnostics all agree on one

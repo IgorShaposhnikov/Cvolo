@@ -1,0 +1,32 @@
+using System;
+
+struct Resource
+{
+	int Id;
+}
+
+extension Resource
+{
+	~Resource()
+	{
+		Console.WriteLine($"drop={Id}");
+	}
+}
+
+struct Pair
+{
+	Resource First;
+	Resource Second;
+}
+
+void Consume(Resource resource)
+{
+}
+
+int main()
+{
+	var Pair pair = Pair { First: Resource { Id: 1 }, Second: Resource { Id: 2 } };
+	Consume(pair.First);
+	Console.WriteLine($"other={pair.Second.Id}");
+	return 0;
+}

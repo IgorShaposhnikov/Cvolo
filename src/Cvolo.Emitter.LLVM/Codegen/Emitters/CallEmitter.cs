@@ -56,6 +56,20 @@ internal sealed class CallEmitter(
 		return EmitCore(call, implicitThisPtr, paramOffset);
 	}
 
+	private static string? TryGetFieldPath(ExpressionSyntax expression)
+	{
+		switch (expression)
+		{
+			case IdentifierExpressionSyntax id:
+				return id.Name;
+			case MemberAccessExpressionSyntax member:
+				var prefix = TryGetFieldPath(member.Expression);
+				return prefix is null ? null : $"{prefix}.{member.MemberName}";
+			default:
+				return null;
+		}
+	}
+
 	private LLVMValueRef EmitCore(CallExpressionSyntax call, LLVMValueRef? implicitThisPtr, int paramOffset)
 	{
 		// Formatting-bound calls are consumed by the formatter pipeline before any ordinary call
@@ -298,6 +312,18 @@ internal sealed class CallEmitter(
 				&& paramUnion.Name == srcUnion.Name)
 			{
 				Function.MovedVars.Add(moveArg.Name);
+			}
+
+			// A resource-owning value passed by value out of a struct projection moves only that
+			// projection. Record the dotted path so projection-aware cleanup skips it and the moved
+			// resource is not destroyed a second time at scope exit.
+			if (paramTy is not null
+				&& paramTy is not PointerTypeSymbol
+				&& argExpr is MemberAccessExpressionSyntax
+				&& TryGetFieldPath(argExpr) is { } movedFieldPath
+				&& expressionTypes.Resolve(argExpr) is StructTypeSymbol or UnionTypeSymbol or ArrayTypeSymbol)
+			{
+				Function.MovedFieldPaths.Add(movedFieldPath);
 			}
 
 			var isVariadic = (astExterns.TryGetValue(emitName, out var ext) && ext.IsVariadic)

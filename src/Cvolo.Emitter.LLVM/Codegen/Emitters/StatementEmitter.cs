@@ -296,6 +296,13 @@ internal sealed class StatementEmitter(
 	/// </summary>
 	private void EmitVariableDeclaration(VariableDeclarationSyntax varDecl)
 	{
+		// Record field-level source moves so projection-aware cleanup skips the moved-from field.
+		if (BindingContext.ResolvedDeclarationMoves.TryGetValue(varDecl, out var declarationMove)
+			&& declarationMove.ToFieldPathString() is { } movedFieldPath)
+		{
+			Function.MovedFieldPaths.Add(movedFieldPath);
+		}
+
 		TypeSymbol? typeSymbol = null;
 		if (varDecl.Type is not null)
 		{

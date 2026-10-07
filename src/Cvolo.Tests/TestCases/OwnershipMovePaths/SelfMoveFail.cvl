@@ -1,0 +1,16 @@
+struct Resource
+{
+	int Id;
+}
+
+extension Resource
+{
+	~Resource() { }
+}
+
+int main()
+{
+	var Resource r = Resource { Id: 1 };
+	r = r;
+	return 0;
+}

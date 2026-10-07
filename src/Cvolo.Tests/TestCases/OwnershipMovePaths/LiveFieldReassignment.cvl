@@ -1,0 +1,28 @@
+using System;
+
+struct Resource
+{
+	int Id;
+}
+
+extension Resource
+{
+	~Resource()
+	{
+		Console.WriteLine($"drop={Id}");
+	}
+}
+
+struct Pair
+{
+	Resource First;
+	Resource Second;
+}
+
+int main()
+{
+	var Pair pair = Pair { First: Resource { Id: 1 }, Second: Resource { Id: 2 } };
+	pair.First = Resource { Id: 3 };
+	Console.WriteLine("after-field-reassign");
+	return 0;
+}

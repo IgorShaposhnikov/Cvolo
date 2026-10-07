@@ -74,7 +74,7 @@ internal sealed class CleanupEmitter(CodegenContext codegen)
 				}
 				else
 				{
-					EmitNestedFieldDestruction(thisPtr, structType, name);
+					EmitNestedFieldDestruction(thisPtr, structType, name, name, function);
 				}
 			}
 
@@ -136,7 +136,7 @@ internal sealed class CleanupEmitter(CodegenContext codegen)
 		}
 		else
 		{
-			EmitNestedFieldDestruction(enumeratorAlloca, structType, "__fe_enumerator");
+			EmitNestedFieldDestruction(enumeratorAlloca, structType, "__fe_enumerator", "__fe_enumerator", null);
 		}
 	}
 
@@ -292,10 +292,18 @@ internal sealed class CleanupEmitter(CodegenContext codegen)
 	}
 
 	/// <summary>
+	/// Destroys one owned value in place at <paramref name="valuePtr"/>, recursively handling
+	/// structs, resource-owning unions, and static arrays. Exposed so replacement lowering can
+	/// drop a live destination value before installing a replacement.
+	/// </summary>
+	public void EmitDestructionAt(LLVMValueRef valuePtr, TypeSymbol type, string name)
+		=> EmitElementDestructor(valuePtr, type, name);
+
+	/// <summary>
 	/// Emits in-place destruction for one value, recursively handling structs, resource-owning
 	/// unions, and static arrays.
 	/// </summary>
-	private void EmitElementDestructor(LLVMValueRef valuePtr, TypeSymbol type, string name)
+	private void EmitElementDestructor(LLVMValueRef valuePtr, TypeSymbol type, string name, string? path = null, FunctionCodegenContext? function = null)
 	{
 		switch (type)
 		{
@@ -310,7 +318,7 @@ internal sealed class CleanupEmitter(CodegenContext codegen)
 				}
 				else
 				{
-					EmitNestedFieldDestruction(valuePtr, structType, name);
+					EmitNestedFieldDestruction(valuePtr, structType, name, path ?? name, function);
 				}
 
 				return;
@@ -332,7 +340,7 @@ internal sealed class CleanupEmitter(CodegenContext codegen)
 	/// <summary>
 	/// Drops every resource-owning field of a struct that has no destructor of its own.
 	/// </summary>
-	private void EmitNestedFieldDestruction(LLVMValueRef valuePtr, StructTypeSymbol structType, string name)
+	private void EmitNestedFieldDestruction(LLVMValueRef valuePtr, StructTypeSymbol structType, string name, string path, FunctionCodegenContext? function)
 	{
 		var structLayout = codegen.Types.Lower(structType);
 		foreach (var field in structType.Fields)
@@ -342,12 +350,18 @@ internal sealed class CleanupEmitter(CodegenContext codegen)
 				continue;
 			}
 
+			var childPath = $"{path}.{field.Name}";
+			if (function is not null && function.MovedFieldPaths.Contains(childPath))
+			{
+				continue;
+			}
+
 			var fieldPtr = Builder.BuildGEP2(structLayout, valuePtr, new LLVMValueRef[]
 			{
 				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
 				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (ulong)codegen.AggregateLayout.GetFieldIndex(structType, field.Name))
 			}, $"{name}_f_{field.Name}");
-			EmitElementDestructor(fieldPtr, field.Type, name);
+			EmitElementDestructor(fieldPtr, field.Type, name, childPath, function);
 		}
 	}
 

@@ -1,0 +1,22 @@
+using System;
+
+struct Resource
+{
+	int Id;
+}
+
+extension Resource
+{
+	~Resource()
+	{
+		Console.WriteLine($"drop={Id}");
+	}
+}
+
+int main()
+{
+	var Resource resource = Resource { Id: 1 };
+	resource = Resource { Id: 2 };
+	Console.WriteLine("after-reassign");
+	return 0;
+}

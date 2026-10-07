@@ -1,0 +1,17 @@
+struct Resource
+{
+	int Id;
+}
+
+extension Resource
+{
+	~Resource() { }
+}
+
+int main()
+{
+	Resource[2] values;
+	int i = 0;
+	values[i] = Resource { Id: 1 };
+	return 0;
+}

@@ -1,0 +1,31 @@
+struct Resource
+{
+	int Id;
+}
+
+extension Resource
+{
+	~Resource() { }
+}
+
+struct Inner
+{
+	Resource R;
+}
+
+extension Inner
+{
+	~Inner() { }
+}
+
+struct Outer
+{
+	Inner I;
+}
+
+int main()
+{
+	var Outer x = Outer { I: Inner { R: Resource { Id: 1 } } };
+	var Resource moved = x.I.R;
+	return 0;
+}

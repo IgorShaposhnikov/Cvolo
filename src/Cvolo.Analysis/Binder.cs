@@ -25,5 +25,8 @@ public sealed class Binder
 
 		// Pass 4: Enforce Memory Safety (Borrow Checker, Moves, Lifetimes)
 		new SafetyPass(_context).Process(units);
+
+		// Pass 5: Bind flow-sensitive ownership decisions for replacement and partial-move cleanup
+		new OwnershipPass(_context).Process(units);
 	}
 }

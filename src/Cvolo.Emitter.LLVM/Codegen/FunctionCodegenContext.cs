@@ -35,6 +35,12 @@ internal sealed class FunctionCodegenContext
 	/// </summary>
 	public HashSet<string> MovedVars { get; } = [];
 	/// <summary>
+	/// Dotted field paths (for example <c>pair.First</c>) whose ownership has been moved out of
+	/// an aggregate local. Projection-aware cleanup must skip these fields so a moved resource is
+	/// not destroyed a second time.
+	/// </summary>
+	public HashSet<string> MovedFieldPaths { get; } = [];
+	/// <summary>
 	/// Names for which destruction or disposal has already been emitted.
 	/// </summary>
 	public HashSet<string> DisposedVars { get; } = [];

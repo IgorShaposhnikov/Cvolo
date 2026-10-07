@@ -1,6 +1,7 @@
 using System.Text;
 using Cvolo.Analysis;
 using Cvolo.Analysis.Semantics;
+using Cvolo.Analysis.Ownership;
 using Cvolo.Analysis.Symbols;
 using Cvolo.Analysis.Symbols.Base;
 using Cvolo.Analysis.Symbols.Collections;
@@ -946,11 +947,13 @@ internal sealed class ExpressionEmitter(
 			{
 				if (Function.Locals.TryGetValue(ctorId.Name, out var ptr))
 				{
+					EmitOwnershipPreStoreCleanup(bin, ptr, expressionTypes.Resolve(bin.Left), ctorId.Name);
 					calls.Emit(ctorCall, ptr);
 					return ptr;
 				}
 				else if (values.ResolveGlobalKey(ctorId.Name) is { } ctorGlobalKey && codegen.GlobalVariables.TryGetValue(ctorGlobalKey, out var ctorGlobalPtr))
 				{
+					EmitOwnershipPreStoreCleanup(bin, ctorGlobalPtr, expressionTypes.Resolve(bin.Left), ctorId.Name);
 					calls.Emit(ctorCall, ctorGlobalPtr);
 					return ctorGlobalPtr;
 				}
@@ -961,6 +964,7 @@ internal sealed class ExpressionEmitter(
 					if (structType?.FindField(ctorId.Name) is not null)
 					{
 						var (fieldPtr, _, _, _) = aggregates.GetFieldPointer(ctorId);
+						EmitOwnershipPreStoreCleanup(bin, fieldPtr, expressionTypes.Resolve(bin.Left), ctorId.Name);
 						calls.Emit(ctorCall, fieldPtr);
 						return fieldPtr;
 					}
@@ -969,24 +973,28 @@ internal sealed class ExpressionEmitter(
 			else if (bin.Left is MemberAccessExpressionSyntax m)
 			{
 				var (fieldPtr, _, _, _) = aggregates.GetFieldPointer(m);
+				EmitOwnershipPreStoreCleanup(bin, fieldPtr, expressionTypes.Resolve(bin.Left), m.MemberName);
 				calls.Emit(ctorCall, fieldPtr);
 				return fieldPtr;
 			}
 			else if (bin.Left is IndexExpressionSyntax idx)
 			{
 				var (elementPtr, _, _, _) = aggregates.GetFieldPointer(idx);
+				EmitOwnershipPreStoreCleanup(bin, elementPtr, expressionTypes.Resolve(bin.Left), "elem");
 				calls.Emit(ctorCall, elementPtr);
 				return elementPtr;
 			}
 			else if (bin.Left is UnaryExpressionSyntax { Operator: "*" } deref)
 			{
 				var targetPtr = Emit(deref.Operand);
+				EmitOwnershipPreStoreCleanup(bin, targetPtr, expressionTypes.Resolve(bin.Left), "deref");
 				calls.Emit(ctorCall, targetPtr);
 				return targetPtr;
 			}
 			else if (bin.Left is CallExpressionSyntax callLeft)
 			{
 				var targetPtr = calls.Emit(callLeft);
+				EmitOwnershipPreStoreCleanup(bin, targetPtr, expressionTypes.Resolve(bin.Left), "call_ret");
 				calls.Emit(ctorCall, targetPtr);
 				return targetPtr;
 			}
@@ -1024,6 +1032,7 @@ internal sealed class ExpressionEmitter(
 
 				if (bin.Right is NullLiteralExpressionSyntax && type is UnionTypeSymbol optionUnion && optionUnion.IsOption)
 				{
+					EmitOwnershipPreStoreCleanup(bin, ptr, type, id.Name);
 					var unionLayout = LowerType(optionUnion);
 
 					// Null-Pointer Optimization: store flat nullptr (None == zero) instead of a tag.
@@ -1061,14 +1070,7 @@ internal sealed class ExpressionEmitter(
 				}
 				else
 				{
-					if (type is UnionTypeSymbol reassignedUnion
-						&& cleanup.UnionNeedsTagCheckedCleanup(reassignedUnion)
-						&& bin.Right is StructInitializationExpressionSyntax
-						&& !Function.MovedVars.Contains(id.Name)
-						&& !Function.DisposedVars.Contains(id.Name))
-					{
-						cleanup.EmitUnionTagCheckedCleanup(id.Name, ptr, reassignedUnion);
-					}
+					EmitOwnershipPreStoreCleanup(bin, ptr, type, id.Name);
 
 					if (type is UnionTypeSymbol && bin.Right is StructInitializationExpressionSyntax reinit)
 					{
@@ -1183,12 +1185,7 @@ internal sealed class ExpressionEmitter(
 				Builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, (ulong)variantIndex), tagPtr);
 			}
 
-			if (fieldType is UnionTypeSymbol fieldUnion
-				&& cleanup.UnionNeedsTagCheckedCleanup(fieldUnion)
-				&& bin.Right is StructInitializationExpressionSyntax)
-			{
-				cleanup.EmitUnionTagCheckedCleanup(m.MemberName, fieldPtr, fieldUnion);
-			}
+			EmitOwnershipPreStoreCleanup(bin, fieldPtr, fieldType, m.MemberName);
 
 			if (fieldType is UnionTypeSymbol && bin.Right is StructInitializationExpressionSyntax fieldReinit)
 				aggregates.EmitStructInitializationInPlace(fieldReinit, fieldPtr);
@@ -1208,12 +1205,7 @@ internal sealed class ExpressionEmitter(
 		else if (bin.Left is IndexExpressionSyntax idx)
 		{
 			var (elementPtr, elementType, _, tbaa) = aggregates.GetFieldPointer(idx);
-			if (elementType is UnionTypeSymbol elemUnion
-				&& cleanup.UnionNeedsTagCheckedCleanup(elemUnion)
-				&& bin.Right is StructInitializationExpressionSyntax)
-			{
-				cleanup.EmitUnionTagCheckedCleanup("elem", elementPtr, elemUnion);
-			}
+			EmitOwnershipPreStoreCleanup(bin, elementPtr, elementType, "elem");
 
 			if (elementType is UnionTypeSymbol && bin.Right is StructInitializationExpressionSyntax elemReinit)
 				aggregates.EmitStructInitializationInPlace(elemReinit, elementPtr);
@@ -1235,12 +1227,7 @@ internal sealed class ExpressionEmitter(
 			var targetPtr = Emit(deref.Operand);
 			var targetType = expressionTypes.Resolve(bin.Left);
 
-			if (targetType is UnionTypeSymbol elemUnion
-				&& cleanup.UnionNeedsTagCheckedCleanup(elemUnion)
-				&& bin.Right is StructInitializationExpressionSyntax)
-			{
-				cleanup.EmitUnionTagCheckedCleanup("deref", targetPtr, elemUnion);
-			}
+			EmitOwnershipPreStoreCleanup(bin, targetPtr, targetType, "deref");
 
 			if (targetType is UnionTypeSymbol && bin.Right is StructInitializationExpressionSyntax elemReinit)
 			{
@@ -1266,12 +1253,7 @@ internal sealed class ExpressionEmitter(
 			// Emit the call. Because it returns 'refvar', LLVM returns the pointer directly.
 			var targetPtr = calls.Emit(callLeft);
 
-			if (targetType is UnionTypeSymbol elemUnion
-				&& cleanup.UnionNeedsTagCheckedCleanup(elemUnion)
-				&& bin.Right is StructInitializationExpressionSyntax)
-			{
-				cleanup.EmitUnionTagCheckedCleanup("call_ret", targetPtr, elemUnion);
-			}
+			EmitOwnershipPreStoreCleanup(bin, targetPtr, targetType, "call_ret");
 
 			if (targetType is UnionTypeSymbol && bin.Right is StructInitializationExpressionSyntax elemReinit)
 			{
@@ -1291,6 +1273,35 @@ internal sealed class ExpressionEmitter(
 		}
 
 		throw new InvalidOperationException("Invalid target assignment");
+	}
+
+	/// <summary>
+	/// Emits the pre-store ownership cleanup for an assignment destination whose previously-held
+	/// value is live. The decision of what to destroy was bound during analysis; the emitter only
+	/// materializes that destruction at the resolved destination address, before the new value is
+	/// installed.
+	/// </summary>
+	private void EmitOwnershipPreStoreCleanup(BinaryExpressionSyntax bin, LLVMValueRef destinationPtr, TypeSymbol destinationType, string name)
+	{
+		if (!BindingContext.ResolvedAssignments.TryGetValue(bin, out var operation))
+			return;
+
+		// A field projection whose ownership is transferred by this assignment must be skipped by
+		// the enclosing scope's projection-aware cleanup. Whole-root moves are handled through the
+		// existing name-based move/reset paths instead.
+		if (operation.SourceMovePath is { Depth: > 0 } sourcePath && sourcePath.ToFieldPathString() is { } movedFieldPath)
+			Function.MovedFieldPaths.Add(movedFieldPath);
+
+		switch (operation.DestinationCleanupPlan)
+		{
+			case DestinationCleanupPlan.WholeLive:
+				cleanup.EmitDestructionAt(destinationPtr, destinationType, name);
+				break;
+			case DestinationCleanupPlan.TagAwareUnionCleanup:
+				if (destinationType is UnionTypeSymbol unionType && cleanup.UnionNeedsTagCheckedCleanup(unionType))
+					cleanup.EmitUnionTagCheckedCleanup(name, destinationPtr, unionType);
+				break;
+		}
 	}
 
 	/// <summary>

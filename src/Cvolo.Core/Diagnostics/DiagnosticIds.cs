@@ -1333,4 +1333,39 @@ public static class DiagnosticIds
 	/// code generation, where W is the semantic width of the shifted value.
 	/// </summary>
 	public const string InvalidShiftCountConstant = "CVL4212";
+
+	/// <summary>
+	/// A resource-move value was assigned to itself (the source and destination move paths are
+	/// identical), which would destroy the value and then read it.
+	/// </summary>
+	public const string SelfMoveAssignment = "CVL4213";
+
+	/// <summary>
+	/// A resource-move assignment where one move path is an ancestor or descendant of the other,
+	/// so the source or destination would be destroyed while still in use.
+	/// </summary>
+	public const string OverlappingMoveAssignment = "CVL4214";
+
+	/// <summary>
+	/// A resource-owning field was moved out of an aggregate that has a user-defined destructor,
+	/// leaving the destructor with an obligation it cannot discharge.
+	/// </summary>
+	public const string PartialMoveFromDestructorAggregate = "CVL4215";
+
+	/// <summary>
+	/// A whole aggregate value was used after one of its owned fields had been moved out.
+	/// </summary>
+	public const string UseAfterPartialMove = "CVL4216";
+
+	/// <summary>
+	/// A resource-move operation through a dynamic index (source element not statically stable) is
+	/// rejected before code generation.
+	/// </summary>
+	public const string DynamicIndexOwnershipUnsupported = "CVL4217";
+
+	/// <summary>
+	/// A resource-move assignment whose source may alias the destination through a path the compiler
+	/// cannot prove disjoint.
+	/// </summary>
+	public const string UnknownAliasedMoveAssignment = "CVL4218";
 }
