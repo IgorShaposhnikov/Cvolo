@@ -130,4 +130,16 @@ public sealed class ResolvedBinaryExpression
 	public TypeSymbol? ErrorOwnerType { get; }
 	public bool IsUserDefined => OperatorOverload is not null;
 	public bool IsSuccess => State == BinaryBindingState.Success;
+
+	/// <summary>
+	/// Whether this builtin integer comparison orders by unsigned semantics. Derived solely from the
+	/// canonical common integer type recorded during binding: an unsigned common type inside the
+	/// numeric-integer domain selects unsigned LLVM predicates. char and enum operands are not part
+	/// of that domain (see <see cref="TypeSymbol.IsNumericIntegerType"/>) and keep existing lowering.
+	/// </summary>
+	public bool IsUnsignedIntegerComparison =>
+		BuiltinOperatorKind == BuiltinBinaryOperatorKind.IntegerComparison
+		&& OperationType is { } operationType
+		&& TypeSymbol.IsNumericIntegerType(operationType)
+		&& !TypeSymbol.IsSignedIntegerType(operationType);
 }

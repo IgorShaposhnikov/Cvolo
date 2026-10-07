@@ -1,0 +1,97 @@
+// Runtime regression for unsigned integer comparison lowering (INC "Unsigned Integer
+// Comparison Lowering"): relational operators on builtin integer types must select LLVM
+// signed/unsigned predicates from the canonical common semantic type recorded by the
+// binder -- never from an operand's bit width and never from "either operand is unsigned".
+// This fixture validates high-bit and 0/MAX boundaries for every covered width, signed
+// controls, nuint/nint target-width behavior, and mixed-width promotion. It returns the
+// number of failed assertions (zero means every check passed).
+
+int main()
+{
+    int fails = 0;
+
+    // uint high bit must compare as unsigned.
+    val uint u4g = 4000000000U;
+    val uint u1 = 1U;
+    if (!(u4g > u1)) fails++;
+    if (!(u1 < u4g)) fails++;
+    if (u4g < u1) fails++;
+
+    // uint boundaries.
+    val uint u0 = 0U;
+    val uint uMax = 0xFFFFFFFFU;
+    if (!(uMax > u0)) fails++;
+    if (u0 > uMax) fails++;
+
+    // ulong full range.
+    val ulong L0 = 0UL;
+    val ulong LMax = 0xFFFFFFFFFFFFFFFFUL;
+    if (!(LMax > L0)) fails++;
+    if (L0 > LMax) fails++;
+
+    // ushort high bit + boundaries.
+    val ushort s0 = 0;
+    val ushort sMax = 65535;
+    if (!(sMax > s0)) fails++;
+    if (s0 > sMax) fails++;
+
+    // byte high bit + boundaries.
+    val byte b0 = 0;
+    val byte bMax = 255;
+    if (!(bMax > b0)) fails++;
+    if (b0 > bMax) fails++;
+
+    // nuint / nint (target width) high-bit controls.
+    val nuint nb = 8;
+    val nuint nz = 0;
+    if (!(nb > nz)) fails++;
+    val nint m1 = -5;
+    val nint mz = 0;
+    if (!(m1 < mz)) fails++;
+    if (m1 > mz) fails++;
+
+    // Signed controls: the same expressions must keep signed semantics.
+    val int iNeg = -1;
+    val int iZero = 0;
+    if (!(iNeg < iZero)) fails++;
+    if (iNeg > iZero) fails++;
+    val long lNeg = -9223372036854775807;
+    val long lZero = 0;
+    if (!(lNeg < lZero)) fails++;
+    val sbyte sbNeg = -128;
+    val sbyte sbPos = 127;
+    if (!(sbNeg < sbPos)) fails++;
+    val short shNeg = -32768;
+    val short shPos = 32767;
+    if (!(shNeg < shPos)) fails++;
+
+    // Mixed widths obey promotion to the canonical common type.
+    val long la = -1;
+    val uint ub = 1;
+    if (!(la < ub)) fails++;          // int-ish operands widen to signed long.
+    val long lc = 10;
+    val uint uc = 4000000000U;
+    if (!(lc < uc)) fails++;          // still signed long: 10 < 4000000000.
+    val uint ua = 4000000000U;
+    val int ia = -5;
+    if (ua > ia) fails++;             // same width, left uint: -5 unsigns to a huge value.
+    if (u1 > ia) fails++;             // 1U > -5: unsigned unsigns the negative -> false.
+    val byte ba = 200;
+    val ushort usa = 100;
+    if (!(ba > usa)) fails++;         // byte + ushort -> unsigned ushort.
+    val short sa = -30000;
+    val ushort sbb = 1;
+    if (!(sa < sbb)) fails++;         // short + ushort -> signed short (tie takes left).
+    val int bigI = 70000;
+    val ushort smallS = 100;
+    if (!(bigI > smallS)) fails++;    // int + ushort -> signed int.
+
+    // Equality stays bitwise after coercion.
+    val int iEq = -1;
+    val uint uEq = 1;
+    if (iEq == uEq) fails++;
+    if (!(u4g != u1)) fails++;
+    if (u4g == u1) fails++;
+
+    return fails;
+}

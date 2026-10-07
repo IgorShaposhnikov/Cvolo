@@ -151,6 +151,14 @@ internal sealed class GlobalEmitter
 				}
 
 				return LLVMValueRef.CreateConstNull(llvmType);
+			// Integer and floating equality/relational comparisons fold like their runtime lowering:
+			// signedness is taken from the canonical common semantic type and float `!=` keeps the
+			// runtime's ordered semantics (NaN compares unequal to everything, including itself).
+			case BinaryExpressionSyntax binary when binary.Operator is "==" or "!=" or "<" or "<=" or ">" or ">=":
+				if (TryEvaluateComparison(binary, out var comparisonResult))
+					return LLVMValueRef.CreateConstInt(LLVMTypeRef.Int1, comparisonResult ? 1UL : 0UL);
+
+				return LLVMValueRef.CreateConstNull(llvmType);
 			case SizeofExpressionSyntax or AlignofExpressionSyntax or OffsetofExpressionSyntax:
 				return LLVMValueRef.CreateConstInt(llvmType, unchecked((ulong)LayoutConstantOf(initializer)));
 			default:
@@ -299,5 +307,105 @@ internal sealed class GlobalEmitter
 				integerValue = 0;
 				return false;
 		}
+	}
+
+	/// <summary>
+	/// Folds a constant equality/relational comparison exactly like the runtime icmp/fcmp lowering:
+	/// each operand is first truncated to its source width, then widened to the canonical common
+	/// type using the source's signedness, then compared with the common type's signed/unsigned
+	/// ordering. Float comparisons mirror <see cref="ExpressionEmitter"/>'s ordered predicates.
+	/// </summary>
+	private bool TryEvaluateComparison(BinaryExpressionSyntax binary, out bool result)
+	{
+		result = false;
+
+		if (!BindingContext.ResolvedBinaryExpressions.TryGetValue(binary, out var binding) || !binding.IsSuccess
+			|| binding.LeftConversion is null || binding.RightConversion is null)
+			return false;
+
+		if (binding.BuiltinOperatorKind == BuiltinBinaryOperatorKind.IntegerComparison
+			&& binding.OperationType is { } integerType
+			&& TypeSymbol.IsNumericIntegerType(integerType))
+		{
+			if (!TryEvaluateConstant(binary.Left, out _, out _, out var leftInteger)
+				|| !TryEvaluateConstant(binary.Right, out _, out _, out var rightInteger))
+				return false;
+
+			var commonWidth = TypeSymbol.IntegerBitWidth(integerType);
+			var useUnsigned = binding.IsUnsignedIntegerComparison;
+			var leftValue = CoerceToCommonWidth((ulong)leftInteger, binding.LeftConversion.ValueType, commonWidth, useUnsigned);
+			var rightValue = CoerceToCommonWidth((ulong)rightInteger, binding.RightConversion.ValueType, commonWidth, useUnsigned);
+
+			result = binary.Operator switch
+			{
+				"==" => leftValue == rightValue,
+				"!=" => leftValue != rightValue,
+				"<" when useUnsigned => leftValue < rightValue,
+				">" when useUnsigned => leftValue > rightValue,
+				"<=" when useUnsigned => leftValue <= rightValue,
+				">=" when useUnsigned => leftValue >= rightValue,
+				"<" => (long)leftValue < (long)rightValue,
+				">" => (long)leftValue > (long)rightValue,
+				"<=" => (long)leftValue <= (long)rightValue,
+				">=" => (long)leftValue >= (long)rightValue,
+				_ => false,
+			};
+			return true;
+		}
+
+		if (binding.BuiltinOperatorKind == BuiltinBinaryOperatorKind.FloatingComparison)
+		{
+			if (!TryEvaluateConstant(binary.Left, out _, out var leftDouble, out _)
+				|| !TryEvaluateConstant(binary.Right, out _, out var rightDouble, out _))
+				return false;
+
+			var isNaN = double.IsNaN(leftDouble) || double.IsNaN(rightDouble);
+			result = binary.Operator switch
+			{
+				"==" => leftDouble == rightDouble,
+				"!=" => !isNaN && leftDouble != rightDouble,
+				"<" => leftDouble < rightDouble,
+				">" => leftDouble > rightDouble,
+				"<=" => leftDouble <= rightDouble,
+				">=" => leftDouble >= rightDouble,
+				_ => false,
+			};
+			return true;
+		}
+
+		return false;
+	}
+
+	/// <summary>
+	/// Reduces a folded 64-bit host pattern to the canonical common width using the source's own
+	/// width and signedness. For unsigned comparisons the result is the zero-extended common-width
+	/// pattern (compared as <see cref="ulong"/>). For signed comparisons the result is sign-extended
+	/// to 64 bits so casting to <see cref="long"/> always yields the true common-type value,
+	/// including widths below 64 where the pattern is re-sign-extended at the common width.
+	/// </summary>
+	private static ulong CoerceToCommonWidth(ulong raw, TypeSymbol sourceType, int commonWidth, bool useUnsigned)
+	{
+		var sourceWidth = TypeSymbol.IntegerBitWidth(sourceType);
+		var sourceMask = sourceWidth == 64 ? ulong.MaxValue : (1UL << sourceWidth) - 1;
+		var truncated = raw & sourceMask;
+
+		if (!useUnsigned)
+		{
+			var sourceSigned = TypeSymbol.IsSignedIntegerType(sourceType);
+			var signExtended = sourceSigned && (truncated & (1UL << (sourceWidth - 1))) != 0
+				? truncated | ~sourceMask
+				: truncated;
+
+			if (commonWidth == 64)
+				return signExtended;
+
+			var commonMask = (1UL << commonWidth) - 1;
+			var atCommon = signExtended & commonMask;
+			return (atCommon & (1UL << (commonWidth - 1))) != 0
+				? atCommon | ~commonMask
+				: atCommon;
+		}
+
+		return commonWidth >= 64 ? truncated : truncated & ((1UL << commonWidth) - 1);
 	}
 }

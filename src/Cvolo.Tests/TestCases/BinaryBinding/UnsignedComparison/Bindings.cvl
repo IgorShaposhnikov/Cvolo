@@ -1,0 +1,41 @@
+// Binder-level fixture for unsigned integer comparison lowering. No System reference --
+// this file is analyzed in-process (without Base library binding) so the recorded
+// ResolvedBinaryExpression shapes can be asserted exactly: OperationType is the canonical
+// common type and IsUnsignedIntegerComparison derives the predicate decision from it.
+
+struct Vec
+{
+    int X;
+    int Y;
+}
+
+public extension Vec
+{
+    public bool operator <(Vec left, Vec right)
+    {
+        return left.X < right.X;
+    }
+}
+
+void Probe()
+{
+    val uint l = 0U;
+    val uint r = 0U;
+    bool sameUnsigned = l > r;
+
+    val int i = 0;
+    val long j = 0;
+    bool mixedSignedWidens = i < j;
+
+    val byte x = 0;
+    val ushort y = 0;
+    bool mixedToUnsigned = x > y;
+
+    val char p = 'a';
+    val char q = 'b';
+    bool charOrder = p < q;
+
+    val Vec ml(X: 1, Y: 2);
+    val Vec mr(X: 3, Y: 4);
+    bool userDefined = ml < mr;
+}

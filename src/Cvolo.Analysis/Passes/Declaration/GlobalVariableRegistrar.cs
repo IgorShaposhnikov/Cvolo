@@ -446,6 +446,19 @@ internal sealed class GlobalVariableRegistrar(BindingContext context)
 	}
 
 	/// <summary>
+	/// Returns whether an expression is a pure constant-string spine (a literal or `+` concatenation
+	/// of literals). String comparisons are not foldable, so they are kept out of the compile-time
+	/// constant gate to avoid silently lowering to the zero constant.
+	/// </summary>
+	private static bool IsConstantStringExpression(ExpressionSyntax expr)
+		=> expr switch
+		{
+			StringLiteralExpressionSyntax => true,
+			BinaryExpressionSyntax { Operator: "+" } bin => IsConstantStringExpression(bin.Left) && IsConstantStringExpression(bin.Right),
+			_ => false
+		};
+
+	/// <summary>
 	/// Returns whether an initializer is one of the compile-time constant forms accepted for
 	/// global storage by the existing declaration rules.
 	/// </summary>
@@ -460,6 +473,13 @@ internal sealed class GlobalVariableRegistrar(BindingContext context)
 			UnaryExpressionSyntax { Operator: "-" } unary => IsCompileTimeConstant(unary.Operand),
 			BinaryExpressionSyntax { Operator: "+" or "-" or "*" or "/" or "%" } bin
 				=> IsCompileTimeConstant(bin.Left) && IsCompileTimeConstant(bin.Right),
+			// Relational and equality comparisons become legal compile-time constants so that
+			// integer/float global constants can participate in constant conditions. String spines
+			// are excluded: their comparisons cannot be folded and must keep failing the gate
+			// instead of silently lowering to the zero constant.
+			BinaryExpressionSyntax { Operator: "==" or "!=" or "<" or "<=" or ">" or ">=" } bin
+				=> !IsConstantStringExpression(bin.Left) && !IsConstantStringExpression(bin.Right)
+					&& IsCompileTimeConstant(bin.Left) && IsCompileTimeConstant(bin.Right),
 			StructInitializationExpressionSyntax structInit => structInit.Initializers.All(static m => IsCompileTimeConstant(m.Expression)),
 			SizeofExpressionSyntax or AlignofExpressionSyntax or OffsetofExpressionSyntax => true,
 			_ => false
@@ -480,8 +500,10 @@ internal sealed class GlobalVariableRegistrar(BindingContext context)
 				=> (TryFoldIntegerConstant(bin.Right, out var divisor) && divisor == 0)
 					|| ContainsConstantIntegerDivisionByZero(bin.Left)
 					|| ContainsConstantIntegerDivisionByZero(bin.Right),
-			BinaryExpressionSyntax { Operator: "+" or "-" or "*" } bin
-				=> ContainsConstantIntegerDivisionByZero(bin.Left) || ContainsConstantIntegerDivisionByZero(bin.Right),
+BinaryExpressionSyntax { Operator: "+" or "-" or "*" } bin
+			=> ContainsConstantIntegerDivisionByZero(bin.Left) || ContainsConstantIntegerDivisionByZero(bin.Right),
+		BinaryExpressionSyntax { Operator: "==" or "!=" or "<" or "<=" or ">" or ">=" } bin
+			=> ContainsConstantIntegerDivisionByZero(bin.Left) || ContainsConstantIntegerDivisionByZero(bin.Right),
 			UnaryExpressionSyntax { Operator: "-" } unary => ContainsConstantIntegerDivisionByZero(unary.Operand),
 			StructInitializationExpressionSyntax structInit => structInit.Initializers.Any(static m => ContainsConstantIntegerDivisionByZero(m.Expression)),
 			_ => false

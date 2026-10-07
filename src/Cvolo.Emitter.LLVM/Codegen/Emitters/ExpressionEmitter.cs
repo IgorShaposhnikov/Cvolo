@@ -589,7 +589,7 @@ internal sealed class ExpressionEmitter(
 			BuiltinBinaryOperatorKind.FloatingArithmetic => EmitFloatingArithmetic(bin.Operator, left, right),
 			BuiltinBinaryOperatorKind.FloatingComparison => EmitFloatingComparison(bin.Operator, left, right),
 			BuiltinBinaryOperatorKind.IntegerArithmetic => EmitIntegerArithmetic(bin.Operator, left, right, resolved.UseUnsignedIntegerSemantics),
-			BuiltinBinaryOperatorKind.IntegerComparison => EmitIntegerComparison(bin.Operator, left, right),
+			BuiltinBinaryOperatorKind.IntegerComparison => EmitIntegerComparison(bin.Operator, left, right, resolved.IsUnsignedIntegerComparison),
 			BuiltinBinaryOperatorKind.BooleanComparison => EmitIntegerComparison(bin.Operator, left, right),
 			BuiltinBinaryOperatorKind.StringComparison => EmitIntegerComparison(bin.Operator, left, right),
 			BuiltinBinaryOperatorKind.NativeDelegateEquality => EmitIntegerComparison(bin.Operator, left, right),
@@ -724,15 +724,15 @@ internal sealed class ExpressionEmitter(
 			_ => throw new InvalidOperationException($"Unknown integer arithmetic operator '{op}'."),
 		};
 
-	private LLVMValueRef EmitIntegerComparison(string op, LLVMValueRef left, LLVMValueRef right)
+	private LLVMValueRef EmitIntegerComparison(string op, LLVMValueRef left, LLVMValueRef right, bool useUnsigned = false)
 		=> op switch
 		{
 			"==" => Builder.BuildICmp(LLVMIntPredicate.LLVMIntEQ, left, right),
 			"!=" => Builder.BuildICmp(LLVMIntPredicate.LLVMIntNE, left, right),
-			"<" => Builder.BuildICmp(LLVMIntPredicate.LLVMIntSLT, left, right),
-			">" => Builder.BuildICmp(LLVMIntPredicate.LLVMIntSGT, left, right),
-			"<=" => Builder.BuildICmp(LLVMIntPredicate.LLVMIntSLE, left, right),
-			">=" => Builder.BuildICmp(LLVMIntPredicate.LLVMIntSGE, left, right),
+			"<" => Builder.BuildICmp(useUnsigned ? LLVMIntPredicate.LLVMIntULT : LLVMIntPredicate.LLVMIntSLT, left, right),
+			">" => Builder.BuildICmp(useUnsigned ? LLVMIntPredicate.LLVMIntUGT : LLVMIntPredicate.LLVMIntSGT, left, right),
+			"<=" => Builder.BuildICmp(useUnsigned ? LLVMIntPredicate.LLVMIntULE : LLVMIntPredicate.LLVMIntSLE, left, right),
+			">=" => Builder.BuildICmp(useUnsigned ? LLVMIntPredicate.LLVMIntUGE : LLVMIntPredicate.LLVMIntSGE, left, right),
 			_ => throw new InvalidOperationException($"Unknown integer comparison operator '{op}'."),
 		};
 

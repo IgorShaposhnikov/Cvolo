@@ -1,0 +1,23 @@
+// Constant folding for global comparison initializers must agree with the runtime
+// semantics recorded by the binder. Each global below folds to a constant i1 during
+// emission; main recomputes the same comparisons at runtime and returns a non-zero code
+// on any mismatch. A disagreement here means the fold picked the wrong predicate
+// (icmp ugt / icmp ult / icmp slt) for the canonical common type.
+
+global bool High = 4000000000U > 1U;              // uint unsigned:       true
+global bool Low = 0xFFFFFFFFU < 1U;               // uint unsigned:       false
+global bool SignedNeg = -9223372036854775807 < 0; // long signed:         true
+global bool NotEqual = 4000000000U != 1U;         // uint bitwise differ: true
+global bool FloatCmp = 1.5 < 2.0;                 // float ordered:       true
+global bool Equal = 4000000000U == 4000000000U;   // uint bitwise equal:  true
+
+int main()
+{
+    if (High != (4000000000U > 1U)) return 1;
+    if (Low != (0xFFFFFFFFU < 1U)) return 2;
+    if (SignedNeg != (-9223372036854775807 < 0)) return 3;
+    if (NotEqual != (4000000000U != 1U)) return 4;
+    if (FloatCmp != (1.5 < 2.0)) return 5;
+    if (Equal != (4000000000U == 4000000000U)) return 6;
+    return 0;
+}
