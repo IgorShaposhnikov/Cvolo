@@ -138,9 +138,12 @@ internal static class PackCompilation
 			: new HashSet<string>(sdkResolution.SystemSources.Select(Path.GetFullPath), pathComparer);
 		if (verbose)
 		{
-			Console.WriteLine("Files selected for compilation:");
+			Console.WriteLine(AnsiConsoleStyle.Header("Files selected for compilation:"));
 			foreach (var file in sourceFiles)
-				Console.WriteLine($"  -> {file}");
+			{
+				Console.WriteLine($"  -> {AnsiConsoleStyle.Path(file)}");
+			}
+
 			Console.WriteLine();
 		}
 

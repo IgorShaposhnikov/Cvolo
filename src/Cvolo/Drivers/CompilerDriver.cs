@@ -9,6 +9,8 @@ using Cvolo.Analysis.Symbols.Base;
 using Cvolo.Analysis.Symbols.FFI;
 using Cvolo.Core.AST;
 using Cvolo.Core.AST.Base;
+using Cvolo.Core.AST.Declarations;
+using Cvolo.Core.AST.Expressions;
 using Cvolo.Core.Diagnostics;
 using Cvolo.Core.Diagnostics.Reporters;
 using Cvolo.Emitter.LLVM;
@@ -96,13 +98,14 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 
 		if (verbose && !reporter.Exclusive && packageArtifacts.Count > 0)
 		{
-			Console.WriteLine("Package dependencies selected for build:");
+			Console.WriteLine(AnsiConsoleStyle.Header("Package dependencies selected for build:"));
 			foreach (var artifact in packageArtifacts)
 			{
 				var input = artifact.UsesSourceFallback
 					? $"Sector 5 source fallback ({artifact.SourceFallbackUnits.Count} file(s))"
-					: artifact.BitcodePath;
-				Console.WriteLine($"  -> {artifact.PackageId}@{artifact.Version}: {input}");
+					: artifact.BitcodePath ?? "<no bitcode input>";
+				Console.WriteLine($"  -> {AnsiConsoleStyle.Value($"{artifact.PackageId}@{artifact.Version}")}:");
+				Console.WriteLine($"     {AnsiConsoleStyle.Path(input)}");
 			}
 
 			Console.WriteLine();
@@ -112,10 +115,10 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 		// Machine reporters claim stdout, so verbose chatter is gated on !Exclusive.
 		if (verbose && !checkOnly && !reporter.Exclusive)
 		{
-			Console.WriteLine("Files selected for compilation:");
+			Console.WriteLine(AnsiConsoleStyle.Header("Files selected for compilation:"));
 			foreach (var file in project.SourceFiles)
 			{
-				Console.WriteLine($"  -> {file}");
+				Console.WriteLine($"  -> {AnsiConsoleStyle.Path(file)}");
 			}
 
 			Console.WriteLine();
@@ -128,6 +131,7 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 		// offsetof, emitted data layout) carry the target they were computed for.
 		binder.Context.NativeTargetDisplay = TargetTriple.HostTriple();
 		var asts = new List<CompilationUnitSyntax>();
+		var sourceNativeLibraryUsages = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
 		ISyntaxParser parser = new AntlrSyntaxParser();
 		CompilationContext? firstContext = null;
 		var baseSourceSet = new HashSet<string>(
@@ -157,6 +161,7 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 
 			asts.Add(ast!);
 			binder.Context.FileContexts[ast!] = context;
+			CollectNativeLibraryUsages(ast!, context.FilePath, sourceNativeLibraryUsages);
 		}
 
 		// External package/artifact units contribute declarations to semantic analysis. They were
@@ -399,7 +404,7 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 
 		if (verbose && linkerPath is not null && !reporter.Exclusive)
 		{
-			Console.WriteLine($"Linking using: {linkerName}...");
+			Console.WriteLine($"{AnsiConsoleStyle.Header("Linking using:")} {AnsiConsoleStyle.Value(linkerName ?? "<unknown>")}...");
 		}
 
 		// 8. Execute Strategy selection (IR only or full target linkage)
@@ -503,6 +508,12 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 		if (nativeConfigurationFailed)
 		{
 			return 1;
+		}
+
+		if (verbose && !reporter.Exclusive && linkInputs.Count > 0)
+		{
+			var nativeLibraryUsages = MergeNativeLibraryUsages(binder.Context.NativeLibraryUsages, sourceNativeLibraryUsages);
+			PrintNativeLibrariesSelectedForBuild(linkInputs, nativeLibraryUsages, nativeTargetLabel);
 		}
 
 		var linkResult = strategy.Execute(
@@ -805,6 +816,122 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 		return ($"{effectiveOs}/{arch ?? "any"}", arch, effectiveOs);
 	}
 
+	private static void PrintNativeLibrariesSelectedForBuild(
+		IReadOnlyList<NativeLinkInput> linkInputs,
+		IReadOnlyDictionary<string, HashSet<string>> usages,
+		string targetLabel)
+	{
+		Console.WriteLine(AnsiConsoleStyle.Header($"Native libraries selected for build ({targetLabel}):"));
+		foreach (var input in linkInputs.OrderBy(i => i.LibraryName, StringComparer.Ordinal))
+		{
+			var selectedInput = input.FullPath is not null
+				? input.FullPath
+				: $"system lookup (-l{input.SystemName ?? input.LibraryName})";
+			Console.WriteLine($"  -> {input.LibraryName}: {AnsiConsoleStyle.Path(selectedInput)}");
+
+			if (input.Origin != NativeLinkInput.ApplicationOrigin)
+				Console.WriteLine($"     origin: {AnsiConsoleStyle.Value(input.Origin)}");
+
+			Console.WriteLine($"     {AnsiConsoleStyle.Header("used by:")}");
+			if (usages.TryGetValue(input.LibraryName, out var files) && files.Count > 0)
+			{
+				foreach (var file in files.OrderBy(f => f, StringComparer.Ordinal))
+					Console.WriteLine($"       - {AnsiConsoleStyle.Path(file)}");
+			}
+			else if (input.Origin != NativeLinkInput.ApplicationOrigin)
+			{
+				Console.WriteLine($"       - {AnsiConsoleStyle.Muted($"package metadata ({input.Origin})")}");
+			}
+			else
+			{
+				Console.WriteLine($"       - {AnsiConsoleStyle.Muted("<source file unavailable>")}");
+			}
+		}
+
+		Console.WriteLine();
+	}
+
+	private static Dictionary<string, HashSet<string>> MergeNativeLibraryUsages(
+		IReadOnlyDictionary<string, HashSet<string>> binderUsages,
+		IReadOnlyDictionary<string, HashSet<string>> sourceUsages)
+	{
+		var merged = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+		foreach (var (libraryName, files) in binderUsages)
+		{
+			if (!merged.TryGetValue(libraryName, out var targetFiles))
+			{
+				targetFiles = new HashSet<string>(StringComparer.Ordinal);
+				merged[libraryName] = targetFiles;
+			}
+
+			foreach (var file in files)
+				targetFiles.Add(file);
+		}
+
+		foreach (var (libraryName, files) in sourceUsages)
+		{
+			if (!merged.TryGetValue(libraryName, out var targetFiles))
+			{
+				targetFiles = new HashSet<string>(StringComparer.Ordinal);
+				merged[libraryName] = targetFiles;
+			}
+
+			foreach (var file in files)
+				targetFiles.Add(file);
+		}
+
+		return merged;
+	}
+
+	private static void CollectNativeLibraryUsages(
+		CompilationUnitSyntax unit,
+		string filePath,
+		Dictionary<string, HashSet<string>> usages)
+	{
+		var members = unit.NamespaceDeclaration is { } ns ? ns.Members : unit.Members;
+		foreach (var member in members)
+		{
+			switch (member)
+			{
+				case ExternBlockSyntax block:
+					RecordLibraryImportUsage(block.Attributes, filePath, usages);
+					break;
+				case GlobalVariableDeclarationSyntax global when global.IsForeign:
+					RecordLibraryImportUsage(global.Attributes, filePath, usages);
+					break;
+			}
+		}
+	}
+
+	private static void RecordLibraryImportUsage(
+		IReadOnlyList<AttributeSyntax> attributes,
+		string filePath,
+		Dictionary<string, HashSet<string>> usages)
+	{
+		foreach (var attribute in attributes)
+		{
+			var name = attribute.Name.EndsWith("Attribute", StringComparison.Ordinal)
+				? attribute.Name[..^"Attribute".Length]
+				: attribute.Name;
+			if (!string.Equals(name, "LibraryImport", StringComparison.Ordinal))
+				continue;
+
+			if (attribute.Arguments.Count == 0 || attribute.ArgumentNames[0] is not null)
+				continue;
+
+			if (attribute.Arguments[0] is not StringLiteralExpressionSyntax literal)
+				continue;
+
+			if (!usages.TryGetValue(literal.Value, out var files))
+			{
+				files = new HashSet<string>(StringComparer.Ordinal);
+				usages[literal.Value] = files;
+			}
+
+			files.Add(filePath);
+		}
+	}
+
 	private static string? RequestedArchitecture(string triple)
 	{
 		var normalized = triple.ToLowerInvariant();
@@ -838,12 +965,12 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 			{
 				File.Copy(fullPath, destPath, overwrite: true);
 				if (verbose)
-					Console.WriteLine($"Copied native library: {Path.GetFileName(fullPath)} -> {binDirectory}");
+					Console.WriteLine($"{AnsiConsoleStyle.Success("Copied native library:")} {AnsiConsoleStyle.Value(Path.GetFileName(fullPath))} -> {AnsiConsoleStyle.Path(binDirectory)}");
 			}
 			catch (Exception ex)
 			{
 				if (verbose)
-					Console.Error.WriteLine($"Warning: Failed to copy {fullPath}: {ex.Message}");
+					Console.Error.WriteLine($"{AnsiConsoleStyle.Yellow}Warning:{AnsiConsoleStyle.Reset} Failed to copy {AnsiConsoleStyle.Path(fullPath)}: {ex.Message}");
 			}
 
 			// On Windows, import libraries (.lib) need their matching DLL at runtime. The DLL may
@@ -861,19 +988,19 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 						{
 							File.Copy(dllFile, dllDest, overwrite: true);
 							if (verbose)
-								Console.WriteLine($"Copied native DLL: {Path.GetFileName(dllFile)} -> {binDirectory}");
+								Console.WriteLine($"{AnsiConsoleStyle.Success("Copied native DLL:")} {AnsiConsoleStyle.Value(Path.GetFileName(dllFile))} -> {AnsiConsoleStyle.Path(binDirectory)}");
 						}
 						catch (Exception ex)
 						{
 							if (verbose)
-								Console.Error.WriteLine($"Warning: Failed to copy {dllFile}: {ex.Message}");
+								Console.Error.WriteLine($"{AnsiConsoleStyle.Yellow}Warning:{AnsiConsoleStyle.Reset} Failed to copy {AnsiConsoleStyle.Path(dllFile)}: {ex.Message}");
 						}
 					}
 				}
 				catch (Exception ex)
 				{
 					if (verbose)
-						Console.Error.WriteLine($"Warning: Failed to scan for DLLs in {dir}: {ex.Message}");
+						Console.Error.WriteLine($"{AnsiConsoleStyle.Yellow}Warning:{AnsiConsoleStyle.Reset} Failed to scan for DLLs in {AnsiConsoleStyle.Path(dir)}: {ex.Message}");
 				}
 			}
 		}

@@ -1,4 +1,5 @@
 using System.CommandLine;
+using Cvolo.Core.Diagnostics;
 using Cvolo.Drivers;
 using Cvolo.Packaging;
 using Cvolo.Projects;
@@ -108,7 +109,7 @@ internal sealed class BuildCommand : Command
 						parseResult.GetValue(verboseOption));
 					useProjectReferenceArtifacts = projectReferences.UseArtifacts;
 					if (parseResult.GetValue(verboseOption) && projectReferences.UseArtifacts)
-						Console.WriteLine($"ProjectReference artifacts: {projectReferences.BuiltProjects} built, {projectReferences.ReusedProjects} reused.\n");
+						Console.WriteLine($"{AnsiConsoleStyle.Header("ProjectReference artifacts:")} {AnsiConsoleStyle.Value(projectReferences.BuiltProjects.ToString())} built, {AnsiConsoleStyle.Value(projectReferences.ReusedProjects.ToString())} reused.\n");
 				}
 
 				if (LibraryBuildPipeline.TryBuild(path, isShared, llvmOnly, emitIrVal, emitLoweredVal, parseResult.GetValue(verboseOption), configurationVal, out var packageResult))
@@ -119,7 +120,7 @@ internal sealed class BuildCommand : Command
 						ProjectBuildPlan.RecordSuccessful(libraryBuild.Graph, libraryBuild.BuildKey, libraryBuild.Configuration);
 					}
 
-					Console.WriteLine($"Built {packageResult!.PackageId} {packageResult.Version} -> {packageResult.OutputPath}");
+					Console.WriteLine($"{AnsiConsoleStyle.Success("Built")} {AnsiConsoleStyle.Value(packageResult!.PackageId)} {AnsiConsoleStyle.Value(packageResult.Version.ToString())} -> {AnsiConsoleStyle.Path(packageResult.OutputPath)}");
 					Environment.Exit(0);
 					return;
 				}
@@ -167,15 +168,16 @@ internal sealed class BuildCommand : Command
 
 	private static void PrintProjectBuildPlan(ProjectBuildPlan plan)
 	{
-		Console.WriteLine("Project graph:");
+		Console.WriteLine(AnsiConsoleStyle.Header("Project graph:"));
 		foreach (var node in plan.Nodes)
 		{
 			var name = Path.GetFileNameWithoutExtension(node.Project.ProjectPath);
 			var status = node.RequiresBuild
 				? node.InputsChanged ? "dirty inputs" : "dirty dependency"
 				: "up-to-date";
-			Console.WriteLine($"  -> {name}: {status}");
+			Console.WriteLine($"  -> {AnsiConsoleStyle.Value(name)}: {AnsiConsoleStyle.Muted(status)}");
 		}
+
 		Console.WriteLine();
 	}
 
@@ -186,12 +188,14 @@ internal sealed class BuildCommand : Command
 
 		if (restore.LockFileUpdated || restore.InstalledPackages > 0)
 		{
-			Console.WriteLine($"Restored packages: {restore.InstalledPackages} installed, {restore.CachedPackages} cached.");
+			Console.WriteLine($"{AnsiConsoleStyle.Header("Restored packages:")} {AnsiConsoleStyle.Value(restore.InstalledPackages.ToString())} installed, {AnsiConsoleStyle.Value(restore.CachedPackages.ToString())} cached.");
 			return;
 		}
 
 		if (verbose)
-			Console.WriteLine("Restore up-to-date.");
+		{
+			Console.WriteLine(AnsiConsoleStyle.Muted("Restore up-to-date."));
+		}
 	}
 
 	private static IncrementalBuild? TryPrepareIncrementalBuild(

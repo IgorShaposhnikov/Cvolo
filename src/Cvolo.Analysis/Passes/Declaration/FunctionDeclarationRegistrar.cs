@@ -428,7 +428,10 @@ internal sealed class FunctionDeclarationRegistrar(BindingContext context)
 		// resolves the path for the current compilation target OS (see LinkStrategy). There is no
 		// frontend file-existence check: cross-compilation must not probe the host disk.
 		if (libraryName is not null)
+		{
 			context.NativeLibraries[libraryName] = new NativeLibraryInfo(libraryName, winPath, linuxPath, macPath);
+			context.RecordNativeLibraryUsage(libraryName);
+		}
 
 		// Legacy block-level public externs are still rejected; function declarations inside
 		// the block use their own visibility, defaulting to internal.

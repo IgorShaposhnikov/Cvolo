@@ -1,3 +1,4 @@
+using Cvolo.Core.Diagnostics;
 using Cvolo.Projects;
 
 namespace Cvolo.Strategies;
@@ -10,7 +11,7 @@ internal sealed class IrOnlyStrategy : ICompilationStrategy
 		// nothing needs to be finalized here.
 		if (verbose)
 		{
-			Console.WriteLine($"Generated LLVM IR: {llPath}");
+			Console.WriteLine($"{AnsiConsoleStyle.Success("Generated LLVM IR:")} {AnsiConsoleStyle.Path(llPath)}");
 		}
 
 		return 0;

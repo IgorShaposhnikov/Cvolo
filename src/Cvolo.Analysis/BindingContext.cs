@@ -259,6 +259,25 @@ public sealed class BindingContext
 	// Native libraries requested via [LibraryImport] on extern blocks, keyed by the bare
 	// library identifier; consumed by the linker strategy to emit -l/--library flags.
 	public Dictionary<string, NativeLibraryInfo> NativeLibraries { get; } = [];
+	/// <summary>
+	/// Source files that declare each logical native-library requirement. Used only for verbose
+	/// build diagnostics; the linker still consumes <see cref="NativeLibraries"/>.
+	/// </summary>
+	public Dictionary<string, HashSet<string>> NativeLibraryUsages { get; } = new(StringComparer.Ordinal);
+
+	public void RecordNativeLibraryUsage(string libraryName)
+	{
+		if (CurrentUnit is null || !FileContexts.TryGetValue(CurrentUnit, out var fileContext))
+			return;
+
+		if (!NativeLibraryUsages.TryGetValue(libraryName, out var files))
+		{
+			files = new HashSet<string>(StringComparer.Ordinal);
+			NativeLibraryUsages[libraryName] = files;
+		}
+
+		files.Add(fileContext.FilePath);
+	}
 	// Delegating-constructor targets (this(...) initializer), keyed by the delegating
 	// constructor's overloaded name; used by the code generator to emit the chained call.
 	public Dictionary<string, FunctionSymbol> ConstructorDelegationTargets { get; } = [];

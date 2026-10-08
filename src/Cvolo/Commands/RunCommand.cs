@@ -1,4 +1,5 @@
 using System.CommandLine;
+using Cvolo.Core.Diagnostics;
 using Cvolo.Drivers;
 using Cvolo.Packaging;
 
@@ -80,7 +81,7 @@ internal sealed class RunCommand : Command
 			{
 				var restore = _buildRestore.RestoreIfRequired(path, noRestoreVal);
 				if (restore is not null && (restore.LockFileUpdated || restore.InstalledPackages > 0))
-					Console.WriteLine($"Restored packages: {restore.InstalledPackages} installed, {restore.CachedPackages} cached.");
+					Console.WriteLine($"{AnsiConsoleStyle.Header("Restored packages:")} {AnsiConsoleStyle.Value(restore.InstalledPackages.ToString())} installed, {AnsiConsoleStyle.Value(restore.CachedPackages.ToString())} cached.");
 
 				ProjectBuildGraph? projectGraph = null;
 				string? projectBuildKey = null;

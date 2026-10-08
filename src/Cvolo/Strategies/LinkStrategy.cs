@@ -112,7 +112,7 @@ internal sealed class LinkStrategy(string binDirectory) : ICompilationStrategy
 
 		if (verbose)
 		{
-			Console.WriteLine($"Linking using: {linkerName}...");
+			Console.WriteLine($"{AnsiConsoleStyle.Header("Linking using:")} {AnsiConsoleStyle.Value(linkerName ?? "<unknown>")}...");
 		}
 
 		// Always capture linker output, including verbose builds. Tests and IDE callers
@@ -170,7 +170,7 @@ internal sealed class LinkStrategy(string binDirectory) : ICompilationStrategy
 					Console.Write(linkerStdout);
 				if (!string.IsNullOrWhiteSpace(linkerStderr))
 					Console.Error.Write(linkerStderr);
-				Console.WriteLine($"Built: {binaryPath}");
+				Console.WriteLine($"{AnsiConsoleStyle.Success("Built:")} {AnsiConsoleStyle.Path(binaryPath)}");
 			}
 
 			return 0;

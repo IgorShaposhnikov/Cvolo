@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using System.Text;
 using System.Text.Json;
+using Cvolo.Core.Diagnostics;
 using Cvolo.Core.Packages;
 using NSec.Cryptography;
 
@@ -50,10 +51,12 @@ public sealed class PackPipeline
 
 		if (options.Verbose)
 		{
-			Console.WriteLine($"Compiled {compile.SourceFiles.Count} project file(s) to LLVM IR.");
-			Console.WriteLine($"Packing targets:");
+			Console.WriteLine($"{AnsiConsoleStyle.Success("Compiled")} {AnsiConsoleStyle.Value(compile.SourceFiles.Count.ToString())} project file(s) to LLVM IR.");
+			Console.WriteLine(AnsiConsoleStyle.Header("Packing targets:"));
 			foreach (var target in targets)
-				Console.WriteLine($"  -> {target}");
+			{
+				Console.WriteLine($"  -> {AnsiConsoleStyle.Value(target)}");
+			}
 		}
 
 		// 4. Produce per-target object code and target-specific bitcode.

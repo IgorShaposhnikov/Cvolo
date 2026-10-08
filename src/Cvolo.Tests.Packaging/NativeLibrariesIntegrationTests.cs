@@ -186,6 +186,12 @@ public sealed class NativeLibrariesIntegrationTests : IDisposable
 		var (exitCode, output) = Compile(CreateDriver(), app, verbose: true);
 
 		Assert.NotEqual(0, exitCode);
+		Assert.Contains("\x1b[", output, StringComparison.Ordinal);
+		Assert.Contains("Native libraries selected for build", output, StringComparison.Ordinal);
+		Assert.Contains("  -> glfw3:", output, StringComparison.Ordinal);
+		Assert.Contains("native", output, StringComparison.Ordinal);
+		Assert.Contains("used by:", output, StringComparison.Ordinal);
+		Assert.Contains("Main.cvl", output, StringComparison.Ordinal);
 		var cvl1704Index = output.IndexOf(DiagnosticIds.NativeLibraryUnresolved, StringComparison.Ordinal);
 		Assert.True(cvl1704Index >= 0, output);
 		var rawIndex = output.IndexOf("error:", StringComparison.Ordinal);
@@ -605,9 +611,19 @@ public int Identity(int value) { return value; }
 
 		var driverType = typeof(ICompilerDriver).Assembly.GetType("Cvolo.Drivers.CompilerDriver", throwOnError: true)!;
 		var driver = Assert.IsAssignableFrom<ICompilerDriver>(Activator.CreateInstance(driverType, cache));
-		var (exitCode, output) = Compile(driver, Path.Combine(consumerDirectory, "LeakConsumer.cvlproj"));
+		var (exitCode, output) = Compile(driver, Path.Combine(consumerDirectory, "LeakConsumer.cvlproj"), verbose: true);
 
 		Assert.True(exitCode == 0, output);
+		Assert.Contains("\x1b[", output, StringComparison.Ordinal);
+		Assert.Contains("Package dependencies selected for build:", output, StringComparison.Ordinal);
+		Assert.Contains("  -> ", output, StringComparison.Ordinal);
+		Assert.Contains("LeakProbe@1.0.0", output, StringComparison.Ordinal);
+		Assert.Contains("Native libraries selected for build", output, StringComparison.Ordinal);
+		Assert.Contains("  -> cvolotest-leak-lib:", output, StringComparison.Ordinal);
+		Assert.Contains("origin:", output, StringComparison.Ordinal);
+		Assert.Contains("LeakProbe", output, StringComparison.Ordinal);
+		Assert.Contains("used by:", output, StringComparison.Ordinal);
+		Assert.Contains("Main.cvl", output, StringComparison.Ordinal);
 		Assert.DoesNotContain(DiagnosticIds.NativeLibraryUnresolved, output, StringComparison.Ordinal);
 		Assert.DoesNotContain(DiagnosticIds.NativeLibraryFallbackWarning, output, StringComparison.Ordinal);
 		Assert.DoesNotContain("leaked_from_package", output, StringComparison.Ordinal);

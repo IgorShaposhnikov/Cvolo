@@ -204,10 +204,14 @@ internal sealed class GlobalVariableRegistrar(BindingContext context)
 						ReportDiagnostic(attr, "Duplicate attribute '[LibraryImport]'.", DiagnosticIds.DuplicateAttributeLibraryImport);
 						continue;
 					}
+
 					sawLibraryImport = true;
 					(libraryName, winPath, linuxPath, macPath) = _attributes.ExtractLibraryImport(attr, libraryName, winPath, linuxPath, macPath);
 					if (libraryName is not null)
+					{
 						context.NativeLibraries[libraryName] = new NativeLibraryInfo(libraryName, winPath, linuxPath, macPath);
+						context.RecordNativeLibraryUsage(libraryName);
+					}
 					break;
 				case "ImportName":
 					if (sawImportName)
@@ -215,6 +219,7 @@ internal sealed class GlobalVariableRegistrar(BindingContext context)
 						ReportDiagnostic(attr, "Duplicate attribute '[ImportName]'.", DiagnosticIds.DuplicateAttributeImportName);
 						continue;
 					}
+
 					sawImportName = true;
 					importName = _attributes.ExtractImportName(attr);
 					break;
@@ -371,7 +376,10 @@ internal sealed class GlobalVariableRegistrar(BindingContext context)
 		string? macPath = null;
 		(libraryName, winPath, linuxPath, macPath) = _attributes.ExtractLibraryImport(attr, libraryName, winPath, linuxPath, macPath);
 		if (libraryName is not null)
+		{
 			context.NativeLibraries[libraryName] = new NativeLibraryInfo(libraryName, winPath, linuxPath, macPath);
+			context.RecordNativeLibraryUsage(libraryName);
+		}
 	}
 
 	private void ReportDiagnostic(SyntaxNode node, string message, string diagnosticId)
@@ -500,10 +508,10 @@ internal sealed class GlobalVariableRegistrar(BindingContext context)
 				=> (TryFoldIntegerConstant(bin.Right, out var divisor) && divisor == 0)
 					|| ContainsConstantIntegerDivisionByZero(bin.Left)
 					|| ContainsConstantIntegerDivisionByZero(bin.Right),
-BinaryExpressionSyntax { Operator: "+" or "-" or "*" } bin
-			=> ContainsConstantIntegerDivisionByZero(bin.Left) || ContainsConstantIntegerDivisionByZero(bin.Right),
-		BinaryExpressionSyntax { Operator: "==" or "!=" or "<" or "<=" or ">" or ">=" } bin
-			=> ContainsConstantIntegerDivisionByZero(bin.Left) || ContainsConstantIntegerDivisionByZero(bin.Right),
+			BinaryExpressionSyntax { Operator: "+" or "-" or "*" } bin
+						=> ContainsConstantIntegerDivisionByZero(bin.Left) || ContainsConstantIntegerDivisionByZero(bin.Right),
+			BinaryExpressionSyntax { Operator: "==" or "!=" or "<" or "<=" or ">" or ">=" } bin
+				=> ContainsConstantIntegerDivisionByZero(bin.Left) || ContainsConstantIntegerDivisionByZero(bin.Right),
 			UnaryExpressionSyntax { Operator: "-" } unary => ContainsConstantIntegerDivisionByZero(unary.Operand),
 			StructInitializationExpressionSyntax structInit => structInit.Initializers.Any(static m => ContainsConstantIntegerDivisionByZero(m.Expression)),
 			_ => false
