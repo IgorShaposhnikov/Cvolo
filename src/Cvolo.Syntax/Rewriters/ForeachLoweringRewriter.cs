@@ -68,7 +68,7 @@ public sealed class ForeachLoweringRewriter : AstRewriterBase
 					var destructors = ext.Destructors.Select(Rewrite).Cast<DestructorDeclarationSyntax>().ToList();
 					var constructors = ext.Constructors.Select(Rewrite).Cast<ConstructorDeclarationSyntax>().ToList();
 					var operators = ext.Operators.Select(Rewrite).Cast<OperatorDeclarationSyntax>().ToList();
-					return new ExtensionDeclarationSyntax(ext.Span, ext.ExtendedTypeName, methods, destructors, constructors, ext.GenericParameters, ext.ConformsTo, ext.Visibility, nameSpan: ext.NameSpan, conformsToSpan: ext.ConformsToSpan, operators: operators);
+					return new ExtensionDeclarationSyntax(ext.Span, ext.ExtendedTypeName, methods, destructors, constructors, ext.GenericParameters, ext.ConformsTo, ext.Visibility, ext.GenericParameterDefaults, nameSpan: ext.NameSpan, conformsToSpan: ext.ConformsToSpan, operators: operators, genericParameterConstraints: ext.GenericParameterConstraints);
 				}
 
 			case OperatorDeclarationSyntax op:
@@ -83,7 +83,7 @@ public sealed class ForeachLoweringRewriter : AstRewriterBase
 			case FunctionDeclarationSyntax func:
 				{
 					var body = func.Body != null ? (BlockStatementSyntax)Rewrite(func.Body) : null;
-					return new FunctionDeclarationSyntax(func.Span, func.ReturnType, func.Name, func.GenericParameters, func.Parameters, body, func.Attributes, func.Modifier, func.Receiver, func.Visibility, callingConvention: func.CallingConvention, bindingKind: func.BindingKind)
+					return new FunctionDeclarationSyntax(func.Span, func.ReturnType, func.Name, func.GenericParameters, func.Parameters, body, func.Attributes, func.Modifier, func.Receiver, func.Visibility, callingConvention: func.CallingConvention, bindingKind: func.BindingKind, genericParameterConstraints: func.GenericParameterConstraints, genericParameterDefaults: func.GenericParameterDefaults)
 					{
 						IsBuiltin = func.IsBuiltin,
 						BuiltinSpan = func.BuiltinSpan

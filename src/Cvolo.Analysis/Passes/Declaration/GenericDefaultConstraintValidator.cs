@@ -11,9 +11,10 @@ namespace Cvolo.Analysis.Passes.Declaration;
 internal sealed class GenericDefaultConstraintValidator(BindingContext context)
 {
 	/// <summary>
-	/// Re-checks every generic struct default against the declared constraints of the
-	/// corresponding type parameter. This runs after extension registration because
-	/// structural protocol conformance depends on the completed extension-method table.
+	/// Re-checks every generic struct, union, and top-level function default against the
+	/// declared constraints of the corresponding type parameter. This runs after extension
+	/// registration because structural protocol conformance depends on the completed
+	/// extension-method table.
 	/// </summary>
 	public void Validate(IEnumerable<CompilationUnitSyntax> units)
 	{
@@ -25,11 +26,36 @@ internal sealed class GenericDefaultConstraintValidator(BindingContext context)
 			var members = context.CurrentNamespace != null ? unit.NamespaceDeclaration!.Members : unit.Members;
 			foreach (var member in members)
 			{
-				if (member is not StructDeclarationSyntax structDecl)
-					continue;
+				IReadOnlyDictionary<string, List<string>> constraints;
+				IReadOnlyDictionary<string, string> defaults;
+				TextSpan span;
+				switch (member)
+				{
+					case StructDeclarationSyntax structDecl:
+						constraints = structDecl.GenericParameterConstraints;
+						defaults = structDecl.GenericParameterDefaults;
+						span = structDecl.Span;
+						break;
+					case UnionDeclarationSyntax unionDecl:
+						constraints = unionDecl.GenericParameterConstraints;
+						defaults = unionDecl.GenericParameterDefaults;
+						span = unionDecl.Span;
+						break;
+					case FunctionDeclarationSyntax functionDecl:
+						constraints = functionDecl.GenericParameterConstraints;
+						defaults = functionDecl.GenericParameterDefaults;
+						span = functionDecl.Span;
+						break;
+					case ExtensionDeclarationSyntax extensionDecl:
+						constraints = extensionDecl.GenericParameterConstraints;
+						defaults = extensionDecl.GenericParameterDefaults;
+						span = extensionDecl.Span;
+						break;
+					default:
+						continue;
+				}
 
-				if (structDecl.GenericParameterDefaults.Count == 0 &&
-					structDecl.GenericParameterConstraints.Count == 0)
+				if (defaults.Count == 0 && constraints.Count == 0)
 					continue;
 
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
@@ -38,22 +64,35 @@ internal sealed class GenericDefaultConstraintValidator(BindingContext context)
 				// parameter also declares a default. Previously a constrained parameter with
 				// no default was skipped entirely, so an unresolved contract vanished without
 				// any diagnostic and left the parameter silently unbound.
-				foreach (var (paramName, constraints) in structDecl.GenericParameterConstraints)
+				foreach (var (paramName, contractNames) in constraints)
 				{
-					foreach (var constraintName in constraints)
+					foreach (var constraintName in contractNames)
 					{
-						if (context.ResolveType(constraintName) is not null)
+						var openBracket = constraintName.IndexOf('<');
+						if (openBracket > 0)
+						{
+							// Constructed bound: only the contract head is resolvable before
+							// instantiation — its arguments may name this declaration's own
+							// generic parameters (e.g. `where T : Comparable<T>`), and resolving
+							// the full text would emit a spurious "unknown type argument" finding.
+							// Conformance of the substituted bound is checked at instantiation.
+							if (context.ResolveType(constraintName[..openBracket]) is not null)
+								continue;
+						}
+						else if (context.ResolveType(constraintName) is not null)
+						{
 							continue;
+						}
 
 						context.Diagnostics.Report(
 							currentFileContext,
-							structDecl.Span,
+							span,
 							$"Unknown contract '{constraintName}' in constraint for parameter '{paramName}'.",
 							DiagnosticIds.UnknownContractInConstraintForParameter);
 					}
 				}
 
-				foreach (var (paramName, defaultTypeName) in structDecl.GenericParameterDefaults)
+				foreach (var (paramName, defaultTypeName) in defaults)
 				{
 					// An unresolved name must never be swallowed. Report a stable id so the
 					// diagnostic survives from the binder to the editor instead of silently
@@ -64,25 +103,25 @@ internal sealed class GenericDefaultConstraintValidator(BindingContext context)
 					{
 						context.Diagnostics.Report(
 							currentFileContext,
-							structDecl.Span,
+							span,
 							$"Unknown type '{defaultTypeName}' in default for generic parameter '{paramName}'.",
 							DiagnosticIds.UnknownType);
 						continue;
 					}
 
-					if (!structDecl.GenericParameterConstraints.TryGetValue(paramName, out var constraints))
+					if (!constraints.TryGetValue(paramName, out var contractNames))
 						continue;
 
-					foreach (var constraintName in constraints)
+					foreach (var constraintName in contractNames)
 					{
 						if (context.ResolveType(constraintName) is not { } constraintType)
 							continue;
 
-						if (!context.TypeSatisfiesContract(defaultType, constraintType))
+						if (!context.SatisfiesConstraintConformance(defaultType, constraintType))
 						{
 							context.Diagnostics.Report(
 								currentFileContext,
-								structDecl.Span,
+								span,
 								$"Default type '{defaultTypeName}' does not satisfy constraint '{constraintName}' of generic parameter '{paramName}'.",
 								DiagnosticIds.DefaultTypeConstraintMismatch);
 						}

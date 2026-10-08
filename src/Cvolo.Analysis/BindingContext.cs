@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using Cvolo.Analysis.Contracts;
 using Cvolo.Analysis.Passes;
 using Cvolo.Analysis.Semantics;
 using Cvolo.Analysis.Symbols;
@@ -1619,33 +1620,6 @@ public sealed class BindingContext
 
 	private StructTypeSymbol InstantiateGenericStruct(StructDeclarationSyntax templateDecl, string templateMangledName, List<TypeSymbol> typeArgs, string? sourceName = null)
 	{
-		for (var i = 0; i < templateDecl.GenericParameters.Count && i < typeArgs.Count; i++)
-		{
-			var paramName = templateDecl.GenericParameters[i];
-			var concreteType = typeArgs[i];
-
-			if (templateDecl.GenericParameterConstraints.TryGetValue(paramName, out var requiredContracts))
-			{
-				foreach (var contractText in requiredContracts)
-				{
-					var contractType = ResolveType(contractText);
-					if (contractType is null)
-					{
-						var currentFileContext = FileContexts[CurrentUnit!];
-						Diagnostics.Report(currentFileContext, templateDecl.Span, $"Unknown contract '{contractText}' in constraint for parameter '{paramName}'.", DiagnosticIds.UnknownContractInConstraintForParameter);
-						continue;
-					}
-
-					if (!TypeSatisfiesContract(concreteType, contractType))
-					{
-						var currentFileContext = FileContexts[CurrentUnit!];
-						Diagnostics.Report(currentFileContext, templateDecl.Span,
-							$"Type '{concreteType.Name}' does not satisfy constraint '{contractText}' of generic parameter '{paramName}'.", DiagnosticIds.TypeDoesNotSatisfyConstraintOfGenericParameter);
-					}
-				}
-			}
-		}
-
 		var instName = $"{templateMangledName}<{string.Join(", ", typeArgs.Select(t => t.Name))}>";
 
 		// Save current active contexts
@@ -1663,6 +1637,8 @@ public sealed class BindingContext
 		{
 			substitutionMap[templateDecl.GenericParameters[i]] = typeArgs[i];
 		}
+
+		ValidateGenericConstraints(templateDecl.GenericParameters, templateDecl.GenericParameterConstraints, typeArgs, substitutionMap, templateDecl.Span);
 
 		var fields = new List<StructFieldSymbol>();
 
@@ -1812,7 +1788,7 @@ public sealed class BindingContext
 		return instantiated;
 	}
 
-	private static string SubstituteTypeString(string typeName, Dictionary<string, TypeSymbol> substitutionMap)
+	private static string SubstituteTypeString(string typeName, IReadOnlyDictionary<string, TypeSymbol> substitutionMap)
 	{
 		var result = typeName;
 		foreach (var kv in substitutionMap)
@@ -2084,6 +2060,13 @@ public sealed class BindingContext
 				: SymbolUnits.TryGetValue(templateMangledName, out var ownerUnit) ? ownerUnit : null;
 			extensionResolutionUnit = originalUnit;
 
+			// An owner-constrained extension block only applies to owner instantiations whose
+			// concrete type arguments satisfy its declared constraints. Skip the block entirely
+			// so inapplicable members never enter the concrete overload table; the block remains
+			// intact for instantiations that do satisfy it.
+			if (!ExtensionConstraintsSatisfied(extDecl, genericParams, typeArgs, substitutionMap, originalUnit))
+				continue;
+
 			// Monomorphize Methods & Destructors
 			foreach (var method in extDecl.Methods.Concat(extDecl.Destructors.Select(static d => d.ToFunctionDeclaration())))
 			{
@@ -2279,6 +2262,8 @@ public sealed class BindingContext
 		{
 			substitutionMap[templateDecl.GenericParameters[i]] = typeArgs[i];
 		}
+
+		ValidateGenericConstraints(templateDecl.GenericParameters, templateDecl.GenericParameterConstraints, typeArgs, substitutionMap, templateDecl.Span);
 
 		var fields = new List<UnionFieldSymbol>();
 		foreach (var field in templateDecl.Fields)
@@ -2886,6 +2871,205 @@ public sealed class BindingContext
 		if (simple.EndsWith("Attribute", StringComparison.Ordinal))
 			simple = simple[..^"Attribute".Length];
 		return simple;
+	}
+
+	private ContractService? _contractService;
+
+	/// <summary>Shared contract services used for generic-constraint conformance checks.</summary>
+	private ContractService Contracts => _contractService ??= new ContractService(this);
+
+	/// <summary>
+	/// The verdict for one substituted generic-parameter bound, carried through constraint-aware
+	/// overload applicability so a failed bound can be surfaced as the primary diagnostic only
+	/// after no viable candidate remains (Inc - Generic Constraint Semantic Parity §11.1).
+	/// </summary>
+	internal readonly record struct GenericConstraintEvaluation(
+		bool Passed,
+		bool Deferred,
+		bool UnknownContract,
+		string? SubstitutedText,
+		string? ParamName,
+		string? TypeName);
+
+	/// <summary>
+	/// Validates substituted generic-parameter constraints at concrete instantiation time
+	/// (structs, unions, and top-level generic functions). The constraint RHS is substituted
+	/// with the same map as field/parameter types, then resolved in the declaration's lexical
+	/// context; the substituted bound is checked for conformance with the concrete type
+	/// argument. Reports CVL4120 for an unknown contract and CVL4105 for a conformance failure.
+	/// </summary>
+	public void ValidateGenericConstraints(
+		IReadOnlyList<string> genericParameters,
+		IReadOnlyDictionary<string, List<string>> constraints,
+		IReadOnlyList<TypeSymbol> typeArgs,
+		IReadOnlyDictionary<string, TypeSymbol> substitutionMap,
+		TextSpan reportSpan)
+	{
+		if (constraints is null || constraints.Count == 0)
+			return;
+
+		for (var i = 0; i < genericParameters.Count && i < typeArgs.Count; i++)
+		{
+			var paramName = genericParameters[i];
+			if (!constraints.TryGetValue(paramName, out var requiredContracts))
+				continue;
+
+			var concreteType = typeArgs[i];
+
+			foreach (var contractText in requiredContracts)
+			{
+				var result = EvaluateConstraint(paramName, contractText, concreteType, substitutionMap);
+				if (result.Passed)
+					continue;
+
+				var currentFileContext = FileContexts[CurrentUnit!];
+				if (result.UnknownContract)
+				{
+					Diagnostics.Report(currentFileContext, reportSpan,
+						$"Unknown contract '{result.SubstitutedText}' in constraint for parameter '{paramName}'.",
+						DiagnosticIds.UnknownContractInConstraintForParameter);
+				}
+				else
+				{
+					Diagnostics.Report(currentFileContext, reportSpan,
+						$"Type '{concreteType.Name}' does not satisfy required constraint '{result.SubstitutedText}' for type parameter '{paramName}'.",
+						DiagnosticIds.TypeDoesNotSatisfyConstraintOfGenericParameter);
+				}
+			}
+		}
+	}
+
+	/// <summary>
+	/// Evaluates one substituted generic-parameter bound without reporting a diagnostic. A bound
+	/// that still references an enclosing active generic parameter or a type-parameter argument is
+	/// evidence-satisfied and deferred to the outer concrete instantiation (INC §12); a genuinely
+	/// unresolvable bound reports as an unknown contract (CVL4120); a conformance mismatch fails
+	/// (CVL4105). The reporting caller decides whether the failure is the primary diagnostic.
+	/// </summary>
+	internal GenericConstraintEvaluation EvaluateConstraint(
+		string paramName,
+		string contractText,
+		TypeSymbol concreteType,
+		IReadOnlyDictionary<string, TypeSymbol> substitutionMap)
+	{
+		var substitutedText = SubstituteTypeString(contractText, substitutionMap);
+
+		var contractType = ResolveType(substitutedText);
+		if (contractType is null)
+		{
+			// A bound referencing an enclosing generic scope (e.g. `where T : IThing<U>`
+			// inside an outer generic declaration) is deferred: the outer concrete
+			// instantiation re-validates the same evidence (INC §12 evidence propagation).
+			if (ContainsActiveGenericParameter(substitutedText))
+				return new GenericConstraintEvaluation(Passed: true, Deferred: true, UnknownContract: false, substitutedText, paramName, concreteType.Name);
+
+			return new GenericConstraintEvaluation(Passed: false, Deferred: false, UnknownContract: true, substitutedText, paramName, concreteType.Name);
+		}
+
+		// A type-parameter argument is evidence-satisfied by the enclosing generic's own
+		// declared bounds; concrete re-validation happens at the outer instantiation.
+		if (concreteType is TypeParameterSymbol)
+			return new GenericConstraintEvaluation(Passed: true, Deferred: true, UnknownContract: false, substitutedText, paramName, concreteType.Name);
+
+		if (!SatisfiesConstraintConformance(concreteType, contractType))
+			return new GenericConstraintEvaluation(Passed: false, Deferred: false, UnknownContract: false, substitutedText, paramName, concreteType.Name);
+
+		return new GenericConstraintEvaluation(Passed: true, Deferred: false, UnknownContract: false, substitutedText, paramName, concreteType.Name);
+	}
+
+	/// <summary>True when the substituted constraint text still names an active generic parameter.</summary>
+	private bool ContainsActiveGenericParameter(string typeText)
+	{
+		foreach (var token in Regex.Split(typeText, @"[<>,\.\s\*\[\]]+"))
+		{
+			if (token.Length > 0 && IsActiveGenericParameter(token))
+				return true;
+		}
+		return false;
+	}
+
+	/// <summary>
+	/// Conformance of a concrete type to a substituted constraint. Simple (non-generic) protocol
+	/// bounds keep the historical name-presence behavior; constructed generic protocol bounds use
+	/// full signature-aware structural conformance with substituted generic arguments; nominal
+	/// interface bounds use the registered interface-conformance relation.
+	/// </summary>
+	internal bool SatisfiesConstraintConformance(TypeSymbol type, TypeSymbol contract)
+	{
+		if (contract is InterfaceTypeSymbol iface)
+			return Contracts.ConformsToInterface(type, iface);
+
+		if (contract is ProtocolTypeSymbol proto)
+		{
+			if (proto.GenericParameters.Count == 0)
+				return TypeSatisfiesContract(type, contract);
+
+			// `where`-bound conformance is a compile-time capability check: the caller has already
+			// substituted the bound's type arguments, and the monomorphized body calls through the
+			// substituted type directly — no dispatch slot is written, so the protocol width-lock
+			// (layout safety for protocol-typed parameters/refvars, WidthLockFail) does not gate it.
+			return Contracts.ConformsToProtocol(type, proto, enforceWidthLock: false);
+		}
+
+		return TypeSatisfiesContract(type, contract);
+	}
+
+	/// <summary>
+	/// Whether an extension block's owner constraints hold for the concrete type arguments of the
+	/// owner instantiation being monomorphized. Unlike <see cref="ValidateGenericConstraints"/> this
+	/// filters silently: an inapplicable extension block is not a type error — its members are simply
+	/// not candidates on that instantiation, so they never pollute the concrete overload table or
+	/// serve as protocol-conformance evidence for a failing owner argument.
+	/// </summary>
+	private bool ExtensionConstraintsSatisfied(
+		ExtensionDeclarationSyntax extDecl,
+		IReadOnlyList<string> genericParams,
+		IReadOnlyList<TypeSymbol> typeArgs,
+		IReadOnlyDictionary<string, TypeSymbol> substitutionMap,
+		CompilationUnitSyntax? extensionUnit)
+	{
+		if (extDecl.GenericParameterConstraints.Count == 0)
+			return true;
+
+		var previousUnit = CurrentUnit;
+		var previousNamespace = CurrentNamespace;
+		try
+		{
+			if (extensionUnit is not null)
+			{
+				CurrentUnit = extensionUnit;
+				CurrentNamespace = extensionUnit.NamespaceDeclaration?.Name;
+			}
+
+			for (var i = 0; i < genericParams.Count && i < typeArgs.Count; i++)
+			{
+				var paramName = genericParams[i];
+				if (!extDecl.GenericParameterConstraints.TryGetValue(paramName, out var contractNames))
+					continue;
+
+				foreach (var contractText in contractNames)
+				{
+					var contractType = ResolveType(SubstituteTypeString(contractText, substitutionMap));
+					if (contractType is null)
+						return false;
+
+					// An open argument carries the enclosing generic's own evidence; it is
+					// re-checked when the enclosing instantiation binds concrete arguments.
+					if (typeArgs[i] is TypeParameterSymbol)
+						continue;
+
+					if (!SatisfiesConstraintConformance(typeArgs[i], contractType))
+						return false;
+				}
+			}
+		}
+		finally
+		{
+			CurrentUnit = previousUnit;
+			CurrentNamespace = previousNamespace;
+		}
+
+		return true;
 	}
 
 	public bool TypeSatisfiesContract(TypeSymbol type, TypeSymbol contract)

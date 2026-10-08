@@ -548,7 +548,8 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			callingConventionCtx: context.callingConvention(),
 			visibilityCtx: context.visibilityModifier(),
 			builtinToken: context.BUILTIN()?.Symbol,
-			leadingDot: null);
+			leadingDot: null,
+			whereClauses: context.whereClause());
 
 	private FunctionDeclarationSyntax BuildExtensionFunctionDeclaration(CvoloParser.ExtensionFunctionDeclarationContext context)
 		=> BuildFunctionDeclarationCore(
@@ -563,7 +564,8 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			callingConventionCtx: context.callingConvention(),
 			visibilityCtx: context.visibilityModifier(),
 			builtinToken: context.BUILTIN()?.Symbol,
-			leadingDot: context.DOT()?.Symbol);
+			leadingDot: context.DOT()?.Symbol,
+			whereClauses: null);
 
 	private FunctionDeclarationSyntax BuildFunctionDeclarationCore(
 		Antlr4.Runtime.ParserRuleContext declarationContext,
@@ -577,7 +579,8 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		CvoloParser.CallingConventionContext? callingConventionCtx,
 		CvoloParser.VisibilityModifierContext? visibilityCtx,
 		Antlr4.Runtime.IToken? builtinToken,
-		Antlr4.Runtime.IToken? leadingDot)
+		Antlr4.Runtime.IToken? leadingDot,
+		IEnumerable<CvoloParser.WhereClauseContext?>? whereClauses)
 	{
 		var returnType = GetReturnTypeName(returnTypeCtx);
 		var name = nameCtx.GetText();
@@ -647,13 +650,17 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				callingConvention = callingConvention[1..^1];
 		}
 
+		var (genericDefaults, genericConstraints) = BuildWhereClauses(whereClauses);
+
 		var function = new FunctionDeclarationSyntax(
 			SpanOf(declarationContext), returnType, name, generics, parameters, body, attributes, modifier, receiver,
 			GetVisibilityModifier(visibilityCtx),
 			nameSpan: SpanOf(nameCtx),
 			returnTypeSpan: SpanOf(returnTypeCtx),
 			callingConvention: callingConvention,
-			bindingKind: isAssociated ? FunctionBindingKind.Associated : FunctionBindingKind.Default);
+			bindingKind: isAssociated ? FunctionBindingKind.Associated : FunctionBindingKind.Default,
+			genericParameterConstraints: genericConstraints,
+			genericParameterDefaults: genericDefaults);
 		if (builtinToken is not null)
 		{
 			function.IsBuiltin = true;
@@ -715,11 +722,6 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		return attributes;
 	}
 
-	private (Dictionary<string, string> Defaults, Dictionary<string, List<string>> Constraints) BuildWhereClause(CvoloParser.WhereClauseContext? whereCtx)
-	{
-		return BuildWhereClauses(whereCtx != null ? [whereCtx] : []);
-	}
-
 	private (Dictionary<string, string> Defaults, Dictionary<string, List<string>> Constraints) BuildWhereClauses(IEnumerable<CvoloParser.WhereClauseContext?> whereClauses)
 	{
 		var defaults = new Dictionary<string, string>();
@@ -744,7 +746,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				else if (constraint is CvoloParser.InterfaceWhereConstraintContext typeCtx)
 				{
 					var paramName = typeCtx.Identifier().GetText();
-					var typeName = typeCtx.qualifiedName().GetText();
+					var typeName = GetTypeName(typeCtx.type());
 					if (!constraints.TryGetValue(paramName, out var list))
 					{
 						list = [];
@@ -2204,13 +2206,13 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		}
 
 		// Deconstruct tuple into defaults and constraints
-		var (defaults, _) = BuildWhereClauses(context.whereClause());
+		var (defaults, constraints) = BuildWhereClauses(context.whereClause());
 
 		string? conformsTo = null;
 		if (context.qualifiedName() is { } conformsCtx)
 			conformsTo = conformsCtx.GetText();
 
-		return new ExtensionDeclarationSyntax(SpanOf(context), extendedTypeName, methods, destructors, constructors, generics, conformsTo, GetVisibilityModifier(context.visibilityModifier()), defaults, nameSpan: SpanOf(context.Identifier().Symbol), conformsToSpan: context.qualifiedName() is { } conformsSpanCtx ? SpanOf(conformsSpanCtx) : null, operators: operators);
+		return new ExtensionDeclarationSyntax(SpanOf(context), extendedTypeName, methods, destructors, constructors, generics, conformsTo, GetVisibilityModifier(context.visibilityModifier()), defaults, nameSpan: SpanOf(context.Identifier().Symbol), conformsToSpan: context.qualifiedName() is { } conformsSpanCtx ? SpanOf(conformsSpanCtx) : null, operators: operators, genericParameterConstraints: constraints);
 	}
 
 	/// <summary>
@@ -2362,14 +2364,14 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		}
 
 		// Deconstruct tuple into defaults and constraints
-		var (defaults, _) = BuildWhereClause(context.whereClause());
+		var (defaults, constraints) = BuildWhereClauses(context.whereClause());
 
 		var fields = new List<UnionFieldSyntax>();
 		foreach (var field in context.unionField())
 			fields.Add(new UnionFieldSyntax(SpanOf(field), GetTypeName(field.type()), field.Identifier().GetText(), GetVisibilityModifier(field.visibilityModifier())));
 
 		var unionAttributes = BuildAttributeList(context.attributeList());
-		var unionDeclaration = new UnionDeclarationSyntax(SpanOf(context), name, generics, fields, unionAttributes, GetVisibilityModifier(context.visibilityModifier()), defaults, context.UNSAFE() is not null);
+		var unionDeclaration = new UnionDeclarationSyntax(SpanOf(context), name, generics, fields, unionAttributes, GetVisibilityModifier(context.visibilityModifier()), defaults, context.UNSAFE() is not null, genericParameterConstraints: constraints);
 		if (context.BUILTIN() is { } builtinToken)
 		{
 			unionDeclaration.IsBuiltin = true;

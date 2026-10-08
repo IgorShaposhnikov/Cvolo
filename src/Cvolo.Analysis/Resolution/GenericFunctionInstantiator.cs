@@ -142,6 +142,12 @@ internal sealed class GenericFunctionInstantiator(
 
 		try
 		{
+			// Constraint conformance is checked under the template's own unit so the substituted
+			// bound resolves through the template's usings and the candidate method table the
+			// template would see. A type-parameter argument is evidence-satisfied by the enclosing
+			// generic's bounds and re-checked at the outer concrete instantiation.
+			context.ValidateGenericConstraints(templateDecl.GenericParameters, templateDecl.GenericParameterConstraints, typeArgs, substitutionMap, templateDecl.Span);
+
 			var localScope = new SymbolTable(context.Globals);
 			foreach (var p in parameters)
 			{

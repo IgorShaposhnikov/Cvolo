@@ -366,8 +366,17 @@ internal sealed class ExpressionValidator(
 						}
 					}
 
-					if (func is null)
-					{
+// §11: omitted type arguments on a top-level generic function are inferred from the
+				// argument types (Inc - Generic Constraint Semantic Parity §10/§11). Substituted
+				// constraints participate in applicability: a failing bound makes this candidate
+				// non-applicable without poisoning a viable competing overload, and it becomes the
+				// primary diagnostic only when nothing else resolves (§11.1).
+				BindingContext.GenericConstraintEvaluation? inferredConstraintFailure = null;
+				if (func is null)
+					func = TryInferTopLevelGenericFunction(call, argTypes, scope, out inferredConstraintFailure);
+
+				if (func is null)
+				{
 						// §7.2 Canonical formatting fallback: Console.Write/WriteLine(value) and
 						// formatter.Write(value) with no applicable ordinary overload bind a
 						// formatting operation (or the dedicated 'not formattable' diagnostic).
@@ -419,6 +428,23 @@ internal sealed class ExpressionValidator(
 						}
 
 						var currentFileContext = context.FileContexts[context.CurrentUnit!];
+
+						// §11.1: when the only reason no candidate resolved is a failed generic
+						// constraint, that failure is the primary diagnostic — not a generic
+						// "no overload" mismatch that hides the real defect.
+						if (inferredConstraintFailure is { } constraintFailure)
+						{
+							if (constraintFailure.UnknownContract)
+								context.Diagnostics.Report(currentFileContext, call.ArgumentListSpan,
+									$"Unknown contract '{constraintFailure.SubstitutedText}' in constraint for parameter '{constraintFailure.ParamName}'.",
+									DiagnosticIds.UnknownContractInConstraintForParameter);
+							else
+								context.Diagnostics.Report(currentFileContext, call.ArgumentListSpan,
+									$"Type '{constraintFailure.TypeName}' does not satisfy required constraint '{constraintFailure.SubstitutedText}' for type parameter '{constraintFailure.ParamName}'.",
+									DiagnosticIds.TypeDoesNotSatisfyConstraintOfGenericParameter);
+							return;
+						}
+
 						var sigString = string.Join(", ", argTypes.Select(t => t.Name));
 						if (context.GenericParameterScopes.Count > 0)
 							return;
@@ -1348,6 +1374,90 @@ internal sealed class ExpressionValidator(
 		}
 
 		return true;
+	}
+
+	/// <summary>
+	/// Applies omitted-argument type inference to a top-level generic function call
+	/// (Inc - Generic Constraint Semantic Parity §10/§11). Type arguments are unified positionally
+	/// from the concrete argument types; the substituted constraints are evaluated without
+	/// reporting. A satisfied candidate is instantiated and returned; a failed candidate is
+	/// non-applicable (the failure is surfaced as the primary diagnostic only when nothing else
+	/// resolves); an uninferrable signature — composed parameter types, wrapped refs without a
+	/// pointer argument, conflicting or unfillable positions — falls through to ordinary
+	/// no-overload reporting.
+	/// </summary>
+	private FunctionSymbol? TryInferTopLevelGenericFunction(
+		CallExpressionSyntax call,
+		IReadOnlyList<TypeSymbol> argTypes,
+		SymbolTable scope,
+		out BindingContext.GenericConstraintEvaluation? constraintFailure)
+	{
+		constraintFailure = null;
+
+		var templateName = Generics.ResolveFunctionTemplateName(call.FunctionName, scope);
+		if (templateName is null || !context.GenericFunctionTemplates.TryGetValue(templateName, out var templateDecl))
+			return null;
+
+		if (templateDecl.Parameters.Count != argTypes.Count)
+			return null;
+
+		var genericParams = templateDecl.GenericParameters.ToList();
+		var inferred = new TypeSymbol?[genericParams.Count];
+		for (var i = 0; i < templateDecl.Parameters.Count; i++)
+		{
+			var typeText = templateDecl.Parameters[i].Type;
+			TypeSymbol effectiveArg = argTypes[i];
+			if (typeText.StartsWith("refvar ", StringComparison.Ordinal) || typeText.StartsWith("ref ", StringComparison.Ordinal))
+			{
+				if (argTypes[i] is not PointerTypeSymbol pointer)
+					return null;
+				effectiveArg = pointer.ReferencedType;
+				typeText = typeText.StartsWith("refvar ", StringComparison.Ordinal) ? typeText[7..] : typeText[4..];
+			}
+
+			var paramIndex = genericParams.IndexOf(typeText);
+			if (paramIndex < 0)
+			{
+				// Composed parameter types (`List<T>`, `T[]`, ...) are not decomposed by inference;
+				// the call falls through to the ordinary finding unless every position is inferable
+				// from a direct generic parameter (the INC's §10/§11 examples).
+				return null;
+			}
+
+			if (inferred[paramIndex] is { } existing && !existing.Equals(effectiveArg))
+				return null;
+			inferred[paramIndex] = effectiveArg;
+		}
+
+		for (var i = 0; i < inferred.Length; i++)
+		{
+			if (inferred[i] is null)
+				return null;
+		}
+
+		var typeArgs = inferred.Select(static t => t!).ToList();
+		var substitutionMap = new Dictionary<string, TypeSymbol>();
+		for (var i = 0; i < genericParams.Count; i++)
+			substitutionMap[genericParams[i]] = typeArgs[i];
+
+		foreach (var (paramName, requiredContracts) in templateDecl.GenericParameterConstraints)
+		{
+			var paramIndex = genericParams.IndexOf(paramName);
+			if (paramIndex < 0)
+				continue;
+
+			foreach (var contractText in requiredContracts)
+			{
+				var result = context.EvaluateConstraint(paramName, contractText, typeArgs[paramIndex], substitutionMap);
+				if (!result.Passed)
+				{
+					constraintFailure = result;
+					return null;
+				}
+			}
+		}
+
+		return Generics.InstantiateGenericFunction(templateDecl, typeArgs, scope);
 	}
 
 	/// <summary>

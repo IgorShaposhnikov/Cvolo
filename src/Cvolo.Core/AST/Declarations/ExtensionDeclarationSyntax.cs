@@ -15,7 +15,8 @@ public sealed class ExtensionDeclarationSyntax(
 	IReadOnlyDictionary<string, string>? genericParameterDefaults = null,
 	TextSpan? nameSpan = null,
 	TextSpan? conformsToSpan = null,
-	IReadOnlyList<OperatorDeclarationSyntax>? operators = null) : SyntaxNode(span)
+	IReadOnlyList<OperatorDeclarationSyntax>? operators = null,
+	IReadOnlyDictionary<string, List<string>>? genericParameterConstraints = null) : SyntaxNode(span)
 {
 	public override SyntaxKind Kind => SyntaxKind.ExtensionDeclaration;
 
@@ -50,6 +51,9 @@ public sealed class ExtensionDeclarationSyntax(
 	public Visibility Visibility { get; } = visibility ?? Visibility.Internal;
 
 	public IReadOnlyDictionary<string, string> GenericParameterDefaults { get; } = genericParameterDefaults ?? new Dictionary<string, string>();
+
+	/// <summary>Per-parameter constraint bounds retained from owner <c>where</c> clauses, used to filter extension applicability.</summary>
+	public IReadOnlyDictionary<string, List<string>> GenericParameterConstraints { get; } = genericParameterConstraints ?? new Dictionary<string, List<string>>();
 
 	public override IEnumerable<SyntaxNode> GetChildren() => [.. Methods, .. Destructors, .. Constructors, .. Operators];
 }

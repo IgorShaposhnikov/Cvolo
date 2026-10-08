@@ -1,0 +1,14 @@
+/// <summary>
+/// Proves that a generic struct constraint on a forward-referenced contract resolves regardless of
+/// file enumeration order.
+/// </summary>
+/// <remarks>
+/// Test: CrossFileTypeDeclarationOrderTests.ConstrainedGeneric_ForwardReference_ResolvesInEitherFileOrder.
+/// Fixture Role: Box.
+/// Compiler Target: DeclarationPass / GenericDefaultConstraintValidator.
+/// </remarks>
+namespace GC;
+
+public struct Box<T> where T : IFoo {
+    public T Value;
+}

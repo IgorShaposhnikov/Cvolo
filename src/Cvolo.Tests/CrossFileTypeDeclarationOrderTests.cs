@@ -143,6 +143,24 @@ public sealed class CrossFileTypeDeclarationOrderTests : CompilerTestBase
 	}
 
 	[Fact]
+	public void ConstrainedGeneric_ForwardReference_ResolvesInEitherFileOrder()
+	{
+		var boxUnit = Unit("ConstrainedStruct", "Box.cvl");
+		var contractUnit = Unit("ConstrainedStruct", "IFoo.cvl");
+		AssertClean(BindInOrder(boxUnit, contractUnit));
+		AssertClean(BindInOrder(contractUnit, boxUnit));
+	}
+
+	[Fact]
+	public void ConstrainedGenericFunction_ForwardReference_ResolvesInEitherFileOrder()
+	{
+		var probeUnit = Unit("ConstrainedFunction", "Probe.cvl");
+		var contractUnit = Unit("ConstrainedFunction", "IFoo.cvl");
+		AssertClean(BindInOrder(probeUnit, contractUnit));
+		AssertClean(BindInOrder(contractUnit, probeUnit));
+	}
+
+	[Fact]
 	public void TypeAlias_ForwardReference_ResolvesAcrossFiles()
 	{
 		var aliasUnit = Unit("TypeAlias", "Alias.cvl");

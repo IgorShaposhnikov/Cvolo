@@ -1,3 +1,10 @@
+using System.Text.Json;
+using Cvolo.Core.AST;
+using Cvolo.Core.AST.Base;
+using Cvolo.Core.AST.Declarations;
+using Cvolo.Core.Diagnostics;
+using Cvolo.Packaging;
+using Cvolo.Syntax.Antlr;
 using Cvolo.Tests.Core;
 
 namespace Cvolo.Tests;
@@ -106,5 +113,69 @@ public sealed class ClassLibraryTests : CompilerTestBase
 		// With --checked-ffi-bounds, exported functions with pointer params should have null checks
 		Assert.Contains("ffi.trap", irContent);
 		Assert.Contains("llvm.trap", irContent);
+	}
+
+	[Fact]
+	public void PackageApi_RoundTrips_GenericConstraints()
+	{
+		const string source = """
+			interface IFoo
+			{
+				void Bar();
+			}
+
+			interface ICompare<A>
+			{
+				bool Less(A other);
+			}
+
+			public struct Box<T>
+				where T : IFoo
+			{
+				T value;
+			}
+
+			public union Maybe<T>
+				where T : ICompare<T>
+			{
+				T inner;
+			}
+
+			public int Probe<T>(T value)
+				where T : IFoo
+			{
+				return 1;
+			}
+			""";
+
+		var unit = new AntlrSyntaxParser().Parse(new CompilationContext(source, "roundtrip.cvl"));
+		var serialized = PackageApiMetadata.FromCompilationUnits(new[] { unit }).Serialize();
+		var rehydrated = JsonSerializer.Deserialize<PackageApiMetadata>(serialized)!;
+
+		Assert.Single(rehydrated.Units.SelectMany(u => u.Structs).Where(s => s.Name == "Box"));
+		var box = rehydrated.Units.SelectMany(u => u.Structs).Single(s => s.Name == "Box");
+		Assert.Equal(new[] { "T" }, box.GenericParameters);
+		Assert.Equal(new List<string> { "IFoo" }, box.GenericParameterConstraints["T"]);
+
+		var maybe = rehydrated.Units.SelectMany(u => u.Unions).Single(s => s.Name == "Maybe");
+		Assert.Equal(new[] { "T" }, maybe.GenericParameters);
+		Assert.Equal(new List<string> { "ICompare<T>" }, maybe.GenericParameterConstraints["T"]);
+
+		var probe = rehydrated.Units.SelectMany(u => u.Functions).Single(f => f.Name == "Probe");
+		Assert.Equal(new[] { "T" }, probe.GenericParameters);
+		Assert.Equal(new List<string> { "IFoo" }, probe.GenericParameterConstraints["T"]);
+
+		// The rehydrated declarations carry the same generic parameters and constraints.
+		var rebuild = rehydrated.CreateCompilationUnits("pkg", "1.0.0");
+		var boxDecl = rebuild
+			.SelectMany(u => (u.NamespaceDeclaration?.Members ?? u.Members).OfType<StructDeclarationSyntax>())
+			.Single(s => s.Name == "Box");
+		Assert.Equal(new List<string> { "IFoo" }, boxDecl.GenericParameterConstraints["T"]);
+
+		var probeDecl = rebuild
+			.SelectMany(u => (u.NamespaceDeclaration?.Members ?? u.Members).OfType<FunctionDeclarationSyntax>())
+			.Single(f => f.Name == "Probe");
+		Assert.Equal(new[] { "T" }, probeDecl.GenericParameters);
+		Assert.Equal(new List<string> { "IFoo" }, probeDecl.GenericParameterConstraints["T"]);
 	}
 }

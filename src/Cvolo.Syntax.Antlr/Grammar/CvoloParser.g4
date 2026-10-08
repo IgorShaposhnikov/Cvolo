@@ -93,7 +93,7 @@ functionModifier
 	;
 
 functionDeclaration
-	: attributeList* visibilityModifier? BUILTIN? ((UNSAFE callingConvention) | functionModifier)? returnType builtinCapableIdentifier (LT typeList GT)? LPAREN parameterList? RPAREN (blockStatement | SEMI)
+	: attributeList* visibilityModifier? BUILTIN? ((UNSAFE callingConvention) | functionModifier)? returnType builtinCapableIdentifier (LT typeList GT)? LPAREN parameterList? RPAREN whereClause* (blockStatement | SEMI)
 	;
 
 builtinCapableIdentifier
@@ -152,7 +152,7 @@ structDeclaration
 	;
 
 unionDeclaration
-	: attributeList* visibilityModifier? BUILTIN? UNSAFE? UNION Identifier (LT genericParameterList GT)? whereClause? LBRACE unionField* RBRACE SEMI?
+	: attributeList* visibilityModifier? BUILTIN? UNSAFE? UNION Identifier (LT genericParameterList GT)? whereClause* LBRACE unionField* RBRACE SEMI?
 	;
 
 unionField
@@ -522,7 +522,7 @@ whereClause
 
 whereConstraint
     : DEFAULT Identifier COLON type                # defaultWhereConstraint
-    | Identifier COLON qualifiedName               # interfaceWhereConstraint
+    | Identifier COLON type                        # interfaceWhereConstraint
     ;
 
 typeList

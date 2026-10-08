@@ -143,12 +143,11 @@ public static class ProjectUniverseLoader
 
 		if (artifacts.Count > 1)
 		{
-			artifacts = artifacts
+			artifacts = [.. artifacts
 				.DistinctBy(artifact => (
 					artifact.PackageId,
 					artifact.Version,
-					BitcodePath: artifact.BitcodePath is null ? string.Empty : Path.GetFullPath(artifact.BitcodePath)))
-				.ToList();
+					BitcodePath: artifact.BitcodePath is null ? string.Empty : Path.GetFullPath(artifact.BitcodePath)))];
 		}
 
 		var packageSystemNamespaces = PackageSdkDependencyResolver.Collect(artifacts);
@@ -178,7 +177,7 @@ public static class ProjectUniverseLoader
 				continue;
 			}
 
-			foreach (var packageUnit in artifact.ApiMetadata.CreateCompilationUnits(artifact.PackageId, artifact.Version))
+			foreach (var packageUnit in artifact.ApiMetadata.CreateCompilationUnits(artifact.PackageId, artifact.Version, skipGenericTemplates: artifact.TemplateUnits.Count > 0))
 				externalUnits.Add(new ExternalSemanticUnit(packageUnit, ExternalSemanticUnitKind.ExternalPackageApi, artifact.PackageId, artifact.Version));
 
 			foreach (var templateUnit in artifact.TemplateUnits)

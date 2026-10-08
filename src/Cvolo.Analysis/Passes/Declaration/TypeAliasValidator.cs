@@ -86,14 +86,22 @@ internal sealed class TypeAliasValidator(BindingContext context)
 	/// </summary>
 	private void ValidateConstraintAliases(IReadOnlyList<SyntaxNode> members)
 	{
-		// Only structs retain constraint types in the AST today; preserve the existing declaration
-		// pass behavior until other declaration forms expose equivalent constraint data.
+		// Structs, unions, and extensions all retain generic-parameter constraints after the
+		// generic-constraint parity rework, so alias bounds are rejected uniformly across them.
 		foreach (var member in members)
 		{
-			if (member is not StructDeclarationSyntax structDeclaration)
+			IReadOnlyDictionary<string, List<string>>? constraints = member switch
+			{
+				StructDeclarationSyntax structDeclaration => structDeclaration.GenericParameterConstraints,
+				UnionDeclarationSyntax unionDeclaration => unionDeclaration.GenericParameterConstraints,
+				ExtensionDeclarationSyntax extensionDeclaration => extensionDeclaration.GenericParameterConstraints,
+				_ => null,
+			};
+
+			if (constraints is null)
 				continue;
 
-			foreach (var constraint in structDeclaration.GenericParameterConstraints.Values.SelectMany(list => list))
+			foreach (var constraint in constraints.Values.SelectMany(list => list))
 			{
 				if (!context.IsAliasReference(constraint))
 					continue;
@@ -101,7 +109,7 @@ internal sealed class TypeAliasValidator(BindingContext context)
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
 				context.Diagnostics.Report(
 					currentFileContext,
-					structDeclaration.Span,
+					member.Span,
 					$"Type alias '{constraint}' cannot be used as a generic parameter constraint.",
 					DiagnosticIds.AliasAsConstraint);
 			}

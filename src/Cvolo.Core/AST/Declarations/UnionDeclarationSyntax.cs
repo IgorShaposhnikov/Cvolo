@@ -11,7 +11,8 @@ public sealed class UnionDeclarationSyntax(
 	IReadOnlyList<AttributeSyntax>? attributes = null,
 	Visibility? visibility = null,
 	IReadOnlyDictionary<string, string>? genericParameterDefaults = null,
-	bool isUnsafe = false) : SyntaxNode(span)
+	bool isUnsafe = false,
+	IReadOnlyDictionary<string, List<string>>? genericParameterConstraints = null) : SyntaxNode(span)
 {
 	public override SyntaxKind Kind => SyntaxKind.UnionDeclaration;
 
@@ -28,6 +29,9 @@ public sealed class UnionDeclarationSyntax(
 	public bool IsUnsafe { get; } = isUnsafe;
 
 	public IReadOnlyDictionary<string, string> GenericParameterDefaults { get; } = genericParameterDefaults ?? new Dictionary<string, string>();
+
+	/// <summary>Per-parameter constraint bounds retained from <c>where</c> clauses (ordinary constraints are enforced, not discarded).</summary>
+	public IReadOnlyDictionary<string, List<string>> GenericParameterConstraints { get; } = genericParameterConstraints ?? new Dictionary<string, List<string>>();
 
 	public bool IsBuiltin { get; set; }
 	public TextSpan? BuiltinSpan { get; set; }

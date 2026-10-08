@@ -34,7 +34,6 @@ public sealed class PackageApiMetadata
 			var functions = members
 				.OfType<FunctionDeclarationSyntax>()
 				.Where(function => function.Visibility == Visibility.Public
-					&& function.GenericParameters.Count == 0
 					&& !function.Parameters.Any(parameter => PackageTemplateSource.ReferencesContract(parameter.Type, sourceBackedContractNames)))
 				.Select(function => new PackageApiFunction
 				{
@@ -45,31 +44,37 @@ public sealed class PackageApiMetadata
 						.Select(parameter => new PackageApiParameter(parameter.Type, parameter.Name))
 						.ToArray(),
 					Modifier = function.Modifier,
-					IsAssociated = function.IsAssociated
+					IsAssociated = function.IsAssociated,
+					GenericParameterConstraints = function.GenericParameterConstraints,
+					GenericParameterDefaults = function.GenericParameterDefaults
 				})
 				.ToArray();
 
 			var structs = members
 				.OfType<StructDeclarationSyntax>()
-				.Where(type => type.GenericParameters.Count == 0)
 				.Select(type => new PackageApiStruct
 				{
 					Name = type.Name,
+					GenericParameters = type.GenericParameters.ToArray(),
 					EmbeddedType = type.EmbeddedType,
 					Fields = type.Fields.Select(field => new PackageApiStructField(field.Type, field.Name, field.Visibility)).ToArray(),
-					Attributes = SerializableAttributeNames(type.Attributes)
+					Attributes = SerializableAttributeNames(type.Attributes),
+					GenericParameterConstraints = type.GenericParameterConstraints,
+					GenericParameterDefaults = type.GenericParameterDefaults
 				})
 				.ToArray();
 
 			var unions = members
 				.OfType<UnionDeclarationSyntax>()
-				.Where(type => type.GenericParameters.Count == 0)
 				.Select(type => new PackageApiUnion
 				{
 					Name = type.Name,
+					GenericParameters = type.GenericParameters.ToArray(),
 					IsUnsafe = type.IsUnsafe,
 					Fields = type.Fields.Select(field => new PackageApiUnionField(field.Type, field.Name, field.Visibility)).ToArray(),
-					Attributes = SerializableAttributeNames(type.Attributes)
+					Attributes = SerializableAttributeNames(type.Attributes),
+					GenericParameterConstraints = type.GenericParameterConstraints,
+					GenericParameterDefaults = type.GenericParameterDefaults
 				})
 				.ToArray();
 
@@ -274,6 +279,7 @@ public sealed class PackageApiMetadata
 			Functions = group.SelectMany(unit => unit.Functions)
 				.DistinctBy(function => (
 					function.Name,
+					GenericParameters: string.Join("\u001f", function.GenericParameters),
 					Parameters: string.Join("\u001f", function.Parameters.Select(parameter => parameter.Type)),
 					function.Modifier,
 					function.IsAssociated))
@@ -321,7 +327,7 @@ public sealed class PackageApiMetadata
 		}
 	}
 
-	public IReadOnlyList<CompilationUnitSyntax> CreateCompilationUnits(string packageId, string version)
+	public IReadOnlyList<CompilationUnitSyntax> CreateCompilationUnits(string packageId, string version, bool skipGenericTemplates = false)
 	{
 		var result = new List<CompilationUnitSyntax>(Units.Count);
 		for (var i = 0; i < Units.Count; i++)
@@ -332,23 +338,37 @@ public sealed class PackageApiMetadata
 			var context = new CompilationContext(string.Empty, filePath);
 			var members = new List<SyntaxNode>();
 
-			members.AddRange(unit.Structs.Select(type => (SyntaxNode)new StructDeclarationSyntax(
+			var availableStructs = skipGenericTemplates
+				? unit.Structs.Where(type => type.GenericParameters.Count == 0)
+				: unit.Structs;
+			var availableUnions = skipGenericTemplates
+				? unit.Unions.Where(type => type.GenericParameters.Count == 0)
+				: unit.Unions;
+			var availableFunctions = skipGenericTemplates
+				? unit.Functions.Where(function => function.GenericParameters.Count == 0)
+				: unit.Functions;
+
+			members.AddRange(availableStructs.Select(type => (SyntaxNode)new StructDeclarationSyntax(
 				span,
 				type.Name,
-				[],
+				type.GenericParameters,
 				type.Fields.Select(field => new StructFieldSyntax(span, field.Type, field.Name, field.Visibility)).ToArray(),
 				type.EmbeddedType,
 				CreateAttributes(type.Attributes, span),
-				Visibility.Public)));
+				Visibility.Public,
+				type.GenericParameterDefaults,
+				type.GenericParameterConstraints)));
 
-			members.AddRange(unit.Unions.Select(type => (SyntaxNode)new UnionDeclarationSyntax(
+			members.AddRange(availableUnions.Select(type => (SyntaxNode)new UnionDeclarationSyntax(
 				span,
 				type.Name,
-				[],
+				type.GenericParameters,
 				type.Fields.Select(field => new UnionFieldSyntax(span, field.Type, field.Name, field.Visibility)).ToArray(),
 				CreateAttributes(type.Attributes, span),
 				Visibility.Public,
-				isUnsafe: type.IsUnsafe)));
+				type.GenericParameterDefaults,
+				isUnsafe: type.IsUnsafe,
+				genericParameterConstraints: type.GenericParameterConstraints)));
 
 			members.AddRange(unit.Enums.Select(type => (SyntaxNode)new EnumDeclarationSyntax(
 				span,
@@ -360,7 +380,7 @@ public sealed class PackageApiMetadata
 
 			members.AddRange(unit.Globals.Select(global => (SyntaxNode)CreateGlobalDeclaration(global, span)));
 
-			members.AddRange(unit.Functions.Select(function =>
+			members.AddRange(availableFunctions.Select(function =>
 				(SyntaxNode)new FunctionDeclarationSyntax(
 					span,
 					function.ReturnType,
@@ -370,7 +390,9 @@ public sealed class PackageApiMetadata
 					null!,
 					modifier: function.Modifier,
 					visibility: Visibility.Public,
-					bindingKind: function.IsAssociated ? FunctionBindingKind.Associated : FunctionBindingKind.Default)));
+					bindingKind: function.IsAssociated ? FunctionBindingKind.Associated : FunctionBindingKind.Default,
+					genericParameterConstraints: function.GenericParameterConstraints,
+					genericParameterDefaults: function.GenericParameterDefaults)));
 
 			members.AddRange(unit.Delegates.Select(type =>
 				(SyntaxNode)new DelegateDeclarationSyntax(
@@ -529,6 +551,8 @@ public sealed class PackageApiFunction
 	public IReadOnlyList<string> GenericParameters { get; init; } = [];
 	public IReadOnlyList<PackageApiParameter> Parameters { get; init; } = [];
 	public SafetyTier? Modifier { get; init; }
+	public IReadOnlyDictionary<string, List<string>> GenericParameterConstraints { get; init; } = new Dictionary<string, List<string>>();
+	public IReadOnlyDictionary<string, string> GenericParameterDefaults { get; init; } = new Dictionary<string, string>();
 
 	/// <summary>
 	/// True when the source declaration was a receiverless associated function (leading dot).
@@ -541,17 +565,23 @@ public sealed class PackageApiFunction
 public sealed class PackageApiStruct
 {
 	public string Name { get; init; } = string.Empty;
+	public IReadOnlyList<string> GenericParameters { get; init; } = [];
 	public string? EmbeddedType { get; init; }
 	public IReadOnlyList<string> Attributes { get; init; } = [];
 	public IReadOnlyList<PackageApiStructField> Fields { get; init; } = [];
+	public IReadOnlyDictionary<string, List<string>> GenericParameterConstraints { get; init; } = new Dictionary<string, List<string>>();
+	public IReadOnlyDictionary<string, string> GenericParameterDefaults { get; init; } = new Dictionary<string, string>();
 }
 
 public sealed class PackageApiUnion
 {
 	public string Name { get; init; } = string.Empty;
+	public IReadOnlyList<string> GenericParameters { get; init; } = [];
 	public bool IsUnsafe { get; init; }
 	public IReadOnlyList<string> Attributes { get; init; } = [];
 	public IReadOnlyList<PackageApiUnionField> Fields { get; init; } = [];
+	public IReadOnlyDictionary<string, List<string>> GenericParameterConstraints { get; init; } = new Dictionary<string, List<string>>();
+	public IReadOnlyDictionary<string, string> GenericParameterDefaults { get; init; } = new Dictionary<string, string>();
 }
 
 public sealed class PackageApiEnum

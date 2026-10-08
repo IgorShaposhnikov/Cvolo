@@ -187,7 +187,7 @@ internal static class PackCompilation
 			var projectReferenceArtifacts = ProjectReferenceArtifactLoader.Load(manifest.ProjectPath, configuration);
 			foreach (var artifact in projectReferenceArtifacts)
 			{
-				foreach (var packageUnit in artifact.ApiMetadata.CreateCompilationUnits(artifact.PackageId, artifact.Version))
+				foreach (var packageUnit in artifact.ApiMetadata.CreateCompilationUnits(artifact.PackageId, artifact.Version, skipGenericTemplates: artifact.TemplateUnits.Count > 0))
 				{
 					asts.Add(packageUnit);
 					binder.Context.FileContexts[packageUnit] = packageUnit.Context;

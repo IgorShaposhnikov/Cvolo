@@ -109,7 +109,8 @@ public sealed class OptionalSyntaxRewriter(bool strictOption, DiagnosticBag diag
 			var rewrittenParams = func.Parameters.Select(p => (ParameterSyntax)Rewrite(p)).ToList();
 			var rewrittenBody = func.Body != null ? (BlockStatementSyntax)Rewrite(func.Body) : null;
 			return new FunctionDeclarationSyntax(func.Span, RewriteType(func.ReturnType, func.Span), func.Name, func.GenericParameters,
-				rewrittenParams, rewrittenBody!, func.Attributes, func.Modifier, func.Receiver, func.Visibility, callingConvention: func.CallingConvention, bindingKind: func.BindingKind)
+				rewrittenParams, rewrittenBody!, func.Attributes, func.Modifier, func.Receiver, func.Visibility, callingConvention: func.CallingConvention, bindingKind: func.BindingKind,
+				genericParameterConstraints: func.GenericParameterConstraints, genericParameterDefaults: func.GenericParameterDefaults)
 			{
 				IsBuiltin = func.IsBuiltin,
 				BuiltinSpan = func.BuiltinSpan
@@ -153,7 +154,7 @@ public sealed class OptionalSyntaxRewriter(bool strictOption, DiagnosticBag diag
 			var rewrittenOps = extDecl.Operators.Select(RewriteOperator).ToList();
 			return new ExtensionDeclarationSyntax(extDecl.Span, RewriteType(extDecl.ExtendedTypeName, extDecl.Span), rewrittenMethods,
 				rewrittenDtors, rewrittenCtors, extDecl.GenericParameters, extDecl.ConformsTo, extDecl.Visibility, extDecl.GenericParameterDefaults,
-				nameSpan: extDecl.NameSpan, conformsToSpan: extDecl.ConformsToSpan, operators: rewrittenOps);
+				nameSpan: extDecl.NameSpan, conformsToSpan: extDecl.ConformsToSpan, operators: rewrittenOps, genericParameterConstraints: extDecl.GenericParameterConstraints);
 		}
 
 		if (node is InterfaceMethodDeclarationSyntax interfaceMember)

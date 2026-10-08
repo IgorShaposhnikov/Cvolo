@@ -18,15 +18,25 @@ internal sealed class ProtocolConformance(BindingContext context, InterfaceConfo
 	/// <summary>
 	/// Returns whether a concrete type structurally satisfies every effective member of a protocol.
 	/// </summary>
-	public bool Conforms(TypeSymbol type, ProtocolTypeSymbol protocol)
+	/// <param name="enforceWidthLock">
+	/// When <see langword="false"/>, skips the generic-width topology lock. The lock proves a
+	/// protocol's shape before a dispatch slot is written (layout safety for protocol-typed
+	/// parameters and refvars); a compile-time <c>where</c>-bound check substitutes its type
+	/// argument and monomorphizes to direct calls, so it evaluates structural capability alone.
+	/// </param>
+	public bool Conforms(TypeSymbol type, ProtocolTypeSymbol protocol, bool enforceWidthLock = true)
 	{
 		var baseType = type is PointerTypeSymbol pointer ? pointer.ReferencedType : type;
 		if (baseType is ProtocolTypeSymbol or InterfaceTypeSymbol)
 			return false;
 
-		// Generic Contracts spec §6.A: a parameterized protocol only matches a concrete type with
-		// the same generic-width topology.
-		if (protocol.GenericParameters.Count > 0
+		// Generic Contracts spec §6.A: a protocol — bare template or instantiated — only matches
+		// a concrete type with the same generic-width topology. Instantiated protocols retain
+		// their template's declared parameters (width-lock arity), so `IContainer<int>` still
+		// requires a width-1 conformer; a flat type with coincidentally matching members is a
+		// layout surprise at the dispatch slot and is rejected.
+		if (enforceWidthLock
+			&& protocol.GenericParameters.Count > 0
 			&& GetConcreteGenericArity(baseType) != protocol.GenericParameters.Count)
 		{
 			return false;

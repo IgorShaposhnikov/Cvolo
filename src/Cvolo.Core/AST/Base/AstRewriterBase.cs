@@ -32,7 +32,7 @@ public abstract class AstRewriterBase
 			var rewrittenDestructors = extDecl.Destructors.Select(Rewrite).Cast<DestructorDeclarationSyntax>().ToList();
 			var rewrittenConstructors = extDecl.Constructors.Select(Rewrite).Cast<ConstructorDeclarationSyntax>().ToList();
 			var rewrittenOperators = extDecl.Operators.Select(Rewrite).Cast<OperatorDeclarationSyntax>().ToList();
-			return new ExtensionDeclarationSyntax(extDecl.Span, extDecl.ExtendedTypeName, rewrittenMethods, rewrittenDestructors, rewrittenConstructors, extDecl.GenericParameters, extDecl.ConformsTo, extDecl.Visibility, nameSpan: extDecl.NameSpan, conformsToSpan: extDecl.ConformsToSpan, operators: rewrittenOperators);
+			return new ExtensionDeclarationSyntax(extDecl.Span, extDecl.ExtendedTypeName, rewrittenMethods, rewrittenDestructors, rewrittenConstructors, extDecl.GenericParameters, extDecl.ConformsTo, extDecl.Visibility, extDecl.GenericParameterDefaults, nameSpan: extDecl.NameSpan, conformsToSpan: extDecl.ConformsToSpan, operators: rewrittenOperators, genericParameterConstraints: extDecl.GenericParameterConstraints);
 		}
 
 		if (node is OperatorDeclarationSyntax op)
@@ -71,7 +71,7 @@ public abstract class AstRewriterBase
 		if (node is FunctionDeclarationSyntax func)
 		{
 			var rewrittenBody = func.Body != null ? (BlockStatementSyntax)Rewrite(func.Body) : null;
-			return new FunctionDeclarationSyntax(func.Span, func.ReturnType, func.Name, func.GenericParameters, func.Parameters, rewrittenBody, func.Attributes, func.Modifier, func.Receiver, func.Visibility, callingConvention: func.CallingConvention, bindingKind: func.BindingKind)
+			return new FunctionDeclarationSyntax(func.Span, func.ReturnType, func.Name, func.GenericParameters, func.Parameters, rewrittenBody, func.Attributes, func.Modifier, func.Receiver, func.Visibility, callingConvention: func.CallingConvention, bindingKind: func.BindingKind, genericParameterConstraints: func.GenericParameterConstraints, genericParameterDefaults: func.GenericParameterDefaults)
 			{
 				IsBuiltin = func.IsBuiltin,
 				BuiltinSpan = func.BuiltinSpan
@@ -285,7 +285,7 @@ public abstract class AstRewriterBase
 		if (node is UnionDeclarationSyntax unionDecl)
 		{
 			var rewrittenFields = unionDecl.Fields.Select(Rewrite).Cast<UnionFieldSyntax>().ToList();
-			return new UnionDeclarationSyntax(unionDecl.Span, unionDecl.Name, unionDecl.GenericParameters, rewrittenFields, unionDecl.Attributes, unionDecl.Visibility, isUnsafe: unionDecl.IsUnsafe)
+			return new UnionDeclarationSyntax(unionDecl.Span, unionDecl.Name, unionDecl.GenericParameters, rewrittenFields, unionDecl.Attributes, unionDecl.Visibility, unionDecl.GenericParameterDefaults, isUnsafe: unionDecl.IsUnsafe, genericParameterConstraints: unionDecl.GenericParameterConstraints)
 			{
 				IsBuiltin = unionDecl.IsBuiltin,
 				BuiltinSpan = unionDecl.BuiltinSpan

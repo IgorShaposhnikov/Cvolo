@@ -18,7 +18,9 @@ public sealed class FunctionDeclarationSyntax(
 	TextSpan? nameSpan = null,
 	TextSpan? returnTypeSpan = null,
 	string? callingConvention = null,
-	FunctionBindingKind bindingKind = FunctionBindingKind.Default) : SyntaxNode(span)
+	FunctionBindingKind bindingKind = FunctionBindingKind.Default,
+	IReadOnlyDictionary<string, List<string>>? genericParameterConstraints = null,
+	IReadOnlyDictionary<string, string>? genericParameterDefaults = null) : SyntaxNode(span)
 {
 	public override SyntaxKind Kind => SyntaxKind.FunctionDeclaration;
 
@@ -37,6 +39,13 @@ public sealed class FunctionDeclarationSyntax(
 	/// </summary>
 	public TextSpan ReturnTypeSpan { get; } = returnTypeSpan ?? span;
 	public IReadOnlyList<string> GenericParameters { get; } = genericParameters;
+
+	/// <summary>Per-parameter constraint bounds, e.g. <c>T</c> : <c>IFoo</c> (retained from <c>where</c> clauses).</summary>
+	public IReadOnlyDictionary<string, List<string>> GenericParameterConstraints { get; } = genericParameterConstraints ?? new Dictionary<string, List<string>>();
+
+	/// <summary>Per-parameter default type arguments, e.g. <c>where DEFAULT T : int</c>.</summary>
+	public IReadOnlyDictionary<string, string> GenericParameterDefaults { get; } = genericParameterDefaults ?? new Dictionary<string, string>();
+
 	public IReadOnlyList<ParameterSyntax> Parameters { get; } = parameters;
 	public BlockStatementSyntax Body { get; } = body;
 	public bool HasBody => Body is not null;

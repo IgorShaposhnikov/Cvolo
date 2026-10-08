@@ -1,0 +1,14 @@
+/// <summary>
+/// Proves that a generic function constraint on a forward-referenced contract resolves regardless
+/// of file enumeration order.
+/// </summary>
+/// <remarks>
+/// Test: CrossFileTypeDeclarationOrderTests.ConstrainedGenericFunction_ForwardReference_ResolvesInEitherFileOrder.
+/// Fixture Role: Probe.
+/// Compiler Target: DeclarationPass / GenericDefaultConstraintValidator.
+/// </remarks>
+namespace GCF;
+
+public int Probe<T>(T value) where T : IFoo {
+    return 1;
+}

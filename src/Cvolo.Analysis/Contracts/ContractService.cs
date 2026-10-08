@@ -29,8 +29,16 @@ public sealed class ContractService
 		=> _interfaces.Conforms(type, interfaceType);
 
 	/// <summary>Whether a concrete type satisfies a structural protocol.</summary>
-	public bool ConformsToProtocol(TypeSymbol type, ProtocolTypeSymbol protocol)
-		=> _protocols.Conforms(type, protocol);
+	/// <param name="enforceWidthLock">
+	/// Pass <see langword="false"/> for compile-time <c>where</c>-bound checks, which substitute
+	/// the type argument first and then evaluate structural capability without the dispatch
+	/// width-lock; pass <see langword="true"/> (the default) everywhere a value may flow into a
+	/// protocol-typed slot.
+	/// </param>
+	public bool ConformsToProtocol(TypeSymbol type, ProtocolTypeSymbol protocol, bool enforceWidthLock = true)
+	{
+		return _protocols.Conforms(type, protocol, enforceWidthLock);
+	}
 
 	/// <summary>
 	/// Whether more than one distinct method on the type could satisfy a protocol member, so the

@@ -345,6 +345,13 @@ internal static class SemanticTokenService
 				yield return function.NameSpan.Start;
 				foreach (var genericPosition in GenericPositions(source, function.Span, function.Name, function.GenericParameters))
 					yield return genericPosition;
+				foreach (var bounds in function.GenericParameterConstraints.Values)
+					foreach (var bound in bounds)
+						if (TryIndexOf(source, function.Span, bound, out var boundPosition))
+							yield return boundPosition;
+				foreach (var defaultType in function.GenericParameterDefaults.Values)
+					if (TryIndexOf(source, function.Span, defaultType, out var functionDefaultPosition))
+						yield return functionDefaultPosition;
 				break;
 			case ConstructorDeclarationSyntax constructor:
 				yield return constructor.NameSpan.Start;
@@ -388,6 +395,10 @@ internal static class SemanticTokenService
 				foreach (var defaultType in unionDeclaration.GenericParameterDefaults.Values)
 					if (TryIndexOf(source, unionDeclaration.Span, defaultType, out var unionDefaultPosition))
 						yield return unionDefaultPosition;
+				foreach (var bounds in unionDeclaration.GenericParameterConstraints.Values)
+					foreach (var bound in bounds)
+						if (TryIndexOf(source, unionDeclaration.Span, bound, out var unionBoundPosition))
+							yield return unionBoundPosition;
 				break;
 			case EnumDeclarationSyntax enumDeclaration:
 				if (TryIndexOf(source, enumDeclaration.Span, enumDeclaration.Name, out var enumName))
@@ -426,6 +437,10 @@ internal static class SemanticTokenService
 				foreach (var defaultType in extensionDeclaration.GenericParameterDefaults.Values)
 					if (TryIndexOf(source, extensionDeclaration.Span, defaultType, out var extensionDefaultPosition))
 						yield return extensionDefaultPosition;
+				foreach (var bounds in extensionDeclaration.GenericParameterConstraints.Values)
+					foreach (var bound in bounds)
+						if (TryIndexOf(source, extensionDeclaration.Span, bound, out var extensionBoundPosition))
+							yield return extensionBoundPosition;
 				break;
 			case StructFieldSyntax structField:
 				if (TryIndexOf(source, structField.Span, structField.Type, out var structFieldType))
