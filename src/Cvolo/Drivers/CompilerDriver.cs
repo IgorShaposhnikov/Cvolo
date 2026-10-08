@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Security;
 using System.Text.Json;
 using System.Xml;
 using System.Xml.Linq;
@@ -26,7 +28,7 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 {
 	private static readonly string[] _linkerCandidates = ["clang", "gcc", "g++"];
 
-	public int Compile(string path, bool llvmOnly, bool isShared, bool emitIr, string optLevel, bool checkOnly = false, bool runAfterCompile = false, bool verbose = false, bool emitLowered = false, string? noWarn = null, bool suppressWarnings = false, bool legacyVisibility = false, bool strictOption = false, bool noTbaa = false, string? targetOs = null, bool checkedFfiBounds = false, string format = "text", string configuration = BuildOutputLayout.DefaultConfiguration, 	bool useProjectReferencePackages = false, bool freestanding = false, bool debug = false)
+	public int Compile(string path, bool llvmOnly, bool isShared, bool emitIr, string optLevel, bool checkOnly = false, bool runAfterCompile = false, bool verbose = false, bool emitLowered = false, string? noWarn = null, bool suppressWarnings = false, bool legacyVisibility = false, bool strictOption = false, bool noTbaa = false, string? targetOs = null, bool checkedFfiBounds = false, string format = "text", string configuration = BuildOutputLayout.DefaultConfiguration, bool useProjectReferencePackages = false, bool freestanding = false, bool debug = false)
 	{
 		configuration = BuildOutputLayout.NormalizeConfiguration(configuration);
 
@@ -324,7 +326,7 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 
 		var llPath = BuildOutputLayout.GetIntermediateIrPath(project.ProjectDirectory, project.OutputName, configuration);
 
-// Resolve optimization level flag
+		// Resolve optimization level flag
 		if (!Enum.TryParse<OptimizationLevel>(optLevel, true, out var parsedLevel))
 		{
 			parsedLevel = OptimizationLevel.Os; // Fallback to size profile
@@ -342,6 +344,7 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 				break;
 			}
 		}
+
 		primarySourcePath ??= firstContext?.FilePath;
 
 		var debugInfo = debug
@@ -409,11 +412,98 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 		var packageIds = packageArtifacts
 			.Select(a => a.PackageId)
 			.ToHashSet(StringComparer.OrdinalIgnoreCase);
-		var nativeLibraries = binder.Context.NativeLibraries.Values
-			.Concat(packageArtifacts.SelectMany(artifact => artifact.NativeLibraries))
-			.Where(library => !packageIds.Contains(library.LibraryName))
-			.DistinctBy(library => library.LibraryName, StringComparer.OrdinalIgnoreCase)
-			.ToArray();
+
+		// Collect every logical native-library requirement with its origin: the application's own
+		// plain-source [LibraryImport] declarations plus logical requirements published by packages.
+		// Package artifacts are collected FIRST: the consumer binder re-registers rehydrated package
+		// [LibraryImport] declarations in its own context, and the ordinal dedup below keeps the
+		// first entry — so a package-origin entry must precede the identical binder-context entry
+		// for diagnostics to report the originating package rather than "<application>".
+		var requirements = new List<NativeRequirement>();
+
+		foreach (var artifact in packageArtifacts)
+		{
+			foreach (var library in artifact.NativeLibraries)
+			{
+				if (!packageIds.Contains(library.LibraryName))
+				{
+					requirements.Add(new NativeRequirement(library, artifact.PackageId));
+				}
+			}
+		}
+
+		foreach (var library in binder.Context.NativeLibraries.Values)
+		{
+			if (!packageIds.Contains(library.LibraryName))
+			{
+				requirements.Add(new NativeRequirement(library, NativeLinkInput.ApplicationOrigin));
+			}
+		}
+
+		// Logical names are opaque and ordinal: "Foo" and "foo" are distinct libraries, dash/dot
+		// names are never coalesced. The originating package of the first requirement is kept for
+		// diagnostics (a single app mapping may satisfy several packages).
+		var distinctRequirements = requirements
+			.GroupBy(r => r.Library.LibraryName, StringComparer.Ordinal)
+			.Select(g => g.First())
+			.ToList();
+
+		// Application-level native mapping model: only project inputs load a .cvlproj manifest, and
+		// the loader tolerates non-package applications (no <PackageId>). Bare .cvl files keep the
+		// legacy source-level OS paths and bare system names unchanged.
+		var nativeGroups = new List<NativeLibrariesGroup>();
+		if (!path.EndsWith(".cvl", StringComparison.OrdinalIgnoreCase))
+		{
+			try
+			{
+				var (groups, manifestWarnings) = ProjectManifest.LoadNativeLibraries(project.ProjectDirectory);
+				nativeGroups.AddRange(groups);
+				foreach (var (code, message) in manifestWarnings)
+					reporter.ReportSynthetic(code, "warning", message, path);
+			}
+			catch (FileNotFoundException)
+			{
+				// No .cvlproj reachable from the input; treat it as a source bundle without mappings.
+			}
+			catch (PackageException ex)
+			{
+				// <NativeLibraries> validation errors (CVLP31xx) are dedicated project-configuration
+				// diagnostics: report and fail before any linker interaction.
+				reporter.ReportSynthetic(ex.Code, "error", ex.Message, path);
+				return 1;
+			}
+		}
+
+		var (nativeTargetLabel, requestedArch, effectiveTargetOs) = ResolveRequestedTarget(targetOs, targetLayout);
+
+		var linkInputs = new List<NativeLinkInput>();
+		var legacyCopyPaths = new List<string>();
+		var runtimePlan = new List<RuntimeStageEntry>();
+		var nativeConfigurationFailed = false;
+		foreach (var requirement in distinctRequirements)
+		{
+			if (!ResolveNativeRequirement(
+				requirement,
+				nativeGroups,
+				effectiveTargetOs,
+				requestedArch,
+				configuration,
+				nativeTargetLabel,
+				project,
+				linkInputs,
+				legacyCopyPaths,
+				runtimePlan,
+				reporter,
+				path))
+			{
+				nativeConfigurationFailed = true;
+			}
+		}
+
+		if (nativeConfigurationFailed)
+		{
+			return 1;
+		}
 
 		var linkResult = strategy.Execute(
 			llPath,
@@ -422,17 +512,25 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 			linkerName,
 			optLevel,
 			verbose,
-			nativeLibraries,
+			linkInputs,
 			targetOs,
+			nativeTargetLabel,
 			packageArtifacts.Where(a => a.BitcodePath is not null).Select(a => a.BitcodePath!),
 			new DebugLinkOptions(debug, targetLayout.ResolveTriple(targetOs), targetOs));
+
 		if (linkResult != 0)
 		{
 			return linkResult;
 		}
 
-		// 8b. Copy referenced native libraries to the output directory so the binary can find them at runtime
-		CopyNativeLibrariesToOutput(nativeLibraries, project, binDirectory, targetOs, verbose);
+		// 8b. Copy native libraries to the output directory so the binary can find them at runtime:
+		// legacy source-level OS paths keep their historical copy behavior (including the Windows
+		// .lib → *.dll directory scan); project-level mappings stage only their explicit RuntimeFiles.
+		CopyLegacyNativeLibrariesToOutput(legacyCopyPaths, binDirectory, effectiveTargetOs, verbose);
+		if (StageProjectRuntimeFiles(runtimePlan, project, binDirectory, reporter, path) != 0)
+		{
+			return 1;
+		}
 
 		// 9. Execute immediate runtime execution if requested
 		if (runAfterCompile)
@@ -575,24 +673,163 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 		reporter.ReportSynthetic(PackageDiagnosticIds.LockOutOfSync, "error", message, path);
 	}
 
-	private static void CopyNativeLibrariesToOutput(IEnumerable<NativeLibraryInfo> nativeLibraries, CompilationProject project, string binDirectory, string? targetOs, bool verbose)
+	/// <summary>
+	/// Resolves one logical native-library requirement into a lowered link input (explicit path or
+	/// bare system name) plus its runtime staging entries, following the application-native-library
+	/// resolution order: 1) unique matching application mapping; 2) legacy source-level OS path
+	/// (application plain sources only); 3) bare system lookup. Returns false when a defensive
+	/// ambiguity aborts the build.
+	/// </summary>
+	private bool ResolveNativeRequirement(
+		NativeRequirement requirement,
+		IReadOnlyList<NativeLibrariesGroup> groups,
+		string effectiveTargetOs,
+		string? requestedArch,
+		string requestedConfiguration,
+		string nativeTargetLabel,
+		CompilationProject project,
+		List<NativeLinkInput> inputs,
+		List<string> legacyCopyPaths,
+		List<RuntimeStageEntry> runtimePlan,
+		IDiagnosticReporter reporter,
+		string inputPath)
 	{
-		var effectiveOs = ResolveTargetOs(targetOs);
-
-		foreach (var lib in nativeLibraries)
+		var library = requirement.Library;
+		var forName = library.LibraryName;
+		var target = effectiveTargetOs switch
 		{
-			var targetPath = effectiveOs switch
+			"windows" => NativeLibraryTarget.Windows,
+			"linux" => NativeLibraryTarget.Linux,
+			_ => NativeLibraryTarget.MacOS
+		};
+
+		// 1. Application mapping — selected mapping is authoritative and never silently falls back.
+		var selection = NativeLibrarySelector.Select(groups, forName, target, requestedArch, requestedConfiguration);
+		if (selection.Kind == NativeLibraryMatchKind.Selected && selection.Declaration is not null)
+		{
+			var linkPath = Path.GetFullPath(selection.Declaration.Path, project.ProjectDirectory);
+			inputs.Add(new NativeLinkInput(forName, linkPath, null, requirement.Origin));
+			foreach (var runtimeFile in selection.Declaration.RuntimeFiles)
 			{
-				"windows" => lib.WinPath,
-				"linux" => lib.LinuxPath,
-				"macos" => lib.MacPath,
+				runtimePlan.Add(new RuntimeStageEntry(
+					Path.GetFullPath(runtimeFile, project.ProjectDirectory),
+					Path.GetFileName(runtimeFile),
+					forName,
+					selection.Declaration.Path));
+			}
+
+			return true;
+		}
+
+		if (selection.Kind == NativeLibraryMatchKind.Ambiguous)
+		{
+			// Load-time validation rejects ambiguity over declared selector combos; this defensive
+			// branch covers a request outside the declared selector space and still fails loudly.
+			reporter.ReportSynthetic(
+				PackageDiagnosticIds.NativeLibrariesAmbiguous,
+				"error",
+				$"Native-library mappings for '{forName}' are ambiguous for {nativeTargetLabel}/{requestedConfiguration}: " +
+				$"add an explicit mapping that dominates the conflicting alternatives.",
+				inputPath);
+			return false;
+		}
+
+		// 2. Legacy source-level OS path (application plain sources only). Package-published paths
+		// are never forced on consumers; packages carry logical requirements only.
+		string? legacyPath = null;
+		string? legacySystemName = null;
+		if (requirement.Origin == NativeLinkInput.ApplicationOrigin)
+		{
+			var targetPath = effectiveTargetOs switch
+			{
+				"windows" => library.WinPath,
+				"linux" => library.LinuxPath,
+				"macos" => library.MacPath,
 				_ => null
 			};
 
-			if (string.IsNullOrEmpty(targetPath) || (!targetPath.Contains('/') && !targetPath.Contains('\\')))
-				continue;
+			if (!string.IsNullOrEmpty(targetPath))
+			{
+				if (targetPath.Contains('/') || targetPath.Contains('\\'))
+				{
+					legacyPath = Path.GetFullPath(targetPath, project.ProjectDirectory);
+				}
+				else
+				{
+					// System marker: a separator-less legacy value like "opengl32.lib" is a bare
+					// system-library name; strip the extension for the -l flag.
+					legacySystemName = Path.GetFileNameWithoutExtension(targetPath);
+				}
+			}
+		}
 
-			var fullPath = Path.GetFullPath(targetPath, project.ProjectDirectory);
+		if (legacyPath is not null)
+		{
+			inputs.Add(new NativeLinkInput(forName, legacyPath, null, requirement.Origin));
+			legacyCopyPaths.Add(legacyPath);
+			return true;
+		}
+
+		// 3. Bare logical name via the system linker search path.
+		var systemName = legacySystemName ?? forName;
+		inputs.Add(new NativeLinkInput(forName, null, systemName, requirement.Origin));
+		if (groups.Any(g => g.Libraries.Any(l => l.For == forName)))
+		{
+			reporter.ReportSynthetic(
+				DiagnosticIds.NativeLibraryFallbackWarning,
+				"warning",
+				$"Native library '{forName}' is mapped in the application .cvlproj for some targets but not for '{nativeTargetLabel}'; " +
+				$"falling back to system lookup ('-l{systemName}').",
+				inputPath);
+		}
+
+		return true;
+	}
+
+	/// <summary>
+	/// Derives the requested target label ("windows/x64"), the INC architecture selector, and the
+	/// canonical target OS from the compilation target. Cross compilation honors the requested
+	/// triple's architecture; the host architecture is never substituted for a requested arch.
+	/// </summary>
+	private static (string Label, string? Arch, string EffectiveOs) ResolveRequestedTarget(string? targetOs, TargetLayout targetLayout)
+	{
+		var effectiveOs = ResolveTargetOs(targetOs);
+		var arch = RequestedArchitecture(targetLayout.ResolveTriple(targetOs))
+			?? RuntimeInformation.ProcessArchitecture switch
+			{
+				Architecture.X64 => "x64",
+				Architecture.Arm64 => "arm64",
+				Architecture.X86 => "x86",
+				_ => null
+			};
+		return ($"{effectiveOs}/{arch ?? "any"}", arch, effectiveOs);
+	}
+
+	private static string? RequestedArchitecture(string triple)
+	{
+		var normalized = triple.ToLowerInvariant();
+		if (normalized.StartsWith("x86_64", StringComparison.Ordinal) || normalized.StartsWith("amd64", StringComparison.Ordinal))
+			return "x64";
+		if (normalized.StartsWith("aarch64", StringComparison.Ordinal) || normalized.StartsWith("arm64", StringComparison.Ordinal))
+			return "arm64";
+		if (normalized.StartsWith("i386", StringComparison.Ordinal)
+			|| normalized.StartsWith("i486", StringComparison.Ordinal)
+			|| normalized.StartsWith("i586", StringComparison.Ordinal)
+			|| normalized.StartsWith("i686", StringComparison.Ordinal)
+			|| normalized.StartsWith("x86-", StringComparison.Ordinal))
+			return "x86";
+		return null;
+	}
+
+	/// <summary>
+	/// Legacy runtime copy: preserves the historical behavior for source-level OS paths, including
+	/// the Windows import-library (.lib) → sibling *.dll directory scan. Project-level mappings
+	/// never use this scan; they stage only explicit RuntimeFiles.
+	/// </summary>
+	private static void CopyLegacyNativeLibrariesToOutput(IReadOnlyList<string> legacyCopyPaths, string binDirectory, string effectiveTargetOs, bool verbose)
+	{
+		foreach (var fullPath in legacyCopyPaths)
+		{
 			if (!File.Exists(fullPath))
 				continue;
 
@@ -609,10 +846,10 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 					Console.Error.WriteLine($"Warning: Failed to copy {fullPath}: {ex.Message}");
 			}
 
-			// On Windows, import libraries (.lib) need their matching DLL at runtime.
-			// The DLL may have a different base name (e.g. glfw3dll.lib -> glfw3.dll),
-			// so scan the same directory for DLL files to copy alongside the import library.
-			if (effectiveOs == "windows" && fullPath.EndsWith(".lib", StringComparison.OrdinalIgnoreCase))
+			// On Windows, import libraries (.lib) need their matching DLL at runtime. The DLL may
+			// have a different base name (e.g. glfw3dll.lib -> glfw3.dll), so scan the same
+			// directory for DLL files to copy alongside the import library.
+			if (effectiveTargetOs == "windows" && fullPath.EndsWith(".lib", StringComparison.OrdinalIgnoreCase))
 			{
 				var dir = Path.GetDirectoryName(fullPath)!;
 				try
@@ -641,6 +878,163 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 			}
 		}
 	}
+
+	/// <summary>
+	/// Stages the explicit RuntimeFiles of selected project-level mappings next to the output.
+	/// The entire plan is computed and validated BEFORE any copy: destination collisions (CVL1706)
+	/// and missing/broken/unreadable sources (CVL1707) fail the build even when the link succeeded.
+	/// </summary>
+	private static int StageProjectRuntimeFiles(IReadOnlyList<RuntimeStageEntry> plan, CompilationProject project, string binDirectory, IDiagnosticReporter reporter, string inputPath)
+	{
+		if (plan.Count == 0)
+			return 0;
+
+		// Lexically normalize every source (collapse ./.., keep case, no symlink resolution).
+		var entries = new List<(RuntimeStageEntry Entry, string NormalizedSource)>(plan.Count);
+		foreach (var entry in plan)
+		{
+			try
+			{
+				entries.Add((entry, Path.GetFullPath(entry.SourcePath)));
+			}
+			catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException or IOException)
+			{
+				reporter.ReportSynthetic(
+					DiagnosticIds.NativeRuntimeUnstageable,
+					"error",
+					$"Native library '{entry.LogicalName}': runtime file '{entry.DeclaredPath}' is not a valid path ({ex.Message}).",
+					inputPath);
+				return 1;
+			}
+		}
+
+		// Destination owners: dedup identical (destination, normalized source) pairs; different
+		// sources claiming the same destination filename is an error regardless of byte identity.
+		var owners = new Dictionary<string, string>(StringComparer.Ordinal);
+		var collided = new HashSet<string>(StringComparer.Ordinal);
+		var copyDestinations = new List<string>();
+		foreach (var (entry, normalizedSource) in entries)
+		{
+			var destination = Path.Combine(binDirectory, entry.DestinationName);
+			if (owners.TryGetValue(destination, out var owner))
+			{
+				if (!string.Equals(owner, normalizedSource, StringComparison.Ordinal))
+				{
+					collided.Add(destination);
+				}
+
+				continue;
+			}
+
+			owners.Add(destination, normalizedSource);
+			copyDestinations.Add(destination);
+		}
+
+		var errors = 0;
+		foreach (var destination in collided)
+		{
+			var sources = entries
+				.Where(e => string.Equals(Path.Combine(binDirectory, e.Entry.DestinationName), destination, StringComparison.Ordinal))
+				.Select(e => e.NormalizedSource)
+				.ToList();
+			reporter.ReportSynthetic(
+				DiagnosticIds.NativeRuntimeDestinationCollision,
+				"error",
+				$"Runtime file collision: '{sources[0]}' and '{sources[^1]}' both stage to destination '{Path.GetFileName(destination)}'. " +
+				"Update the RuntimeFile paths so every destination filename is unique.",
+				inputPath);
+			errors++;
+		}
+
+		// Collisions with compiler-generated output artifacts are rejected before staging.
+		var outputExt = project.IsShared
+			? (OperatingSystem.IsWindows() ? ".dll" : ".so")
+			: (OperatingSystem.IsWindows() ? ".exe" : "");
+		var outputPath = Path.GetFullPath(Path.Combine(binDirectory, project.OutputName + outputExt));
+		var pdbPath = Path.GetFullPath(Path.Combine(binDirectory, project.OutputName + ".pdb"));
+		foreach (var destination in copyDestinations)
+		{
+			var full = Path.GetFullPath(destination);
+			if (full.Equals(outputPath, StringComparison.Ordinal) || full.Equals(pdbPath, StringComparison.Ordinal))
+			{
+				reporter.ReportSynthetic(
+					DiagnosticIds.NativeRuntimeDestinationCollision,
+					"error",
+					$"Runtime file '{Path.GetFileName(destination)}' collides with a compiler-generated output artifact; choose a different RuntimeFile name.",
+					inputPath);
+				errors++;
+			}
+		}
+
+		if (errors > 0)
+			return 1;
+
+		// Validate sources (existence + symlink resolution) before copying anything.
+		foreach (var (entry, normalizedSource) in entries)
+		{
+			var destination = Path.Combine(binDirectory, entry.DestinationName);
+			if (collided.Contains(destination))
+				continue;
+
+			try
+			{
+				var info = new FileInfo(normalizedSource);
+				var resolved = info.ResolveLinkTarget(returnFinalTarget: true);
+				if (resolved is not null && !resolved.Exists)
+				{
+					reporter.ReportSynthetic(
+						DiagnosticIds.NativeRuntimeUnstageable,
+						"error",
+						$"Native library '{entry.LogicalName}': runtime file '{entry.DeclaredPath}' resolves to missing target '{resolved.FullName}'.",
+						inputPath);
+					return 1;
+				}
+			}
+			catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or SecurityException or ArgumentException or NotSupportedException)
+			{
+				reporter.ReportSynthetic(
+					DiagnosticIds.NativeRuntimeUnstageable,
+					"error",
+					$"Native library '{entry.LogicalName}': runtime file '{entry.DeclaredPath}' cannot be stage-validated: {ex.Message}.",
+					inputPath);
+				return 1;
+			}
+		}
+
+		// Copy phase: follow symlinks to the final regular-file payload and copy its bytes; the
+		// destination keeps the DECLARED basename, never the resolved target's name.
+		foreach (var (entry, normalizedSource) in entries)
+		{
+			var destination = Path.Combine(binDirectory, entry.DestinationName);
+			if (collided.Contains(destination))
+				continue;
+
+			try
+			{
+				var payload = new FileInfo(normalizedSource).ResolveLinkTarget(returnFinalTarget: true)?.FullName ?? normalizedSource;
+				using (var source = File.OpenRead(payload))
+				using (var target = new FileStream(destination, FileMode.Create, FileAccess.Write, FileShare.None))
+				{
+					source.CopyTo(target);
+				}
+			}
+			catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or SecurityException or ArgumentException or NotSupportedException)
+			{
+				reporter.ReportSynthetic(
+					DiagnosticIds.NativeRuntimeUnstageable,
+					"error",
+					$"Native library '{entry.LogicalName}': failed to stage runtime file '{normalizedSource}' to '{destination}': {ex.Message}.",
+					inputPath);
+				return 1;
+			}
+		}
+
+		return 0;
+	}
+
+	private sealed record NativeRequirement(NativeLibraryInfo Library, string Origin);
+
+	private sealed record RuntimeStageEntry(string SourcePath, string DestinationName, string LogicalName, string DeclaredPath);
 
 	private static string ResolveTargetOs(string? targetOs)
 	{

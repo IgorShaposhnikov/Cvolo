@@ -1,14 +1,28 @@
 using System.Diagnostics;
-using Cvolo.Analysis.Symbols.FFI;
 using Cvolo.Core.Diagnostics;
-using Cvolo.Projects;
 using Cvolo.Packaging;
+using Cvolo.Projects;
 
 namespace Cvolo.Strategies;
 
+/// <summary>
+/// A native link input lowered by the driver into exactly one of two shapes: an explicit file path
+/// (application mapping or legacy source-level OS path) or a bare <c>-l</c> system name.
+/// <paramref name="Origin"/> records which package (or "&lt;application&gt;") required the library so
+/// CVL1704 diagnostics can point at the owner.
+/// </summary>
+/// <param name="LibraryName">The logical [LibraryImport] name (ordinal, case-sensitive).</param>
+/// <param name="FullPath">Explicit link input path; null when <paramref name="SystemName"/> is set.</param>
+/// <param name="SystemName">Bare system library name passed as <c>-l&lt;name&gt;</c>; null when <paramref name="FullPath"/> is set.</param>
+/// <param name="Origin">The originating package id or "&lt;application&gt;".</param>
+public sealed record NativeLinkInput(string LibraryName, string? FullPath, string? SystemName, string Origin)
+{
+	internal const string ApplicationOrigin = "<application>";
+}
+
 internal sealed class LinkStrategy(string binDirectory) : ICompilationStrategy
 {
-	public int Execute(string llPath, CompilationProject project, string? linkerPath, string? linkerName, string optLevel = "Os", bool verbose = false, IEnumerable<NativeLibraryInfo>? nativeLibraries = null, string? targetOs = null, IEnumerable<string>? additionalInputs = null, DebugLinkOptions? debug = null)
+	public int Execute(string llPath, CompilationProject project, string? linkerPath, string? linkerName, string optLevel = "Os", bool verbose = false, IEnumerable<NativeLinkInput>? nativeLibraries = null, string? targetOs = null, string? nativeTargetLabel = null, IEnumerable<string>? additionalInputs = null, DebugLinkOptions? debug = null)
 	{
 		if (linkerPath is null)
 		{
@@ -72,45 +86,25 @@ internal sealed class LinkStrategy(string binDirectory) : ICompilationStrategy
 
 		var packageInputFlags = string.Concat(packageInputs.Select(path => $" \"{path}\""));
 
-		// FFI native libraries: [LibraryImport] forwards ONLY the path matching the current
-		// compilation target OS (win:/linux:/mac:); a missing target path falls back to the
-		// bare library name via -l<name>. Path strings are forwarded verbatim (resolved
-		// relative to the project directory) — no host-disk existence check, so cross
-		// compilation is respected and the static linker reports CVL1704 if a file is gone.
-		var effectiveOs = ResolveTargetOs(targetOs);
+		// FFI native libraries: the driver already lowered each logical [LibraryImport] requirement
+		// into an explicit file path (application mapping or legacy source-level OS path) or a bare
+		// -l system name. Paths are forwarded verbatim — no host-disk existence check, so cross
+		// compilation is respected and a missing selected input surfaces as a CVL1704 from the linker.
 		var libraryFlags = "";
 		if (nativeLibraries is not null)
 		{
 			foreach (var lib in nativeLibraries)
 			{
-				var targetPath = effectiveOs switch
+				if (!string.IsNullOrEmpty(lib.FullPath))
 				{
-					"windows" => lib.WinPath,
-					"linux" => lib.LinuxPath,
-					"macos" => lib.MacPath,
-					_ => null
-				};
-
-				if (!string.IsNullOrEmpty(targetPath))
+					libraryFlags += $" \"{lib.FullPath}\"";
+				}
+				else if (!string.IsNullOrEmpty(lib.SystemName))
 				{
-					// System marker: If the path does not contain directory separators, treat it as a 
-					// system library name from the Windows SDK / Linux library search paths (e.g., "opengl32.lib").
-					if (!targetPath.Contains('/') && !targetPath.Contains('\\'))
-					{
-						// Strip the file extension (e.g., "opengl32.lib" -> "opengl32") to pass cleanly to Clang
-						var cleanLibName = Path.GetFileNameWithoutExtension(targetPath);
-						libraryFlags += $" -l{cleanLibName}";
-					}
-					else
-					{
-						// If separators are present, it is a local relative asset path; resolve it 
-						// deterministically relative to the project directory root.
-						libraryFlags += $" \"{Path.GetFullPath(targetPath, project.ProjectDirectory)}\"";
-					}
+					libraryFlags += $" -l{lib.SystemName}";
 				}
 				else
 				{
-					// Core fallback: Use the base library primitive identifier name if target parameters are absent
 					libraryFlags += $" -l{lib.LibraryName}";
 				}
 			}
@@ -182,16 +176,106 @@ internal sealed class LinkStrategy(string binDirectory) : ICompilationStrategy
 			return 0;
 		}
 
-		if (nativeLibraries is not null && nativeLibraries.Any() && LooksLikeMissingNativeLibrary(linkerStderr))
+		var inputs = nativeLibraries?.ToList() ?? [];
+		if (inputs.Count > 0 && LooksLikeMissingNativeLibrary(linkerStderr) && MissingNativeAttributedToInput(linkerStderr, inputs))
 		{
-			Console.Error.WriteLine($"Compile Error {DiagnosticIds.NativeLibraryUnresolved}: A native library requested via [LibraryImport] could not be resolved by the linker.");
+			// Recognized missing-native failure: raw linker output is hidden by default and only
+			// shown before the Cvolo diagnostic when --verbose is requested.
+			if (verbose)
+			{
+				if (!string.IsNullOrWhiteSpace(linkerStdout))
+					Console.Error.Write(linkerStdout);
+				Console.Error.Write(linkerStderr);
+			}
+
+			var targetLabel = nativeTargetLabel ?? ResolveTargetOs(targetOs);
+			var os = targetLabel.Split('/')[0];
+			foreach (var lib in inputs)
+			{
+				ReportNativeLibraryUnresolved(lib, targetLabel, os);
+			}
+
+			return 1;
 		}
+
 		Console.Error.WriteLine("Linking failed:");
 		if (!string.IsNullOrWhiteSpace(linkerStdout))
 			Console.Error.Write(linkerStdout);
 		Console.Error.WriteLine(linkerStderr);
 
 		return 1;
+	}
+
+	/// <summary>
+	/// Reports a recognized missing-native failure as CVL1704, shaped by whether an explicit path
+	/// was configured (show the path + its application-root resolution) or only a bare system name
+	/// was attempted (recommend adding a mapping).
+	/// </summary>
+	private static void ReportNativeLibraryUnresolved(NativeLinkInput lib, string targetLabel, string os)
+	{
+		var originLabel = lib.Origin == NativeLinkInput.ApplicationOrigin
+			? "The application"
+			: $"Package '{lib.Origin}'";
+
+		if (!string.IsNullOrEmpty(lib.FullPath))
+		{
+			var relative = TryMakeRelative(lib.FullPath);
+			Console.Error.WriteLine(
+				$"Compile Error {DiagnosticIds.NativeLibraryUnresolved}: {originLabel} requires native library '{lib.LibraryName}', " +
+				$"but it could not be linked using the configured path '{lib.FullPath}' (from the application root: '{relative}') for target '{targetLabel}'. " +
+				"Verify the file exists and can be linked for this target.");
+		}
+		else
+		{
+			Console.Error.WriteLine(
+				$"Compile Error {DiagnosticIds.NativeLibraryUnresolved}: {originLabel} requires native library '{lib.LibraryName}', " +
+				$"but it could not be resolved for target '{targetLabel}'. " +
+				$"Add a mapping to the application .cvlproj: <NativeLibraries Target=\"{os}\"><NativeLibrary For=\"{lib.LibraryName}\" Path=\"...\">" +
+				"<RuntimeFile Path=\"...\" /></NativeLibrary></NativeLibraries>. RuntimeFile is optional.");
+		}
+	}
+
+	private static string TryMakeRelative(string fullPath)
+	{
+		try
+		{
+			return Path.GetFileName(fullPath);
+		}
+		catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+		{
+			return fullPath;
+		}
+	}
+
+	/// <summary>
+	/// Confirms the missing-library signature actually references one of the native inputs (its path
+	/// basename, system name, or logical name) so unrelated failures — a missing IR file, an object
+	/// missing its own sibling, a plain link error — are never misclassified as missing native libs.
+	/// </summary>
+	private static bool MissingNativeAttributedToInput(string linkerStderr, IReadOnlyList<NativeLinkInput> inputs)
+	{
+		foreach (var lib in inputs)
+		{
+			if (lib.FullPath is not null
+				&& linkerStderr.Contains(Path.GetFileName(lib.FullPath), StringComparison.OrdinalIgnoreCase))
+			{
+				return true;
+			}
+
+			if (lib.SystemName is not null
+				&& linkerStderr.Contains(lib.SystemName, StringComparison.OrdinalIgnoreCase))
+			{
+				return true;
+			}
+
+			if (lib.FullPath is null && lib.SystemName is null
+				&& linkerStderr.Contains(lib.LibraryName, StringComparison.OrdinalIgnoreCase))
+			{
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	/// <summary>

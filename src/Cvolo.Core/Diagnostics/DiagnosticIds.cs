@@ -407,6 +407,15 @@ public static class DiagnosticIds
 	/// <summary>Native library could not be resolved by the linker.</summary>
 	public const string NativeLibraryUnresolved = "CVL1704";
 
+	/// <summary>Warning: a library mapped for some targets falls back to bare-name system lookup on the requested target.</summary>
+	public const string NativeLibraryFallbackWarning = "CVL1705";
+
+	/// <summary>Error: two different runtime sources would be staged to the same destination filename.</summary>
+	public const string NativeRuntimeDestinationCollision = "CVL1706";
+
+	/// <summary>Error: a selected RuntimeFile could not be staged (missing, broken symlink, or I/O failure).</summary>
+	public const string NativeRuntimeUnstageable = "CVL1707";
+
 	// ── Unsafe C-ABI Interop (CVLF20xx) ──
 
 	/// <summary>An imported foreign global cannot declare an initializer; its storage is external.</summary>

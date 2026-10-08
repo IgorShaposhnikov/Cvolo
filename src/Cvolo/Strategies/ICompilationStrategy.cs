@@ -1,9 +1,8 @@
-using Cvolo.Analysis.Symbols.FFI;
 using Cvolo.Projects;
 
 namespace Cvolo.Strategies;
 
 public interface ICompilationStrategy
 {
-	int Execute(string llPath, CompilationProject project, string? linkerPath, string? linkerName, string optLevel = "Os", bool verbose = false, IEnumerable<NativeLibraryInfo>? nativeLibraries = null, string? targetOs = null, IEnumerable<string>? additionalInputs = null, DebugLinkOptions? debug = null);
+	int Execute(string llPath, CompilationProject project, string? linkerPath, string? linkerName, string optLevel = "Os", bool verbose = false, IEnumerable<NativeLinkInput>? nativeLibraries = null, string? targetOs = null, string? nativeTargetLabel = null, IEnumerable<string>? additionalInputs = null, DebugLinkOptions? debug = null);
 }

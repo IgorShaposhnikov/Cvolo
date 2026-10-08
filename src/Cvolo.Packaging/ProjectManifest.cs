@@ -25,7 +25,9 @@ public sealed class ProjectManifest
 		bool strictOption,
 		string? localFeed,
 		IReadOnlyList<string> targetFrameworks,
-		IReadOnlyList<PackageReference> dependencies)
+		IReadOnlyList<PackageReference> dependencies,
+		IReadOnlyList<NativeLibrariesGroup> nativeLibraries,
+		IReadOnlyList<(string Code, string Message)> warnings)
 	{
 		ProjectPath = projectPath;
 		ProjectDirectory = projectDirectory;
@@ -37,6 +39,8 @@ public sealed class ProjectManifest
 		LocalFeed = localFeed;
 		TargetFrameworks = targetFrameworks;
 		Dependencies = dependencies;
+		NativeLibraries = nativeLibraries;
+		Warnings = warnings;
 	}
 
 	/// <summary>The absolute path of the .cvlproj file.</summary>
@@ -69,6 +73,12 @@ public sealed class ProjectManifest
 	/// <summary>The declared package references.</summary>
 	public IReadOnlyList<PackageReference> Dependencies { get; }
 
+	/// <summary>The declared &lt;NativeLibraries&gt; target groups (application native-library resolution).</summary>
+	public IReadOnlyList<NativeLibrariesGroup> NativeLibraries { get; }
+
+	/// <summary>Non-fatal manifest advisories (e.g. absolute-path portability warnings) keyed by diagnostic code.</summary>
+	public IReadOnlyList<(string Code, string Message)> Warnings { get; }
+
 	/// <summary>
 	/// Loads and validates the nearest .cvlproj by walking up from <paramref name="pathOrDirectory"/>.
 	/// </summary>
@@ -84,6 +94,39 @@ public sealed class ProjectManifest
 			return LoadFromProjectFile(projectFile);
 
 		throw new FileNotFoundException($"Could not find a .cvlproj file from '{startDir.FullName}' or any parent directory.");
+	}
+
+	/// <summary>
+	/// Loads ONLY the &lt;NativeLibraries&gt; target groups from the nearest .cvlproj, tolerating
+	/// application projects that are not packages (no &lt;PackageId&gt;/&lt;Version&gt; properties).
+	/// The final application declares native mappings without package identity, so this path must
+	/// not demand package identity — while native-structure validation (CVLP31xx) still throws.
+	/// </summary>
+	public static (IReadOnlyList<NativeLibrariesGroup> NativeLibraries, IReadOnlyList<(string Code, string Message)> Warnings) LoadNativeLibraries(string pathOrDirectory)
+	{
+		var fullPath = Path.GetFullPath(pathOrDirectory);
+		var startDir = Directory.Exists(fullPath)
+			? new DirectoryInfo(fullPath)
+			: new DirectoryInfo(Path.GetDirectoryName(fullPath) ?? fullPath);
+
+		var projectFile = FindProject(startDir);
+		if (projectFile is null)
+			throw new FileNotFoundException($"Could not find a .cvlproj file from '{startDir.FullName}' or any parent directory.");
+
+		XDocument doc;
+		try
+		{
+			doc = XDocument.Load(projectFile.FullName);
+		}
+		catch (Exception ex) when (ex is IOException or System.Xml.XmlException)
+		{
+			throw new PackageException(PackageDiagnosticIds.InvalidSemVer, $"Failed to read '{projectFile.Name}'.", ex.Message);
+		}
+
+		var root = doc.Root ?? throw new PackageException(PackageDiagnosticIds.InvalidSemVer, $"'{projectFile.Name}' has no root element.");
+		var warnings = new List<(string Code, string Message)>();
+		var groups = NativeLibrariesParser.Parse(root, warnings);
+		return (groups, warnings);
 	}
 
 	private static FileInfo? FindProject(DirectoryInfo start)
@@ -154,6 +197,9 @@ public sealed class ProjectManifest
 			}
 		}
 
+		var warnings = new List<(string Code, string Message)>();
+		var nativeLibraries = NativeLibrariesParser.Parse(root, warnings);
+
 		return new ProjectManifest(
 			projectPath: projectFile.FullName,
 			projectDirectory: projectFile.Directory?.FullName ?? throw new InvalidOperationException("Project file has no directory."),
@@ -164,6 +210,8 @@ public sealed class ProjectManifest
 			strictOption: strictOption,
 			localFeed: localFeed,
 			targetFrameworks: targetFrameworks,
-			dependencies: dependencies);
+			dependencies: dependencies,
+			nativeLibraries: nativeLibraries,
+			warnings: warnings);
 	}
 }

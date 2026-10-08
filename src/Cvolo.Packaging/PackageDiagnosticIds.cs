@@ -64,4 +64,33 @@ public static class PackageDiagnosticIds
 	/// <summary>Warning: an unsigned package is accepted because no trusted-key policy is configured.</summary>
 	public const string UnsignedWarning = "CVLP3050";
 
+	// ── .cvlproj NativeLibraries groups (CVLP31xx) ──
+	// Reserved exclusively for the application-level native-library declaration model
+	// (Application-Native-Library-Resolution INC). These are project-configuration
+	// diagnostics, distinct from the CVL1704-1707 resolution/staging diagnostics.
+
+	/// <summary>Error: a &lt;NativeLibraries&gt; block is structurally invalid (unknown attribute/element, empty value).</summary>
+	public const string NativeLibrariesInvalidStructure = "CVLP3100";
+
+	/// <summary>Error: the &lt;NativeLibraries Target&gt; value is not windows, linux, or macos.</summary>
+	public const string NativeLibrariesUnknownTarget = "CVLP3101";
+
+	/// <summary>Error: the &lt;NativeLibraries Arch&gt; value is not x64, arm64, or x86.</summary>
+	public const string NativeLibrariesUnknownArchitecture = "CVLP3102";
+
+	/// <summary>Error: the &lt;NativeLibraries Configuration&gt; value is not Debug or Release.</summary>
+	public const string NativeLibrariesUnknownConfiguration = "CVLP3103";
+
+	/// <summary>Error: a library path is empty or contains an unsupported environment/MSBuild expression.</summary>
+	public const string NativeLibrariesInvalidPath = "CVLP3104";
+
+	/// <summary>Error: the same (For, Target, Arch, Configuration) selector is declared more than once.</summary>
+	public const string NativeLibrariesDuplicateSelector = "CVLP3105";
+
+	/// <summary>Error: two matching native-library mappings are incomparable and neither dominates the other.</summary>
+	public const string NativeLibrariesAmbiguous = "CVLP3106";
+
+	/// <summary>Warning: an absolute library path is accepted but is not portable across machines/projects.</summary>
+	public const string NativeLibrariesAbsolutePath = "CVLP3107";
+
 }
