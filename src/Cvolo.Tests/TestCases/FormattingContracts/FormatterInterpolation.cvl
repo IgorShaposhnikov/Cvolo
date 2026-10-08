@@ -1,10 +1,10 @@
-using System;
-
 // Verifies StringInterpolation with primitive segments resolves through the formatter
 // pipeline (expressions evaluated once, %f-compatible doubles).
 // Expected output:
 //   sum=5
 //   pi=3.500000
+
+using System;
 
 int main()
 {

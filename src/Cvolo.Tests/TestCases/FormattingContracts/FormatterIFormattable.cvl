@@ -1,5 +1,3 @@
-using System;
-
 // Verifies IFormattable conformance drives the canonical formatting pipeline:
 // a Formatter.Write call binds to the extension's Format(refvar Formatter), interpolated
 // writes run through the pipeline without materializing a string, and a Console-bound
@@ -10,6 +8,8 @@ using System;
 //   (3, 4)
 //   42
 //   center=(3, 4)
+
+using System;
 
 struct Point
 {

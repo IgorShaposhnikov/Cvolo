@@ -1,11 +1,11 @@
-using System;
-
 // Verifies Option and Result are formattable without conforming to either interface.
 // Expected output:
 //   Some(42)
 //   None
 //   Ok(7)
 //   Err(boom)
+
+using System;
 
 int main()
 {

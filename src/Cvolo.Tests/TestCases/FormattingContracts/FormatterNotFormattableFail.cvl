@@ -1,7 +1,7 @@
-using System;
-
 // Negative case: a type that conforms to neither IFormattable nor IStringable (and is not a
 // primitive, string, Option, or Result) is rejected with diagnostic CVL4193.
+
+using System;
 
 struct Ticket
 {

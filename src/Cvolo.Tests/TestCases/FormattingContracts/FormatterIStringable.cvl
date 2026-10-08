@@ -1,7 +1,7 @@
-using System;
-
 // Verifies a type with only IStringable conformance is formattable via its ToString()
 // extension method. Expected output: Ada
+
+using System;
 
 struct Person
 {
