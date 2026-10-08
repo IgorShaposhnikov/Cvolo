@@ -22,12 +22,20 @@ internal sealed class OwnershipAnalyzer(BindingContext context)
 	private readonly SafetyExpressionFacts _facts = new(context);
 	private readonly Dictionary<MovePath, OwnershipState> _state = new();
 
+	// Maps a live 'ref'/'refvar' local name to the move path of the storage it references, so
+	// assignments through a borrowed reference update the underlying owner's ownership state exactly
+	// as a direct assignment would (§17).
+	private readonly Dictionary<string, MovePath> _referenceProvenance = new();
+	private readonly HashSet<string> _parameterReferenceNames = new();
+
 	public void Analyze(FunctionDeclarationSyntax func)
 	{
 		if (!func.HasBody)
 			return;
 
 		_state.Clear();
+		_referenceProvenance.Clear();
+		_parameterReferenceNames.Clear();
 		var scope = new SymbolTable(context.Globals);
 
 		foreach (var param in func.Parameters)
@@ -36,6 +44,7 @@ internal sealed class OwnershipAnalyzer(BindingContext context)
 			if (type is null)
 				continue;
 
+			_parameterReferenceNames.Add(param.Name);
 			scope.Declare(new VariableSymbol(param.Name, type, false) { IsInitialized = true, Origin = OriginKind.Parameter });
 			if (OwnershipTypeFacts.NeedsDestruction(type, context))
 				_state[new MovePath(param.Name)] = OwnershipState.Live;
@@ -94,6 +103,19 @@ internal sealed class OwnershipAnalyzer(BindingContext context)
 			return;
 
 		scope.Declare(symbol);
+
+		// A 'ref'/'refvar' local borrows storage; record its provenance so later writes through the
+		// reference resolve back to the owner's move path. The initializer may be a borrow
+		// ('refvar owner') or another reference local.
+		var declaresReference = v.Type is "ref" or "refvar"
+			|| (v.Type is { } typeName
+				&& (typeName.StartsWith("refvar ", StringComparison.Ordinal)
+					|| typeName.StartsWith("ref ", StringComparison.Ordinal)));
+		if (declaresReference
+			&& v.Initializer is not null
+			&& ResolveMovePath(v.Initializer) is { } borrowTarget)
+			_referenceProvenance[symbol.Name] = borrowTarget;
+
 		var destroys = OwnershipTypeFacts.NeedsDestruction(symbol.Type, context);
 		var root = new MovePath(symbol.Name);
 
@@ -109,8 +131,17 @@ internal sealed class OwnershipAnalyzer(BindingContext context)
 		if (!destroys)
 			return;
 
+		// Extracting an owned value through an untracked raw-pointer dereference cannot be
+		// tracked, so it is rejected deterministically instead of guessing a tracked root (§16.2).
+		if (v.Initializer is UnaryExpressionSyntax { Operator: "*" })
+		{
+			Report(v, "Cannot move a resource out of an untracked raw-pointer dereference.",
+				DiagnosticIds.UnknownAliasedMoveAssignment);
+			return;
+		}
+
 		// Initializing an owned local from an owned source path transfers ownership (a move).
-		var sourcePath = MovePathBuilder.TryBuild(v.Initializer);
+		var sourcePath = ResolveMovePath(v.Initializer);
 		if (sourcePath is not null && OwnsDestructibleValue(sourcePath, scope))
 		{
 			if (HasDestructorAncestor(v.Initializer, scope))
@@ -170,7 +201,30 @@ internal sealed class OwnershipAnalyzer(BindingContext context)
 	{
 		AnalyzeExpression(bin.Right, scope);
 
+		// Rebinding a borrowed 'ref'/'refvar' local to another reference is a pointer reassignment,
+		// not an ownership transfer; it just retargets the provenance. Parameters are not
+		// rebindable: assigning to a 'ref'/'refvar' parameter writes through it (value copy).
+		if (bin.Left is IdentifierExpressionSyntax rebindId
+			&& !_parameterReferenceNames.Contains(rebindId.Name)
+			&& _referenceProvenance.ContainsKey(rebindId.Name)
+			&& ResolveType(bin.Right, scope) is PointerTypeSymbol)
+		{
+			if (ResolveMovePath(bin.Right) is { } reboundTarget)
+				_referenceProvenance[rebindId.Name] = reboundTarget;
+			context.ResolvedReferenceRebinds.Add(bin);
+			return;
+		}
+
+		var destPath = ResolveMovePath(bin.Left);
 		var destType = ResolveType(bin.Left, scope);
+
+		// Assignment through a borrowed 'ref'/'refvar' local targets the referenced storage, so the
+		// effective destination type is the referent's type and the effective move path is the
+		// borrowed owner's path (§17).
+		if (bin.Left is IdentifierExpressionSyntax borrowedId
+			&& _referenceProvenance.TryGetValue(borrowedId.Name, out var borrowedTarget))
+			destType = ResolvePathType(borrowedTarget, scope) ?? destType;
+
 		if (destType is null)
 		{
 			AnalyzeExpression(bin.Left, scope);
@@ -190,23 +244,32 @@ internal sealed class OwnershipAnalyzer(BindingContext context)
 			return;
 		}
 
-		var destPath = MovePathBuilder.TryBuild(bin.Left);
-		var sourcePath = MovePathBuilder.TryBuild(bin.Right);
+		var sourcePath = ResolveMovePath(bin.Right);
 		var sourceIsMove = sourcePath is not null && OwnsDestructibleValue(sourcePath, scope);
 
-		// Dynamic-index destination: a non-constant index into an aggregate of owned elements does
-		// not designate a stable identity, so the write is rejected until region analysis can prove
-		// every candidate element is live and pre-store stable.
+		// Dynamic-index destination: a non-constant index into an array of owned elements has no
+		// stable element identity. It is legal only when region analysis proves every possible
+		// selected element is Live and pre-store evaluation cannot invalidate a candidate.
+		DynamicDestinationRegion? destinationRegion = null;
 		if (destPath is null && bin.Left is IndexExpressionSyntax dynamicIndex
-			&& ResolveType(dynamicIndex.Left, scope) is ArrayTypeSymbol
+			&& ResolveType(dynamicIndex.Left, scope) is ArrayTypeSymbol dynamicArray
 			&& !MovePathBuilder.TryGetConstantIndex(dynamicIndex.Index, out _))
 		{
-			Report(bin, "Dynamic-index ownership assignment is not supported: the target element is not statically identifiable.",
-				DiagnosticIds.DynamicIndexOwnershipUnsupported);
-			return;
+			var arrayPath = MovePathBuilder.TryBuild(dynamicIndex.Left);
+			var sourceMayAliasCandidate = arrayPath is not null && sourcePath is not null && sourcePath.Root == arrayPath.Root;
+			if (arrayPath is null || sourceMayAliasCandidate || !AllCandidateElementsLive(arrayPath, dynamicArray))
+			{
+				Report(bin, "Dynamic-index ownership assignment is not supported: the target element is not statically identifiable.",
+					DiagnosticIds.DynamicIndexOwnershipUnsupported);
+				return;
+			}
+
+			destinationRegion = new DynamicDestinationRegion(arrayPath, dynamicIndex.Index, dynamicArray.Size);
 		}
 
-		var destState = ComputeDestinationState(destPath);
+		var destState = destinationRegion is not null
+			? DestinationOwnershipState.WholeLive
+			: ComputeDestinationState(destPath);
 		var relation = MovePathRelation.None;
 
 		if (sourceIsMove && destPath is not null && sourcePath is not null)
@@ -229,7 +292,7 @@ internal sealed class OwnershipAnalyzer(BindingContext context)
 			bin.Left,
 			destType,
 			destPath,
-			null,
+			destinationRegion,
 			destState,
 			plan,
 			isResourceUnion ? ReplacementKind.TagAwareUnionReplace : ReplacementKind.Ordinary,
@@ -239,9 +302,33 @@ internal sealed class OwnershipAnalyzer(BindingContext context)
 
 		if (destPath is not null)
 			_state[destPath] = OwnershipState.Live;
+		else if (destinationRegion is not null)
+			foreach (var candidate in destinationRegion.EnumerateCandidatePaths())
+				_state[candidate] = OwnershipState.Live;
 
 		if (sourceIsMove && sourcePath is not null)
 			MarkMoved(sourcePath);
+	}
+
+	/// <summary>
+	/// True when every element of a fixed array candidate region is currently Live.
+	/// Only direct whole-array liveness or direct per-element liveness counts; missing
+	/// per-element entries are unavailable and must not inherit liveness from the root,
+	/// otherwise a partially initialized array would masquerade as uniformly Live.
+	/// </summary>
+	private bool AllCandidateElementsLive(MovePath arrayPath, ArrayTypeSymbol arrayType)
+	{
+		var rootIsLive = _state.TryGetValue(arrayPath, out var rootState) && rootState == OwnershipState.Live;
+
+		for (var i = 0; i < arrayType.Size; i++)
+		{
+			var element = arrayPath.Append(ProjectionStep.FixedIndex(i));
+			var elementIsLive = _state.TryGetValue(element, out var elementState) && elementState == OwnershipState.Live;
+			if (!rootIsLive && !elementIsLive)
+				return false;
+		}
+
+		return true;
 	}
 
 	private void AnalyzeCall(CallExpressionSyntax call, SymbolTable scope)
@@ -255,7 +342,18 @@ internal sealed class OwnershipAnalyzer(BindingContext context)
 			{
 				var parameter = func.Parameters[i];
 				var byValue = parameter.Type is not PointerTypeSymbol;
-				var path = byValue ? MovePathBuilder.TryBuild(argument) : null;
+				if (byValue
+					&& argument is UnaryExpressionSyntax { Operator: "*" }
+					&& ResolveType(argument, scope) is { } pointeeType
+					&& OwnershipTypeFacts.NeedsDestruction(pointeeType, context))
+				{
+					Report(argument, "Cannot move a resource out of an untracked raw-pointer dereference.",
+						DiagnosticIds.UnknownAliasedMoveAssignment);
+					AnalyzeExpression(argument, scope);
+					continue;
+				}
+
+				var path = byValue ? ResolveMovePath(argument) : null;
 				if (path is not null && OwnsDestructibleValue(path, scope))
 					MarkMoved(path);
 			}
@@ -264,10 +362,44 @@ internal sealed class OwnershipAnalyzer(BindingContext context)
 		}
 	}
 
+	/// <summary>
+	/// Builds the move path for an expression, resolving the root of a borrowed 'ref'/'refvar'
+	/// local to the storage it references, so reads and writes through the reference project onto
+	/// the underlying owner's move path (§17).
+	/// </summary>
+	private MovePath? ResolveMovePath(ExpressionSyntax expr)
+	{
+		var path = MovePathBuilder.TryBuild(expr);
+		if (path is null)
+			return null;
+
+		if (_referenceProvenance.TryGetValue(path.Root, out var target))
+		{
+			var resolved = target;
+			foreach (var step in path.Steps)
+				resolved = resolved.Append(step);
+			return resolved;
+		}
+
+		return path;
+	}
+
 	private DestinationOwnershipState ComputeDestinationState(MovePath? path)
 	{
 		if (path is null)
 			return DestinationOwnershipState.Unavailable;
+
+		// Fixed-index element projections carry their own ownership. They must not
+		// inherit the aggregate's whole-value liveness, otherwise partial array
+		// initialization would make an untracked element look Live (and get a
+		// spurious pre-store destruction). An element with no direct entry is
+		// Unavailable; runtime element live-flags govern replacement and cleanup.
+		if (path.Steps.Count > 0
+			&& path.Steps[^1].Kind == ProjectionStepKind.FixedIndex
+			&& !_state.ContainsKey(path))
+		{
+			return DestinationOwnershipState.Unavailable;
+		}
 
 		return ComputeWholeState(path) switch
 		{
@@ -377,7 +509,12 @@ internal sealed class OwnershipAnalyzer(BindingContext context)
 				return ResolveType(b.Expression, scope);
 
 			case UnaryExpressionSyntax u when u.Operator == "*":
-				return ResolveType(u.Operand, scope) is PointerTypeSymbol pointer ? pointer.ReferencedType : null;
+				return ResolveType(u.Operand, scope) switch
+				{
+					PointerTypeSymbol pointer => pointer.ReferencedType,
+					RawPointerTypeSymbol rawPointer => rawPointer.ElementType,
+					_ => null
+				};
 
 			default:
 				return null;

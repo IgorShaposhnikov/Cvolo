@@ -1,0 +1,31 @@
+using System;
+
+struct Resource
+{
+	int Id;
+}
+
+extension Resource
+{
+	~Resource()
+	{
+		Console.WriteLine($"drop={Id}");
+	}
+}
+
+void Consume(Resource resource)
+{
+}
+
+int main()
+{
+	bool flag = true;
+	var Resource r = Resource { Id: 1 };
+	if (flag)
+	{
+		Consume(r);
+	}
+	r = Resource { Id: 2 };
+	Console.WriteLine("end");
+	return 0;
+}

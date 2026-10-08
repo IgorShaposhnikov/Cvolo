@@ -1,0 +1,28 @@
+using System;
+
+struct Resource
+{
+	int Id;
+}
+
+extension Resource
+{
+	~Resource()
+	{
+		Console.WriteLine($"drop={Id}");
+	}
+}
+
+union Choice
+{
+	Resource R;
+	int Code;
+}
+
+int main()
+{
+	var Choice x = Choice { R: Resource { Id: 1 } };
+	x.Code = 7;
+	Console.WriteLine("end");
+	return 0;
+}

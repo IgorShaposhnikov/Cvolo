@@ -297,10 +297,17 @@ internal sealed class StatementEmitter(
 	private void EmitVariableDeclaration(VariableDeclarationSyntax varDecl)
 	{
 		// Record field-level source moves so projection-aware cleanup skips the moved-from field.
-		if (BindingContext.ResolvedDeclarationMoves.TryGetValue(varDecl, out var declarationMove)
-			&& declarationMove.ToFieldPathString() is { } movedFieldPath)
+		if (BindingContext.ResolvedDeclarationMoves.TryGetValue(varDecl, out var declarationMove))
 		{
-			Function.MovedFieldPaths.Add(movedFieldPath);
+			if (declarationMove.Depth == 0)
+			{
+				if (Function.LiveFlags.ContainsKey(declarationMove.Root))
+					cleanup.SetLiveFlag(Function, declarationMove.Root, false);
+			}
+			else if (declarationMove.ToFieldPathString() is { } movedFieldPath)
+			{
+				Function.MovedFieldPaths.Add(movedFieldPath);
+			}
 		}
 
 		TypeSymbol? typeSymbol = null;
@@ -361,6 +368,18 @@ internal sealed class StatementEmitter(
 			var alloca = memory.BuildEntryAlloca(llvmType, varDecl.Name);
 			Function.Locals[varDecl.Name] = alloca;
 			Function.VariableTypes[varDecl.Name] = typeSymbol;
+
+			// Runtime liveness flag: tracks whether this local currently owns a value that must
+			// be destroyed. Initialized false; set true after a successful initializing store.
+			var declaresOwned = cleanup.TypeRequiresDestruction(typeSymbol);
+			if (declaresOwned)
+				cleanup.GetOrCreateLiveFlag(Function, varDecl.Name);
+
+			// Owned fixed arrays track liveness per element: each element starts Unavailable and
+			// only becomes Live once actually initialized/moved into. Scope-exit cleanup and
+			// element replacement consult these flags so uninitialized elements are never destroyed.
+			if (declaresOwned && typeSymbol is ArrayTypeSymbol declaredArrayType)
+				cleanup.GetOrCreateElementFlags(Function, varDecl.Name, declaredArrayType.Size);
 
 			// Panic-safe zero-ing: a ResourceMove-style union local is pre-set to None so that if
 			// a panic occurs while its constructor/initializer is still running, the unwinder (and
@@ -430,6 +449,8 @@ internal sealed class StatementEmitter(
 					var arrayPtr = emitExpression(varDecl.Initializer);
 					var sliceVal = coercion.CoerceArrayToSlice(arrayPtr, valTy, (typeSymbol as SliceTypeSymbol)!);
 					Builder.BuildStore(sliceVal, alloca);
+					if (declaresOwned)
+						cleanup.SetLiveFlag(Function, varDecl.Name, true);
 					return;
 				}
 
@@ -462,6 +483,24 @@ internal sealed class StatementEmitter(
 					coerced = coercion.CoerceFloatWidth(coerced, expressionTypes.Resolve(varDecl.Initializer!) ?? typeSymbol, typeSymbol);
 					Builder.BuildStore(coerced, alloca);
 				}
+
+				if (declaresOwned)
+				{
+					cleanup.SetLiveFlag(Function, varDecl.Name, true);
+					// A fully-initialized owned fixed array (literal or replication) has every
+					// element live; record that so scope-exit cleanup and replacement agree.
+					if (typeSymbol is ArrayTypeSymbol initializedArrayType)
+					{
+						for (int elementIndex = 0; elementIndex < initializedArrayType.Size; elementIndex++)
+							cleanup.SetElementFlag(Function, varDecl.Name, initializedArrayType.Size, elementIndex, true);
+					}
+				}
+			}
+			else if (declaresOwned)
+			{
+				// An owned local declared without an initializer is treated as live so its
+				// destructor still runs at scope exit, matching the pre-existing contract.
+				cleanup.SetLiveFlag(Function, varDecl.Name, true);
 			}
 		}
 		else
@@ -469,6 +508,10 @@ internal sealed class StatementEmitter(
 			// Type Inference
 			var valTy = expressionTypes.Resolve(varDecl.Initializer!);
 			Function.VariableTypes[varDecl.Name] = valTy;
+
+			var infersOwned = cleanup.TypeRequiresDestruction(valTy);
+			if (infersOwned)
+				cleanup.GetOrCreateLiveFlag(Function, varDecl.Name);
 
 			if (varDecl.Initializer is CallExpressionSyntax ctorCall && expressionTypes.IsConstructorCall(ctorCall, valTy))
 			{
@@ -518,6 +561,9 @@ internal sealed class StatementEmitter(
 				Function.Locals[varDecl.Name] = alloca;
 				Builder.BuildStore(val, alloca);
 			}
+
+			if (infersOwned)
+				cleanup.SetLiveFlag(Function, varDecl.Name, true);
 		}
 	}
 

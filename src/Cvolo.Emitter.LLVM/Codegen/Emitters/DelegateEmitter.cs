@@ -88,7 +88,11 @@ internal sealed class DelegateEmitter(
 				{
 					Builder.BuildStore(values.Load(captureName), fieldPtr);
 					if (info.CaptureMode == LambdaCaptureMode.Move)
+					{
 						Function.MovedVars.Add(captureName);
+						if (Function.LiveFlags.TryGetValue(captureName, out var liveFlag))
+							Builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int1, 0), liveFlag);
+					}
 				}
 			}
 		}

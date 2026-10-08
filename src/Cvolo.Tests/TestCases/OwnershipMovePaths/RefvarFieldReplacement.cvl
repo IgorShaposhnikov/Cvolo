@@ -1,0 +1,29 @@
+using System;
+
+struct Resource
+{
+    int Id;
+}
+
+extension Resource
+{
+    ~Resource()
+    {
+        Console.WriteLine($"drop={Id}");
+    }
+}
+
+struct Pair
+{
+    Resource First;
+    Resource Second;
+}
+
+int main()
+{
+    var Pair pair = Pair { First: Resource { Id: 1 }, Second: Resource { Id: 2 } };
+    refvar Resource rr = refvar pair.First;
+    rr = Resource { Id: 3 };
+    Console.WriteLine("end");
+    return 0;
+}

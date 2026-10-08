@@ -1,0 +1,24 @@
+using System;
+
+struct Resource { int Id; }
+
+extension Resource
+{
+    ~Resource()
+    {
+        Console.WriteLine($"drop={Id}");
+    }
+}
+
+void Consume(Resource resource)
+{
+}
+
+[UnsafeBody]
+int main()
+{
+    var Resource r = Resource { Id: 1 };
+    Resource* p = &r;
+    Consume(*p);
+    return 0;
+}

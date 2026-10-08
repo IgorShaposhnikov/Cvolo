@@ -26,7 +26,14 @@ internal sealed class MoveAnalyzer(
 	public void VerifyReadable(IdentifierExpressionSyntax identifier, SymbolTable scope)
 	{
 		if ((scope.Lookup(identifier.Name) as VariableSymbol ?? context.ResolveGlobalReference(identifier.Name, out _)) is { IsMoved: true })
+		{
 			context.Diagnostics.Report(context.CurrentUnit!.Context, identifier.Span, $"Use of moved variable '{identifier.Name}'", DiagnosticIds.UseOfMovedVariable);
+
+			// Diagnostic precedence (§22.1): when the same read is primarily a use-after-move
+			// failure, the definite-assignment 'possibly uninitialized' diagnostic for that exact
+			// read is suppressed so ownership is reported as the single cause.
+			context.Diagnostics.Suppress(DiagnosticIds.UseOfPossiblyUninitializedVariable, identifier.Span);
+		}
 	}
 
 	/// <summary>Returns whether the type uses move-only resource semantics.</summary>

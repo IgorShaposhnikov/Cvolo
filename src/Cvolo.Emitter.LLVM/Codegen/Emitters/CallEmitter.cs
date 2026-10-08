@@ -312,6 +312,7 @@ internal sealed class CallEmitter(
 				&& paramUnion.Name == srcUnion.Name)
 			{
 				Function.MovedVars.Add(moveArg.Name);
+				cleanup.SetLiveFlag(Function, moveArg.Name, false);
 			}
 
 			// A resource-owning value passed by value out of a struct projection moves only that
@@ -324,6 +325,27 @@ internal sealed class CallEmitter(
 				&& expressionTypes.Resolve(argExpr) is StructTypeSymbol or UnionTypeSymbol or ArrayTypeSymbol)
 			{
 				Function.MovedFieldPaths.Add(movedFieldPath);
+				cleanup.SetLiveFlag(Function, movedFieldPath, false);
+			}
+
+			if (paramTy is not null
+			&& paramTy is not PointerTypeSymbol
+			&& argExpr is IndexExpressionSyntax elemArg
+			&& elemArg.Left is IdentifierExpressionSyntax elemArrId
+			&& expressionTypes.Resolve(elemArrId) is ArrayTypeSymbol elemArrTy
+			&& Cvolo.Analysis.Ownership.MovePathBuilder.TryGetConstantIndex(elemArg.Index, out var elemMoveIndex))
+		{
+			cleanup.SetElementFlag(Function, elemArrId.Name, elemArrTy.Size, elemMoveIndex, false);
+		}
+
+		// A whole resource-owning local passed by value transfers ownership out of this frame.
+			if (paramTy is not null
+				&& paramTy is not PointerTypeSymbol
+				&& argExpr is IdentifierExpressionSyntax wholeMoveArg
+				&& Function.VariableTypes.TryGetValue(wholeMoveArg.Name, out var wholeMoveTy)
+				&& cleanup.TypeRequiresDestruction(wholeMoveTy))
+			{
+				cleanup.SetLiveFlag(Function, wholeMoveArg.Name, false);
 			}
 
 			var isVariadic = (astExterns.TryGetValue(emitName, out var ext) && ext.IsVariadic)

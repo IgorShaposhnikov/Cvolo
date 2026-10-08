@@ -1,0 +1,26 @@
+using System;
+
+struct Resource
+{
+    int Id;
+}
+
+extension Resource
+{
+    ~Resource()
+    {
+        Console.WriteLine($"drop={Id}");
+    }
+}
+
+int main()
+{
+    var Resource a = Resource { Id: 1 };
+    var Resource b = Resource { Id: 2 };
+    refvar Resource rr = refvar a;
+    refvar Resource other = refvar b;
+    rr = other;
+    rr = Resource { Id: 3 };
+    Console.WriteLine("end");
+    return 0;
+}

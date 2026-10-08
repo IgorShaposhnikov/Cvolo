@@ -45,6 +45,22 @@ internal sealed class FunctionCodegenContext
 	/// </summary>
 	public HashSet<string> DisposedVars { get; } = [];
 	/// <summary>
+	/// Runtime ownership liveness flags keyed by move path (a whole local name such as
+	/// <c>r</c> or a dotted field path such as <c>pair.First</c>). A flag holds an <c>i1</c>
+	/// whose value is true when the projection currently owns a live value that must be
+	/// destroyed. Flags make cleanup and replacement correct when a move, initialization, or
+	/// reassignment occurs on only some control-flow paths.
+	/// </summary>
+	public Dictionary<string, LLVMValueRef> LiveFlags { get; } = [];
+
+	/// <summary>
+	/// Per-element liveness flag arrays for owned fixed arrays, keyed by the array root name.
+	/// Each value is an alloca of <c>[N x i1]</c> where N is the element count; element i is true
+	/// when element i currently holds a live owned value. Lets the array destructor loop and
+	/// element replacement touch only live elements (uninitialized elements must never be destroyed).
+	/// </summary>
+	public Dictionary<string, LLVMValueRef> ElementLiveFlagArrays { get; } = [];
+	/// <summary>
 	/// Current nesting depth of unsafe emission regions. A value greater than zero means the
 	/// current emission point is allowed to perform operations guarded by unsafe semantics.
 	/// </summary>

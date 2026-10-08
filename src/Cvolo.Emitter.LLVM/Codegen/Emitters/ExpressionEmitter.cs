@@ -979,7 +979,24 @@ internal sealed class ExpressionEmitter(
 			}
 			else if (bin.Left is IndexExpressionSyntax idx)
 			{
-				var (elementPtr, _, _, _) = aggregates.GetFieldPointer(idx);
+				var (elementPtr, elementCtorType, _, _) = aggregates.GetFieldPointer(idx);
+				if (idx.Left is IdentifierExpressionSyntax ctorArrayId
+					&& expressionTypes.Resolve(idx.Left) is ArrayTypeSymbol ctorArrayType
+					&& MovePathBuilder.TryGetConstantIndex(idx.Index, out var ctorElementIndex))
+				{
+					var ctorElementFlags = cleanup.GetOrCreateElementFlags(Function, ctorArrayId.Name, ctorArrayType.Size);
+					var ctorElementFlagsType = LLVMTypeRef.CreateArray(LLVMTypeRef.Int1, (uint)ctorArrayType.Size);
+					var ctorElementFlagPtr = Builder.BuildGEP2(ctorElementFlagsType, ctorElementFlags, new LLVMValueRef[]
+					{
+						LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
+						LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (ulong)ctorElementIndex)
+					}, "elem_flag_ptr");
+					var ctorElementLive = Builder.BuildLoad2(LLVMTypeRef.Int1, ctorElementFlagPtr, "elem_live");
+					cleanup.EmitGuardedByCondition(ctorElementLive, () => cleanup.EmitDestructionAt(elementPtr, elementCtorType, "elem"));
+					calls.Emit(ctorCall, elementPtr);
+					cleanup.SetElementFlag(Function, ctorArrayId.Name, ctorArrayType.Size, ctorElementIndex, true);
+					return elementPtr;
+				}
 				EmitOwnershipPreStoreCleanup(bin, elementPtr, expressionTypes.Resolve(bin.Left), "elem");
 				calls.Emit(ctorCall, elementPtr);
 				return elementPtr;
@@ -1055,7 +1072,11 @@ internal sealed class ExpressionEmitter(
 				}
 				else if (type is PointerTypeSymbol)
 				{
-					if (bin.Right is BorrowExpressionSyntax
+					// A reference local is rebound (not dereferenced) when the assignment was bound as a
+					// reference rebind (§17.1) or the source is itself a reference expression; all other
+					// assignments write the referent value through the reference.
+					if (BindingContext.ResolvedReferenceRebinds.Contains(bin)
+						|| bin.Right is BorrowExpressionSyntax
 						|| (rTy is PointerTypeSymbol rhsRef && cleanup.TypeEscapesHeap(rhsRef.ReferencedType)))
 					{
 						Builder.BuildStore(right, ptr);
@@ -1063,6 +1084,9 @@ internal sealed class ExpressionEmitter(
 					else
 					{
 						var actualPtr = Builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), ptr, "target_ptr");
+						// Assignment through a borrowed 'ref'/'refvar' local writes into the
+						// referenced storage; destroy the old referent first when it is live (§17).
+						EmitOwnershipPreStoreCleanup(bin, actualPtr, rTy, id.Name);
 						var coerced = coercion.CoerceIntegerWidth(right, rTy, type);
 						coerced = coercion.CoerceFloatWidth(coerced, rTy, type);
 						Builder.BuildStore(coerced, actualPtr);
@@ -1172,6 +1196,16 @@ internal sealed class ExpressionEmitter(
 		{
 			var (fieldPtr, fieldType, _, tbaa) = aggregates.GetFieldPointer(m);
 
+			// A write to any variant of a resource-owning tagged union is a whole-root
+			// replacement: the previously active payload must be destroyed (tag-aware)
+			// before the new variant is installed and its tag published.
+			if (expressionTypes.Resolve(m.Expression) is UnionTypeSymbol resourceUnion
+				&& cleanup.UnionNeedsTagCheckedCleanup(resourceUnion))
+			{
+				var (unionRootPtr, _, _, _) = aggregates.GetFieldPointer(m.Expression);
+				cleanup.EmitUnionTagCheckedCleanup(m.MemberName, unionRootPtr, resourceUnion);
+			}
+
 			// Set active variant tag when assigning a union variant (e.g. 'this.Some = value')
 			if (expressionTypes.Resolve(m.Expression) is UnionTypeSymbol unionType && !unionType.IsNpoEligible && !unionType.IsUnsafe)
 			{
@@ -1205,7 +1239,37 @@ internal sealed class ExpressionEmitter(
 		else if (bin.Left is IndexExpressionSyntax idx)
 		{
 			var (elementPtr, elementType, _, tbaa) = aggregates.GetFieldPointer(idx);
-			EmitOwnershipPreStoreCleanup(bin, elementPtr, elementType, "elem");
+
+			// Fixed-index elements of an owned array carry per-element liveness. The static analyzer
+			// reports such elements as Unavailable, so the runtime element flag is the authority for
+			// both the pre-store replacement drop and the scope-exit array loop.
+			IdentifierExpressionSyntax? elementArrayId = null;
+			ArrayTypeSymbol? elementArrayType = null;
+			int elementIndex = 0;
+			if (idx.Left is IdentifierExpressionSyntax candidateArrayId
+				&& expressionTypes.Resolve(idx.Left) is ArrayTypeSymbol candidateArrayType
+				&& MovePathBuilder.TryGetConstantIndex(idx.Index, out elementIndex))
+			{
+				elementArrayId = candidateArrayId;
+				elementArrayType = candidateArrayType;
+			}
+
+			if (elementArrayId is not null && elementArrayType is not null)
+			{
+				var elementFlags = cleanup.GetOrCreateElementFlags(Function, elementArrayId.Name, elementArrayType.Size);
+				var elementFlagsType = LLVMTypeRef.CreateArray(LLVMTypeRef.Int1, (uint)elementArrayType.Size);
+				var elementFlagPtr = Builder.BuildGEP2(elementFlagsType, elementFlags, new LLVMValueRef[]
+				{
+					LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
+					LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (ulong)elementIndex)
+				}, "elem_flag_ptr");
+				var elementLive = Builder.BuildLoad2(LLVMTypeRef.Int1, elementFlagPtr, "elem_live");
+				cleanup.EmitGuardedByCondition(elementLive, () => cleanup.EmitDestructionAt(elementPtr, elementType, "elem"));
+			}
+			else
+			{
+				EmitOwnershipPreStoreCleanup(bin, elementPtr, elementType, "elem");
+			}
 
 			if (elementType is UnionTypeSymbol && bin.Right is StructInitializationExpressionSyntax elemReinit)
 				aggregates.EmitStructInitializationInPlace(elemReinit, elementPtr);
@@ -1218,6 +1282,11 @@ internal sealed class ExpressionEmitter(
 				coerced = coercion.CoerceFloatWidth(coerced, rTy, elementType);
 				var elemStore = Builder.BuildStore(coerced, elementPtr);
 				aggregates.ApplyTbaa(tbaa, elemStore);
+			}
+
+			if (elementArrayId is not null && elementArrayType is not null)
+			{
+				cleanup.SetElementFlag(Function, elementArrayId.Name, elementArrayType.Size, elementIndex, true);
 			}
 
 			return right;
@@ -1286,20 +1355,60 @@ internal sealed class ExpressionEmitter(
 		if (!BindingContext.ResolvedAssignments.TryGetValue(bin, out var operation))
 			return;
 
+		// The analyzer resolves the effective destination type, including assignment through a
+		// borrowed 'ref'/'refvar' local whose referent is the real owner. Prefer it so destruction
+		// targets the referent rather than the reference slot (§17).
+		destinationType = operation.DestinationType;
+
 		// A field projection whose ownership is transferred by this assignment must be skipped by
 		// the enclosing scope's projection-aware cleanup. Whole-root moves are handled through the
 		// existing name-based move/reset paths instead.
-		if (operation.SourceMovePath is { Depth: > 0 } sourcePath && sourcePath.ToFieldPathString() is { } movedFieldPath)
-			Function.MovedFieldPaths.Add(movedFieldPath);
+		if (operation.SourceMovePath is { } sourcePath)
+		{
+			if (sourcePath.Depth == 0)
+			{
+				// Whole-local source: clear its runtime liveness flag so cleanup skips it. Only
+				// touch flags that already exist; per-field projections never get flags.
+				if (Function.LiveFlags.ContainsKey(sourcePath.Root))
+					cleanup.SetLiveFlag(Function, sourcePath.Root, false);
+			}
+			else if (sourcePath.ToFieldPathString() is { } movedFieldPath)
+			{
+				Function.MovedFieldPaths.Add(movedFieldPath);
+			}
+		}
 
+		// Safe-union destinations are destroyed through the tag-aware path, which is itself
+		// runtime-conditional (the tag is reset to None whenever the payload is moved out), so it is
+		// always emitted regardless of the statically-bound plan.
+		if (destinationType is UnionTypeSymbol unionDestination && cleanup.UnionNeedsTagCheckedCleanup(unionDestination))
+		{
+			cleanup.EmitUnionTagCheckedCleanup(name, destinationPtr, unionDestination);
+			return;
+		}
+
+		// Whole-local destination with a runtime liveness flag: the flag is the authority because the
+		// statically-bound plan cannot observe conditional (branch-local) moves. Guard the old-value
+		// destruction on the flag, then mark it live for the value about to be installed.
+		if (operation.DestinationMovePath is { Depth: 0 } destinationPath
+			&& Function.LiveFlags.ContainsKey(destinationPath.Root)
+			&& cleanup.TypeRequiresDestruction(destinationType))
+		{
+			cleanup.EmitGuardedByLiveFlag(
+				Function,
+				destinationPath.Root,
+				() => cleanup.EmitDestructionAt(destinationPtr, destinationType, name));
+			cleanup.SetLiveFlag(Function, destinationPath.Root, true);
+			return;
+		}
+
+		// Field, element, deref, and call-return destinations still use the statically-bound plan.
 		switch (operation.DestinationCleanupPlan)
 		{
 			case DestinationCleanupPlan.WholeLive:
 				cleanup.EmitDestructionAt(destinationPtr, destinationType, name);
 				break;
 			case DestinationCleanupPlan.TagAwareUnionCleanup:
-				if (destinationType is UnionTypeSymbol unionType && cleanup.UnionNeedsTagCheckedCleanup(unionType))
-					cleanup.EmitUnionTagCheckedCleanup(name, destinationPtr, unionType);
 				break;
 		}
 	}

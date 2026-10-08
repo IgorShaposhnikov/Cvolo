@@ -1,0 +1,20 @@
+using System;
+
+struct Resource { int Id; }
+
+extension Resource
+{
+    ~Resource()
+    {
+        Console.WriteLine($"drop={Id}");
+    }
+}
+
+int main()
+{
+    var Resource[2] values;
+    values[0] = Resource { Id: 1 };
+    values[1] = Resource { Id: 2 };
+    Console.WriteLine("end");
+    return 0;
+}

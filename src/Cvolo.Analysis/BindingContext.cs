@@ -86,6 +86,14 @@ public sealed class BindingContext
 	public Dictionary<BinaryExpressionSyntax, Ownership.ResolvedAssignmentOperation> ResolvedAssignments { get; } = [];
 
 	/// <summary>
+	/// Assignment expressions that rebind a borrowed 'ref'/'refvar' local to another reference
+	/// (a pointer reassignment) rather than writing through the reference. The emitter stores the
+	/// new pointer into the reference slot for these; all other reference-typed assignments write
+	/// the referent value.
+	/// </summary>
+	public HashSet<BinaryExpressionSyntax> ResolvedReferenceRebinds { get; } = [];
+
+	/// <summary>
 	/// Source move paths for local declarations whose initializer transfers ownership out of an
 	/// owned projection (e.g. <c>var Resource x = pair.First;</c>). Keyed by declaration syntax.
 	/// Projection-aware cleanup consults these so the moved-from field is not destroyed twice.

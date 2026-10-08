@@ -22,4 +22,17 @@ public class DiagnosticBag
 	{
 		_diagnostics.AddRange(other._diagnostics);
 	}
+
+	/// <summary>
+	/// Removes an already-reported diagnostic with the given stable id at the exact span.
+	/// Used for diagnostic precedence: when a read is primarily an ownership / use-after-move
+	/// failure, the associated possibly-uninitialized read diagnostic at the same span is
+	/// suppressed so the ownership diagnostic is the single reported cause.
+	/// </summary>
+	public void Suppress(string diagnosticId, TextSpan span)
+	{
+		_diagnostics.RemoveAll(d => d.Id == diagnosticId
+			&& d.Span.Start == span.Start
+			&& d.Span.End == span.End);
+	}
 }

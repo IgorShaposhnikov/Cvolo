@@ -1,0 +1,26 @@
+using System;
+
+struct Resource
+{
+	int Id;
+}
+
+extension Resource
+{
+	~Resource()
+	{
+		Console.WriteLine($"drop={Id}");
+	}
+}
+
+int main()
+{
+	bool flag = true;
+	var Resource r = Resource { Id: 1 };
+	if (flag)
+	{
+		r = Resource { Id: 2 };
+	}
+	Console.WriteLine("end");
+	return 0;
+}

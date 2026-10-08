@@ -80,35 +80,61 @@ public sealed class CompilerHarness
 	public ProcessResult ExecuteBinary(string binaryName, string folderPath, string? input = null)
 	{
 		var binaryPath = ResolveBinaryPath(binaryName, folderPath);
-		var psi = new ProcessStartInfo
+		// The isolated case directory nests the case name twice (folder + exe), which can push the
+		// full path past the legacy 260-character MAX_PATH limit for long case names. CreateProcess
+		// cannot reliably launch those (the extended-length "\\?\" prefix does not help here, either),
+		// so run the binary from a short temporary copy and remove it afterwards.
+		string? temporaryCopy = null;
+		var launchPath = binaryPath;
+		if (binaryPath.Length >= 248)
 		{
-			FileName = binaryPath,
-			RedirectStandardOutput = true,
-			RedirectStandardError = true,
-			RedirectStandardInput = input is not null,
-			StandardOutputEncoding = Encoding.UTF8,
-			UseShellExecute = false,
-			CreateNoWindow = true,
-		};
-
-		using var process = Process.Start(psi)
-			?? throw new InvalidOperationException($"Failed to start compiled test binary '{binaryPath}'.");
-
-		if (input is not null)
-		{
-			process.StandardInput.WriteLine(input);
-			process.StandardInput.Flush();
-			process.StandardInput.Close();
+			temporaryCopy = Path.Combine(
+				Path.GetTempPath(),
+				$"cvolotest_{Guid.NewGuid():N}{Path.GetExtension(binaryPath)}");
+			File.Copy(binaryPath, temporaryCopy, overwrite: true);
+			launchPath = temporaryCopy;
 		}
 
-		var stdoutTask = process.StandardOutput.ReadToEndAsync();
-		var stderrTask = process.StandardError.ReadToEndAsync();
-		process.WaitForExit();
+		try
+		{
+			var psi = new ProcessStartInfo
+			{
+				FileName = launchPath,
+				RedirectStandardOutput = true,
+				RedirectStandardError = true,
+				RedirectStandardInput = input is not null,
+				StandardOutputEncoding = Encoding.UTF8,
+				UseShellExecute = false,
+				CreateNoWindow = true,
+			};
 
-		return new ProcessResult(
-			process.ExitCode,
-			stdoutTask.GetAwaiter().GetResult(),
-			stderrTask.GetAwaiter().GetResult());
+			using var process = Process.Start(psi)
+				?? throw new InvalidOperationException($"Failed to start compiled test binary '{binaryPath}'.");
+
+			if (input is not null)
+			{
+				process.StandardInput.WriteLine(input);
+				process.StandardInput.Flush();
+				process.StandardInput.Close();
+			}
+
+			var stdoutTask = process.StandardOutput.ReadToEndAsync();
+			var stderrTask = process.StandardError.ReadToEndAsync();
+			process.WaitForExit();
+
+			return new ProcessResult(
+				process.ExitCode,
+				stdoutTask.GetAwaiter().GetResult(),
+				stderrTask.GetAwaiter().GetResult());
+		}
+		finally
+		{
+			if (temporaryCopy is not null)
+			{
+				try { File.Delete(temporaryCopy); }
+				catch { /* best-effort cleanup */ }
+			}
+		}
 	}
 
 	private CompilerInvocationResult RunCompiler(string relativePath, bool useCheck, string[] extraArgs)

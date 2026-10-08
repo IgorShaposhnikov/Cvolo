@@ -24,6 +24,124 @@ internal sealed class CleanupEmitter(CodegenContext codegen)
 	private LLVMBuilderRef Builder => codegen.Builder;
 	private BindingContext BindingContext => codegen.BindingContext ?? throw new InvalidOperationException("Cleanup emission requires an active binding context.");
 
+	/// <summary>Returns whether the type carries a recursive destruction obligation.</summary>
+	public bool TypeRequiresDestruction(TypeSymbol type) => TypeNeedsDestruction(type);
+
+	private static string SanitizeFlagName(string path)
+	{
+		Span<char> buffer = stackalloc char[path.Length];
+		for (var i = 0; i < path.Length; i++)
+		{
+			var c = path[i];
+			buffer[i] = char.IsLetterOrDigit(c) ? c : '_';
+		}
+		return new string(buffer);
+	}
+
+	/// <summary>
+	/// Returns the runtime liveness flag for a move path, creating a function-entry alloca
+	/// initialized to false on first use.
+	/// </summary>
+	public LLVMValueRef GetOrCreateLiveFlag(FunctionCodegenContext function, string path)
+	{
+		if (function.LiveFlags.TryGetValue(path, out var existing))
+		{
+			return existing;
+		}
+
+		var flag = Builder.BuildAlloca(LLVMTypeRef.Int1, $"live_{SanitizeFlagName(path)}");
+		Builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int1, 0), flag);
+		function.LiveFlags[path] = flag;
+		return flag;
+	}
+
+	/// <summary>Sets the runtime liveness flag for a move path to the given value.</summary>
+	public void SetLiveFlag(FunctionCodegenContext function, string path, bool live)
+	{
+		var flag = GetOrCreateLiveFlag(function, path);
+		Builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int1, live ? 1UL : 0UL), flag);
+	}
+
+	/// <summary>
+	/// Runs <paramref name="body"/> only when the runtime liveness flag for <paramref name="path"/>
+	/// is true. When no flag exists the body runs unconditionally, preserving prior behavior for
+	/// projections that never participate in conditional ownership flow.
+	/// </summary>
+	public void EmitGuardedByLiveFlag(FunctionCodegenContext? function, string path, Action body)
+	{
+		if (function is null || !function.LiveFlags.TryGetValue(path, out var flag))
+		{
+			body();
+			return;
+		}
+
+		var currentFunc = Builder.InsertBlock.Parent;
+		var doBlock = currentFunc.AppendBasicBlock($"live_{SanitizeFlagName(path)}_do");
+		var afterBlock = currentFunc.AppendBasicBlock($"live_{SanitizeFlagName(path)}_after");
+		var isLive = Builder.BuildLoad2(LLVMTypeRef.Int1, flag, "live_flag");
+		Builder.BuildCondBr(isLive, doBlock, afterBlock);
+		Builder.PositionAtEnd(doBlock);
+		body();
+		Builder.BuildBr(afterBlock);
+		Builder.PositionAtEnd(afterBlock);
+	}
+
+	/// <summary>
+	/// Returns (creating on first use) the per-element liveness flag array for an owned fixed
+	/// array root. Element i is true only while element i holds a live owned value, so the array
+	/// destructor loop and element replacement touch only live elements. Missing entries therefore
+	/// must never be destroyed.
+	/// </summary>
+	public LLVMValueRef GetOrCreateElementFlags(FunctionCodegenContext function, string root, int size)
+	{
+		if (function.ElementLiveFlagArrays.TryGetValue(root, out var existing))
+			return existing;
+
+		var flagsType = LLVMTypeRef.CreateArray(LLVMTypeRef.Int1, (uint)size);
+		var flags = Builder.BuildAlloca(flagsType, $"live_{SanitizeFlagName(root)}_elems");
+		for (var i = 0; i < size; i++)
+		{
+			var slot = Builder.BuildGEP2(flagsType, flags, new LLVMValueRef[]
+			{
+				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
+				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (ulong)i)
+			}, $"live_elem_init_{i}");
+			Builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int1, 0), slot);
+		}
+
+		function.ElementLiveFlagArrays[root] = flags;
+		return flags;
+	}
+
+	/// <summary>Sets the liveness flag for one fixed-index array element (creating flags if needed).</summary>
+	public void SetElementFlag(FunctionCodegenContext function, string root, int size, int index, bool live)
+	{
+		var flags = GetOrCreateElementFlags(function, root, size);
+		var slot = Builder.BuildGEP2(LLVMTypeRef.CreateArray(LLVMTypeRef.Int1, (uint)size), flags, new LLVMValueRef[]
+		{
+			LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
+			LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (ulong)index)
+		}, $"live_elem_set_{index}");
+		Builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int1, live ? 1UL : 0UL), slot);
+	}
+
+	/// <summary>
+	/// Guards <paramref name="body"/> on a runtime i1 condition, splitting the current block into
+	/// a body block and a continuation block. Used for per-element array liveness where the
+	/// condition is an indexed load rather than a named flag.
+	/// </summary>
+	public void EmitGuardedByCondition(LLVMValueRef condition, Action body)
+	{
+		var currentFunc = Builder.InsertBlock.Parent;
+		var doBlock = currentFunc.AppendBasicBlock("elem_live_do");
+		var afterBlock = currentFunc.AppendBasicBlock("elem_live_after");
+		Builder.BuildCondBr(condition, doBlock, afterBlock);
+		Builder.PositionAtEnd(doBlock);
+		body();
+		Builder.BuildBr(afterBlock);
+		Builder.PositionAtEnd(afterBlock);
+	}
+
 	/// <summary>
 	/// Emits cleanup for the selected variables in a function frame, respecting the frame's
 	/// moved/disposed/heap ownership state.
@@ -32,7 +150,7 @@ internal sealed class CleanupEmitter(CodegenContext codegen)
 	{
 		foreach (var name in variableNames)
 		{
-			if (function.MovedVars.Contains(name) || function.DisposedVars.Contains(name))
+			if (function.DisposedVars.Contains(name))
 			{
 				continue;
 			}
@@ -43,11 +161,27 @@ internal sealed class CleanupEmitter(CodegenContext codegen)
 				continue;
 			}
 
+			// When a runtime liveness flag exists it is the sole authority for this projection:
+			// a compile-time "moved" mark would incorrectly suppress cleanup on paths where the
+			// move did not execute. Without a flag the previous name-based skip is preserved.
+			var hasFlag = function.LiveFlags.ContainsKey(name);
+			if (!hasFlag && function.MovedVars.Contains(name))
+			{
+				continue;
+			}
+
 			function.DisposedVars.Add(name);
 
 			var ptrAlloc = function.Locals[name];
 			var type = function.VariableTypes[name];
 
+			EmitGuardedByLiveFlag(hasFlag ? function : null, name, () =>
+				EmitScopeDestruction(function, name, ptrAlloc, type, isHeap, skipHeapFree));
+		}
+	}
+
+	private void EmitScopeDestruction(FunctionCodegenContext function, string name, LLVMValueRef ptrAlloc, TypeSymbol type, bool isHeap, bool skipHeapFree)
+	{
 			// Call the type's destructor only for owned structs. A struct without its own
 			// destructor still drops resource-owning fields transitively.
 			if (type is StructTypeSymbol structType)
@@ -87,7 +221,7 @@ internal sealed class CleanupEmitter(CodegenContext codegen)
 			// Static arrays destroy resource-owning elements in reverse index order.
 			if (type is ArrayTypeSymbol arrayType)
 			{
-				EmitArrayDestructorLoop(ptrAlloc, arrayType, name);
+				EmitArrayDestructorLoop(ptrAlloc, arrayType, name, function);
 			}
 
 			// Heap storage is released after value destruction unless the caller requested the
@@ -113,7 +247,6 @@ internal sealed class CleanupEmitter(CodegenContext codegen)
 				var freeType = codegen.FunctionTypes["free"];
 				Builder.BuildCall2(freeType, freeFunc, new LLVMValueRef[] { actualHeapPtr }, "");
 			}
-		}
 	}
 
 	/// <summary>
@@ -254,7 +387,7 @@ internal sealed class CleanupEmitter(CodegenContext codegen)
 	/// Emits the reverse-index destructor loop for a static array whose element type requires
 	/// destruction.
 	/// </summary>
-	private void EmitArrayDestructorLoop(LLVMValueRef ptrAlloc, ArrayTypeSymbol arrayType, string name)
+	private void EmitArrayDestructorLoop(LLVMValueRef ptrAlloc, ArrayTypeSymbol arrayType, string name, FunctionCodegenContext? function = null)
 	{
 		if (!TypeNeedsDestruction(arrayType.ElementType))
 			return;
@@ -283,7 +416,26 @@ internal sealed class CleanupEmitter(CodegenContext codegen)
 			LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
 			iVal
 		}, $"{name}_arr_elem");
-		EmitElementDestructor(elementPtr, arrayType.ElementType, name);
+
+		// Per-element liveness: a fixed-array element that was never initialized (or whose
+		// ownership already moved out) must not be destroyed. When element flags exist the
+		// destruction is conditioned on the runtime flag value.
+		if (function is not null && function.ElementLiveFlagArrays.TryGetValue(name, out var flagsArray))
+		{
+			var flagsType = LLVMTypeRef.CreateArray(LLVMTypeRef.Int1, (uint)arrayType.Size);
+			var flagPtr = Builder.BuildGEP2(flagsType, flagsArray, new LLVMValueRef[]
+			{
+				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
+				iVal
+			}, $"{name}_arr_flag");
+			var elementLive = Builder.BuildLoad2(LLVMTypeRef.Int1, flagPtr, $"{name}_arr_live");
+			EmitGuardedByCondition(elementLive, () => EmitElementDestructor(elementPtr, arrayType.ElementType, name));
+		}
+		else
+		{
+			EmitElementDestructor(elementPtr, arrayType.ElementType, name);
+		}
+
 		var next = Builder.BuildSub(iVal, LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1), $"{name}_arr_dec");
 		Builder.BuildStore(next, indexAlloca);
 		Builder.BuildBr(condBlock);
@@ -332,7 +484,7 @@ internal sealed class CleanupEmitter(CodegenContext codegen)
 				return;
 
 			case ArrayTypeSymbol arrayType:
-				EmitArrayDestructorLoop(valuePtr, arrayType, name);
+				EmitArrayDestructorLoop(valuePtr, arrayType, name, function);
 				return;
 		}
 	}
@@ -351,7 +503,8 @@ internal sealed class CleanupEmitter(CodegenContext codegen)
 			}
 
 			var childPath = $"{path}.{field.Name}";
-			if (function is not null && function.MovedFieldPaths.Contains(childPath))
+			var hasFlag = function is not null && function.LiveFlags.ContainsKey(childPath);
+			if (!hasFlag && function is not null && function.MovedFieldPaths.Contains(childPath))
 			{
 				continue;
 			}
@@ -361,7 +514,8 @@ internal sealed class CleanupEmitter(CodegenContext codegen)
 				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
 				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (ulong)codegen.AggregateLayout.GetFieldIndex(structType, field.Name))
 			}, $"{name}_f_{field.Name}");
-			EmitElementDestructor(fieldPtr, field.Type, name, childPath, function);
+			EmitGuardedByLiveFlag(hasFlag ? function : null, childPath, () =>
+				EmitElementDestructor(fieldPtr, field.Type, name, childPath, function));
 		}
 	}
 
