@@ -1,3 +1,5 @@
+using Cvolo.Core.AST.Base;
+
 namespace Cvolo.Core.Diagnostics;
 
 public enum SourceOrigin
@@ -13,6 +15,14 @@ public sealed class CompilationContext(string source, string filePath)
 	public string Source { get; } = source;
 	public string FilePath { get; } = filePath;
 	public SourceOrigin Origin { get; set; } = SourceOrigin.Project;
+
+	/// <summary>
+	/// Structured extent expressions for static array types declared in this unit, keyed by the
+	/// canonical flattened type name (for example <c>int[2+3*4]</c>). The parser records these so the
+	/// binder can evaluate an extent with ordinary expression precedence, instead of re-parsing the
+	/// serialized size text with an ad-hoc operator splitter.
+	/// </summary>
+	public Dictionary<string, ExpressionSyntax> ArrayExtentExpressions { get; } = [];
 
 	public (int Line, int Col) GetCoordinates(int position)
 	{

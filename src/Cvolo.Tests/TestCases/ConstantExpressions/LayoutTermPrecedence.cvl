@@ -1,0 +1,10 @@
+// Canonical static-array extent regression: layout terms participate in
+// ordinary precedence (`3 + sizeof<int>() * 2` == 11). Keep in sync with
+// ConstantExpressionTests.ExtentUsesOrdinaryExpressionSemantics.
+using System;
+
+int main() {
+    var byte[3 + sizeof<int>() * 2] values = {};
+    Console.WriteLine($"bytes={sizeof<byte[3 + sizeof<int>() * 2]>()}");
+    return 0;
+}

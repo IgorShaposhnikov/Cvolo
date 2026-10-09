@@ -1,0 +1,8 @@
+// Canonical static-array extent regression: a runtime variable is not a
+// compile-time constant, so it cannot size a static array. Keep this rejected
+// when changing the evaluator.
+int main() {
+    int n = 5;
+    var byte[n] values = {};
+    return 0;
+}

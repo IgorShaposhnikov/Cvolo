@@ -1,0 +1,10 @@
+// Canonical static-array extent regression: parentheses override precedence
+// (`(2 + 3) * 4` == 20). Keep in sync with
+// ConstantExpressionTests.ExtentUsesOrdinaryExpressionSemantics.
+using System;
+
+int main() {
+    var byte[(2 + 3) * 4] values = {};
+    Console.WriteLine($"bytes={sizeof<byte[(2 + 3) * 4]>()}");
+    return 0;
+}

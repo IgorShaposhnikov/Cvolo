@@ -1,0 +1,10 @@
+// Canonical static-array extent regression: `%` is available in a fixed-array
+// constant (10 % 4 + 1 == 3). Keep in sync with
+// ConstantExpressionTests.ExtentUsesOrdinaryExpressionSemantics.
+using System;
+
+int main() {
+    var byte[10 % 4 + 1] values = {};
+    Console.WriteLine($"bytes={sizeof<byte[10 % 4 + 1]>()}");
+    return 0;
+}

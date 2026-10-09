@@ -1,0 +1,7 @@
+// Canonical static-array extent regression: evaluated extents must still obey
+// the fixed-array size domain. Negative sizes are rejected instead of producing
+// an ArrayTypeSymbol with invalid layout.
+int main() {
+    var byte[-1] values = {};
+    return 0;
+}

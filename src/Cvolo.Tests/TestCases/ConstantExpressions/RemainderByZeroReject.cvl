@@ -1,0 +1,6 @@
+// Canonical static-array extent regression: remainder by zero is not a valid
+// compile-time extent. Keep this rejected when changing the evaluator.
+int main() {
+    var byte[10 % 0] values = {};
+    return 0;
+}

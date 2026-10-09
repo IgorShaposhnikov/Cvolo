@@ -1811,6 +1811,28 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		return TextSpan.FromBounds(start, end);
 	}
 
+	/// <summary>
+	/// Records the structured extent expression behind a static array type name so the binder can
+	/// evaluate it with ordinary expression precedence (see <c>ConstantExpressionEvaluator</c>).
+	/// The type name is the canonical flattened spelling returned by <see cref="GetTypeName"/>, so
+	/// the binder's later <c>ResolveType(name)</c> call finds exactly this expression.
+	/// </summary>
+	private void RegisterArrayExtent(string typeName, CvoloParser.ExpressionContext extentContext)
+	{
+		if (_compilationContext is null || _compilationContext.ArrayExtentExpressions.ContainsKey(typeName))
+			return;
+
+		try
+		{
+			_compilationContext.ArrayExtentExpressions[typeName] = BuildExpression(extentContext);
+		}
+		catch
+		{
+			// A malformed extent is reported by the normal parse/semantic passes; leaving it
+			// unregistered simply keeps the array type unresolved here.
+		}
+	}
+
 	private string GetTypeName(CvoloParser.TypeContext context)
 	{
 		if (context is null)
@@ -1835,7 +1857,9 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 
 		if (context is CvoloParser.ArrayTypeContext arrCtx)
 		{
-			return $"{GetTypeName(arrCtx.type())}[{arrCtx.expression().GetText()}]";
+			var arrayTypeName = $"{GetTypeName(arrCtx.type())}[{arrCtx.expression().GetText()}]";
+			RegisterArrayExtent(arrayTypeName, arrCtx.expression());
+			return arrayTypeName;
 		}
 
 		if (context is CvoloParser.SliceTypeContext sliceCtx)

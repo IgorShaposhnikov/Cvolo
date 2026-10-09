@@ -1,0 +1,12 @@
+// Canonical static-array extent regression: enum metadata composes with
+// ordinary arithmetic (Color.Count + 1 == 4). Keep in sync with
+// ConstantExpressionTests.ExtentUsesOrdinaryExpressionSemantics.
+using System;
+
+enum Color : byte { Red, Green, Blue }
+
+int main() {
+    var byte[Color.Count + 1] values = {};
+    Console.WriteLine($"a={sizeof<byte[Color.Count + 1]>()}");
+    return 0;
+}

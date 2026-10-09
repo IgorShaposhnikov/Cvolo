@@ -1,0 +1,15 @@
+// Canonical static-array extent regression: the evaluated extent, not the
+// source spelling, defines array type identity, so `int[2 + 3 * 4]` and
+// `int[14]` are the same type (the call binds only if they are equal). Keep in
+// sync with ConstantExpressionTests.ExtentUsesOrdinaryExpressionSemantics.
+using System;
+
+void Take(int[14] values) {
+}
+
+int main() {
+    var int[2 + 3 * 4] values = {};
+    Take(values);
+    Console.WriteLine($"ok={sizeof<int[14]>()}");
+    return 0;
+}

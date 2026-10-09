@@ -796,7 +796,10 @@ public sealed class BindingContext
 			var sizePart = name.Substring(openBracket + 1, name.Length - openBracket - 2);
 			var innerName = name[..openBracket];
 			var innerType = ResolveType(innerName);
-			if (innerType is not null && TryEvaluateEnumSizeConstant(sizePart) is { } computedSize && computedSize <= int.MaxValue)
+			if (innerType is not null
+				&& TryEvaluateArrayExtent(name, sizePart) is { } computedSize
+				&& computedSize >= 0
+				&& computedSize <= int.MaxValue)
 			{
 				var arrType = new ArrayTypeSymbol(innerType, (int)computedSize);
 				_typeCache[name] = arrType;
@@ -1075,151 +1078,49 @@ public sealed class BindingContext
 	}
 
 	/// <summary>
-	/// Evaluates a static array size expression used inside a type (e.g. "Color.Max + 1").
-	/// Supports plain literals and left-to-right integer arithmetic over literals and
-	/// enum metaprogramming constants (Min, Max, Count). Returns null when the expression
-	/// cannot be resolved to a constant (caller treats the type as unresolvable).
-	/// Per spec §5.C: using Min or Max on an enum with negative variant values is forbidden.
+	/// Evaluates the size expression of a static array type with the canonical
+	/// <see cref="Constants.ConstantExpressionEvaluator"/> over the structured extent the parser
+	/// recorded for <paramref name="typeName"/>. Operator precedence, parentheses and <c>%</c> follow
+	/// the ordinary expression grammar. When only a serialized literal is available (synthesized or
+	/// imported types with no source extent), that plain integer is accepted directly.
+	/// Returns null when the extent is not a compile-time integer, so the caller treats the type as
+	/// unresolvable rather than inventing a value.
 	/// </summary>
-	private long? TryEvaluateEnumSizeConstant(string text)
+	private long? TryEvaluateArrayExtent(string typeName, string sizeText)
 	{
-		var trimmed = text.Trim();
-		var parts = new List<string>();
-		var ops = new List<char>();
-		var current = new System.Text.StringBuilder();
-		foreach (var ch in trimmed)
+		if (FindArrayExtentExpression(typeName) is { } extent
+			&& Constants.ConstantExpressionEvaluator.TryEvaluateInteger(extent, this, out var evaluated))
 		{
-			if (ch is '+' or '-' or '*' or '/')
-			{
-				if (current.Length > 0)
-				{
-					parts.Add(current.ToString());
-					current.Clear();
-				}
-
-				ops.Add(ch);
-			}
-			else
-			{
-				current.Append(ch);
-			}
+			return evaluated;
 		}
 
-		if (current.Length > 0)
-			parts.Add(current.ToString());
-
-		if (parts.Count == 0)
-			return null;
-
-		var result = ResolveEnumSizeTerm(parts[0]);
-		for (var i = 0; i < ops.Count && result is not null; i++)
-		{
-			var rhs = ResolveEnumSizeTerm(parts[i + 1]);
-			if (rhs is null)
-				return null;
-			result = ops[i] switch
-			{
-				'+' => result + rhs,
-				'-' => result - rhs,
-				'*' => result * rhs,
-				'/' when rhs != 0 => result / rhs,
-				_ => null,
-			};
-		}
-
-		return result;
-	}
-
-	private long? ResolveEnumSizeTerm(string term)
-	{
-		var trimmed = term.Trim();
-		if (long.TryParse(trimmed, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var literal))
+		if (long.TryParse(sizeText.Trim(), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var literal))
 			return literal;
 
-		if (TryEvaluateLayoutTerm(trimmed, out var layoutValue))
-			return layoutValue;
-
-		var dot = trimmed.LastIndexOf('.');
-		if (dot <= 0 || dot == trimmed.Length - 1)
-			return null;
-		var enumName = trimmed[..dot];
-		var member = trimmed[(dot + 1)..];
-		if (ResolveType(enumName) is not EnumTypeSymbol targetEnum)
-			return null;
-
-		var hasNegative = targetEnum.Variants.Any(v => v.Value < 0);
-		if (member == "Min")
-			return hasNegative ? null : targetEnum.Variants.Min(v => v.Value);
-		if (member == "Max")
-			return hasNegative ? null : targetEnum.Variants.Max(v => v.Value);
-		if (member == "Count")
-			return targetEnum.IsFlags
-				? targetEnum.Variants.Count(v => v.Value > 0 && IsPowerOfTwo(v.Value))
-				: targetEnum.Variants.Count;
 		return null;
 	}
 
-	private static bool IsPowerOfTwo(long value) => value > 0 && (value & (value - 1)) == 0;
-
-	private bool TryEvaluateLayoutTerm(string term, out long value)
+	/// <summary>
+	/// Finds the parser-recorded extent expression for a static array type name, preferring the unit
+	/// being bound and then any other loaded unit (including external packages whose source was
+	/// parsed in this compilation).
+	/// </summary>
+	private ExpressionSyntax? FindArrayExtentExpression(string typeName)
 	{
-		value = 0L;
-
-		if (term.StartsWith("sizeof<", StringComparison.Ordinal) && term.EndsWith(">()", StringComparison.Ordinal))
+		if (CurrentUnit is not null
+			&& FileContexts.TryGetValue(CurrentUnit, out var currentContext)
+			&& currentContext.ArrayExtentExpressions.TryGetValue(typeName, out var currentExtent))
 		{
-			var type = ResolveLayoutType(term, "sizeof<");
-			if (type is null)
-				return false;
-			value = LayoutService.GetLayout(type).Size;
-			return true;
+			return currentExtent;
 		}
 
-		if (term.StartsWith("alignof<", StringComparison.Ordinal) && term.EndsWith(">()", StringComparison.Ordinal))
+		foreach (var fileContext in FileContexts.Values)
 		{
-			var type = ResolveLayoutType(term, "alignof<");
-			if (type is null)
-				return false;
-			value = LayoutService.GetLayout(type).Alignment;
-			return true;
+			if (fileContext.ArrayExtentExpressions.TryGetValue(typeName, out var extent))
+				return extent;
 		}
 
-		if (term.StartsWith("offsetof<", StringComparison.Ordinal) && term.EndsWith(")", StringComparison.Ordinal))
-		{
-			var closeAngle = term.IndexOf('>');
-			var openParen = term.IndexOf('(', closeAngle + 1);
-			if (closeAngle < 0 || openParen < 0)
-				return false;
-
-			var type = ResolveType(term["offsetof<".Length..closeAngle].Trim());
-			if (type is null || Cvolo.Analysis.Passes.Validation.ExpressionValidator.ContainsTypeParameter(type))
-				return false;
-
-			var memberText = term[(openParen + 1)..^1].Trim();
-			if (memberText.Length == 0)
-				return false;
-
-			var path = new List<string>();
-			foreach (var segment in memberText.Split('.'))
-				path.Add(segment.Trim());
-
-			var offset = LayoutService.TryGetFieldOffset(type, path);
-			if (offset is null)
-				return false;
-
-			value = offset.Value;
-			return true;
-		}
-
-		return false;
-	}
-
-	private TypeSymbol? ResolveLayoutType(string term, string prefix)
-	{
-		var typeName = term[prefix.Length..^"()>".Length].Trim();
-		var type = ResolveType(typeName);
-		if (type is null || Cvolo.Analysis.Passes.Validation.ExpressionValidator.ContainsTypeParameter(type) || type == TypeSymbol.Void)
-			return null;
-		return type;
+		return null;
 	}
 
 	/// Returns false with a diagnostic if any argument cannot be resolved, so a

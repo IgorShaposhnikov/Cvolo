@@ -1,0 +1,13 @@
+// Canonical static-array extent regression: unary negation and mixed
+// intermediate arithmetic evaluate with ordinary semantics
+// (20 - sizeof<int>() * 3 == 8, -1 + 8 == 7). Keep in sync with
+// ConstantExpressionTests.ExtentUsesOrdinaryExpressionSemantics.
+using System;
+
+int main() {
+    var byte[20 - sizeof<int>() * 3] a = {};
+    var int[-1 + 8] b = {};
+    Console.WriteLine($"a={sizeof<byte[20 - sizeof<int>() * 3]>()}");
+    Console.WriteLine($"b={sizeof<int[-1 + 8]>()}");
+    return 0;
+}
