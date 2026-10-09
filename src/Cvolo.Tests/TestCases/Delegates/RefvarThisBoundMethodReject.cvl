@@ -1,0 +1,24 @@
+/// <summary>
+/// Rejects a bound-method delegate conversion whose receiver contract is
+/// `refvar this`. A stored delegate would need an exclusive mutable borrow-lock
+/// over its whole live range, which is not defined yet, so the conversion is a
+/// compile-time error. Expect CVL1322 at the method-group expression.
+/// </summary>
+delegate int Handler(int amount);
+
+struct Counter {
+    int Value;
+}
+
+extension Counter {
+    int Add(refvar this, int amount) {
+        Value += amount;
+        return Value;
+    }
+}
+
+int main() {
+    var Counter counter = Counter { Value: 1 };
+    Handler handler = counter.Add;
+    return handler(41) == 42 ? 0 : 1;
+}

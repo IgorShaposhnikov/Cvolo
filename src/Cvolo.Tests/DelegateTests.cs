@@ -45,4 +45,34 @@ public sealed class DelegateTests : CompilerTestBase
 		Assert.Equal(0, runCode);
 		Assert.Equal(expected.Replace("\r\n", "\n").Trim(), runStdout.Replace("\r\n", "\n").Trim());
 	}
+
+	// A bound-method delegate stores a context pointer to its receiver, which would need an
+	// exclusive mutable borrow-lock for the delegate's whole live range. That contract is not
+	// defined yet, so conversion must fail with CVL1322 whenever the selected method's effective
+	// receiver is mutable. Add cases here when the receiver-contract rules change.
+	[Theory]
+	[InlineData("RefvarThisBoundMethodReject")]
+	[InlineData("AutoInferredMutatingBoundMethodReject")]
+	public void BoundMethodWithMutableReceiver_IsRejected(string caseName)
+	{
+		var fileName = $"{Category}/{caseName}.cvl";
+		var (exitCode, _, stderr) = RunCompiler(fileName);
+		Assert.NotEqual(0, exitCode);
+		Assert.Contains("CVL1322", stderr);
+	}
+
+	// Negative control: the mutable-receiver rejection must not over-reach and break
+	// non-mutating bound-method delegates (here a read-only `ref this` receiver).
+	[Theory]
+	[InlineData("ReadOnlyRefBoundMethod", "42")]
+	public void ReadOnlyReceiverBoundMethod_StillCompilesAndRuns(string caseName, string expected)
+	{
+		var fileName = $"{Category}/{caseName}.cvl";
+		var (exitCode, stdout, stderr) = RunCompiler(fileName);
+		AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
+
+		var (runCode, runStdout) = ExecuteBinary(caseName, Category);
+		Assert.Equal(0, runCode);
+		Assert.Equal(expected.Replace("\r\n", "\n").Trim(), runStdout.Replace("\r\n", "\n").Trim());
+	}
 }

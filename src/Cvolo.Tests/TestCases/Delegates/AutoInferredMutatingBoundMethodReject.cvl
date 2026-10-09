@@ -1,0 +1,24 @@
+/// <summary>
+/// Rejects a bound-method delegate conversion where the source omits a receiver
+/// marker but the analyzed body mutates the receiver, so the *effective*
+/// receiver is mutable. The check must read resolved receiver semantics, not
+/// source spelling. Expect CVL1322 (and the CVL1011 auto-inference warning).
+/// </summary>
+delegate int Handler(int amount);
+
+struct Counter {
+    int Value;
+}
+
+extension Counter {
+    int Add(int amount) {
+        Value += amount;
+        return Value;
+    }
+}
+
+int main() {
+    var Counter counter = Counter { Value: 1 };
+    Handler handler = counter.Add;
+    return 0;
+}

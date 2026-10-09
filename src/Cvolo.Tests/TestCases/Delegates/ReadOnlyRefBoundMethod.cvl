@@ -1,0 +1,26 @@
+/// <summary>
+/// Accepts a bound-method delegate whose receiver is read-only via `ref this`.
+/// Confirms the mutable-receiver rejection does not over-reach: a non-mutating
+/// bound method still converts and runs under existing lifetime rules.
+/// Prints 42.
+/// </summary>
+using System;
+
+delegate int Getter();
+
+struct Box {
+    int Value;
+}
+
+extension Box {
+    int Read(ref this) {
+        return Value;
+    }
+}
+
+int main() {
+    var Box box = Box { Value: 42 };
+    Getter get = box.Read;
+    Console.WriteLine(get());
+    return 0;
+}

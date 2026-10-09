@@ -310,7 +310,7 @@ internal sealed class ExpressionValidator(
 										return;
 
 									if (typeArgs.All(static t => t is not null))
-										func = Generics.InstantiateGenericFunction(templateDecl, typeArgs.Select(static t => t!).ToList(), scope);
+										func = Generics.InstantiateGenericFunction(templateDecl, [.. typeArgs.Select(static t => t!)], scope);
 								}
 							}
 						}
@@ -366,17 +366,16 @@ internal sealed class ExpressionValidator(
 						}
 					}
 
-// §11: omitted type arguments on a top-level generic function are inferred from the
-				// argument types (Inc - Generic Constraint Semantic Parity §10/§11). Substituted
-				// constraints participate in applicability: a failing bound makes this candidate
-				// non-applicable without poisoning a viable competing overload, and it becomes the
-				// primary diagnostic only when nothing else resolves (§11.1).
-				BindingContext.GenericConstraintEvaluation? inferredConstraintFailure = null;
-				if (func is null)
-					func = TryInferTopLevelGenericFunction(call, argTypes, scope, out inferredConstraintFailure);
+					// §11: omitted type arguments on a top-level generic function are inferred from the
+					// argument types (Inc - Generic Constraint Semantic Parity §10/§11). Substituted
+					// constraints participate in applicability: a failing bound makes this candidate
+					// non-applicable without poisoning a viable competing overload, and it becomes the
+					// primary diagnostic only when nothing else resolves (§11.1).
+					BindingContext.GenericConstraintEvaluation? inferredConstraintFailure = null;
+					func ??= TryInferTopLevelGenericFunction(call, argTypes, scope, out inferredConstraintFailure);
 
-				if (func is null)
-				{
+					if (func is null)
+					{
 						// §7.2 Canonical formatting fallback: Console.Write/WriteLine(value) and
 						// formatter.Write(value) with no applicable ordinary overload bind a
 						// formatting operation (or the dedicated 'not formattable' diagnostic).
@@ -757,6 +756,7 @@ internal sealed class ExpressionValidator(
 						"Lambda requires an expected delegate type.",
 						DiagnosticIds.LambdaRequiresExpectedDelegateType);
 				}
+
 				break;
 			case DefaultExpressionSyntax defaultExpr:
 				{
@@ -947,6 +947,7 @@ internal sealed class ExpressionValidator(
 			context.Diagnostics.Report(currentFileContext, call.ArgumentListSpan,
 				$"Delegate '{delegateType.Name}' cannot be invoked with argument types ({actual}).", DiagnosticIds.DelegateCannotBeInvokedWithArgumentTypes);
 		}
+
 		if (delegateType.IsNative)
 		{
 			_validation.RequireUnsafe(
@@ -2759,7 +2760,26 @@ internal sealed class ExpressionValidator(
 			return;
 		}
 
-		context.ResolvedFunctionConversions[groupRef] = matches[0];
+		var selected = matches[0];
+
+		// A bound-method delegate stores a context pointer to its receiver and may invoke it later,
+		// which would require an exclusive mutable borrow-lock for the delegate's whole live range.
+		// That contract is not defined yet, so a bound method whose *effective* receiver is mutable
+		// (an explicit 'refvar this', or an unmarked extension the body analysis inferred as mutating)
+		// is rejected here. The check reads the resolved symbol's receiver mutability rather than the
+		// source spelling, so an inferred mutation cannot bypass the restriction.
+		if (isBoundMethod
+			&& selected.Parameters.Count > 0
+			&& selected.Parameters[0].Name == "this"
+			&& selected.Parameters[0].Type is PointerTypeSymbol { IsMutable: true })
+		{
+			context.Diagnostics.Report(currentFileContext, groupRef.Span,
+				"Receiver delegation via 'refvar this' is unsupported for bound-method delegates.",
+				DiagnosticIds.RefvarThisDelegation);
+			return;
+		}
+
+		context.ResolvedFunctionConversions[groupRef] = selected;
 	}
 
 	/// <summary>
@@ -2848,6 +2868,7 @@ internal sealed class ExpressionValidator(
 							candidates.AddRange(context.GetExtensionMethodCandidates(receiverType, context.CurrentUnit, member.MemberName)
 								.Select(candidate => candidate.Function));
 					}
+
 					break;
 				}
 		}
@@ -2904,13 +2925,16 @@ internal sealed class ExpressionValidator(
 	{
 		if (function.IsVariadic || function.Parameters.Count != delegateType.Parameters.Count)
 			return false;
+
 		if (!function.ReturnType.Equals(delegateType.ReturnType))
 			return false;
+
 		for (var i = 0; i < function.Parameters.Count; i++)
 		{
 			if (!function.Parameters[i].Type.Equals(delegateType.Parameters[i].Type))
 				return false;
 		}
+
 		return true;
 	}
 
