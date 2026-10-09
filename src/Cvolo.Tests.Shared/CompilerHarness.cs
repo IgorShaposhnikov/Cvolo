@@ -55,14 +55,11 @@ public sealed class CompilerHarness
 			return existing;
 
 		var sourceRoot = TestCases.Root;
-		var categoryDirectory = Path.GetDirectoryName(key) ?? string.Empty;
-		var caseName = Path.GetFileNameWithoutExtension(key);
 		var isolatedDirectory = Path.GetFullPath(Path.Combine(
 			sourceRoot,
 			"_isolated",
-			categoryDirectory,
-			caseName,
-			_isolationId));
+			_isolationId,
+			$"case{_isolatedCaseDirectories.Count + 1:000}"));
 
 		Directory.CreateDirectory(isolatedDirectory);
 		_isolatedCaseDirectories[key] = isolatedDirectory;

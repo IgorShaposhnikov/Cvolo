@@ -1,0 +1,20 @@
+// Definite-assignment regression: both if/else branches assign the local, so
+// the joined state must allow the later read. Keep expected output in
+// DefiniteAssignmentTests synchronized with this fixture.
+using System;
+
+int Read(bool flag) {
+    var int value;
+    if (flag) {
+        value = 11;
+    } else {
+        value = 22;
+    }
+    return value;
+}
+
+int main() {
+    Console.WriteLine(Read(true));
+    Console.WriteLine(Read(false));
+    return 0;
+}

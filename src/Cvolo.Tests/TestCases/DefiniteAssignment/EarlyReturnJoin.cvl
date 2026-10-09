@@ -1,0 +1,20 @@
+// Definite-assignment regression: an early return removes the unassigned path
+// from the join, so the fall-through read is valid. Keep expected output in
+// DefiniteAssignmentTests synchronized with this fixture.
+using System;
+
+int Read(bool flag) {
+    var int value;
+    if (flag) {
+        value = 10;
+    } else {
+        return 20;
+    }
+    return value;
+}
+
+int main() {
+    Console.WriteLine(Read(true));
+    Console.WriteLine(Read(false));
+    return 0;
+}

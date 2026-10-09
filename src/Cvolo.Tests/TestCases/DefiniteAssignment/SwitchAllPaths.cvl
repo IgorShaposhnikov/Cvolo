@@ -1,0 +1,28 @@
+// Definite-assignment regression: every enum switch case assigns the local, so
+// the exhaustive switch join must allow the later read. Keep expected output in
+// DefiniteAssignmentTests synchronized with this fixture.
+using System;
+
+enum Choice : byte {
+    First,
+    Second
+}
+
+int Read(Choice choice) {
+    var int value;
+    switch (choice) {
+        case First:
+            value = 10;
+            break;
+        case Second:
+            value = 20;
+            break;
+    }
+    return value;
+}
+
+int main() {
+    Console.WriteLine(Read(Choice.First));
+    Console.WriteLine(Read(Choice.Second));
+    return 0;
+}

@@ -1,0 +1,14 @@
+// Definite-assignment regression: assigning one struct field must not make
+// sibling fields readable. Keep this fixture rejected with CVL4139 when
+// changing projection/field coverage rules.
+struct Pair {
+    int First;
+    int Second;
+}
+
+int main() {
+    var Pair pair;
+    pair.First = 10;
+    // Initializing one field must not make every other field readable.
+    return pair.Second;
+}

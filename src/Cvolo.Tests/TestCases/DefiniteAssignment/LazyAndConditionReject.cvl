@@ -1,0 +1,14 @@
+// Definite-assignment regression: assignment inside `a && b` only happens on
+// the true short-circuit path. Keep this fixture rejected with CVL4139 when
+// changing lazy condition flow.
+int Read(bool a, bool b) {
+    var int value;
+    if (a && b) {
+        value = 7;
+    }
+    return value;
+}
+
+int main() {
+    return Read(false, false);
+}

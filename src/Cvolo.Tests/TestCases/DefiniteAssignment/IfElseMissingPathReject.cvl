@@ -1,0 +1,15 @@
+// Definite-assignment regression: an empty else branch must not contribute the
+// assignment from the then branch. Keep this fixture rejected with CVL4139 when
+// changing if/else joins.
+int Read(bool flag) {
+    var int value;
+    if (flag) {
+        value = 10;
+    } else {
+    }
+    return value;
+}
+
+int main() {
+    return Read(false);
+}

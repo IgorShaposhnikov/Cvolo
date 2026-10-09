@@ -1,0 +1,12 @@
+// Definite-assignment regression: passing an uninitialized local by refvar is
+// not an out-parameter contract. Keep this rejected with CVL4139 unless the
+// language adds an explicit out/inout initialization guarantee.
+void Observe(refvar int value) {
+    // A mutable borrow is not an out-parameter contract and need not assign value.
+}
+
+int main() {
+    var int value;
+    Observe(ref value);
+    return value;
+}

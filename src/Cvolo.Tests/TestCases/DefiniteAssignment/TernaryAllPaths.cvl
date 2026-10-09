@@ -1,0 +1,16 @@
+// Definite-assignment regression: both ternary arms feed an assignment before
+// the read. Keep expected output in DefiniteAssignmentTests synchronized with
+// this fixture.
+using System;
+
+int Read(bool flag) {
+    var int value;
+    value = flag ? 11 : 22;
+    return value;
+}
+
+int main() {
+    Console.WriteLine(Read(true));
+    Console.WriteLine(Read(false));
+    return 0;
+}

@@ -1,0 +1,20 @@
+// Definite-assignment regression: lazy `&&` flow plus an else branch assigns on
+// every path. Keep expected output in DefiniteAssignmentTests synchronized with
+// this fixture.
+using System;
+
+int Read(bool a, bool b) {
+    var int value;
+    if (a && b) {
+        value = 7;
+    } else {
+        value = 3;
+    }
+    return value;
+}
+
+int main() {
+    Console.WriteLine(Read(true, true));
+    Console.WriteLine(Read(true, false));
+    return 0;
+}

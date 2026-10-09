@@ -1,0 +1,14 @@
+// Definite-assignment regression: an if-without-else must not initialize a
+// local on the path where the condition is false. Keep this fixture rejected
+// with CVL4139 when changing if/join behavior.
+int Read(bool flag) {
+    var int value;
+    if (flag) {
+        value = 10;
+    }
+    return value;
+}
+
+int main() {
+    return Read(false);
+}

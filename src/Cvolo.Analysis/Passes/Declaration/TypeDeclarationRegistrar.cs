@@ -317,7 +317,7 @@ internal sealed class TypeDeclarationRegistrar(BindingContext context)
 		if (IsTypeNameTaken(mangledName, structDecl.Name))
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.Report(currentFileContext, structDecl.Span, $"Duplicate type definition '{structDecl.Name}'", DiagnosticIds.DuplicateTypeDefinition);
+			context.Diagnostics.Report(currentFileContext, DeclarationNameSpan(currentFileContext, structDecl.Name, structDecl.Span), $"Duplicate type definition '{structDecl.Name}'", DiagnosticIds.DuplicateTypeDefinition);
 			return;
 		}
 
@@ -438,7 +438,7 @@ internal sealed class TypeDeclarationRegistrar(BindingContext context)
 		if (IsTypeNameTaken(mangledName, unionDecl.Name))
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.Report(currentFileContext, unionDecl.Span, $"Duplicate type definition '{unionDecl.Name}'", DiagnosticIds.DuplicateTypeDefinition);
+			context.Diagnostics.Report(currentFileContext, DeclarationNameSpan(currentFileContext, unionDecl.Name, unionDecl.Span), $"Duplicate type definition '{unionDecl.Name}'", DiagnosticIds.DuplicateTypeDefinition);
 			return;
 		}
 
@@ -645,7 +645,7 @@ internal sealed class TypeDeclarationRegistrar(BindingContext context)
 		if (IsTypeNameTaken(mangledName, delegateDecl.Name))
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.Report(currentFileContext, delegateDecl.Span, $"Duplicate type definition '{delegateDecl.Name}'", DiagnosticIds.DuplicateTypeDefinition);
+			context.Diagnostics.Report(currentFileContext, delegateDecl.NameSpan, $"Duplicate type definition '{delegateDecl.Name}'", DiagnosticIds.DuplicateTypeDefinition);
 			return;
 		}
 
@@ -739,12 +739,14 @@ internal sealed class TypeDeclarationRegistrar(BindingContext context)
 				context.Diagnostics.Report(currentFileContext, delegateDecl.ReturnTypeSpan, $"Return type '{returnType.Name}' is resource-bearing.", DiagnosticIds.NativeAbiResourceBearing);
 				return;
 			}
+
 			if (NativeAbiRepresentability.ContainsEnumWithoutExplicitStorage(returnType))
 			{
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
 				context.Diagnostics.Report(currentFileContext, delegateDecl.ReturnTypeSpan, $"Return type '{returnType.Name}' contains an enum without explicit ABI storage.", DiagnosticIds.NativeEnumRequiresExplicitStorage);
 				return;
 			}
+
 			if (!NativeAbiRepresentability.IsNativeAbiRepresentable(returnType, NativeAbiPosition.Return))
 			{
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
@@ -753,6 +755,7 @@ internal sealed class TypeDeclarationRegistrar(BindingContext context)
 					DiagnosticIds.NativeAbiTypeNotRepresentable);
 				return;
 			}
+
 			if (!NativeAbiAggregateClassification.IsVerifiedForDirectBoundary(returnType, context.NativePointerBytes, context.NativeAggregateAbiSupported))
 			{
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
@@ -804,12 +807,14 @@ internal sealed class TypeDeclarationRegistrar(BindingContext context)
 				context.Diagnostics.Report(currentFileContext, p.Span, $"Parameter '{p.Name}' is resource-bearing.", DiagnosticIds.NativeAbiResourceBearing);
 				continue;
 			}
+
 			if (isNative && NativeAbiRepresentability.ContainsEnumWithoutExplicitStorage(paramType))
 			{
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
 				context.Diagnostics.Report(currentFileContext, p.Span, $"Parameter '{p.Name}' contains an enum without explicit ABI storage.", DiagnosticIds.NativeEnumRequiresExplicitStorage);
 				continue;
 			}
+
 			if (isNative && !NativeAbiRepresentability.IsNativeAbiRepresentable(paramType, NativeAbiPosition.Parameter))
 			{
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
@@ -933,6 +938,20 @@ internal sealed class TypeDeclarationRegistrar(BindingContext context)
 		|| context.DelegateTypes.ContainsKey(mangledName)
 		|| TypeSymbol.FromName(declaredName) is not null;
 
+	private static TextSpan DeclarationNameSpan(CompilationContext fileContext, string name, TextSpan declarationSpan)
+	{
+		var source = fileContext.Source;
+		if (declarationSpan.Start >= 0 && declarationSpan.Start < source.Length)
+		{
+			var length = Math.Min(declarationSpan.Length, source.Length - declarationSpan.Start);
+			var index = source.IndexOf(name, declarationSpan.Start, length, StringComparison.Ordinal);
+			if (index >= 0)
+				return new TextSpan(index, name.Length);
+		}
+
+		return new TextSpan(declarationSpan.Start, Math.Min(name.Length, Math.Max(1, declarationSpan.Length)));
+	}
+
 	/// <summary>
 	/// Publishes an enum declaration, validates its storage and flag rules, and evaluates compile-time variant values.
 	/// </summary>
@@ -943,7 +962,7 @@ internal sealed class TypeDeclarationRegistrar(BindingContext context)
 		if (IsTypeNameTaken(mangledName, enumDecl.Name))
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
-			context.Diagnostics.Report(currentFileContext, enumDecl.Span, $"Duplicate type definition '{enumDecl.Name}'", DiagnosticIds.DuplicateTypeDefinition);
+			context.Diagnostics.Report(currentFileContext, DeclarationNameSpan(currentFileContext, enumDecl.Name, enumDecl.Span), $"Duplicate type definition '{enumDecl.Name}'", DiagnosticIds.DuplicateTypeDefinition);
 			return;
 		}
 
@@ -1130,5 +1149,4 @@ internal sealed class TypeDeclarationRegistrar(BindingContext context)
 				return null;
 		}
 	}
-
 }

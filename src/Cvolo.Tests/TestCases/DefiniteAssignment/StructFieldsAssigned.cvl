@@ -1,0 +1,17 @@
+// Definite-assignment regression: assigning all struct fields makes field reads
+// valid through projection coverage. Keep expected output in
+// DefiniteAssignmentTests synchronized with this fixture.
+using System;
+
+struct Pair {
+    int First;
+    int Second;
+}
+
+int main() {
+    var Pair pair;
+    pair.First = 11;
+    pair.Second = 22;
+    Console.WriteLine(pair.First + pair.Second);
+    return 0;
+}
