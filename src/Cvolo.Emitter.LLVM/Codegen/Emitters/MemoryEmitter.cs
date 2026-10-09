@@ -38,8 +38,9 @@ internal sealed class MemoryEmitter(CodegenContext codegen)
 	}
 
 	/// <summary>
-	/// Allocates unmanaged storage for a runtime number of elements while preserving the existing
-	/// LLVM GEP-based element-size calculation.
+	/// Allocates unmanaged storage for a runtime number of elements. The element size is resolved
+	/// from the module data layout as a plain integer constant so the total-size multiplication never
+	/// folds into an unsupported LLVM constant expression.
 	/// </summary>
 	/// <param name="elementType">LLVM element type stored in the allocation.</param>
 	/// <param name="elementCount">Runtime element count produced by expression emission.</param>
@@ -49,13 +50,7 @@ internal sealed class MemoryEmitter(CodegenContext codegen)
 	{
 		var count64 = Builder.BuildZExt(elementCount, LLVMTypeRef.Int64, "count_64");
 
-		var nullPtr = LLVMValueRef.CreateConstPointerNull(LLVMTypeRef.CreatePointer(elementType, 0));
-		var sizePtr = Builder.BuildGEP2(
-			elementType,
-			nullPtr,
-			new LLVMValueRef[] { LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1) },
-			"size_ptr");
-		var elementSize64 = Builder.BuildPtrToInt(sizePtr, LLVMTypeRef.Int64, "element_size");
+		var elementSize64 = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int64, (ulong)GetStoreSize(elementType));
 		var totalSize = Builder.BuildMul(count64, elementSize64, "total_alloc_size");
 
 		var mallocFunc = codegen.Globals["malloc"];
