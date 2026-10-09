@@ -1,0 +1,12 @@
+// Regression: an integer constant exactly representable by both float and double
+// must not resolve by declaration order when the two overloads are otherwise tied.
+void Pick(float value) {
+}
+
+void Pick(double value) {
+}
+
+int main() {
+    Pick(42);
+    return 0;
+}

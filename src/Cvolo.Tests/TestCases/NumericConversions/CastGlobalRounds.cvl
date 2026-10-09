@@ -1,0 +1,12 @@
+// Regression: explicit numeric casts in global initializers are compile-time
+// constants. (float)16777217 must round to the nearest binary32 value 16777216.
+using System;
+
+public global float Rounded = (float)16777217;
+public global double Exact = (double)16777217;
+
+int main() {
+    Console.WriteLine(Rounded == 16777216.0f ? 1 : 0);
+    Console.WriteLine(Exact == 16777217.0 ? 1 : 0);
+    return 0;
+}

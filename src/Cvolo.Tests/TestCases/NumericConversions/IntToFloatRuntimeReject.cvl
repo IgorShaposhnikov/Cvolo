@@ -1,0 +1,9 @@
+// Regression: runtime int values do not have a fully float-exact source domain,
+// so int-to-float remains explicit-only outside proven constant expressions.
+float Convert(int value) {
+    return value;
+}
+
+int main() {
+    return 0;
+}

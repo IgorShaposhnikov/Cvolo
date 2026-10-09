@@ -1,0 +1,12 @@
+// Regression: unary plus is an ordinary operator, not transparent parentheses.
+// +42 and +(40 + 2) are valid compile-time constants.
+using System;
+
+public global float Prefix = +42;
+public global float Parenthesized = +(40 + 2);
+
+int main() {
+    Console.WriteLine(Prefix == 42.0f ? 1 : 0);
+    Console.WriteLine(Parenthesized == 42.0f ? 1 : 0);
+    return 0;
+}

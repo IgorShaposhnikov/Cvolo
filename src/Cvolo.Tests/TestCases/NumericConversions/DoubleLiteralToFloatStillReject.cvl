@@ -1,0 +1,6 @@
+// Regression: floating literal rules are unchanged; an unsuffixed double literal
+// cannot implicitly initialize a float.
+int main() {
+    var float value = 1.0;
+    return 0;
+}

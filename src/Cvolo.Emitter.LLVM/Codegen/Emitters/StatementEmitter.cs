@@ -269,6 +269,9 @@ internal sealed class StatementEmitter(
 				materialized = Builder.BuildLoad2(layout, value, "struct_ret_val");
 			}
 
+			if (materialized is null && type is not null)
+				value = coercion.CoerceIntegerToFloating(value, type, expectedType, "ret_int_to_fp");
+
 			cleanup.EmitScopeCleanup(Function, [.. Function.Locals.Keys], skipHeapFree: Function.OwnershipTransferFunction);
 
 			if (materialized is not null)
@@ -479,8 +482,10 @@ internal sealed class StatementEmitter(
 						&& (varDecl.Initializer is MemberAccessExpressionSyntax or IndexExpressionSyntax)
 						? coercion.CoerceReferenceToValue(value, expressionTypes.Resolve(varDecl.Initializer!))
 						: value;
-					coerced = coercion.CoerceIntegerWidth(coerced, expressionTypes.Resolve(varDecl.Initializer!) ?? typeSymbol, typeSymbol);
-					coerced = coercion.CoerceFloatWidth(coerced, expressionTypes.Resolve(varDecl.Initializer!) ?? typeSymbol, typeSymbol);
+					var initializerType = expressionTypes.Resolve(varDecl.Initializer!) ?? typeSymbol;
+					coerced = coercion.CoerceIntegerToFloating(coerced, initializerType, typeSymbol, "store_int_to_fp");
+					coerced = coercion.CoerceIntegerWidth(coerced, initializerType, typeSymbol);
+					coerced = coercion.CoerceFloatWidth(coerced, initializerType, typeSymbol);
 					Builder.BuildStore(coerced, alloca);
 				}
 

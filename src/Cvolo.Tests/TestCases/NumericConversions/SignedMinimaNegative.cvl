@@ -1,0 +1,14 @@
+// Regression: -9223372036854775808 binds as long.MinValue through direct unary
+// minus. Its magnitude 2^63 is exactly representable in float and double.
+using System;
+
+public global long Min = -9223372036854775808;
+public global float MinFloat = -9223372036854775808;
+public global double MinDouble = -9223372036854775808;
+
+int main() {
+    Console.WriteLine(Min == -9223372036854775808 ? 1 : 0);
+    Console.WriteLine(MinFloat == -9223372036854775808.0f ? 1 : 0);
+    Console.WriteLine(MinDouble == -9223372036854775808.0 ? 1 : 0);
+    return 0;
+}

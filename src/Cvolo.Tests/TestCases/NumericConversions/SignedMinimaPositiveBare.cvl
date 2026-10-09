@@ -1,0 +1,3 @@
+// Regression: an unsuffixed magnitude beyond long.MaxValue has no positive
+// domain and is illegal unless it is the direct operand of unary minus.
+public global long D = 9223372036854775808;

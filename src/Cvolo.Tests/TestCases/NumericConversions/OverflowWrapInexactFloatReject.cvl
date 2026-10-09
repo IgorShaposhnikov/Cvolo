@@ -1,0 +1,3 @@
+// Regression: 2147483647 + 2 wraps to -2147483647, whose magnitude 2147483647 is
+// not exactly representable in float; the implicit conversion must be rejected.
+public global float X = 2147483647 + 2;

@@ -1,0 +1,16 @@
+// Regression: 16777217 is not exactly representable as float but is exactly
+// representable as double, so overload resolution must choose the double overload.
+using System;
+
+int Pick(float value) {
+    return 1;
+}
+
+int Pick(double value) {
+    return 2;
+}
+
+int main() {
+    Console.WriteLine(Pick(16777217));
+    return 0;
+}

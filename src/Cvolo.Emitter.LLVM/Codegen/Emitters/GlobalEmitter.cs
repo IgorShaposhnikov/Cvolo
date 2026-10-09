@@ -1,3 +1,4 @@
+using System.Numerics;
 using Cvolo.Analysis;
 using Cvolo.Analysis.Semantics;
 using Cvolo.Analysis.Symbols.Base;
@@ -106,6 +107,17 @@ internal sealed class GlobalEmitter
 		if (initializer is null)
 			return LLVMValueRef.CreateConstNull(llvmType);
 
+		if (TypeSymbol.IsFloatingPointType(typeSymbol))
+		{
+			if (NumericConversionSemantics.TryGetFloatingConstant(initializer, typeSymbol, BindingContext, out var floatingConstant))
+				return LLVMValueRef.CreateConstReal(llvmType, floatingConstant);
+
+			if (TryEvaluateConstant(initializer, out var isDoubleResult, out var doubleResult, out var integerResult))
+				return LLVMValueRef.CreateConstReal(llvmType, isDoubleResult ? doubleResult : integerResult);
+
+			return LLVMValueRef.CreateConstNull(llvmType);
+		}
+
 		switch (initializer)
 		{
 			case IntegerLiteralExpressionSyntax integerLiteral:
@@ -126,6 +138,23 @@ internal sealed class GlobalEmitter
 					default:
 						return LLVMValueRef.CreateConstNull(llvmType);
 				}
+			case UnaryExpressionSyntax { Operator: "+" } unary:
+				return BuildInitializer(typeSymbol, unary.Operand, llvmType);
+			case UnaryExpressionSyntax cast when NumericConversionSemantics.TryParseCastOperator(cast.Operator, out _):
+				if (NumericConversionSemantics.TryEvaluateIntegerConstant(cast, BindingContext, out var castInteger, out var castSource)
+					&& castSource is not null && TypeSymbol.IsNumericIntegerType(castSource))
+				{
+					return LLVMValueRef.CreateConstInt(llvmType, ToBitPattern(castInteger));
+				}
+
+				if (TryEvaluateConstant(cast, out var castIsDouble, out var castDouble, out var castLong))
+				{
+					return llvmType.Kind is LLVMTypeKind.LLVMDoubleTypeKind or LLVMTypeKind.LLVMFloatTypeKind
+						? LLVMValueRef.CreateConstReal(llvmType, castIsDouble ? castDouble : castLong)
+						: LLVMValueRef.CreateConstInt(llvmType, unchecked((ulong)castLong));
+				}
+
+				return LLVMValueRef.CreateConstNull(llvmType);
 			case StructInitializationExpressionSyntax structInitializer when typeSymbol is StructTypeSymbol structType
 				&& _codegen.LlvmStructTypes.TryGetValue(structType.Name, out var namedStruct):
 				{
@@ -134,7 +163,7 @@ internal sealed class GlobalEmitter
 					{
 						var memberInitializer = structInitializer.Initializers.FirstOrDefault(member => member.MemberName == field.Name);
 						var fieldType = _codegen.Types.Lower(field.Type);
-						fieldValues.Add(memberInitializer is not null && IsSimpleConstant(memberInitializer.Expression)
+						fieldValues.Add(memberInitializer is not null
 							? BuildInitializer(field.Type, memberInitializer.Expression, fieldType)
 							: LLVMValueRef.CreateConstNull(fieldType));
 					}
@@ -168,6 +197,13 @@ internal sealed class GlobalEmitter
 
 	private long LayoutConstantOf(ExpressionSyntax expression)
 		=> BindingContext.ResolvedLayoutConstants.TryGetValue(expression, out var value) ? value : BindingContext.EvaluateLayoutConstant(expression);
+
+	/// <summary>Reduces a folded integer constant to its 64-bit two's-complement bit pattern.</summary>
+	private static ulong ToBitPattern(BigInteger value)
+	{
+		var mask = (BigInteger.One << 64) - 1;
+		return (ulong)(value & mask);
+	}
 
 	/// <summary>
 	/// Returns whether an initializer node is one of the literal forms accepted directly inside a
@@ -225,6 +261,40 @@ internal sealed class GlobalEmitter
 				doubleValue = -doubleValue;
 				integerValue = -integerValue;
 				return true;
+			case UnaryExpressionSyntax { Operator: "+" } unary:
+				return TryEvaluateConstant(unary.Operand, out isDouble, out doubleValue, out integerValue);
+			case UnaryExpressionSyntax cast when NumericConversionSemantics.TryParseCastOperator(cast.Operator, out var castName)
+				&& BindingContext.ResolveType(castName) is { } castType:
+				if (NumericConversionSemantics.TryEvaluateIntegerConstant(cast, BindingContext, out var castValue, out _))
+				{
+					isDouble = TypeSymbol.IsFloatingPointType(castType);
+					integerValue = unchecked((long)ToBitPattern(castValue));
+					doubleValue = (double)castValue;
+					return true;
+				}
+
+				if (TryEvaluateConstant(cast.Operand, out var operandIsDouble, out var operandDouble, out var operandInteger))
+				{
+					if (TypeSymbol.IsFloatingPointType(castType))
+					{
+						isDouble = true;
+						doubleValue = castType.Equals(TypeSymbol.Float) ? (float)operandDouble : operandDouble;
+						integerValue = 0;
+					}
+					else
+					{
+						isDouble = false;
+						integerValue = operandInteger;
+						doubleValue = operandInteger;
+					}
+
+					return true;
+				}
+
+				isDouble = false;
+				doubleValue = 0;
+				integerValue = 0;
+				return false;
 			case BinaryExpressionSyntax binary:
 				if (!BindingContext.ResolvedBinaryExpressions.TryGetValue(binary, out var binding)
 					|| !binding.IsSuccess
@@ -295,6 +365,17 @@ internal sealed class GlobalEmitter
 							doubleValue = 0;
 							integerValue = 0;
 							return false;
+					}
+
+					// §8.2.1: post-overflow signed normalization. Truncate the folded result to the
+					// resolved integer width and reinterpret under its signedness so the emitted
+					// constant matches runtime wrapping arithmetic (e.g. 2147483647 + 1 is
+					// -2147483648, not +2147483648).
+					if (binding.OperationType is { } intOperationType
+						&& TypeSymbol.IsNumericIntegerType(intOperationType))
+					{
+						integerValue = unchecked((long)ToBitPattern(
+							NumericConversionSemantics.TruncateIntegerToType(integerValue, intOperationType)));
 					}
 
 					doubleValue = integerValue;

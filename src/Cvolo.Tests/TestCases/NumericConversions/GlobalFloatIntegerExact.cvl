@@ -1,0 +1,12 @@
+// Regression: exact integer literals assigned to float globals must emit typed
+// LLVM float constants, not integer constants with a float global type.
+using System;
+
+public global float PositionY = 0x0002000F;
+public global float RefreshRate = 0x0002100F;
+
+int main() {
+    Console.WriteLine(PositionY == 131087.0f ? 1 : 0);
+    Console.WriteLine(RefreshRate == 135183.0f ? 1 : 0);
+    return 0;
+}

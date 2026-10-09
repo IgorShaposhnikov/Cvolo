@@ -70,6 +70,21 @@ internal sealed class ValueCoercion(CodegenContext codegen)
 	}
 
 	/// <summary>
+	/// Converts an integer register value to a floating-point register value after semantic
+	/// validation has already proven that the implicit conversion is legal.
+	/// </summary>
+	public LLVMValueRef CoerceIntegerToFloating(LLVMValueRef value, TypeSymbol fromType, TypeSymbol toType, string name = "int_to_fp")
+	{
+		if (!TypeSymbol.IsNumericIntegerType(fromType) || !TypeSymbol.IsFloatingPointType(toType))
+			return value;
+
+		var llvmTarget = codegen.Types.Lower(toType);
+		return TypeSymbol.IsSignedIntegerType(fromType)
+			? Builder.BuildSIToFP(value, llvmTarget, name)
+			: Builder.BuildUIToFP(value, llvmTarget, name);
+	}
+
+	/// <summary>
 	/// Dereferences a <c>ref T</c>-represented pointer when a value destination consumes the
 	/// referenced <c>T</c> rather than the reference itself.
 	/// </summary>

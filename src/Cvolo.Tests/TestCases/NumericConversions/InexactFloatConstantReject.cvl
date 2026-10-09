@@ -1,0 +1,6 @@
+// Regression: 16777217 is just beyond binary32 exactness and must not implicitly
+// convert to float, even though nearby 16777216 and 16777218 are exactly representable.
+int main() {
+    var float value = 16777217;
+    return 0;
+}

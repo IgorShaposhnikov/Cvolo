@@ -320,7 +320,7 @@ public sealed class ValidationPass(BindingContext context)
 				case BinaryExpressionSyntax binary:
 					Expressions.Check(binary, globalScope);
 					break;
-				case UnaryExpressionSyntax { Operator: "-" } unary:
+				case UnaryExpressionSyntax { Operator: "-" or "+" } unary:
 					Bind(unary.Operand);
 					break;
 				case StructInitializationExpressionSyntax structInitializer:

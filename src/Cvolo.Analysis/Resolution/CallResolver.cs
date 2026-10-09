@@ -27,7 +27,7 @@ internal sealed class CallResolver(BindingContext context, OverloadResolver over
 	/// overload set exactly as the legacy validation path did.
 	/// </summary>
 	public FunctionSymbol? ResolveOrdinaryCall(CallExpressionSyntax call, IReadOnlyList<TypeSymbol> argumentTypes, SymbolTable scope)
-		=> ResolveOrdinaryCall(call, argumentTypes, scope, out _, out _);
+		=> ResolveOrdinaryCall(call, argumentTypes, scope, out _, out _, out _);
 
 	/// <summary>
 	/// Resolves a non-generic ordinary call and reports any dotted-call form that disagreed with the
@@ -39,12 +39,32 @@ internal sealed class CallResolver(BindingContext context, OverloadResolver over
 		SymbolTable scope,
 		out DottedCallMismatch mismatch,
 		out string? mismatchOwnerName)
+		=> ResolveOrdinaryCall(call, argumentTypes, scope, out mismatch, out mismatchOwnerName, out _);
+
+	/// <summary>
+	/// Resolves a non-generic ordinary call and additionally reports whether two or more distinct
+	/// applicable overloads were equally best, so the caller can report an ambiguity rather than a
+	/// generic no-overload mismatch.
+	/// </summary>
+	public FunctionSymbol? ResolveOrdinaryCall(
+		CallExpressionSyntax call,
+		IReadOnlyList<TypeSymbol> argumentTypes,
+		SymbolTable scope,
+		out DottedCallMismatch mismatch,
+		out string? mismatchOwnerName,
+		out bool ambiguous)
 	{
 		mismatch = DottedCallMismatch.None;
 		mismatchOwnerName = null;
-		return TryResolveEnumName(call, argumentTypes, scope)
-			?? TryResolveFlagsHasFlag(call, argumentTypes, scope)
-			?? overloads.Resolve(call.FunctionName, argumentTypes, scope, null, out mismatch, out mismatchOwnerName);
+		var synthesized = TryResolveEnumName(call, argumentTypes, scope)
+			?? TryResolveFlagsHasFlag(call, argumentTypes, scope);
+		if (synthesized is not null)
+		{
+			ambiguous = false;
+			return synthesized;
+		}
+
+		return overloads.Resolve(call.FunctionName, argumentTypes, scope, call, out mismatch, out mismatchOwnerName, out ambiguous);
 	}
 
 	/// <summary>

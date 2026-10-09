@@ -1,0 +1,15 @@
+// Regression: a runtime short passed with only float/double overloads has two
+// equal lossless conversions and must be reported as ambiguous, not "no match".
+using System;
+
+void S(float value) {
+}
+
+void S(double value) {
+}
+
+int main() {
+    short s = 5;
+    S(s);
+    return 0;
+}

@@ -1,3 +1,4 @@
+using Cvolo.Analysis.Semantics;
 using Cvolo.Analysis.Symbols;
 using Cvolo.Analysis.Symbols.Base;
 using Cvolo.Analysis.Symbols.Collections;
@@ -111,7 +112,25 @@ internal sealed class OverloadResolver(BindingContext context)
 		out DottedCallMismatch mismatch,
 		out string? mismatchOwnerName,
 		bool allowTypeReceiverInstanceFallback = false)
+		=> Resolve(name, argumentTypes, scope, call, out mismatch, out mismatchOwnerName, out _, allowTypeReceiverInstanceFallback);
+
+	/// <summary>
+	/// Resolves a call and additionally distinguishes "no applicable candidate" from "two or more
+	/// equally-best applicable candidates". A tie between distinct undominated candidates is reported
+	/// through <paramref name="ambiguous"/> so the call site can emit an ambiguity diagnostic instead
+	/// of a generic no-overload mismatch.
+	/// </summary>
+	public FunctionSymbol? Resolve(
+		string name,
+		IReadOnlyList<TypeSymbol> argumentTypes,
+		SymbolTable scope,
+		CallExpressionSyntax? call,
+		out DottedCallMismatch mismatch,
+		out string? mismatchOwnerName,
+		out bool ambiguous,
+		bool allowTypeReceiverInstanceFallback = false)
 	{
+		ambiguous = false;
 		var candidates = new List<FunctionSymbol>();
 		var baseName = name;
 		var adjustedArgumentTypes = new List<TypeSymbol>(argumentTypes);
@@ -258,20 +277,104 @@ internal sealed class OverloadResolver(BindingContext context)
 		}
 
 
-		FunctionSymbol? bestMatch = null;
-		var bestScore = -1;
+		// Applicable candidates with per-argument conversion ranks. When every applicable candidate is a
+		// pure fixed-arity signature, selection uses the per-argument vector dominance partial order
+		// (§5.4); otherwise (variadic or count-restored candidates) the legacy score-sum selection is
+		// retained unchanged.
+		var applicable = new List<(FunctionSymbol Candidate, List<int> Ranks)>();
+		var includeVectorDominance = true;
 		foreach (var candidate in candidates)
 		{
 			var parameterTypes = candidate.Parameters.Select(parameter => parameter.Type).ToList();
-			var score = CompareSignature(parameterTypes, adjustedArgumentTypes, candidate.IsVariadic);
+			var ranks = CompareSignatureRanks(parameterTypes, adjustedArgumentTypes, candidate.IsVariadic, call);
+			if (ranks is null)
+				continue;
+
+			if (ranks.Count != adjustedArgumentTypes.Count)
+				includeVectorDominance = false;
+
+			applicable.Add((candidate, ranks));
+		}
+
+		if (applicable.Count == 0)
+		{
+			ambiguous = false;
+			return null;
+		}
+
+		if (includeVectorDominance)
+		{
+			var undominated = new List<FunctionSymbol>();
+			foreach (var (candidate, ranks) in applicable)
+			{
+				var candidateIsDominated = false;
+				foreach (var (other, otherRanks) in applicable)
+				{
+					if (ReferenceEquals(candidate, other))
+						continue;
+
+					// other dominates candidate iff other is not worse on every argument and strictly
+					// better on at least one argument.
+					var dominates = true;
+					var strictlyBetter = false;
+					for (var i = 0; i < ranks.Count; i++)
+					{
+						if (otherRanks[i] < ranks[i])
+						{
+							dominates = false;
+							break;
+						}
+
+						if (otherRanks[i] > ranks[i])
+							strictlyBetter = true;
+					}
+
+					if (dominates && strictlyBetter)
+					{
+						candidateIsDominated = true;
+						break;
+					}
+				}
+
+				if (!candidateIsDominated)
+					undominated.Add(candidate);
+			}
+
+			if (undominated.Count == 1)
+			{
+				ambiguous = false;
+				return undominated[0];
+			}
+
+			// Two or more incomparable undominated candidates: ambiguous; never pick by registration
+			// order or total sum.
+			ambiguous = true;
+			return null;
+		}
+
+		FunctionSymbol? bestMatch = null;
+		var bestScore = -1;
+		ambiguous = false;
+		foreach (var (candidate, ranks) in applicable)
+		{
+			var score = 0;
+			foreach (var rank in ranks)
+				score += rank;
+
 			if (score > bestScore)
 			{
 				bestScore = score;
 				bestMatch = candidate;
+				ambiguous = false;
+			}
+			else if (score == bestScore && !ReferenceEquals(bestMatch, candidate))
+			{
+				bestMatch = null;
+				ambiguous = true;
 			}
 		}
 
-		return bestScore >= 0 ? bestMatch : null;
+		return ambiguous ? null : bestMatch;
 	}
 
 	/// <summary>
@@ -400,8 +503,10 @@ internal sealed class OverloadResolver(BindingContext context)
 				score += 3;
 			else if (TypeSymbol.IsIntegerType(parameterTypes[i]) && TypeSymbol.IsIntegerType(argumentTypes[i]))
 				score += 1;
-			else if (TypeSymbol.IsFloatingPointType(parameterTypes[i]) && TypeSymbol.IsIntegerType(argumentTypes[i]))
+			else if (NumericConversionSemantics.IsImplicitConversionAllowed(parameterTypes[i], argumentTypes[i]))
 				score += 1;
+			else
+				return -1;
 		}
 
 		return score;
@@ -411,43 +516,63 @@ internal sealed class OverloadResolver(BindingContext context)
 	/// Scores a candidate signature against call-site argument types and returns <c>-1</c> when the
 	/// candidate is incompatible.
 	/// </summary>
-	public int CompareSignature(IReadOnlyList<TypeSymbol> parameterTypes, IReadOnlyList<TypeSymbol> argumentTypes, bool isVariadic)
+	public int CompareSignature(IReadOnlyList<TypeSymbol> parameterTypes, IReadOnlyList<TypeSymbol> argumentTypes, bool isVariadic, CallExpressionSyntax? call = null)
 	{
-		if (!isVariadic && parameterTypes.Count != argumentTypes.Count)
-			return -1;
-		if (isVariadic && argumentTypes.Count < parameterTypes.Count)
+		var ranks = CompareSignatureRanks(parameterTypes, argumentTypes, isVariadic, call);
+		if (ranks is null)
 			return -1;
 
 		var score = 0;
+		foreach (var rank in ranks)
+			score += rank;
+		return score;
+	}
+
+	/// <summary>
+	/// Returns the per-argument conversion ranks for a candidate signature, or <c>null</c> when any
+	/// required parameter pair is incompatible. A variadic candidate contributes a trailing <c>+1</c>
+	/// rank element after its fixed parameters.
+	/// </summary>
+	private List<int>? CompareSignatureRanks(IReadOnlyList<TypeSymbol> parameterTypes, IReadOnlyList<TypeSymbol> argumentTypes, bool isVariadic, CallExpressionSyntax? call = null)
+	{
+		if (!isVariadic && parameterTypes.Count != argumentTypes.Count)
+			return null;
+		if (isVariadic && argumentTypes.Count < parameterTypes.Count)
+			return null;
+
+		var ranks = new List<int>(parameterTypes.Count + (isVariadic ? 1 : 0));
+		var expressionOffset = call is null ? 0 : argumentTypes.Count - call.Arguments.Count;
 		for (var i = 0; i < parameterTypes.Count; i++)
 		{
 			var parameter = parameterTypes[i];
 			var argument = argumentTypes[i];
+			var argumentExpression = call is not null && i >= expressionOffset && i - expressionOffset < call.Arguments.Count
+				? call.Arguments[i - expressionOffset]
+				: null;
 
 			if (argument == UnresolvedArgument)
-				return -1;
+				return null;
 
 			if (argument == DeferredCallableArgument)
 			{
-				if (parameter is DelegateTypeSymbol)
-				{
-					score += 4;
-					continue;
-				}
+				if (parameter is not DelegateTypeSymbol)
+					return null;
 
-				return -1;
+				ranks.Add(4);
+				continue;
 			}
 
+			int rank;
 			if (parameter.Equals(argument))
 			{
-				score += 4;
+				rank = 4;
 			}
 			else if (argument.Equals(TypeSymbol.Null)
 					 && (parameter is RawPointerTypeSymbol
 						 || parameter is UnionTypeSymbol { IsOption: true }
 						 || parameter is DelegateTypeSymbol { IsNative: true }))
 			{
-				score += 3;
+				rank = 3;
 			}
 			else if (parameter is PointerTypeSymbol parameterPointer
 					 && argument is PointerTypeSymbol argumentPointer
@@ -456,53 +581,55 @@ internal sealed class OverloadResolver(BindingContext context)
 					 && sliceType.ElementType.Equals(arrayType.ElementType))
 			{
 				if (parameterPointer.IsMutable && !argumentPointer.IsMutable)
-					return -1;
-				score += parameterPointer.IsMutable == argumentPointer.IsMutable ? 3 : 2;
+					return null;
+				rank = parameterPointer.IsMutable == argumentPointer.IsMutable ? 3 : 2;
 			}
 			else if (parameter is PointerTypeSymbol pointerParameter
 					 && argument is PointerTypeSymbol pointerArgument
 					 && pointerParameter.ReferencedType.Equals(pointerArgument.ReferencedType))
 			{
 				if (pointerParameter.IsMutable && !pointerArgument.IsMutable)
-					return -1;
-				score += pointerParameter.IsMutable == pointerArgument.IsMutable ? 3 : 2;
+					return null;
+				rank = pointerParameter.IsMutable == pointerArgument.IsMutable ? 3 : 2;
 			}
 			else if (parameter is SliceTypeSymbol slice && argument is ArrayTypeSymbol array
 					 && slice.ElementType.Equals(array.ElementType))
 			{
-				score += 3;
+				rank = 3;
 			}
 			else if (parameter is PointerTypeSymbol pointer && pointer.ReferencedType.Equals(argument))
 			{
-				score += 2;
+				rank = 2;
 			}
 			else if (argument is PointerTypeSymbol dereferencedArgumentPointer && parameter.Equals(dereferencedArgumentPointer.ReferencedType))
 			{
-				score += 2;
+				rank = 2;
 			}
-			else if (parameter.Equals(TypeSymbol.Double) && argument.Equals(TypeSymbol.Int))
+			else if (NumericConversionSemantics.IsImplicitConversionAllowed(parameter, argument, argumentExpression, context))
 			{
-				score += 1;
+				rank = 1;
 			}
 			else if (TypeSymbol.IsNumericIntegerType(parameter) && TypeSymbol.IsNumericIntegerType(argument) && !parameter.Equals(argument))
 			{
-				score += 1;
+				rank = 1;
 			}
 			else if (parameter.Name == "string"
 					 && ((argument is ArrayTypeSymbol charArray && charArray.ElementType.Name == "char")
 						 || (argument is SliceTypeSymbol charSlice && charSlice.ElementType.Name == "char")))
 			{
-				score += 1;
+				rank = 1;
 			}
 			else
 			{
-				return -1;
+				return null;
 			}
+
+			ranks.Add(rank);
 		}
 
 		if (isVariadic)
-			score += 1;
-		return score;
+			ranks.Add(1);
+		return ranks;
 	}
 
 	/// <summary>

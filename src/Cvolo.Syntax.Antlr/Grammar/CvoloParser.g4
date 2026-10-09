@@ -408,7 +408,8 @@ expression
 	| STAR expression                                       										# dereferenceExpression
 	| AMPERSAND expression                                  										# addressOfExpression
 	| MINUS expression                                      										# unaryMinusExpression
-	| EXCLAMATION expression                                										# logicalNotExpression
+	| PLUS expression                                       										# unaryPlusExpression
+	| EXCLAMATION expression																		# logicalNotExpression
 	| TILDE expression																				# bitwiseNotExpression
 	| INC expression                                        										# prefixIncrementExpression
 	| DEC expression                                        										# prefixDecrementExpression

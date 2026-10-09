@@ -1,0 +1,18 @@
+// Regression: overload ranking is a per-argument partial order. With a float
+// first argument, Calc(variable, 42 + 1) is dominated by the (float,float)
+// overload, which must win uniquely.
+using System;
+
+int Calc(float a, float b) {
+    return 1;
+}
+
+int Calc(double a, double b) {
+    return 2;
+}
+
+int main() {
+    float variable = 1.0f;
+    Console.WriteLine(Calc(variable, 42 + 1));
+    return 0;
+}

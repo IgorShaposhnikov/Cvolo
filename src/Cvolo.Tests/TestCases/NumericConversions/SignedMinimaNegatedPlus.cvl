@@ -1,0 +1,3 @@
+// Regression: unary plus is not transparent parentheses; negating a unary-plus
+// magnitude cannot rescue the out-of-range positive literal.
+public global long E = -( +9223372036854775808 );

@@ -16,11 +16,17 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 	private readonly DiagnosticBag _diagnostics = new();
 	private CompilationContext? _compilationContext;
 
+	// Unsuffixed integer magnitudes in (long.MaxValue, ulong.MaxValue] are valid only as the operand
+	// of a direct unary minus (the signed-minimum exception). They are tracked here until either a
+	// unary minus consumes them or the parse finishes and they are still unresolved.
+	private readonly Dictionary<int, string> _pendingSignedMagnitudeOffsets = new();
+
 	public DiagnosticBag Diagnostics => _diagnostics;
 
 	public CompilationUnitSyntax? Parse(CompilationContext context)
 	{
 		_compilationContext = context;
+		_pendingSignedMagnitudeOffsets.Clear();
 		var inputStream = new AntlrInputStream(context.Source);
 		var lexer = new CvoloLexer(inputStream);
 
@@ -92,13 +98,35 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		// consumers that tolerate partial syntax (the tooling) can analyze the declarations they can
 		// recover. The compiler driver independently aborts on parser diagnostics, so compilation is
 		// unchanged. Only if recovery cannot build a coherent unit do we return null as before.
+		CompilationUnitSyntax? unit = null;
 		try
 		{
-			return BuildCompilationUnit(tree, context);
+			unit = BuildCompilationUnit(tree, context);
 		}
 		catch (Exception) when (_diagnostics.HasErrors)
 		{
-			return null;
+			unit = null;
+		}
+
+		ReportPendingSignedMagnitudeOverflows();
+		return unit;
+	}
+
+	// An unsuffixed integer magnitude in (long.MaxValue, ulong.MaxValue] is legal only when it is the
+	// operand of a direct unary minus. Any such literal that survives parsing is not part of a valid
+	// signed-minimum expression and must be reported as too large.
+	private void ReportPendingSignedMagnitudeOverflows()
+	{
+		if (_compilationContext is null || _pendingSignedMagnitudeOffsets.Count == 0)
+			return;
+
+		foreach (var (offset, text) in _pendingSignedMagnitudeOffsets)
+		{
+			_diagnostics.Report(
+				_compilationContext,
+				new TextSpan(offset, text.Length),
+				$"Integer literal `{text}` is too large for type `ulong`.",
+				DiagnosticIds.IntegerLiteralTooLarge);
 		}
 	}
 
@@ -1062,6 +1090,8 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 					var result = DecodeIntegerLiteral(text);
 					if (result.OverflowType is not null)
 						ReportParseError(intCtx, $"Integer literal `{text}` is too large for type `{result.OverflowType}`.", DiagnosticIds.IntegerLiteralTooLarge);
+					else if (result.LiteralType == "long" && result.Value > long.MaxValue)
+						_pendingSignedMagnitudeOffsets[SpanOf(intCtx).Start] = text;
 
 					return new IntegerLiteralExpressionSyntax(SpanOf(intCtx), result.Value, result.LiteralType);
 				}
@@ -1210,7 +1240,18 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				}
 
 			case CvoloParser.UnaryMinusExpressionContext unaryMinus:
-				return new UnaryExpressionSyntax(SpanOf(unaryMinus), "-", BuildExpression(unaryMinus.expression()));
+				{
+					var operand = BuildExpression(unaryMinus.expression());
+					if (operand is IntegerLiteralExpressionSyntax { LiteralType: "long" } signedMin
+						&& _pendingSignedMagnitudeOffsets.Remove(signedMin.Span.Start))
+					{
+						return new UnaryExpressionSyntax(SpanOf(unaryMinus), "-", signedMin);
+					}
+
+					return new UnaryExpressionSyntax(SpanOf(unaryMinus), "-", operand);
+				}
+			case CvoloParser.UnaryPlusExpressionContext unaryPlus:
+				return new UnaryExpressionSyntax(SpanOf(unaryPlus), "+", BuildExpression(unaryPlus.expression()));
 			case CvoloParser.LogicalNotExpressionContext notCtx:
 				return new UnaryExpressionSyntax(SpanOf(notCtx), "!", BuildExpression(notCtx.expression()));
 			case CvoloParser.CastExpressionContext castCtx:
@@ -1593,7 +1634,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			"ul" or "uL" or "Ul" or "UL" or "lu" or "lU" or "Lu" or "LU" => (value, "ulong", null),
 			_ => value <= int.MaxValue ? (value, null, null)
 				: value <= long.MaxValue ? (value, "long", null)
-				: (value, "long", "ulong"),
+				: (value, "long", null),
 		};
 	}
 

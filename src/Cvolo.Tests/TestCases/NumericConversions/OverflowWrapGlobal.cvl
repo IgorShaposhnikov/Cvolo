@@ -1,0 +1,13 @@
+// Regression: constant integer arithmetic wraps at the resolved operand width.
+// 2147483647 + 1 in a signed int global folds to -2147483648, exactly
+// representable in both float and double.
+using System;
+
+public global float Wrapped = 2147483647 + 1;
+public global double WrappedDouble = 2147483647 + 1;
+
+int main() {
+    Console.WriteLine(Wrapped == -2147483648.0f ? 1 : 0);
+    Console.WriteLine(WrappedDouble == -2147483648.0 ? 1 : 0);
+    return 0;
+}

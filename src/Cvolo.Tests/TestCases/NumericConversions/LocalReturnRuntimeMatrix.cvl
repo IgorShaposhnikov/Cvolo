@@ -1,0 +1,23 @@
+// Regression: the runtime type-domain matrix permits small integer domains to
+// float/double, and int/uint to double, but not int to float.
+using System;
+
+float FromShort(short value) {
+    return value;
+}
+
+double FromInt(int value) {
+    return value;
+}
+
+float ExactConstant() {
+    return 16777216;
+}
+
+int main() {
+    var short small = 123;
+    Console.WriteLine(FromShort(small) == 123.0f ? 1 : 0);
+    Console.WriteLine(FromInt(2147483647) == 2147483647.0 ? 1 : 0);
+    Console.WriteLine(ExactConstant() == 16777216.0f ? 1 : 0);
+    return 0;
+}

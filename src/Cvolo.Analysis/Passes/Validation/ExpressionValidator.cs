@@ -318,7 +318,21 @@ internal sealed class ExpressionValidator(
 					else
 					{
 						// Use overload resolution logic for standard non-generic functions / constructors
-						func = Calls.ResolveOrdinaryCall(call, argTypes, scope, out mismatch, out mismatchOwnerName);
+						func = Calls.ResolveOrdinaryCall(call, argTypes, scope, out mismatch, out mismatchOwnerName, out var ambiguousOverload);
+
+						// Two or more distinct applicable candidates were equally best: this is
+						// ambiguity, not a missing overload. Reporting it before the generic/template
+						// fallbacks keeps the defect precise and prevents a guessed binding.
+						if (func is null && ambiguousOverload)
+						{
+							context.Diagnostics.Report(
+								context.FileContexts[context.CurrentUnit!],
+								call.ArgumentListSpan,
+								$"Call to '{call.FunctionName}' is ambiguous between multiple overloads.",
+								DiagnosticIds.AmbiguousFunctionConversion);
+							return;
+						}
+
 
 
 						// No concrete overload matched: fall back to interface-parameterized dispatch

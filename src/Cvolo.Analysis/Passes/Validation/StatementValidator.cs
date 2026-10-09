@@ -1,4 +1,5 @@
 using Cvolo.Analysis.Resolution;
+using Cvolo.Analysis.Semantics;
 using Cvolo.Analysis.Symbols;
 using Cvolo.Analysis.Symbols.Base;
 using Cvolo.Analysis.Symbols.Collections;
@@ -674,16 +675,11 @@ internal sealed class StatementValidator(
 								  (resolvedType is RawPointerTypeSymbol ||
 								  (resolvedType is UnionTypeSymbol union && union.IsOption));
 
-				// Integer width family: implicit conversion between exact-width integers
-				// (byte/short/int/long and unsigned variants) is allowed.
-				var isIntegerWidthConversion = TypeSymbol.IsNumericIntegerType(resolvedType)
-					&& TypeSymbol.IsNumericIntegerType(initializerType);
-
-				// Implicit float -> double widening is allowed; the reverse needs an
-				// explicit cast (a bare `double` literal to `float` is a dedicated error).
-				var isFloatWidening = TypeSymbol.IsFloatingPointType(resolvedType)
-					&& TypeSymbol.IsFloatingPointType(initializerType)
-					&& resolvedType.Equals(TypeSymbol.Double);
+				var isImplicitConversion = NumericConversionSemantics.IsImplicitConversionAllowed(
+					resolvedType,
+					initializerType,
+					varDecl.Initializer,
+					context);
 
 				if (initializerType.Equals(TypeSymbol.Null) && _validation.UnsafeDepth > 0)
 				{
@@ -699,7 +695,7 @@ internal sealed class StatementValidator(
 						context.Diagnostics.Report(currentFileContext, varDecl.Span, "The 'null' literal requires a pointer type (Option or raw pointer).", DiagnosticIds.NullOutsideUnsafeContext);
 					}
 				}
-				else if (!isIntegerWidthConversion && !isFloatWidening)
+				else if (!isImplicitConversion)
 				{
 					if (resolvedType.Equals(TypeSymbol.Float) && varDecl.Initializer is DoubleLiteralExpressionSyntax)
 					{
@@ -712,8 +708,10 @@ internal sealed class StatementValidator(
 				}
 			}
 
-			// CVL1902: an integer literal must fit the declared numeric integer type.
+			// CVL1902: an integer literal must fit the declared numeric integer type. Magnitudes above
+			// long.MaxValue are owned by the parser (signed-minimum handling), so they are excluded here.
 			if (varDecl.Initializer is IntegerLiteralExpressionSyntax intLiteral
+				&& intLiteral.Value <= long.MaxValue
 				&& resolvedType is not null
 				&& TypeSymbol.IsNumericIntegerType(resolvedType))
 			{
@@ -823,7 +821,13 @@ internal sealed class StatementValidator(
 								  (expectedType is RawPointerTypeSymbol ||
 								  (expectedType is UnionTypeSymbol union && union.IsOption));
 
-				if (!isValidNull)
+				var isImplicitConversion = NumericConversionSemantics.IsImplicitConversionAllowed(
+					expectedType,
+					actualType,
+					ret.Expression,
+					context);
+
+				if (!isValidNull && !isImplicitConversion)
 				{
 					var currentFileContext = context.FileContexts[context.CurrentUnit!];
 					if (_validation.UnsafeDepth > 0 && actualType.Equals(TypeSymbol.Null))

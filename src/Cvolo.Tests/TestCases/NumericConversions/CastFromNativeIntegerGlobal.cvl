@@ -1,0 +1,12 @@
+// Regression: (float)(nint)42 and (double)(nuint)42 round a native integer
+// constant into floating globals; the native source is allowed via explicit cast.
+using System;
+
+public global float FromNative = (float)(nint)42;
+public global double FromUnsignedNative = (double)(nuint)42;
+
+int main() {
+    Console.WriteLine(FromNative == 42.0f ? 1 : 0);
+    Console.WriteLine(FromUnsignedNative == 42.0 ? 1 : 0);
+    return 0;
+}

@@ -93,6 +93,13 @@ public static class IntegerEdgeSemantics
 					return true;
 				}
 				break;
+			case UnaryExpressionSyntax { Operator: "+" } positive:
+				if (TryEvaluateIntegerConstant(positive.Operand, out var positiveValue))
+				{
+					value = positiveValue;
+					return true;
+				}
+				break;
 			case BinaryExpressionSyntax binary:
 				if (binary.Operator is "+" or "-" or "*" or "/" or "%"
 					&& TryEvaluateIntegerConstant(binary.Left, out var left)
@@ -109,22 +116,22 @@ public static class IntegerEdgeSemantics
 						case "*":
 							value = unchecked(left * right);
 							return true;
-case "/":
-						if (right == 0 || (left == long.MinValue && right == -1))
-						{
-							value = 0;
-							return false;
-						}
-						value = left / right;
-						return true;
-					case "%":
-						if (right == 0 || (left == long.MinValue && right == -1))
-						{
-							value = 0;
-							return false;
-						}
-						value = left % right;
-						return true;
+						case "/":
+							if (right == 0 || (left == long.MinValue && right == -1))
+							{
+								value = 0;
+								return false;
+							}
+							value = left / right;
+							return true;
+						case "%":
+							if (right == 0 || (left == long.MinValue && right == -1))
+							{
+								value = 0;
+								return false;
+							}
+							value = left % right;
+							return true;
 					}
 				}
 				break;

@@ -1,0 +1,3 @@
+// Regression: omitting the floating cast keeps the native-integer source, which
+// must not implicitly convert to float even when the value is exactly representable.
+public global float N = (nint)42;

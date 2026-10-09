@@ -1,3 +1,4 @@
+using Cvolo.Analysis.Semantics;
 using Cvolo.Analysis.Symbols;
 using Cvolo.Analysis.Symbols.Base;
 using Cvolo.Analysis.Symbols.Collections;
@@ -109,6 +110,16 @@ internal sealed class GlobalVariableRegistrar(BindingContext context)
 			return;
 		}
 
+		if (globalDecl.Initializer is not null && type is not DelegateTypeSymbol && !IsInitializerCompatible(type, globalDecl.Initializer))
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			var initializerType = GetConstantInitializerType(globalDecl.Initializer)?.Name ?? "<unknown>";
+			context.Diagnostics.Report(currentFileContext, globalDecl.Initializer.Span,
+				$"Cannot initialize variable of type '{type.Name}' with value of type '{initializerType}'",
+				DiagnosticIds.CannotInitializeVariableOfTypeWithValueOfType);
+			return;
+		}
+
 		// CVL1036 (§TBAA): a multi-word container exposed with module-wide (ABI) visibility
 		// invites unsynchronized 16-byte register tearing. Single-word public scalars and small
 		// (<9 byte) aggregates are fine; anything wider must live behind a Lock/Mutex wrapper.
@@ -139,6 +150,62 @@ internal sealed class GlobalVariableRegistrar(BindingContext context)
 		}
 		shortNameList.Add(symbol);
 		context.GlobalVariables.Add((globalDecl, symbol));
+	}
+
+	private bool IsInitializerCompatible(TypeSymbol targetType, ExpressionSyntax initializer)
+	{
+		if (targetType is StructTypeSymbol structType && initializer is StructInitializationExpressionSyntax structInitializer)
+		{
+			foreach (var member in structInitializer.Initializers)
+			{
+				var field = structType.FindField(member.MemberName);
+				if (field is null || !IsInitializerCompatible(field.Type, member.Expression))
+					return false;
+			}
+
+			return true;
+		}
+
+		var sourceType = GetConstantInitializerType(initializer);
+		return sourceType is not null && NumericConversionSemantics.IsImplicitConversionAllowed(targetType, sourceType, initializer, context);
+	}
+
+	private TypeSymbol? GetConstantInitializerType(ExpressionSyntax initializer) => initializer switch
+	{
+		IntegerLiteralExpressionSyntax literal => literal.LiteralType switch
+		{
+			"uint" => TypeSymbol.UInt,
+			"long" => TypeSymbol.Long,
+			"ulong" => TypeSymbol.ULong,
+			"nint" => TypeSymbol.NInt,
+			"nuint" => TypeSymbol.NUInt,
+			_ => literal.Value <= int.MaxValue ? TypeSymbol.Int : TypeSymbol.Long
+		},
+		DoubleLiteralExpressionSyntax literal => literal.IsFloat ? TypeSymbol.Float : TypeSymbol.Double,
+		BooleanLiteralExpressionSyntax => TypeSymbol.Bool,
+		CharacterLiteralExpressionSyntax => TypeSymbol.Char,
+		NullLiteralExpressionSyntax => TypeSymbol.Null,
+		SizeofExpressionSyntax or AlignofExpressionSyntax or OffsetofExpressionSyntax => TypeSymbol.NUInt,
+		UnaryExpressionSyntax { Operator: "+" or "-", Operand: var operand } => GetConstantInitializerType(operand),
+		UnaryExpressionSyntax cast when NumericConversionSemantics.TryParseCastOperator(cast.Operator, out var castTypeName) => context.ResolveType(castTypeName),
+		BinaryExpressionSyntax binary when binary.Operator is "+" or "-" or "*" or "/" or "%" or "==" or "!=" or "<" or "<=" or ">" or ">=" => GetBinaryConstantType(binary),
+		_ => null
+	};
+
+	private TypeSymbol? GetBinaryConstantType(BinaryExpressionSyntax binary)
+	{
+		var left = GetConstantInitializerType(binary.Left);
+		var right = GetConstantInitializerType(binary.Right);
+		if (left is null || right is null)
+			return null;
+
+		if (binary.Operator is "==" or "!=" or "<" or "<=" or ">" or ">=")
+			return TypeSymbol.Bool;
+
+		if (TypeSymbol.IsFloatingPointType(left) || TypeSymbol.IsFloatingPointType(right))
+			return left.Equals(TypeSymbol.Double) || right.Equals(TypeSymbol.Double) ? TypeSymbol.Double : TypeSymbol.Float;
+
+		return TypeSymbol.Int;
 	}
 
 	/// <summary>
@@ -478,7 +545,10 @@ internal sealed class GlobalVariableRegistrar(BindingContext context)
 		return expr switch
 		{
 			IntegerLiteralExpressionSyntax or DoubleLiteralExpressionSyntax or BooleanLiteralExpressionSyntax or CharacterLiteralExpressionSyntax or NullLiteralExpressionSyntax => true,
-			UnaryExpressionSyntax { Operator: "-" } unary => IsCompileTimeConstant(unary.Operand),
+			UnaryExpressionSyntax { Operator: "+" or "-" } unary => IsCompileTimeConstant(unary.Operand),
+			// An explicit cast of a constant expression is itself a compile-time constant; the
+			// cast target's type compatibility is checked separately by IsInitializerCompatible.
+			UnaryExpressionSyntax cast when NumericConversionSemantics.TryParseCastOperator(cast.Operator, out _) => IsCompileTimeConstant(cast.Operand),
 			BinaryExpressionSyntax { Operator: "+" or "-" or "*" or "/" or "%" } bin
 				=> IsCompileTimeConstant(bin.Left) && IsCompileTimeConstant(bin.Right),
 			// Relational and equality comparisons become legal compile-time constants so that
@@ -512,7 +582,8 @@ internal sealed class GlobalVariableRegistrar(BindingContext context)
 						=> ContainsConstantIntegerDivisionByZero(bin.Left) || ContainsConstantIntegerDivisionByZero(bin.Right),
 			BinaryExpressionSyntax { Operator: "==" or "!=" or "<" or "<=" or ">" or ">=" } bin
 				=> ContainsConstantIntegerDivisionByZero(bin.Left) || ContainsConstantIntegerDivisionByZero(bin.Right),
-			UnaryExpressionSyntax { Operator: "-" } unary => ContainsConstantIntegerDivisionByZero(unary.Operand),
+			UnaryExpressionSyntax { Operator: "+" or "-" } unary => ContainsConstantIntegerDivisionByZero(unary.Operand),
+			UnaryExpressionSyntax cast when NumericConversionSemantics.TryParseCastOperator(cast.Operator, out _) => ContainsConstantIntegerDivisionByZero(cast.Operand),
 			StructInitializationExpressionSyntax structInit => structInit.Initializers.Any(static m => ContainsConstantIntegerDivisionByZero(m.Expression)),
 			_ => false
 		};
@@ -531,6 +602,9 @@ internal sealed class GlobalVariableRegistrar(BindingContext context)
 				return true;
 			case UnaryExpressionSyntax { Operator: "-" } unary when TryFoldIntegerConstant(unary.Operand, out var inner):
 				value = unchecked(-inner);
+				return true;
+			case UnaryExpressionSyntax { Operator: "+" } unary when TryFoldIntegerConstant(unary.Operand, out var inner):
+				value = inner;
 				return true;
 			case BinaryExpressionSyntax bin when bin.Operator is "+" or "-" or "*" or "/" or "%"
 				&& TryFoldIntegerConstant(bin.Left, out var l) && TryFoldIntegerConstant(bin.Right, out var r):

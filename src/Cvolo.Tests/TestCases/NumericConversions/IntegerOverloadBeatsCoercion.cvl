@@ -1,0 +1,15 @@
+// Regression: an exact integer overload remains better than any numeric coercion.
+using System;
+
+int Pick(int value) {
+    return 1;
+}
+
+int Pick(double value) {
+    return 2;
+}
+
+int main() {
+    Console.WriteLine(Pick(42));
+    return 0;
+}

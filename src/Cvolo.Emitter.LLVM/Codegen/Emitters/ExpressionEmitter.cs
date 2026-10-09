@@ -1,7 +1,7 @@
 using System.Text;
 using Cvolo.Analysis;
-using Cvolo.Analysis.Semantics;
 using Cvolo.Analysis.Ownership;
+using Cvolo.Analysis.Semantics;
 using Cvolo.Analysis.Symbols;
 using Cvolo.Analysis.Symbols.Base;
 using Cvolo.Analysis.Symbols.Collections;
@@ -873,47 +873,47 @@ internal sealed class ExpressionEmitter(
 		switch (left)
 		{
 			case IdentifierExpressionSyntax id:
-			{
-				if (Function.Locals.TryGetValue(id.Name, out var localPtr))
 				{
-					var type = Function.VariableTypes[id.Name];
-					if (type is PointerTypeSymbol or UnionTypeSymbol)
-						return null;
-					return (localPtr, type, null);
+					if (Function.Locals.TryGetValue(id.Name, out var localPtr))
+					{
+						var type = Function.VariableTypes[id.Name];
+						if (type is PointerTypeSymbol or UnionTypeSymbol)
+							return null;
+						return (localPtr, type, null);
+					}
+
+					if (values.ResolveGlobalKey(id.Name) is { } globalKey
+						&& codegen.GlobalVariables.TryGetValue(globalKey, out var globalPtr))
+					{
+						var type = codegen.GlobalVariableTypes[globalKey];
+						if (type is UnionTypeSymbol)
+							return null;
+						return (globalPtr, type, null);
+					}
+
+					if (Function.Locals.TryGetValue("this", out var thisPtr)
+						&& Function.VariableTypes["this"] is PointerTypeSymbol thisPointer
+						&& thisPointer.ReferencedType is StructTypeSymbol thisStruct
+						&& thisStruct.FindField(id.Name) is not null)
+					{
+						var (fieldPtr, fieldType, _, tbaa) = aggregates.GetFieldPointer(id);
+						return (fieldPtr, fieldType, tbaa);
+					}
+
+					return null;
 				}
 
-				if (values.ResolveGlobalKey(id.Name) is { } globalKey
-					&& codegen.GlobalVariables.TryGetValue(globalKey, out var globalPtr))
+			case MemberAccessExpressionSyntax member:
 				{
-					var type = codegen.GlobalVariableTypes[globalKey];
-					if (type is UnionTypeSymbol)
-						return null;
-					return (globalPtr, type, null);
-				}
-
-				if (Function.Locals.TryGetValue("this", out var thisPtr)
-					&& Function.VariableTypes["this"] is PointerTypeSymbol thisPointer
-					&& thisPointer.ReferencedType is StructTypeSymbol thisStruct
-					&& thisStruct.FindField(id.Name) is not null)
-				{
-					var (fieldPtr, fieldType, _, tbaa) = aggregates.GetFieldPointer(id);
+					var (fieldPtr, fieldType, _, tbaa) = aggregates.GetFieldPointer(member);
 					return (fieldPtr, fieldType, tbaa);
 				}
 
-				return null;
-			}
-
-			case MemberAccessExpressionSyntax member:
-			{
-				var (fieldPtr, fieldType, _, tbaa) = aggregates.GetFieldPointer(member);
-				return (fieldPtr, fieldType, tbaa);
-			}
-
 			case IndexExpressionSyntax index:
-			{
-				var (elementPtr, elementType, _, tbaa) = aggregates.GetFieldPointer(index);
-				return (elementPtr, elementType, tbaa);
-			}
+				{
+					var (elementPtr, elementType, _, tbaa) = aggregates.GetFieldPointer(index);
+					return (elementPtr, elementType, tbaa);
+				}
 
 			case UnaryExpressionSyntax { Operator: "*" } deref:
 				return (Emit(deref.Operand), expressionTypes.Resolve(left), null);
@@ -1618,6 +1618,8 @@ internal sealed class ExpressionEmitter(
 
 		switch (unary.Operator)
 		{
+			case "+":
+				return operand;
 			case "-":
 				{
 					var handled = TryFoldConstantNegation(unary, operand, out var folded);
