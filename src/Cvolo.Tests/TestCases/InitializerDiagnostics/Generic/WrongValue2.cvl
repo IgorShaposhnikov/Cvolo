@@ -1,0 +1,10 @@
+// P08: only the second member value has the wrong type in a fully specialized Pair.
+// Value1 receives the expected int; Value2 requires bool but receives int.
+// Expect exactly one CVL4019 for Value2; repeated semantic queries must not report it twice.
+
+public struct Pair<T, R> { public T Value1; public R Value2; }
+int main() {
+    // Value1 is valid; the Value2 assignment is the sole source of CVL4019.
+    val p = Pair<int, bool> { Value1: 1, Value2: 2 };
+    return 0;
+}

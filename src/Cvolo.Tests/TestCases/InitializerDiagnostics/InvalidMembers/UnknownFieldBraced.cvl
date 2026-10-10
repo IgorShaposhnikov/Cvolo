@@ -1,0 +1,10 @@
+// T03: braced initialization of an existing field whose declared type cannot be resolved.
+// Point.BaseColor is a declared member, but the Color type is unknown.
+// Expect one CVL4135, no CVL4093, no dependent CVL4019 or nested member errors.
+
+struct Point { int X; int Y; Color BaseColor; }
+int main() {
+    // BaseColor exists; nested R initialization cannot be validated without its target type Color.
+    val point = Point { X: 1, Y: 2, BaseColor: (R: 255) };
+    return 0;
+}

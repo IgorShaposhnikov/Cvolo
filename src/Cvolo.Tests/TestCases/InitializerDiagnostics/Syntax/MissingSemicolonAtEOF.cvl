@@ -1,0 +1,7 @@
+// P04: the final variable declaration reaches EOF without a semicolon.
+// No following token is available to anchor the missing-semicolon diagnostic.
+// Expect zero-width CVL4174 at the EOF boundary, without an internal compiler error.
+
+int main() {
+    // No semicolon follows this value: the file intentionally ends here.
+    val int x = 1

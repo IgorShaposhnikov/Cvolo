@@ -134,13 +134,28 @@ internal sealed class TypeDeclarationRegistrar(BindingContext context)
 	/// </remarks>
 	public void CompleteStorage()
 	{
-		foreach (var pending in _pendingStructs)
+		// Bind templates before concrete fields that may instantiate them. This
+		// preserves the declaration-site failure as the root even across files
+		// whose enumeration order changes between compilation snapshots.
+		foreach (var pending in _pendingStructs.Where(p => p.IsGenericTemplate))
 		{
 			UseUnit(pending.Unit);
 			CompleteStruct(pending);
 		}
 
-		foreach (var pending in _pendingUnions)
+		foreach (var pending in _pendingUnions.Where(p => p.IsGenericTemplate))
+		{
+			UseUnit(pending.Unit);
+			CompleteUnion(pending);
+		}
+
+		foreach (var pending in _pendingStructs.Where(p => !p.IsGenericTemplate))
+		{
+			UseUnit(pending.Unit);
+			CompleteStruct(pending);
+		}
+
+		foreach (var pending in _pendingUnions.Where(p => !p.IsGenericTemplate))
 		{
 			UseUnit(pending.Unit);
 			CompleteUnion(pending);
@@ -348,6 +363,16 @@ internal sealed class TypeDeclarationRegistrar(BindingContext context)
 	/// <summary>
 	/// Resolves a struct's field symbols into the identity published by <see cref="PredeclareStruct"/>.
 	/// </summary>
+	private TextSpan DeclaredTypeSpan(TextSpan declaration, string typeName)
+	{
+		var source = context.FileContexts[context.CurrentUnit!].Source;
+		if (declaration.Start < 0 || declaration.Start >= source.Length)
+			return declaration;
+		var length = Math.Min(declaration.Length, source.Length - declaration.Start);
+		var offset = source.Substring(declaration.Start, length).IndexOf(typeName, StringComparison.Ordinal);
+		return offset >= 0 ? new TextSpan(declaration.Start + offset, typeName.Length) : declaration;
+	}
+
 	private void CompleteStruct(PendingStruct pending)
 	{
 		var structDecl = pending.Declaration;
@@ -370,10 +395,19 @@ internal sealed class TypeDeclarationRegistrar(BindingContext context)
 				foreach (var field in structDecl.Fields)
 				{
 					if (!templateFieldNames.Add(field.Name))
+					{
+						context.Diagnostics.Report(context.FileContexts[context.CurrentUnit!], field.Span,
+							$"Duplicate field '{field.Name}' in struct '{structDecl.Name}'", DiagnosticIds.DuplicateFieldInStruct);
 						continue;
+					}
 
 					if (context.ResolveType(field.Type) is not { } fieldType)
+					{
+						context.RegisterInvalidAggregateMember(pending.Symbol.Name, field.Name, field, DiagnosticIds.UnknownTypeOfField, isUnion: false);
+						context.Diagnostics.Report(context.FileContexts[context.CurrentUnit!], DeclaredTypeSpan(field.Span, field.Type),
+							$"Unknown type '{field.Type}' of field '{field.Name}'", DiagnosticIds.UnknownTypeOfField);
 						continue;
+					}
 
 					templateFields.Add(new StructFieldSymbol(field.Name, fieldType)
 					{
@@ -407,7 +441,8 @@ internal sealed class TypeDeclarationRegistrar(BindingContext context)
 			if (fieldType is null)
 			{
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
-				context.Diagnostics.Report(currentFileContext, field.Span, $"Unknown type '{field.Type}' of field '{field.Name}'", DiagnosticIds.UnknownTypeOfField);
+				context.RegisterInvalidAggregateMember(pending.Symbol.Name, field.Name, field, DiagnosticIds.UnknownTypeOfField, isUnion: false);
+				context.Diagnostics.Report(currentFileContext, DeclaredTypeSpan(field.Span, field.Type), $"Unknown type '{field.Type}' of field '{field.Name}'", DiagnosticIds.UnknownTypeOfField);
 				continue;
 			}
 
@@ -493,13 +528,22 @@ internal sealed class TypeDeclarationRegistrar(BindingContext context)
 				foreach (var field in unionDecl.Fields)
 				{
 					if (!templateFieldNames.Add(field.Name))
+					{
+						context.Diagnostics.Report(context.FileContexts[context.CurrentUnit!], field.Span,
+							$"Duplicate field '{field.Name}' in union '{unionDecl.Name}'", DiagnosticIds.DuplicateFieldInUnion);
 						continue;
+					}
 
 					if (field.Type == "void")
 						continue;
 
 					if (context.ResolveType(field.Type) is not { } templateFieldType)
+					{
+						context.RegisterInvalidAggregateMember(pending.Symbol.Name, field.Name, field, DiagnosticIds.UnknownTypeOfFieldInUnion, isUnion: true);
+						context.Diagnostics.Report(context.FileContexts[context.CurrentUnit!], DeclaredTypeSpan(field.Span, field.Type),
+							$"Unknown type '{field.Type}' of field '{field.Name}' in union '{unionDecl.Name}'", DiagnosticIds.UnknownTypeOfFieldInUnion);
 						continue;
+					}
 
 					templateFields.Add(new UnionFieldSymbol(field.Name, templateFieldType, isVoidVariant: false)
 					{
@@ -550,7 +594,8 @@ internal sealed class TypeDeclarationRegistrar(BindingContext context)
 				if (fieldType is null)
 				{
 					var currentFileContext = context.FileContexts[context.CurrentUnit!];
-					context.Diagnostics.Report(currentFileContext, field.Span, $"Unknown type '{field.Type}' of field '{field.Name}' in union '{unionDecl.Name}'", DiagnosticIds.UnknownTypeOfFieldInUnion);
+					context.RegisterInvalidAggregateMember(pending.Symbol.Name, field.Name, field, DiagnosticIds.UnknownTypeOfFieldInUnion, isUnion: true);
+					context.Diagnostics.Report(currentFileContext, DeclaredTypeSpan(field.Span, field.Type), $"Unknown type '{field.Type}' of field '{field.Name}' in union '{unionDecl.Name}'", DiagnosticIds.UnknownTypeOfFieldInUnion);
 					continue;
 				}
 

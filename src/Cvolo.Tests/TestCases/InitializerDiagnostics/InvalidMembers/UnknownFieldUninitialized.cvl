@@ -1,0 +1,10 @@
+// T15: a field with an unresolved declared type is omitted from an initializer.
+// BaseColor is declared but its type Color does not exist.
+// Expect CVL4135 without a secondary missing-initializer diagnostic for BaseColor.
+
+struct Point { int X; Color BaseColor; }
+int main() {
+    // Omitting BaseColor is not an independent missing-field error once its type is invalid.
+    val point = Point { X: 1 };
+    return 0;
+}

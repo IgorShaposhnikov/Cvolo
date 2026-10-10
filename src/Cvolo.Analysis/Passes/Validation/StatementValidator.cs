@@ -730,6 +730,22 @@ internal sealed class StatementValidator(
 			}
 		}
 
+		// A failed aggregate bind has no inferred primitive type. Earlier code
+		// defaulted null to int, fabricating a usable local after an error.
+		if (resolvedType is null && varDecl.Initializer is StructInitializationExpressionSyntax aggregateInitializer)
+		{
+			// A real, declared aggregate with an unresolved member remains a nominal
+			// type for editor symbol lookup, but it still has an invalid declaration
+			// and cannot be emitted. This avoids a fake int or undefined-local cascade.
+			var owner = context.ResolveType(aggregateInitializer.StructTypeName);
+			if (owner is StructTypeSymbol invalidStruct && context.HasInvalidAggregateMembers(invalidStruct.Name, isUnion: false))
+				resolvedType = invalidStruct;
+			else if (owner is UnionTypeSymbol invalidUnion && context.HasInvalidAggregateMembers(invalidUnion.Name, isUnion: true))
+				resolvedType = invalidUnion;
+			else
+				return; // No successful inferred type, so do not invent one.
+		}
+
 		resolvedType ??= TypeSymbol.Int;
 
 		// Stack Allocation Guard: block any single local array whose byte size would

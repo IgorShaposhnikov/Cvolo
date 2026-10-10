@@ -1,0 +1,10 @@
+// P10, Tooling: repeated diagnostic queries must be side-effect free.
+// Value2 in Pair<int, bool> is assigned int rather than bool.
+// Expect one stable CVL4019 at the same position across two GetDiagnostics() calls.
+
+public struct Pair<T, R> { public T Value1; public R Value2; }
+int main() {
+    // The Value2 assignment is the only invalid field; querying again must not duplicate it.
+    val p = Pair<int, bool> { Value1: 1, Value2: 2 };
+    return 0;
+}

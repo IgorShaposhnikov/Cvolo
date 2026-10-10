@@ -1,0 +1,10 @@
+// T10: declared generic union variant with an unresolved payload type.
+// Choice<T>.Broken exists, but payload type Missing is undeclared.
+// Expect one declaration root error and no fabricated missing-variant diagnostic.
+
+// Broken exists by name but is semantically invalid; do not create an ABI payload layout.
+union Choice<T> { Missing Broken; T Valid; }
+int main() {
+    val choice = Choice<int> { Broken: 1 };
+    return 0;
+}

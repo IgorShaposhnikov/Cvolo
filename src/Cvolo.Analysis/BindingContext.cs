@@ -29,6 +29,49 @@ public sealed class BindingContext
 	public ClassificationAnalyzer Classification => _classification ??= new ClassificationAnalyzer(this);
 	public SymbolTable Globals { get; } = new();
 	public Dictionary<string, StructTypeSymbol> StructTypes { get; } = [];
+
+	/// <summary>
+	/// Source-declared aggregate members whose type could not be resolved. These are
+	/// NOT storage fields: a successful ABI/layout may never be synthesized from them.
+	/// Entries belong to this compilation snapshot, including its generic instances.
+	/// </summary>
+	public sealed record InvalidAggregateMember(SyntaxNode Declaration, string CauseDiagnosticId);
+
+	private readonly Dictionary<string, Dictionary<string, InvalidAggregateMember>> _invalidStructMembers = new(StringComparer.Ordinal);
+	private readonly Dictionary<string, Dictionary<string, InvalidAggregateMember>> _invalidUnionMembers = new(StringComparer.Ordinal);
+
+	public void RegisterInvalidAggregateMember(string owner, string member, SyntaxNode declaration, string causeDiagnosticId, bool isUnion)
+	{
+		var table = isUnion ? _invalidUnionMembers : _invalidStructMembers;
+		if (!table.TryGetValue(owner, out var members))
+			table[owner] = members = new Dictionary<string, InvalidAggregateMember>(StringComparer.Ordinal);
+		members.TryAdd(member, new InvalidAggregateMember(declaration, causeDiagnosticId));
+	}
+
+	public bool TryFindInvalidAggregateMember(string owner, string member, bool isUnion, out InvalidAggregateMember? invalid)
+	{
+		var table = isUnion ? _invalidUnionMembers : _invalidStructMembers;
+		if (table.TryGetValue(owner, out var direct) && direct.TryGetValue(member, out invalid))
+			return true;
+
+		// A constructed generic inherits the invalid declaration of the template.
+		var genericStart = owner.IndexOf('<');
+		if (genericStart >= 0 && table.TryGetValue(owner[..genericStart], out var template) && template.TryGetValue(member, out invalid))
+			return true;
+
+		invalid = null;
+		return false;
+	}
+
+	public bool HasInvalidAggregateMembers(string owner, bool isUnion)
+	{
+		var table = isUnion ? _invalidUnionMembers : _invalidStructMembers;
+		if (table.TryGetValue(owner, out var direct) && direct.Count > 0)
+			return true;
+		var genericStart = owner.IndexOf('<');
+		return genericStart >= 0 && table.TryGetValue(owner[..genericStart], out var template) && template.Count > 0;
+	}
+
 	public Dictionary<VariableDeclarationSyntax, VariableSymbol> VariableSymbols { get; } = [];
 	public Dictionary<CompilationUnitSyntax, CompilationContext> FileContexts { get; } = [];
 	// Store generic struct templates (e.g. "Point<T>")
@@ -1603,8 +1646,15 @@ public sealed class BindingContext
 			var fieldType = ResolveType(substitutedTypeName);
 			if (fieldType is null)
 			{
-				var currentFileContext = FileContexts[CurrentUnit!];
-				Diagnostics.Report(currentFileContext, field.Span, $"Could not resolve field type '{substitutedTypeName}' during generic instantiation of '{instName}'", DiagnosticIds.CouldNotResolveFieldTypeDuringGenericInstantiationOf);
+				// The template's field declaration owns this failure. Do not re-report it
+				// at every instantiation and do not fabricate a concrete field layout.
+				if (!TryFindInvalidAggregateMember(templateMangledName, field.Name, isUnion: false, out _))
+				{
+					var currentFileContext = FileContexts[CurrentUnit!];
+					Diagnostics.Report(currentFileContext, field.Span, $"Could not resolve field type '{substitutedTypeName}' during generic instantiation of '{instName}'", DiagnosticIds.CouldNotResolveFieldTypeDuringGenericInstantiationOf);
+					RegisterInvalidAggregateMember(instName, field.Name, field, DiagnosticIds.CouldNotResolveFieldTypeDuringGenericInstantiationOf, isUnion: false);
+				}
+
 				continue;
 			}
 
@@ -2205,8 +2255,13 @@ public sealed class BindingContext
 				fieldType = ResolveType(substitutedTypeName);
 				if (fieldType is null)
 				{
-					var currentFileContext = FileContexts[CurrentUnit!];
-					Diagnostics.Report(currentFileContext, field.Span, $"Could not resolve field type '{substitutedTypeName}' during generic instantiation of '{instName}'", DiagnosticIds.CouldNotResolveFieldTypeDuringGenericInstantiationOf);
+					if (!TryFindInvalidAggregateMember(templateMangledName, field.Name, isUnion: true, out _))
+					{
+						var currentFileContext = FileContexts[CurrentUnit!];
+						Diagnostics.Report(currentFileContext, field.Span, $"Could not resolve field type '{substitutedTypeName}' during generic instantiation of '{instName}'", DiagnosticIds.CouldNotResolveFieldTypeDuringGenericInstantiationOf);
+						RegisterInvalidAggregateMember(instName, field.Name, field, DiagnosticIds.CouldNotResolveFieldTypeDuringGenericInstantiationOf, isUnion: true);
+					}
+
 					continue;
 				}
 			}

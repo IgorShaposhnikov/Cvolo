@@ -1,0 +1,6 @@
+// T05, file 1/2: declaration site of an unresolved field type.
+// Point.BaseColor has type Color, which is not declared in any compilation unit.
+// Expect one primary CVL4135 here, without duplicate diagnostics at use sites.
+
+// The single root diagnostic belongs to the Color type token in this declaration.
+struct Point { int X; int Y; Color BaseColor; }

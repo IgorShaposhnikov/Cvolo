@@ -1,0 +1,8 @@
+// T06: two distinct declarations produce two independent errors of the same kind.
+// Both A.Item and B.Item refer to the undeclared type Missing.
+// Expect two separate CVL4135 roots; deduplication by error ID or message is wrong.
+
+// These are different source declarations, each requiring its own CVL4135.
+struct A { Missing Item; }
+struct B { Missing Item; }
+int main() { return 0; }

@@ -1,0 +1,10 @@
+// T09: unresolved field type in a generic template and its specialization.
+// Box<T>.Broken uses undeclared type Missing; Value correctly depends on T.
+// Expect one CVL4135 at the template, without reporting Broken absent from Box<int>.
+
+// Broken has an invalid type, but its declaration must still be remembered after specialization.
+struct Box<T> { Missing Broken; T Value; }
+int main() {
+    val box = Box<int> { Broken: 1, Value: 2 };
+    return 0;
+}

@@ -1377,4 +1377,9 @@ public static class DiagnosticIds
 	/// cannot prove disjoint.
 	/// </summary>
 	public const string UnknownAliasedMoveAssignment = "CVL4218";
+
+	/// <summary>
+	/// A generic aggregate initializer omitted mandatory explicit type arguments.
+	/// </summary>
+	public const string GenericInitializerRequiresTypeArguments = "CVL4219";
 }

@@ -1,0 +1,9 @@
+// T05, file 2/2: use a field with an unresolved type from Types.cvl.
+// This use site is in a different compilation unit from the root declaration error.
+// Expect no additional CVL4135, CVL4093 or CVL4019 at this use.
+
+int main() {
+    // The unknown Color type was already diagnosed in Types.cvl; do not repeat it here.
+    val point = Point { X: 1, Y: 2, BaseColor: (R: 3) };
+    return 0;
+}

@@ -1,0 +1,10 @@
+// P06 / T13: generic structure initialization without required type arguments.
+// Pair<T, R> requires two explicit type arguments, but Pair { ... } omits both.
+// Expect exactly one CVL4219, no cascading CVL4019; inferring T/R from values is forbidden.
+
+public struct Pair<T, R> { public T Value1; public R Value2; }
+int main() {
+    // Intentional error: demand explicit type arguments instead of inferring them from field values.
+    val p = Pair { Value1: 1, Value2: 2 };
+    return 0;
+}

@@ -2006,7 +2006,8 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 
 	private sealed class SyntaxErrorListener(DiagnosticBag diagnostics, CompilationContext context, CommonTokenStream tokenStream) : BaseErrorListener
 	{
-		private readonly HashSet<int> _cascadeLines = new();
+		private readonly HashSet<int> _cascadeLines = [];
+		private readonly HashSet<(int Position, int Token)> _missingDelimiters = [];
 
 		/// <summary>
 		/// Start indices of DOT tokens the parser rejected. Used after parsing to turn a top-level
@@ -2060,6 +2061,12 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				return;
 			}
 
+			// Use the grammar's active owner and expected-token set, not regexes over
+			// ANTLR's human-readable English recovery message. The insertion point
+			// belongs to the completed previous token, not the next valid statement.
+			if (TryReportMissingDelimiter(recognizer, offendingSymbol))
+				return;
+
 			var simplified = SimplifyMessage(offendingSymbol, msg);
 			var diagnosticId = offendingSymbol is { Type: TokenConstants.EOF }
 				? DiagnosticIds.UnexpectedEndOfFile
@@ -2088,6 +2095,74 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 
 			coalesceSpan = new TextSpan(previous.StartIndex, previous.Text!.Length + offendingSymbol.Text!.Length);
 			return true;
+		}
+
+		/// <summary>
+		/// Diagnose known omitted closers at their zero-width source insertion boundary.
+		/// Only a genuine parser expected token inside its owning construct can trigger
+		/// this path. Unrelated malformed statements retain normal ANTLR recovery.
+		/// </summary>
+		private bool TryReportMissingDelimiter(IRecognizer recognizer, IToken? offending)
+		{
+			if (recognizer is not Parser parser || offending is null)
+				return false;
+
+			var expected = parser.GetExpectedTokens();
+			var statementBoundary = IsStatementBoundary(offending.Type);
+			for (var rule = parser.Context; rule is not null; rule = rule.Parent as ParserRuleContext)
+			{
+				if (rule is CvoloParser.StructInitializationExpressionContext initializer)
+				{
+					var closer = initializer.RBRACE()?.Symbol;
+					if ((closer is null || closer.StartIndex < 0)
+						&& expected.Contains(CvoloLexer.RBRACE) && statementBoundary)
+						return ReportMissingToken(offending, CvoloLexer.RBRACE, "Expected '}' to close struct initializer.");
+					break;
+				}
+			}
+
+			if (!expected.Contains(CvoloLexer.SEMI)
+				|| !(statementBoundary || offending.Type == CvoloLexer.RBRACE))
+				return false;
+
+			for (var rule = parser.Context; rule is not null; rule = rule.Parent as ParserRuleContext)
+			{
+				if (rule is CvoloParser.VariableDeclarationContext)
+					return ReportMissingToken(offending, CvoloLexer.SEMI, "Expected ';' after variable declaration.");
+				if (rule is CvoloParser.ExpressionStatementContext)
+					return ReportMissingToken(offending, CvoloLexer.SEMI, "Expected ';' after expression statement.");
+			}
+			return false;
+		}
+
+		private bool ReportMissingToken(IToken offending, int missingToken, string message)
+		{
+			if (offending.TokenIndex < 0)
+				return false;
+			IToken? previous = null;
+			for (var i = offending.TokenIndex - 1; i >= 0; i--)
+			{
+				var token = tokenStream.Get(i);
+				if (token.Channel != Lexer.DefaultTokenChannel || token.Type == TokenConstants.EOF)
+					continue;
+				previous = token;
+				break;
+			}
+			if (previous is null)
+				return false;
+
+			var at = Math.Clamp(previous.StopIndex + 1, 0, context.Source.Length);
+			if (_missingDelimiters.Add((at, missingToken)))
+				diagnostics.Report(context, new TextSpan(at, 0), message, DiagnosticIds.ExpectedToken);
+			return true;
+		}
+
+		private static bool IsStatementBoundary(int token)
+		{
+			return token is CvoloLexer.RETURN or CvoloLexer.VAL or CvoloLexer.VAR or CvoloLexer.REF or CvoloLexer.REFVAR
+				or CvoloLexer.IF or CvoloLexer.WHILE or CvoloLexer.FOR or CvoloLexer.FOREACH
+				or CvoloLexer.SWITCH or CvoloLexer.BREAK or CvoloLexer.CONTINUE or CvoloLexer.DEFER
+				or TokenConstants.EOF;
 		}
 
 		private static string SimplifyMessage(IToken? offendingSymbol, string message)

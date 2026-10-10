@@ -1,0 +1,10 @@
+// P09: two independent type errors in a generic structure initializer.
+// After specialization both fields require bool, but both values have type int.
+// Expect two distinct CVL4019 errors, without duplicate binding/diagnostics from Check and GetType.
+
+public struct Pair<T, R> { public T Value1; public R Value2; }
+int main() {
+    // Both values are invalid independently: one CVL4019 for Value1 and one for Value2.
+    val p = Pair<bool, bool> { Value1: 1, Value2: 2 };
+    return 0;
+}

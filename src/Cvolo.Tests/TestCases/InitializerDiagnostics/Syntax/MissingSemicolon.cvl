@@ -1,0 +1,10 @@
+// P02: semicolon missing after an otherwise completed braced declaration.
+// The closing brace exists, and the next statement begins with return.
+// Expect a zero-width CVL4174 immediately after the previous declaration brace.
+
+struct Point { int X; }
+int main() {
+    // Semicolon is intentionally omitted after this brace; do not highlight the return statement.
+    val p = Point { X: 1 }
+    return 0;
+}

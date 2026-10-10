@@ -1,0 +1,11 @@
+// T22, AFTER edit: the IDE snapshot now contains a declaration for Color.
+// The document text was replaced, and the previously unresolved type now exists.
+// Expect CVL4135 and dependent errors to disappear from the new snapshot.
+
+// Color is now declared, so the BaseColor initializer can be checked normally.
+struct Color { int R; }
+struct Point { Color BaseColor; }
+int main() {
+    val point = Point { BaseColor: (R: 1) };
+    return 0;
+}

@@ -1,0 +1,14 @@
+// P01: a braced initializer is missing its closing brace.
+// After Value2: 2, a separate return statement begins immediately.
+// Expect zero-width CVL4174 after the last value; do not report CVL4173 on 'return'.
+
+public struct Pair<T, R> {
+    public T Value1;
+    public R Value2;
+}
+
+int main() {
+    // The closing initializer brace is intentionally missing; return must not be parsed as a field.
+    val p = Pair<int, int> { Value1: 1, Value2: 2
+    return 0;
+}

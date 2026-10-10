@@ -1,0 +1,10 @@
+// T11: ordinary field conversion errors must remain visible after error recovery.
+// Field B requires bool but receives an int literal.
+// Expect one genuine CVL4019; suppressing cascades must not suppress this independent error.
+
+struct Pair { int A; bool B; }
+int main() {
+    // Field A is valid; assigning int to bool field B intentionally triggers CVL4019.
+    val pair = Pair { A: 1, B: 2 };
+    return 0;
+}

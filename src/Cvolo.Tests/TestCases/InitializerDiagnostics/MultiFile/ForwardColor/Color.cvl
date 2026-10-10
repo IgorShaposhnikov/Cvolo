@@ -1,0 +1,12 @@
+// T26, file 2/3: Color is defined in a separate compilation unit.
+// Point.BaseColor in Types.cvl refers to this Color type.
+// Expect resolution after registering all units, without a premature CVL4135.
+
+// Declaration order across source files must not change the outcome.
+// The fields are public so this scenario does not test external access to private fields.
+// Private-member access control is an independent language rule.
+public struct Color {
+    public int R;
+    public int G;
+    public int B;
+}

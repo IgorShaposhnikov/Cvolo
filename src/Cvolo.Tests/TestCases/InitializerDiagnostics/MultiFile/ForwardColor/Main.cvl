@@ -1,0 +1,9 @@
+// T26, file 3/3: use Point in a multi-file compilation.
+// Point is declared in Types.cvl, while nested type Color is declared in Color.cvl.
+// Expect valid initialization regardless of compilation-unit enumeration order.
+
+int main() {
+    // Exercise both types defined in other compilation units.
+    var Point point(X: 10, Y: 20, BaseColor: (R: 255, G: 0, B: 0));
+    return 0;
+}

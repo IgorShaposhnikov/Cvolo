@@ -122,7 +122,7 @@ internal sealed class ExpressionValidator(
 				CheckBorrowExpression(borrow, scope);
 				break;
 			case StructInitializationExpressionSyntax structInit:
-				CheckStructInitializationExpression(structInit, scope);
+				GetOrBindStructInitializer(structInit, scope);
 				break;
 			case CharacterLiteralExpressionSyntax:
 				break;
@@ -219,9 +219,10 @@ internal sealed class ExpressionValidator(
 						Check(arg, scope);
 						var argType = GetType(arg, scope);
 						if (argType is null
-							&& arg is BinaryExpressionSyntax binaryArgument
+							&& ((arg is BinaryExpressionSyntax binaryArgument
 							&& context.ResolvedBinaryExpressions.TryGetValue(binaryArgument, out var binaryBinding)
 							&& binaryBinding.State == BinaryBindingState.Error)
+							|| arg is StructInitializationExpressionSyntax))
 						{
 							argTypes.Add(OverloadResolver.UnresolvedArgument);
 						}
@@ -1581,6 +1582,8 @@ internal sealed class ExpressionValidator(
 			var variantField = unionType.FindField(expr.MemberName);
 			if (variantField is null)
 			{
+				if (context.TryFindInvalidAggregateMember(unionType.Name, expr.MemberName, isUnion: true, out _))
+					return null;
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
 				context.Diagnostics.Report(currentFileContext, expr.Span, $"Union '{unionType.Name}' does not contain variant '{expr.MemberName}'", DiagnosticIds.UnionDoesNotContainVariant);
 				return null;
@@ -1608,6 +1611,8 @@ internal sealed class ExpressionValidator(
 		var field = structType.FindField(expr.MemberName);
 		if (field is null)
 		{
+			if (context.TryFindInvalidAggregateMember(structType.Name, expr.MemberName, isUnion: false, out _))
+				return null;
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
 			context.Diagnostics.Report(currentFileContext, expr.Span, $"Struct '{structType.Name}' does not contain field '{expr.MemberName}'", DiagnosticIds.StructDoesNotContainField);
 			return null;
@@ -1854,14 +1859,63 @@ internal sealed class ExpressionValidator(
 	/// <summary>
 	/// Validates named struct or union initialization and returns the constructed semantic type.
 	/// </summary>
-	private TypeSymbol? CheckStructInitializationExpression(StructInitializationExpressionSyntax expr, SymbolTable scope)
+	private readonly Dictionary<(StructInitializationExpressionSyntax Syntax, SymbolTable Scope, CompilationUnitSyntax? Unit, string ConstructedName), TypeSymbol?> _resolvedInitializers = [];
+
+	private TypeSymbol? GetOrBindStructInitializer(StructInitializationExpressionSyntax expr, SymbolTable scope)
 	{
+		// Avoid resolving the type a second time during a type query. The cache is scoped
+		// to the validator/binding snapshot, syntax occurrence, lexical scope and type.
+		var key = (expr, scope, context.CurrentUnit, expr.StructTypeName);
+		if (_resolvedInitializers.TryGetValue(key, out var result))
+			return result;
+
 		var type = context.ResolveType(expr.StructTypeName);
+		result = BindStructInitializer(expr, scope, type);
+		_resolvedInitializers[key] = result;
+		// Even null (failed bind) is cached.
+		return result;
+	}
+
+	private TypeSymbol? BindStructInitializer(StructInitializationExpressionSyntax expr, SymbolTable scope, TypeSymbol? type)
+	{
 		if (type is null)
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
 			context.Diagnostics.Report(currentFileContext, expr.Span, $"Unknown type '{expr.StructTypeName}'", DiagnosticIds.UnknownType);
 			return null;
+		}
+
+		// Bare generic declarations are not concrete types. Preserve the existing
+		// explicit-default rule, but do not infer type arguments from field values.
+		if (type is StructTypeSymbol or UnionTypeSymbol && !expr.StructTypeName.Contains('<'))
+		{
+			IReadOnlyList<string>? defaultArguments = null;
+			if (context.GenericStructTemplates.TryGetValue(type.Name, out var structTemplate))
+			{
+				if (structTemplate.GenericParameters.All(p => structTemplate.GenericParameterDefaults.ContainsKey(p)))
+					defaultArguments = structTemplate.GenericParameters.Select(p => structTemplate.GenericParameterDefaults[p]).ToList();
+			}
+			else if (context.GenericUnionTemplates.TryGetValue(type.Name, out var unionTemplate))
+			{
+				if (unionTemplate.GenericParameters.All(p => unionTemplate.GenericParameterDefaults.ContainsKey(p)))
+					defaultArguments = unionTemplate.GenericParameters.Select(p => unionTemplate.GenericParameterDefaults[p]).ToList();
+			}
+			else
+				defaultArguments = [];
+
+			if (defaultArguments is null)
+			{
+				context.Diagnostics.Report(context.FileContexts[context.CurrentUnit!], new TextSpan(expr.Span.Start, expr.StructTypeName.Length),
+					$"Generic type '{expr.StructTypeName}' requires explicit type arguments.", DiagnosticIds.GenericInitializerRequiresTypeArguments);
+				return null;
+			}
+
+			if (defaultArguments.Count > 0)
+			{
+				type = context.ResolveType($"{expr.StructTypeName}<{string.Join(", ", defaultArguments)}>");
+				if (type is null)
+					return null;
+			}
 		}
 
 		if (type is UnionTypeSymbol unionType)
@@ -1877,6 +1931,8 @@ internal sealed class ExpressionValidator(
 			var field = unionType.FindField(init.MemberName);
 			if (field is null)
 			{
+				if (context.TryFindInvalidAggregateMember(unionType.Name, init.MemberName, isUnion: true, out _))
+					return null; // Declared, but invalid: original type declaration owns the error.
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
 				context.Diagnostics.Report(currentFileContext, init.Span, $"Union '{unionType.Name}' does not contain variant '{init.MemberName}'", DiagnosticIds.UnionDoesNotContainVariant);
 				return unionType;
@@ -1924,7 +1980,7 @@ internal sealed class ExpressionValidator(
 				}
 			}
 
-			return unionType;
+			return context.HasInvalidAggregateMembers(unionType.Name, isUnion: true) ? null : unionType;
 		}
 
 		if (type is not StructTypeSymbol structType)
@@ -1947,6 +2003,8 @@ internal sealed class ExpressionValidator(
 			var field = structType.FindField(init.MemberName);
 			if (field is null)
 			{
+				if (context.TryFindInvalidAggregateMember(structType.Name, init.MemberName, isUnion: false, out _))
+					continue; // Member exists; its unresolved type cannot be checked here.
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
 				context.Diagnostics.Report(currentFileContext, init.Span, $"Struct '{structType.Name}' does not contain field '{init.MemberName}'", DiagnosticIds.StructDoesNotContainField);
 				continue;
@@ -1998,7 +2056,7 @@ internal sealed class ExpressionValidator(
 			}
 		}
 
-		return structType;
+		return context.HasInvalidAggregateMembers(structType.Name, isUnion: false) ? null : structType;
 	}
 
 	/// <summary>
@@ -2398,7 +2456,9 @@ internal sealed class ExpressionValidator(
 	/// chain's own presence and the member's presence are independent facts and both must survive.
 	/// </remarks>
 	private UnionTypeSymbol? ResolveLiftedOption(TypeSymbol memberType)
-		=> context.ResolveType($"Option<{memberType.Name}>") as UnionTypeSymbol;
+	{
+		return context.ResolveType($"Option<{memberType.Name}>") as UnionTypeSymbol;
+	}
 
 	private ResolvedOptionalChainExpression CacheOptionalChainError(
 		OptionalChainExpressionSyntax chain,
@@ -2469,7 +2529,9 @@ internal sealed class ExpressionValidator(
 		return resolved;
 	}
 
-	/// <summary>Reports the one primary diagnostic retained by a final error-bound binary operation.</summary>
+	/// <summary>
+	/// Reports the one primary diagnostic retained by a final error-bound binary operation.
+	/// </summary>
 	private void ReportBinaryBindingError(ResolvedBinaryExpression resolved)
 	{
 		switch (resolved.ErrorKind)
@@ -2565,7 +2627,7 @@ internal sealed class ExpressionValidator(
 			LambdaExpressionSyntax lam => context.ResolvedLambdas.TryGetValue(lam, out var lamInfo) ? lamInfo.Delegate : null,
 			MemberAccessExpressionSyntax m => CheckMemberAccessExpression(m, scope, expectedType),
 			BorrowExpressionSyntax b => new PointerTypeSymbol(GetType(b.Expression, scope) ?? TypeSymbol.Int, b.IsMutable),
-			StructInitializationExpressionSyntax s => CheckStructInitializationExpression(s, scope),
+			StructInitializationExpressionSyntax s => GetOrBindStructInitializer(s, scope),
 			HeapAllocationExpressionSyntax h => GetType(h.Expression, scope),
 			HeapArrayAllocationExpressionSyntax ha => new SliceTypeSymbol(context.ResolveType(ha.ElementTypeName)!),
 			IndexExpressionSyntax idx => GetType(idx.Left, scope) switch
@@ -3118,7 +3180,10 @@ internal sealed class ExpressionValidator(
 	/// </summary>
 	private void CheckParenthesizedStructInitialization(ParenthesizedStructInitializerExpressionSyntax expr, SymbolTable scope)
 	{
-		var type = context.ResolveType(expr.ResolvedStructTypeName!);
+		if (expr.ResolvedStructTypeName is null)
+			return;
+
+		var type = context.ResolveType(expr.ResolvedStructTypeName);
 		if (type is not StructTypeSymbol structType)
 			return;
 
