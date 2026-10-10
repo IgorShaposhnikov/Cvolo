@@ -215,8 +215,108 @@ public sealed class NativeLibrariesIntegrationTests : IDisposable
 		Assert.Contains("Add a mapping to the application .cvlproj", output, StringComparison.Ordinal);
 		Assert.Contains("<NativeLibraries", output, StringComparison.Ordinal);
 		Assert.Contains(CurrentTarget, output, StringComparison.Ordinal);
+		// The suggested .cvlproj mapping must be human-readable and directly copyable XML.
+		Assert.Contains($"Add a mapping to the application .cvlproj:{Environment.NewLine}{Environment.NewLine}", output, StringComparison.Ordinal);
+		var exampleStart = output.IndexOf("<NativeLibraries Target=", StringComparison.Ordinal);
+		var exampleEnd = output.IndexOf("</NativeLibraries>", exampleStart, StringComparison.Ordinal);
+		Assert.True(exampleStart >= 0 && exampleEnd >= 0, $"Missing XML mapping in diagnostic:{Environment.NewLine}{output}");
+		var xml = output[exampleStart..(exampleEnd + "</NativeLibraries>".Length)];
+		Assert.Contains($"{Environment.NewLine}    <NativeLibrary", xml, StringComparison.Ordinal);
+		Assert.Contains($"{Environment.NewLine}        <RuntimeFile", xml, StringComparison.Ordinal);
+		var mapping = System.Xml.Linq.XElement.Parse(xml);
+		Assert.Equal(CurrentTarget, (string?)mapping.Attribute("Target"));
+		var nativeLibrary = Assert.Single(mapping.Elements("NativeLibrary"));
+		Assert.Equal("cvolotest-defmissing-xyz", (string?)nativeLibrary.Attribute("For"));
+		Assert.NotNull(nativeLibrary.Element("RuntimeFile"));
+		Assert.DoesNotContain("     |-- help:", output, StringComparison.Ordinal);
+		Assert.DoesNotContain("     `-- note:", output, StringComparison.Ordinal);
 		// Completely unmapped system libraries must NOT warn (no mapping exists on any target).
 		Assert.DoesNotContain(DiagnosticIds.NativeLibraryFallbackWarning, output, StringComparison.Ordinal);
+	}
+
+	// Terminal styling must not change the content of the copyable native mapping.
+	[Fact]
+	public void NativeLibraryDiagnostic_AnsiColor_RetainsPlainTextAndValidXml()
+	{
+		var strategyType = typeof(ICompilerDriver).Assembly.GetType("Cvolo.Strategies.LinkStrategy", throwOnError: true)!;
+		var formatter = strategyType.GetMethod("FormatNativeLibraryUnresolved",
+			System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
+		Assert.NotNull(formatter);
+		var native = new Cvolo.Strategies.NativeLinkInput("glfw3", null, null, "Cvolo.GLFW");
+		var plain = Assert.IsType<string>(formatter!.Invoke(null, [native, "windows/x64", "windows", false]));
+		var colored = Assert.IsType<string>(formatter.Invoke(null, [native, "windows/x64", "windows", true]));
+
+		Assert.DoesNotContain("\x1b[", plain, StringComparison.Ordinal);
+		Assert.Contains("\x1b[31m[Compile Error CVL1704]:", colored, StringComparison.Ordinal);
+		Assert.Contains("\x1b[90m  1. [Link windows/x64]:", colored, StringComparison.Ordinal);
+		Assert.DoesNotContain("|-- help:", colored, StringComparison.Ordinal);
+		Assert.Contains("<NativeLibraries Target=\"windows\">", colored, StringComparison.Ordinal);
+		Assert.DoesNotContain("\x1b[96m<NativeLibraries", colored, StringComparison.Ordinal);
+		Assert.Contains("     |-- error: ", plain, StringComparison.Ordinal);
+		Assert.Contains($"Add a mapping to the application .cvlproj:{Environment.NewLine}{Environment.NewLine}<NativeLibraries", plain, StringComparison.Ordinal);
+		Assert.DoesNotContain("|-- help:", plain, StringComparison.Ordinal);
+		Assert.DoesNotContain("`-- note:", plain, StringComparison.Ordinal);
+		Assert.DoesNotContain("\x1b[32m", colored, StringComparison.Ordinal);
+		Assert.DoesNotContain("Source files for errors:", plain, StringComparison.Ordinal);
+		Assert.Equal(plain, System.Text.RegularExpressions.Regex.Replace(colored, "\x1b\\[[0-9;]*m", string.Empty));
+
+		var start = plain.IndexOf("<NativeLibraries", StringComparison.Ordinal);
+		var end = plain.IndexOf("</NativeLibraries>", start, StringComparison.Ordinal);
+		Assert.True(start >= 0 && end > start, plain);
+		var xml = plain[start..(end + "</NativeLibraries>".Length)];
+		var mapping = System.Xml.Linq.XElement.Parse(xml);
+		Assert.Equal("windows", (string?)mapping.Attribute("Target"));
+		Assert.Equal("glfw3", (string?)Assert.Single(mapping.Elements("NativeLibrary")).Attribute("For"));
+	}
+
+	// Redirection must not add terminal escapes to captured CI/test output.
+	[Fact]
+	public void NativeLibraryDiagnostic_PlainText_MappedPathPreservesDiagnosticId()
+	{
+		var strategyType = typeof(ICompilerDriver).Assembly.GetType("Cvolo.Strategies.LinkStrategy", throwOnError: true)!;
+		var formatter = strategyType.GetMethod("FormatNativeLibraryUnresolved",
+			System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
+		Assert.NotNull(formatter);
+		var native = new Cvolo.Strategies.NativeLinkInput("glfw3", "native/glfw3.lib", null, "<application>");
+		var plain = Assert.IsType<string>(formatter!.Invoke(null, [native, "windows/x64", "windows", false]));
+		var colored = Assert.IsType<string>(formatter.Invoke(null, [native, "windows/x64", "windows", true]));
+		Assert.Contains("[Compile Error CVL1704]:", plain, StringComparison.Ordinal);
+		Assert.Contains("  1. [Link windows/x64]:", plain, StringComparison.Ordinal);
+		Assert.Contains("     |-- error: ", plain, StringComparison.Ordinal);
+		Assert.DoesNotContain("|-- help:", plain, StringComparison.Ordinal);
+		Assert.Contains("Verify that the native library exists and supports the selected target.", plain, StringComparison.Ordinal);
+		Assert.Contains("native/glfw3.lib", plain, StringComparison.Ordinal);
+		Assert.DoesNotContain("<NativeLibraries", plain, StringComparison.Ordinal);
+		Assert.Equal(plain, System.Text.RegularExpressions.Regex.Replace(colored, "\x1b\\[[0-9;]*m", string.Empty));
+	}
+
+	/// <summary>
+	/// CVL1704 mirrors the structured compiler diagnostic without inventing a source span.
+	/// The XML snippet remains copyable, and special characters in logical names are escaped.
+	/// </summary>
+	[Theory]
+	[InlineData("lib&core")]
+	[InlineData("\"quoted\"")]
+	public void NativeLibraryDiagnostic_CopyableXmlAndNoFakeSourceLocation(string libraryName)
+	{
+		var strategyType = typeof(ICompilerDriver).Assembly.GetType("Cvolo.Strategies.LinkStrategy", throwOnError: true)!;
+		var formatter = strategyType.GetMethod("FormatNativeLibraryUnresolved",
+			System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
+		Assert.NotNull(formatter);
+
+		var input = new Cvolo.Strategies.NativeLinkInput(libraryName, null, null, "<application>");
+		var output = Assert.IsType<string>(formatter!.Invoke(null, [input, "windows/x64", "windows", false]));
+		Assert.True(output.StartsWith("[Compile Error CVL1704]:", StringComparison.Ordinal), output);
+		Assert.Contains("  1. [Link windows/x64]:", output, StringComparison.Ordinal);
+		Assert.DoesNotContain("[Line ", output, StringComparison.Ordinal);
+		Assert.DoesNotContain("Source files for errors:", output, StringComparison.Ordinal);
+		Assert.DoesNotContain("\x1b[", output, StringComparison.Ordinal);
+		var start = output.IndexOf("<NativeLibraries", StringComparison.Ordinal);
+		var end = output.IndexOf("</NativeLibraries>", start, StringComparison.Ordinal);
+		Assert.True(start >= 0 && end > start, output);
+		var xml = output[start..(end + "</NativeLibraries>".Length)];
+		var parsed = System.Xml.Linq.XElement.Parse(xml);
+		Assert.Equal(libraryName, (string?)Assert.Single(parsed.Elements("NativeLibrary")).Attribute("For"));
 	}
 
 	// CVL1704 must not misclassify non-native link failures
@@ -589,6 +689,11 @@ public int Identity(int value) { return value; }
 		Assert.Contains("cvolotest-leak-lib", output, StringComparison.Ordinal);
 		Assert.Contains("Package 'LeakProbe'", output, StringComparison.Ordinal);
 		Assert.Contains("Add a mapping to the application .cvlproj", output, StringComparison.Ordinal);
+		// Package-owned requirements use the same multiline XML example as application requirements.
+		Assert.Contains($"{Environment.NewLine}<NativeLibraries Target=\"{CurrentTarget}\">{Environment.NewLine}", output, StringComparison.Ordinal);
+		Assert.Contains($"Add a mapping to the application .cvlproj:{Environment.NewLine}{Environment.NewLine}<NativeLibraries", output, StringComparison.Ordinal);
+		Assert.DoesNotContain("|-- help:", output, StringComparison.Ordinal);
+		Assert.Contains($"{Environment.NewLine}    <NativeLibrary For=\"cvolotest-leak-lib\" Path=\"...\">", output, StringComparison.Ordinal);
 		// Package-owned source-level paths must never surface on the consumer side.
 		Assert.DoesNotContain("leaked_from_package", output, StringComparison.Ordinal);
 		Assert.DoesNotContain(DiagnosticIds.NativeLibraryFallbackWarning, output, StringComparison.Ordinal);

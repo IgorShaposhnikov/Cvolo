@@ -213,26 +213,75 @@ internal sealed class LinkStrategy(string binDirectory) : ICompilationStrategy
 	/// </summary>
 	private static void ReportNativeLibraryUnresolved(NativeLinkInput lib, string targetLabel, string os)
 	{
+		// Terminal diagnostics use the existing ANSI palette. Redirected output and
+		// NO_COLOR stay plain text so the XML snippet is copyable and CI logs are stable.
+		var useColor = !Console.IsErrorRedirected
+			&& Environment.GetEnvironmentVariable("NO_COLOR") is null
+			&& !string.Equals(Environment.GetEnvironmentVariable("TERM"), "dumb", StringComparison.OrdinalIgnoreCase);
+		Console.Error.WriteLine(FormatNativeLibraryUnresolved(lib, targetLabel, os, useColor));
+	}
+
+	/// <summary>
+	/// Formats the same diagnostic with or without ANSI styling. Only terminal presentation
+	/// changes: native-library resolution, diagnostic ids and the suggested XML stay identical.
+	/// </summary>
+	private static string FormatNativeLibraryUnresolved(NativeLinkInput lib, string targetLabel, string os, bool useColor)
+	{
+		// Match the structured text diagnostic layout used by CompilationContext:
+		// a red bracketed header and one numbered finding with an error rail.
+		// Native linking has no source span, so never fabricate a source line or caret.
+		static string Style(string text, string color, bool enabled) =>
+			enabled ? color + text + AnsiConsoleStyle.Reset : text;
+
 		var originLabel = lib.Origin == NativeLinkInput.ApplicationOrigin
 			? "The application"
 			: $"Package '{lib.Origin}'";
+		const string darkGray = "\x1b[90m";
+		const string red = "\x1b[31m";
+		var header = Style($"[Compile Error {DiagnosticIds.NativeLibraryUnresolved}]:", red, useColor);
+		var finding = Style($"  1. [Link {targetLabel}]: ", darkGray, useColor) +
+			Style($"Native library '{lib.LibraryName}' could not be resolved.", AnsiConsoleStyle.White, useColor);
+		var emptyRail = Style("     |", darkGray, useColor);
+		string Error(string message) => Style("     |-- error: ", darkGray, useColor) + message;
 
 		if (!string.IsNullOrEmpty(lib.FullPath))
 		{
 			var relative = TryMakeRelative(lib.FullPath);
-			Console.Error.WriteLine(
-				$"Compile Error {DiagnosticIds.NativeLibraryUnresolved}: {originLabel} requires native library '{lib.LibraryName}', " +
-				$"but it could not be linked using the configured path '{lib.FullPath}' (from the application root: '{relative}') for target '{targetLabel}'. " +
-				"Verify the file exists and can be linked for this target.");
+			return string.Join(Environment.NewLine,
+				header,
+				finding,
+				string.Empty,
+				Error($"{originLabel} requires '{lib.LibraryName}' for '{targetLabel}'."),
+				Style("     |   ", darkGray, useColor) + $"Configured path: '{lib.FullPath}'",
+				Style("     |   ", darkGray, useColor) + $"From the application root: '{relative}'",
+				emptyRail,
+				string.Empty,
+				"Verify that the native library exists and supports the selected target.",
+				string.Empty);
 		}
-		else
-		{
-			Console.Error.WriteLine(
-				$"Compile Error {DiagnosticIds.NativeLibraryUnresolved}: {originLabel} requires native library '{lib.LibraryName}', " +
-				$"but it could not be resolved for target '{targetLabel}'. " +
-				$"Add a mapping to the application .cvlproj: <NativeLibraries Target=\"{os}\"><NativeLibrary For=\"{lib.LibraryName}\" Path=\"...\">" +
-				"<RuntimeFile Path=\"...\" /></NativeLibrary></NativeLibraries>. RuntimeFile is optional.");
-		}
+
+		// Keep the XML block in source form: a user must be able to copy it
+		// into .cvlproj without first removing gutter prefixes or ANSI escapes.
+		var xmlOs = System.Security.SecurityElement.Escape(os) ?? string.Empty;
+		var xmlLibrary = System.Security.SecurityElement.Escape(lib.LibraryName) ?? string.Empty;
+		var suggestedMapping = string.Join(Environment.NewLine,
+			$"<NativeLibraries Target=\"{xmlOs}\">",
+			$"    <NativeLibrary For=\"{xmlLibrary}\" Path=\"...\">",
+			"        <RuntimeFile Path=\"...\" />",
+			"    </NativeLibrary>",
+			"</NativeLibraries>");
+
+		return string.Join(Environment.NewLine,
+			header,
+			finding,
+			string.Empty,
+			Error($"{originLabel} requires '{lib.LibraryName}' for '{targetLabel}'."),
+			emptyRail,
+			string.Empty,
+			"Add a mapping to the application .cvlproj:",
+			string.Empty,
+			suggestedMapping,
+			string.Empty);
 	}
 
 	private static string TryMakeRelative(string fullPath)
