@@ -42,7 +42,9 @@ internal sealed class VisibilityValidator(BindingContext context)
 			return;
 
 		var arguments = type.Name.Substring(openBracket + 1, closeBracket - openBracket - 1);
-		foreach (var rawArgument in arguments.Split(','))
+		if (!BindingContext.TrySplitTypeArguments(arguments, out var nestedArguments))
+			return;
+		foreach (var rawArgument in nestedArguments)
 		{
 			var argumentType = context.ResolveType(rawArgument.Trim());
 			if (argumentType is null)

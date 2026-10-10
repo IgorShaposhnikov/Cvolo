@@ -1,0 +1,8 @@
+// G22_DeepInvalid: REJECT: malformed slot inside a bounded deep named type fails without recursion explosion.
+public struct Pair<T, R> { public T Value1; public R Value2; }
+
+int main() {
+    // The deepest argument omits its required type head.
+    val size = sizeof<Pair<Pair<Pair<Pair<Pair<Pair<Pair<Pair<Pair<Pair< <int, int>, int>, int>, int>, int>, int>, int>, int>, int>, int>, int>>();
+    return 0;
+}

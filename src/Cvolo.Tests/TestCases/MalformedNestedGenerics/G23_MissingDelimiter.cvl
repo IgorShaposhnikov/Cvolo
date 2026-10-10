@@ -1,0 +1,8 @@
+// G23_MissingDelimiter: REJECT: a malformed type remains the primary error even when the initializer is unclosed.
+public struct Pair<T, R> { public T Value1; public R Value2; }
+
+int main() {
+    // The initializer deliberately lacks its closing brace and semicolon.
+    val p = Pair< <int, int>, int> { Value1: 1, Value2: 2
+    return 0;
+}

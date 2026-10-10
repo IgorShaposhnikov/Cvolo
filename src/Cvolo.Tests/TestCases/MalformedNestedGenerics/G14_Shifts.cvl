@@ -1,0 +1,9 @@
+// G14_Shifts: ACCEPT: right shifts and arithmetic right shifts stay expressions.
+
+int main() {
+    // These operators are not generic closing delimiters.
+    val a = 8 >> 1;
+    val b = 32 >>> 2;
+    val c = 1 << 2;
+    return 0;
+}

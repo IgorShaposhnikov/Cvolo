@@ -56,7 +56,8 @@ public sealed class BindingContext
 
 		// A constructed generic inherits the invalid declaration of the template.
 		var genericStart = owner.IndexOf('<');
-		if (genericStart >= 0 && table.TryGetValue(owner[..genericStart], out var template) && template.TryGetValue(member, out invalid))
+		if (genericStart >= 0 && table.TryGetValue(owner[..genericStart], out var template)
+			&& template.TryGetValue(member, out invalid))
 			return true;
 
 		invalid = null;
@@ -1166,13 +1167,63 @@ public sealed class BindingContext
 		return null;
 	}
 
+	/// <summary>
+	/// Splits a generic argument list only at depth-zero commas. Recursive type
+	/// arguments must remain whole (Pair&lt;Pair&lt;int, int&gt;, int&gt;),
+	/// including ref, pointer, array and optional forms inside the list.
+	/// </summary>
+	internal static bool TrySplitTypeArguments(string text, out List<string> arguments)
+	{
+		arguments = [];
+		var angleDepth = 0;
+		var squareDepth = 0;
+		var parenthesesDepth = 0;
+		var start = 0;
+		for (var i = 0; i < text.Length; i++)
+		{
+			switch (text[i])
+			{
+				case '<' when squareDepth == 0 && parenthesesDepth == 0: angleDepth++; break;
+				case '>' when squareDepth == 0 && parenthesesDepth == 0:
+					if (angleDepth == 0) return false;
+					angleDepth--;
+					break;
+				case '[': squareDepth++; break;
+				case ']':
+					if (squareDepth == 0) return false;
+					squareDepth--;
+					break;
+				case '(': parenthesesDepth++; break;
+				case ')':
+					if (parenthesesDepth == 0) return false;
+					parenthesesDepth--;
+					break;
+				case ',' when angleDepth == 0 && squareDepth == 0 && parenthesesDepth == 0:
+					var argument = text[start..i].Trim();
+					if (argument.Length == 0) return false;
+					arguments.Add(argument);
+					start = i + 1;
+					break;
+			}
+		}
+		if (angleDepth != 0 || squareDepth != 0 || parenthesesDepth != 0)
+			return false;
+		var last = text[start..].Trim();
+		if (last.Length == 0) return false;
+		arguments.Add(last);
+		return true;
+	}
+
+	/// <summary>
 	/// Returns false with a diagnostic if any argument cannot be resolved, so a
 	/// null type is never smuggled into generic instantiation (which would NRE).
 	/// </summary>
 	private bool TryResolveTypeArguments(string argsPart, out List<TypeSymbol> typeArgs)
 	{
 		typeArgs = [];
-		foreach (var rawArg in argsPart.Split(','))
+		if (!TrySplitTypeArguments(argsPart, out var arguments))
+			return false;
+		foreach (var rawArg in arguments)
 		{
 			var argType = ResolveType(rawArg.Trim());
 			if (argType is null)
@@ -1450,7 +1501,9 @@ public sealed class BindingContext
 		if (isGeneric)
 		{
 			var argsPart = name.Substring(openBracket + 1, name.Length - openBracket - 2);
-			typeArgs = argsPart.Split(',').Select(a => a.Trim()).Where(a => a.Length > 0).ToList();
+			if (!TrySplitTypeArguments(argsPart, out var splitArguments))
+				return null;
+			typeArgs = splitArguments;
 		}
 
 		// Priority 1: current namespace
@@ -1654,7 +1707,6 @@ public sealed class BindingContext
 					Diagnostics.Report(currentFileContext, field.Span, $"Could not resolve field type '{substitutedTypeName}' during generic instantiation of '{instName}'", DiagnosticIds.CouldNotResolveFieldTypeDuringGenericInstantiationOf);
 					RegisterInvalidAggregateMember(instName, field.Name, field, DiagnosticIds.CouldNotResolveFieldTypeDuringGenericInstantiationOf, isUnion: false);
 				}
-
 				continue;
 			}
 
@@ -2261,7 +2313,6 @@ public sealed class BindingContext
 						Diagnostics.Report(currentFileContext, field.Span, $"Could not resolve field type '{substitutedTypeName}' during generic instantiation of '{instName}'", DiagnosticIds.CouldNotResolveFieldTypeDuringGenericInstantiationOf);
 						RegisterInvalidAggregateMember(instName, field.Name, field, DiagnosticIds.CouldNotResolveFieldTypeDuringGenericInstantiationOf, isUnion: true);
 					}
-
 					continue;
 				}
 			}

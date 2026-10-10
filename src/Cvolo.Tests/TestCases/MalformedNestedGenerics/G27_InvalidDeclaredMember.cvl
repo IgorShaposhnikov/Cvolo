@@ -1,0 +1,8 @@
+// G27_InvalidDeclaredMember: REJECT: a bad type declaration must not invent a usable member or a missing-field cascade.
+public struct Pair<T, R> { public T Value1; public R Value2; }
+
+public struct Outer {
+    // Malformed generic syntax is primary, not a missing member diagnosis.
+    public Pair< <int, int>, int> Stored;
+}
+int main() { return 0; }

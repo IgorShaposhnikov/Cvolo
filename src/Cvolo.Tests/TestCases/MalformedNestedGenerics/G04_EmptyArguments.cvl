@@ -1,0 +1,9 @@
+// G04_EmptyArguments: REJECT: the generic argument list cannot be empty.
+public struct Pair<T, R> { public T Value1; public R Value2; }
+
+int main()
+{
+    // Exercise the generic syntax at this initializer.
+    val p = Pair<> { Value1: 1, Value2: 2 };
+    return 0;
+}

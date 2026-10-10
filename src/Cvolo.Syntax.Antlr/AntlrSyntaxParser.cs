@@ -15,6 +15,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 {
 	private readonly DiagnosticBag _diagnostics = new();
 	private CompilationContext? _compilationContext;
+	private int _malformedGenericSourceOffset = -1;
 
 	// Unsuffixed integer magnitudes in (long.MaxValue, ulong.MaxValue] are valid only as the operand
 	// of a direct unary minus (the signed-minimum exception). They are tracked here until either a
@@ -27,6 +28,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 	{
 		_compilationContext = context;
 		_pendingSignedMagnitudeOffsets.Clear();
+		_malformedGenericSourceOffset = -1;
 		var inputStream = new AntlrInputStream(context.Source);
 		var lexer = new CvoloLexer(inputStream);
 
@@ -38,11 +40,42 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		lexer.AddErrorListener(new LexerErrorListener(_diagnostics, context));
 
 		var tokenStream = new CommonTokenStream(lexer);
+		tokenStream.Fill();
+		// The grammar cannot parse a missing type head after a generic '<'. In the
+		// adjacent spelling the lexer has already combined both characters into
+		// LSHIFT, so ordinary ANTLR recovery can misclassify the remainder as a
+		// shift expression. Detect malformed generic slots without changing lexer
+		// tokenization or the meaning of expression shift operators.
+		var invalidGeneric = FindMalformedGeneric(tokenStream.GetTokens());
+		if (invalidGeneric is { } badGeneric)
+		{
+			_malformedGenericSourceOffset = badGeneric.Span.Start;
+			_diagnostics.Report(context, badGeneric.Span, badGeneric.Message, badGeneric.Id);
+		}
+
+		if (invalidGeneric is { } malformedType)
+		{
+			// Parse a same-length recovery view with only the syntactically broken
+			// top-level declaration blanked out. No invented type ever enters the AST.
+			// Original TextSpan offsets and all later declarations are preserved.
+			var recoverySource = MaskInvalidDeclaration(context.Source, tokenStream.GetTokens(), malformedType.Span.Start);
+			if (recoverySource != context.Source)
+			{
+				var recoveryLexer = new CvoloLexer(new AntlrInputStream(recoverySource));
+				recoveryLexer.RemoveErrorListeners();
+				recoveryLexer.AddErrorListener(new LexerErrorListener(_diagnostics, context));
+				tokenStream = new CommonTokenStream(recoveryLexer);
+				tokenStream.Fill();
+			}
+		}
+
 		var parser = new CvoloParser(tokenStream);
 
 		parser.RemoveErrorListeners();
 		var errorListener = new SyntaxErrorListener(_diagnostics, context, tokenStream);
 		parser.AddErrorListener(errorListener);
+		if (invalidGeneric is { } malformed)
+			errorListener.SuppressGenericRecovery(malformed.RecoveryStart, malformed.RecoveryEnd);
 
 		var tree = parser.compilationUnit();
 
@@ -110,6 +143,182 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 
 		ReportPendingSignedMagnitudeOverflows();
 		return unit;
+	}
+
+	/// <summary>
+	/// Remove the one broken top-level declaration from ANTLR's recovery input
+	/// while preserving all offsets, line breaks and subsequent declarations.
+	/// The original source remains authoritative for the root diagnostic.
+	/// In particular a recovered generic must never become an ordinary type.
+	/// </summary>
+	private static string MaskInvalidDeclaration(string source, IList<IToken> tokens, int invalidPosition)
+	{
+		var visible = tokens.Where(t => t.Channel == Lexer.DefaultTokenChannel && t.Type != TokenConstants.EOF).ToArray();
+		var memberStart = -1;
+		var depth = 0;
+		foreach (var token in visible)
+		{
+			if (memberStart < 0 && depth == 0)
+				memberStart = token.StartIndex;
+			if (token.Type == CvoloLexer.LBRACE)
+				depth++;
+			else if (token.Type == CvoloLexer.RBRACE && depth > 0)
+				depth--;
+			if (depth != 0 || (token.Type != CvoloLexer.SEMI && token.Type != CvoloLexer.RBRACE))
+				continue;
+			if (memberStart <= invalidPosition && invalidPosition <= token.StopIndex)
+				return MaskSourceRange(source, memberStart, token.StopIndex + 1);
+			memberStart = -1;
+		}
+		if (memberStart >= 0 && invalidPosition >= memberStart)
+			return MaskSourceRange(source, memberStart, source.Length);
+		return source;
+	}
+
+	private static string MaskSourceRange(string source, int start, int end)
+	{
+		var characters = source.ToCharArray();
+		for (var i = Math.Max(0, start); i < Math.Min(end, characters.Length); i++)
+			if (characters[i] is not ('\r' or '\n'))
+				characters[i] = ' ';
+		return new string(characters);
+	}
+
+	/// <summary>
+	/// True when a potential generic owner lives inside an earlier unmatched
+	/// generic list. The next '>' is then an outer closer, not a surplus one.
+	/// </summary>
+	private static bool HasEnclosingGenericAngle(IToken[] tokens, int before)
+	{
+		var depth = 0;
+		for (var i = 0; i < before; i++)
+		{
+			var kind = tokens[i].Type;
+			if (kind is CvoloLexer.SEMI or CvoloLexer.LBRACE or CvoloLexer.RBRACE)
+				depth = 0;
+			else if (kind == CvoloLexer.LT && i > 0 && tokens[i - 1].Type is CvoloLexer.Identifier or CvoloLexer.GT)
+				depth++;
+			else if (kind == CvoloLexer.GT && depth > 0)
+				depth--;
+		}
+		return depth > 0;
+	}
+
+	private sealed record MalformedGeneric(TextSpan Span, string Message, string Id, int RecoveryStart, int RecoveryEnd);
+
+	/// <summary>
+	/// Inspect actual lexer tokens (including maximal-munch LSHIFT) for malformed
+	/// named generic arguments. This does not split or reclassify shift tokens:
+	/// valid comparison and shift expressions keep the original lexer stream.
+	/// </summary>
+	private static MalformedGeneric? FindMalformedGeneric(IList<IToken> tokens)
+	{
+		var visible = tokens.Where(t => t.Channel == Lexer.DefaultTokenChannel).ToArray();
+		for (var i = 1; i < visible.Length - 1; i++)
+		{
+			var opener = visible[i];
+			if (visible[i - 1].Type != CvoloLexer.Identifier ||
+				opener.Type is not (CvoloLexer.LT or CvoloLexer.LSHIFT))
+				continue;
+
+			var next = visible[i + 1];
+			// A plain `a << b` is an expression shift. Only the generic-like
+			// spelling with argument separators / closers is a type error.
+			if (opener.Type == CvoloLexer.LSHIFT)
+			{
+				if (!LooksLikeGenericTail(visible, i + 1))
+					continue;
+				return InvalidSlot(opener.StartIndex + 1, opener.StartIndex, visible, i,
+					"Expected a type argument after '<'; an unnamed nested generic type is not valid.");
+			}
+
+			if (next.Type == CvoloLexer.LT)
+				return InvalidSlot(next.StartIndex, opener.StartIndex, visible, i,
+					"Expected a type argument after '<'; a type name is required before nested '<'.");
+			if (next.Type is CvoloLexer.GT or CvoloLexer.COMMA)
+				return InvalidSlot(next.StartIndex, opener.StartIndex, visible, i,
+					"Expected a type argument after '<'; generic argument slots cannot be empty.",
+					next.Type == CvoloLexer.GT ? DiagnosticIds.UnexpectedToken : DiagnosticIds.ExpectedToken);
+
+			// A top-level generic-list closer is the only kind of '>' that this
+			// local scan recognizes; we never reinterpret GT in an expression.
+			var depth = 1;
+			var sawComma = false;
+			for (var j = i + 1; j < visible.Length; j++)
+			{
+				var token = visible[j];
+				if (token.Type == CvoloLexer.LT) { depth++; continue; }
+				if (token.Type == CvoloLexer.GT)
+				{
+					depth--;
+					if (depth != 0) continue;
+					if (j + 2 < visible.Length && visible[j + 1].Type == CvoloLexer.GT
+						&& visible[j + 2].Type is (CvoloLexer.LBRACE or CvoloLexer.SEMI)
+						&& !HasEnclosingGenericAngle(visible, i))
+						return InvalidSlot(visible[j + 1].StartIndex, opener.StartIndex, visible, i,
+							"Unexpected '>' after the completed generic type argument list.", DiagnosticIds.UnexpectedToken);
+					break;
+				}
+				if (token.Type == CvoloLexer.COMMA && depth == 1)
+				{
+					sawComma = true;
+					if (j + 1 < visible.Length && visible[j + 1].Type is (CvoloLexer.GT or CvoloLexer.COMMA or CvoloLexer.LT))
+						return InvalidSlot(visible[j + 1].StartIndex, opener.StartIndex, visible, i,
+							"Expected a type argument after ',' in the generic argument list.");
+				}
+				if (token.Type == CvoloLexer.LSHIFT && depth > 0 && sawComma)
+					return InvalidSlot(token.StartIndex + 1, opener.StartIndex, visible, i,
+						"Expected a type name before a nested generic argument list.");
+				if (token.Type is CvoloLexer.LBRACE or CvoloLexer.SEMI or TokenConstants.EOF)
+				{
+					if (sawComma)
+					{
+						var previous = visible[j - 1];
+						var insertion = Math.Max(opener.StartIndex + 1, previous.StopIndex + 1);
+						return InvalidSlot(insertion, opener.StartIndex, visible, i,
+							"Expected '>' to close the generic type argument list.", zeroWidth: true);
+					}
+					break;
+				}
+				if (token.Type == CvoloLexer.RPAREN && sawComma)
+					break;
+			}
+		}
+		return null;
+	}
+
+	private static bool LooksLikeGenericTail(IToken[] tokens, int start)
+	{
+		var sawArgumentSeparator = false;
+		for (var i = start; i < tokens.Length && i < start + 64; i++)
+		{
+			var current = tokens[i].Type;
+			if (current == CvoloLexer.COMMA)
+				sawArgumentSeparator = true;
+			if (current == CvoloLexer.GT && sawArgumentSeparator && i + 1 < tokens.Length
+				&& tokens[i + 1].Type is (CvoloLexer.COMMA or CvoloLexer.GT
+					or CvoloLexer.LBRACE or CvoloLexer.LPAREN or CvoloLexer.SEMI))
+				return true;
+			if (current is CvoloLexer.SEMI or TokenConstants.EOF or CvoloLexer.LBRACE
+				or CvoloLexer.LPAREN or CvoloLexer.RPAREN)
+				return false;
+		}
+		return false;
+	}
+
+	private static MalformedGeneric InvalidSlot(int at, int ownerStart, IToken[] tokens, int ownerIndex,
+		string message, string id = DiagnosticIds.ExpectedToken, bool zeroWidth = false)
+	{
+		var end = tokens.Length == 0 ? at : tokens[^1].StopIndex + 1;
+		// Suppress dependent ANTLR diagnostics only until the current statement's
+		// semicolon. Any later statement remains independently diagnosable.
+		for (var j = ownerIndex + 1; j < tokens.Length; j++)
+		{
+			if (tokens[j].Type == CvoloLexer.SEMI) { end = tokens[j].StopIndex; break; }
+			if (tokens[j].Type == TokenConstants.EOF) { end = tokens[j].StartIndex; break; }
+		}
+		return new MalformedGeneric(new TextSpan(Math.Max(0, at), zeroWidth ? 0 : 1),
+			message, id, ownerStart, end);
 	}
 
 	// An unsuffixed integer magnitude in (long.MaxValue, ulong.MaxValue] is legal only when it is the
@@ -243,6 +452,12 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 
 	private SyntaxNode? BuildDeclaration(CvoloParser.DeclarationContext context)
 	{
+		// Fail-closed fallback if malformed input could not be masked before parsing.
+		// Never expose its synthetic generic type to the binder or emitter.
+		if (_malformedGenericSourceOffset >= 0 && context.Start is { } start
+			&& start.StartIndex <= _malformedGenericSourceOffset
+			&& (context.Stop?.StopIndex ?? -1) >= _malformedGenericSourceOffset)
+			return null;
 		if (context.functionDeclaration() is { } func)
 			return BuildFunctionDeclaration(func);
 		if (context.externDeclaration() is { } ext)
@@ -1915,8 +2130,15 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 
 		if (context is CvoloParser.GenericInstantiationTypeContext genInstCtx)
 		{
+			// A recovered typeList may be absent or have error nodes / inserted
+			// tokens. Never manufacture a normal type spelling from that tree.
+			if (genInstCtx.type() is null || genInstCtx.typeList() is not { } arguments
+				|| arguments.type().Length == 0 || ContainsRecoveryError(genInstCtx))
+				return string.Empty;
 			var innerTypeName = GetTypeName(genInstCtx.type());
-			var args = genInstCtx.typeList().type().Select(GetTypeName);
+			var args = arguments.type().Select(GetTypeName).ToArray();
+			if (string.IsNullOrWhiteSpace(innerTypeName) || args.Any(string.IsNullOrWhiteSpace))
+				return string.Empty;
 			return $"{innerTypeName}<{string.Join(", ", args)}>";
 		}
 
@@ -1943,6 +2165,16 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		}
 
 		return context.GetText();
+	}
+
+	private static bool ContainsRecoveryError(IParseTree? node)
+	{
+		if (node is null || node is IErrorNode || node is ITerminalNode { Symbol.TokenIndex: < 0 })
+			return true;
+		for (var i = 0; i < node.ChildCount; i++)
+			if (ContainsRecoveryError(node.GetChild(i)))
+				return true;
+		return false;
 	}
 
 	private string GetReturnTypeName(CvoloParser.ReturnTypeContext context)
@@ -2006,8 +2238,17 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 
 	private sealed class SyntaxErrorListener(DiagnosticBag diagnostics, CompilationContext context, CommonTokenStream tokenStream) : BaseErrorListener
 	{
-		private readonly HashSet<int> _cascadeLines = [];
-		private readonly HashSet<(int Position, int Token)> _missingDelimiters = [];
+		private readonly HashSet<int> _cascadeLines = new();
+		private readonly HashSet<(int Position, int Token)> _missingDelimiters = new();
+		private int _genericRecoveryStart = -1;
+		private int _genericRecoveryEnd = -1;
+
+		public void SuppressGenericRecovery(int start, int end)
+		{
+			_genericRecoveryStart = start;
+			_genericRecoveryEnd = end;
+		}
+
 
 		/// <summary>
 		/// Start indices of DOT tokens the parser rejected. Used after parsing to turn a top-level
@@ -2017,6 +2258,13 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 
 		public override void SyntaxError(TextWriter output, IRecognizer recognizer, IToken offendingSymbol, int line, int charPositionInLine, string msg, RecognitionException e)
 		{
+			// A lexical generic-argument diagnostic is already the root cause.
+			// Drop only ANTLR's dependent recovery errors inside that construct;
+			// later independent declarations keep their own parser diagnostics.
+			if (_genericRecoveryStart >= 0 && offendingSymbol is not null
+				&& offendingSymbol.StartIndex >= _genericRecoveryStart
+				&& offendingSymbol.StartIndex <= _genericRecoveryEnd)
+				return;
 			if (offendingSymbol is { Type: CvoloLexer.DOT })
 				RejectedDotIndices.Add(offendingSymbol.StartIndex);
 			var start = offendingSymbol?.StartIndex ?? 0;
@@ -2157,13 +2405,11 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			return true;
 		}
 
-		private static bool IsStatementBoundary(int token)
-		{
-			return token is CvoloLexer.RETURN or CvoloLexer.VAL or CvoloLexer.VAR or CvoloLexer.REF or CvoloLexer.REFVAR
-				or CvoloLexer.IF or CvoloLexer.WHILE or CvoloLexer.FOR or CvoloLexer.FOREACH
-				or CvoloLexer.SWITCH or CvoloLexer.BREAK or CvoloLexer.CONTINUE or CvoloLexer.DEFER
-				or TokenConstants.EOF;
-		}
+		private static bool IsStatementBoundary(int token) => token is
+			CvoloLexer.RETURN or CvoloLexer.VAL or CvoloLexer.VAR or CvoloLexer.REF or CvoloLexer.REFVAR
+			or CvoloLexer.IF or CvoloLexer.WHILE or CvoloLexer.FOR or CvoloLexer.FOREACH
+			or CvoloLexer.SWITCH or CvoloLexer.BREAK or CvoloLexer.CONTINUE or CvoloLexer.DEFER
+			or TokenConstants.EOF;
 
 		private static string SimplifyMessage(IToken? offendingSymbol, string message)
 		{

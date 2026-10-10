@@ -1,0 +1,6 @@
+// G21_EOF: REJECT: malformed generic syntax at EOF gives a bounded diagnostic without a crash.
+public struct Pair<T, R> { public T Value1; public R Value2; }
+
+int main() {
+    // There is deliberately no final type argument or closing bracket.
+    val p = Pair< <int, int>, int

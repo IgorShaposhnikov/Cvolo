@@ -1,0 +1,7 @@
+// IDE snapshot: Again revision of the same nested generic initializer.
+public struct Pair<T, R> { public T Value1; public R Value2; }
+int main() {
+    // Reparsing must not reuse an invalid type or an old diagnostic.
+    val p = Pair<<int, int>, int> { Value1: 1, Value2: 2 };
+    return 0;
+}

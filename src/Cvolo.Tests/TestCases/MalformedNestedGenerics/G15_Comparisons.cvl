@@ -1,0 +1,8 @@
+// G15_Comparisons: ACCEPT: relational expressions keep their original parsing and precedence.
+
+int main() {
+    // These less-than and greater-than tokens are comparisons, not type arguments.
+    val smaller = 1 < 2;
+    val larger = 3 > 2;
+    return 0;
+}

@@ -143,7 +143,9 @@ internal static class ProtocolCanonicalizer
 				var baseName = t[..openBracket];
 				var baseIndex = IndexOfGeneric(genericParameters, baseName);
 				var baseToken = baseIndex >= 0 ? $"$T{baseIndex}" : NormalizeRawTypeName(baseName);
-				var args = t[(openBracket + 1)..closeBracket].Split(',').Select(a => CanonicalizeProtocolInner(a.Trim(), genericParameters, context, selfReplacement, concreteTypeArguments));
+				if (!BindingContext.TrySplitTypeArguments(t[(openBracket + 1)..closeBracket], out var splitArguments))
+					return NormalizeRawTypeName(t);
+				var args = splitArguments.Select(a => CanonicalizeProtocolInner(a, genericParameters, context, selfReplacement, concreteTypeArguments));
 				return $"{baseToken}<{string.Join(",", args)}>";
 			}
 		}

@@ -1,0 +1,8 @@
+// G22_DeepValid: ACCEPT: bounded deep nested generic type syntax stays finite and valid.
+public struct Pair<T, R> { public T Value1; public R Value2; }
+
+int main() {
+    // Exercise nested closers without inventing anonymous types.
+    val size = sizeof<Pair<Pair<Pair<Pair<Pair<Pair<Pair<Pair<Pair<Pair<Pair<int, int>, int>, int>, int>, int>, int>, int>, int>, int>, int>, int>>();
+    return 0;
+}
