@@ -9,15 +9,16 @@ public static class TestCases
 	public const string DirectoryName = "TestCases";
 
 	/// <summary>Physical fixture root for the currently executing test project.</summary>
-	public static string Root => Path.Combine(AppContext.BaseDirectory, DirectoryName);
+	public static string Root => ResolveRoot();
 
 	/// <summary>Returns the physical path of one fixture.</summary>
 	public static string PathOf(string relativePath)
 	{
 		ArgumentException.ThrowIfNullOrWhiteSpace(relativePath);
 		var normalized = Normalize(relativePath);
-		var path = Path.GetFullPath(Path.Combine(Root, normalized));
-		var root = Path.GetFullPath(Root) + Path.DirectorySeparatorChar;
+		var rootPath = ResolveRoot(normalized);
+		var path = Path.GetFullPath(Path.Combine(rootPath, normalized));
+		var root = Path.GetFullPath(rootPath) + Path.DirectorySeparatorChar;
 		if (!path.StartsWith(root, StringComparison.OrdinalIgnoreCase))
 			throw new ArgumentException($"Fixture path escapes '{DirectoryName}': {relativePath}", nameof(relativePath));
 		return path;
@@ -78,6 +79,42 @@ public static class TestCases
 	private static string Normalize(string path) =>
 		path.Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar)
 			.TrimStart(Path.DirectorySeparatorChar);
+
+	private static string ResolveRoot(string? relativePath = null)
+	{
+		var outputRoot = Path.Combine(AppContext.BaseDirectory, DirectoryName);
+		if (relativePath is null && Directory.Exists(outputRoot))
+			return outputRoot;
+		if (relativePath is not null && ExistsAsFixture(outputRoot, relativePath))
+			return outputRoot;
+
+		var testAssemblyName = AppDomain.CurrentDomain.GetAssemblies()
+			.Select(assembly => assembly.GetName().Name)
+			.FirstOrDefault(name => name is not null
+				&& name.StartsWith("Cvolo.Tests", StringComparison.Ordinal)
+				&& name != "Cvolo.Tests.Shared");
+
+		var current = new DirectoryInfo(AppContext.BaseDirectory);
+		while (current is not null)
+		{
+			if (testAssemblyName is not null)
+			{
+				var sourceRoot = Path.Combine(current.FullName, "src", testAssemblyName, DirectoryName);
+				if (relativePath is null ? Directory.Exists(sourceRoot) : ExistsAsFixture(sourceRoot, relativePath))
+					return sourceRoot;
+			}
+
+			current = current.Parent;
+		}
+
+		return outputRoot;
+	}
+
+	private static bool ExistsAsFixture(string root, string relativePath)
+	{
+		var path = Path.Combine(root, relativePath);
+		return File.Exists(path) || Directory.Exists(path);
+	}
 }
 
 public readonly record struct MarkedTestCase(string Text, int Position);

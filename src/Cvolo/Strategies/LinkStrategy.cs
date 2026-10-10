@@ -177,7 +177,8 @@ internal sealed class LinkStrategy(string binDirectory) : ICompilationStrategy
 		}
 
 		var inputs = nativeLibraries?.ToList() ?? [];
-		if (inputs.Count > 0 && LooksLikeMissingNativeLibrary(linkerStderr) && MissingNativeAttributedToInput(linkerStderr, inputs))
+		var linkerOutput = linkerStdout + linkerStderr;
+		if (inputs.Count > 0 && LooksLikeMissingNativeLibrary(linkerOutput) && MissingNativeAttributedToInput(linkerOutput, inputs))
 		{
 			// Recognized missing-native failure: raw linker output is hidden by default and only
 			// shown before the Cvolo diagnostic when --verbose is requested.
