@@ -1,0 +1,18 @@
+// G24: Malformed generic arguments remain a primary syntax error when brace fields use equals.
+// EXPECT: one expected-type-argument diagnostic at the second "<"; no dependent field conversion errors.
+
+public struct Pair<T, R>
+{
+    public T Value1;
+    public R Value2;
+}
+
+int main()
+{
+    // Exercise the generic syntax at this initializer.
+    val p = Pair< <int, int>, int> {
+        Value1 = 1,
+        Value2 = 2
+    };
+    return 0;
+}

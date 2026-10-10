@@ -1,0 +1,12 @@
+// AttributeNamedArg (S20): Attribute named arguments keep their original colon separator.
+
+[Unknown(Key: 1)]
+public struct Point
+{
+    public int X;
+}
+
+int main()
+{
+    return 0;
+}

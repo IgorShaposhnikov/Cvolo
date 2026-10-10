@@ -1,0 +1,16 @@
+// S18: Reparse immutable snapshots after toggling the braced separator.
+
+public struct Point
+{
+    public int X;
+    public int Y;
+}
+
+int main()
+{
+    val p = Point {
+        X = 1,
+        Y = 2
+    };
+    return 0;
+}

@@ -1,0 +1,36 @@
+// IndependentErrors (G30): REJECT a malformed generic while preserving a separate real missing-field diagnostic.
+
+public struct Pair<T, R>
+{
+    public T Value1;
+    public R Value2;
+}
+
+public struct Other
+{
+    public int Present;
+}
+
+int Bad()
+{
+    // This declaration is skipped rather than providing a fabricated generic.
+    val p = Pair< <int, int>, int> {
+        Value1: 1,
+        Value2: 2
+    };
+    return 0;
+}
+
+int Good()
+{
+    // This member is genuinely absent from an otherwise valid struct type.
+    val x = Other {
+        Absent: 1
+    };
+    return 0;
+}
+
+int main()
+{
+    return Good();
+}

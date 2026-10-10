@@ -1,9 +1,0 @@
-// G24_EqualSeparator_GATED: GATED: enable only when the approved brace-field equals syntax is implemented.
-public struct Pair<T, R> { public T Value1; public R Value2; }
-
-int main()
-{
-    // Exercise the generic syntax at this initializer.
-    val p = Pair< <int, int>, int> { Value1 = 1, Value2 = 2 };
-    return 0;
-}

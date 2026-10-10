@@ -1,0 +1,17 @@
+// DuplicateMixed (S04): Colon and equals spellings of X are a duplicate member.
+
+public struct Point
+{
+    public int X;
+    public int Y;
+}
+
+int main()
+{
+    val p = Point {
+        X: 1,
+        X = 2,
+        Y: 3
+    };
+    return 0;
+}

@@ -1,0 +1,15 @@
+// S20: Generic interface constraints continue to use colon tokens.
+
+public interface I
+{
+}
+
+public struct Limited<T> where T: I
+{
+    public T Value;
+}
+
+int main()
+{
+    return 0;
+}

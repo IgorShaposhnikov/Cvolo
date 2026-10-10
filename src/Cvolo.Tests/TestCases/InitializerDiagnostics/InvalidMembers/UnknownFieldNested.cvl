@@ -2,8 +2,15 @@
 // BaseColor is declared, but Color is unavailable; nested R/G/B values lack a target type.
 // Expect one CVL4135 on Color and no fabricated CVL4093 or nested diagnostics.
 
-struct Point { int X; int Y; Color BaseColor; }
-int main() {
+struct Point
+{
+    int X;
+    int Y;
+    Color BaseColor;
+}
+
+int main()
+{
     // This is contextual field initialization; do not look up a constructor or validate nested R/G/B.
     var Point point(X: 10, Y: 20, BaseColor: (R: 255, G: 0, B: 0));
     return 0;

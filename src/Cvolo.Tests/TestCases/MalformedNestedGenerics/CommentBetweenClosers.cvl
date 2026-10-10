@@ -1,0 +1,20 @@
+// CommentBetweenClosers (G13): ACCEPT: comments and spaces between nested generic delimiters retain the same type.
+
+public struct Pair<T, R>
+{
+    public T Value1;
+    public R Value2;
+}
+
+int main()
+{
+    // Exercise the generic syntax at this initializer.
+    val p = Pair<Pair<int, int> /* between closers */, int> {
+        Value1: Pair<int, int> {
+            Value1: 1,
+            Value2: 2
+        },
+        Value2: 3
+    };
+    return 0;
+}

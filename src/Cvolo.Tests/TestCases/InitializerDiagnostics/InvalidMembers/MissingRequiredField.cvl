@@ -2,9 +2,17 @@
 // Field B is declared with valid type bool but is omitted from the initializer.
 // Expect a missing-initializer diagnostic for B; ordinary validation rules still apply.
 
-struct Pair { int A; bool B; }
-int main() {
+struct Pair
+{
+    int A;
+    bool B;
+}
+
+int main()
+{
     // Only A is initialized; required field B is intentionally missing.
-    val pair = Pair { A: 1 };
+    val pair = Pair {
+        A: 1
+    };
     return 0;
 }

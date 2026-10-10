@@ -201,7 +201,9 @@ public sealed class CvoloSourcePrinter
 				return $"{mi.MemberName}: {Print(mi.Expression)}";
 
 			case StructInitializationExpressionSyntax si:
-				var siInits = string.Join(", ", si.Initializers.Select(i => $"{i.MemberName}: {Print(i.Expression)}"));
+				// Both accepted braced spellings print canonically as field = value.
+				// Parenthesized contextual initializers remain colon-only.
+				var siInits = string.Join(", ", si.Initializers.Select(i => $"{i.MemberName} = {Print(i.Expression)}"));
 				return $"{si.StructTypeName} {{ {siInits} }}";
 
 			case ParenthesizedStructInitializerExpressionSyntax psi:

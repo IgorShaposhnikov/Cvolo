@@ -2,7 +2,8 @@
 // A separate return statement follows the unfinished int x = 1 declaration.
 // Expect CVL4174 immediately after 1, before CRLF; original line endings are preserved.
 
-int main() {
+int main()
+{
     // The semicolon is omitted after 1; CRLF must be preserved when checking TextSpan.
     int x = 1
     return 0;

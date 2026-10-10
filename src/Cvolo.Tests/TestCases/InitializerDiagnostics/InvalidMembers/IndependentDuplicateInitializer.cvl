@@ -2,9 +2,21 @@
 // X is initialized twice while another field BaseColor has an unknown Color type.
 // Expect CVL4135 and exactly one duplicate-initializer diagnostic for X.
 
-struct Point { int X; int Y; Color BaseColor; }
-int main() {
+struct Point
+{
+    int X;
+    int Y;
+    Color BaseColor;
+}
+
+int main()
+{
     // The second X initializer is invalid regardless of whether Color resolves.
-    val point = Point { X: 1, X: 2, Y: 3, BaseColor: (R: 4) };
+    val point = Point {
+        X: 1,
+        X: 2,
+        Y: 3,
+        BaseColor: (R: 4)
+    };
     return 0;
 }

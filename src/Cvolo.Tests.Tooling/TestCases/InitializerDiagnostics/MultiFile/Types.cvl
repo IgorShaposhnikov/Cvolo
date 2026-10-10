@@ -1,6 +1,11 @@
 // T05, Tooling, declaration site: root error for an unresolved field type.
 // Point.BaseColor refers to undeclared type Color.
 // Expect exactly one CVL4135 at the declaration in this document.
-
 // The Color type token is invalid; BaseColor still exists as a declared field name.
-struct Point { int X; int Y; Color BaseColor; }
+
+struct Point
+{
+    int X;
+    int Y;
+    Color BaseColor;
+}

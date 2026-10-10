@@ -2,9 +2,22 @@
 // Color exists and defines R/G/B, so all nested named initializers resolve.
 // Expect no diagnostics; recovery for unresolved field types must not break valid code.
 
-struct Color { int R; int G; int B; }
-struct Point { int X; int Y; Color BaseColor; }
-int main() {
+struct Color
+{
+    int R;
+    int G;
+    int B;
+}
+
+struct Point
+{
+    int X;
+    int Y;
+    Color BaseColor;
+}
+
+int main()
+{
     // BaseColor provides the nested Color target type used to validate R/G/B.
     var Point point(X: 10, Y: 20, BaseColor: (R: 255, G: 0, B: 0));
     return 0;

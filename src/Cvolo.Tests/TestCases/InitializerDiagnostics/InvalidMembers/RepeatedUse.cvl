@@ -2,10 +2,25 @@
 // Point.BaseColor refers to undeclared type Color at a single source declaration.
 // Expect exactly one CVL4135 at the declaration and no per-use CVL4093/CVL4019.
 
-struct Point { int X; int Y; Color BaseColor; }
-int main() {
+struct Point
+{
+    int X;
+    int Y;
+    Color BaseColor;
+}
+
+int main()
+{
     // Using BaseColor again must not create another root CVL4135 at this use site.
-    val a = Point { X: 1, Y: 2, BaseColor: (R: 1) };
-    val b = Point { X: 3, Y: 4, BaseColor: (G: 2) };
+    val a = Point {
+        X: 1,
+        Y: 2,
+        BaseColor: (R: 1)
+    };
+    val b = Point {
+        X: 3,
+        Y: 4,
+        BaseColor: (G: 2)
+    };
     return 0;
 }

@@ -362,8 +362,8 @@ variableDeclaration
 	| type Identifier (ASSIGN expression)? SEMI
 	| REFVAR Identifier ASSIGN expression SEMI
 	| REF Identifier ASSIGN expression SEMI
-	| (VAL | VAR) type Identifier LPAREN structInitializerList RPAREN SEMI
-	| type Identifier LPAREN structInitializerList RPAREN SEMI
+	| (VAL | VAR) type Identifier LPAREN parenFieldInitializerList RPAREN SEMI
+	| type Identifier LPAREN parenFieldInitializerList RPAREN SEMI
 	| (VAL | VAR) type Identifier LPAREN expression RPAREN SEMI
 	| type Identifier LPAREN expression RPAREN SEMI
 	;
@@ -443,8 +443,8 @@ expression
 	| HEAP expression                                       										# heapAllocationExpression
 	| HEAP type LBRACK expression RBRACK															# heapArrayAllocationExpression
 	| LBRACE (expression (COMMA expression)*)? RBRACE												# arrayInitializationExpression
-	| Identifier (LT typeList GT)? LBRACE structInitializerList? RBRACE								# structInitializationExpression
-	| LPAREN structInitializerList RPAREN															# parenthesizedStructInitializer
+	| Identifier (LT typeList GT)? LBRACE bracedFieldInitializerList? RBRACE								# structInitializationExpression
+	| LPAREN parenFieldInitializerList RPAREN															# parenthesizedStructInitializer
 	| Identifier                                            										# identifierExpression
 	| IntegerLiteral                                        										# integerLiteralExpression
 	| DoubleLiteral                                         										# doubleLiteralExpression
@@ -505,11 +505,21 @@ asmArgument
 	| asmOption														# asmOptionArgument
 	;
 
-structInitializerList
-	: structMemberInitializer (COMMA structMemberInitializer)*
+// Only braced aggregate literals permit the assignment-style field separator.
+// Distinct productions keep contextual parentheses unambiguously label-based.
+bracedFieldInitializerList
+	: bracedFieldInitializer (COMMA bracedFieldInitializer)*
 	;
 
-structMemberInitializer
+bracedFieldInitializer
+	: Identifier (COLON | ASSIGN) expression
+	;
+
+parenFieldInitializerList
+	: parenFieldInitializer (COMMA parenFieldInitializer)*
+	;
+
+parenFieldInitializer
 	: Identifier COLON expression
 	;
 

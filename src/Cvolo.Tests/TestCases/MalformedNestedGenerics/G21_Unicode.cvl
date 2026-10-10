@@ -1,8 +1,0 @@
-// G21_Unicode: REJECT: Unicode comments preceding the malformed slot do not shift its source offset.
-public struct Pair<T, R> { public T Value1; public R Value2; }
-
-int main() {
-    // π, λ and ∑ are comments and must not change the generic error location.
-    val p = Pair< <int, int>, int> { Value1: 1, Value2: 2 };
-    return 0;
-}

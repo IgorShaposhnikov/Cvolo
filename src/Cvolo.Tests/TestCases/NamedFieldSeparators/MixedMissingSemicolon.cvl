@@ -1,0 +1,16 @@
+// MixedMissingSemicolon (S19): A missing semicolon after a closed mixed initializer should be recovered.
+
+public struct Point
+{
+    public int X;
+    public int Y;
+}
+
+int main()
+{
+    val p = Point {
+        X: 1,
+        Y = 2
+    }
+    return 0;
+}

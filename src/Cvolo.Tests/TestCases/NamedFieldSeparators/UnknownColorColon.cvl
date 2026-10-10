@@ -1,0 +1,18 @@
+// UnknownColorColon (S22): Colon must preserve the same root error as S21.
+
+public struct Point
+{
+    public int X;
+    public int Y;
+    public Color BaseColor;
+}
+
+int main()
+{
+    val p = Point {
+        X = 1,
+        Y = 2,
+        BaseColor: (R: 255, G: 0, B: 0)
+    };
+    return 0;
+}

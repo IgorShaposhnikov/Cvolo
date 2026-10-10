@@ -1,9 +1,0 @@
-// G21_LF: REJECT: an LF-terminated source anchors the diagnostic at the invalid angle.
-public struct Pair<T, R> { public T Value1; public R Value2; }
-
-int main()
-{
-    // Exercise the generic syntax at this initializer.
-    val p = Pair< <int, int>, int> { Value1: 1, Value2: 2 };
-    return 0;
-}

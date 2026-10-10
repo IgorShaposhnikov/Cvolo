@@ -1,0 +1,8 @@
+// OrdinaryAssignment (S10): An ordinary parenthesized assignment remains an assignment expression.
+
+int main()
+{
+    var int R = 0;
+    val int result = (R = 255);
+    return R - 255;
+}

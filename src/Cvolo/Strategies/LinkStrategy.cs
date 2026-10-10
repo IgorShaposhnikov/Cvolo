@@ -345,7 +345,12 @@ internal sealed class LinkStrategy(string binDirectory) : ICompilationStrategy
 		if (string.IsNullOrWhiteSpace(stderr))
 			return false;
 
-		return stderr.Contains("unable to find library", StringComparison.OrdinalIgnoreCase)
+		// MSVC link.exe / lld-link reports missing -l inputs as LNK1181 rather
+		// than with the Unix "library not found" wording. Attribution to a
+		// requested native input is still required before emitting CVL1704.
+		return (stderr.Contains("LNK1181", StringComparison.OrdinalIgnoreCase)
+			&& stderr.Contains("cannot open input file", StringComparison.OrdinalIgnoreCase))
+			|| stderr.Contains("unable to find library", StringComparison.OrdinalIgnoreCase)
 			|| stderr.Contains("library not found", StringComparison.OrdinalIgnoreCase)
 			|| stderr.Contains("cannot find -l", StringComparison.OrdinalIgnoreCase)
 			|| stderr.Contains("could not open", StringComparison.OrdinalIgnoreCase)

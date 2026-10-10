@@ -1,0 +1,17 @@
+// MissingOuterCloser (G08): REJECT: a complete inner generic does not substitute for the missing outer closer.
+
+public struct Pair<T, R>
+{
+    public T Value1;
+    public R Value2;
+}
+
+int main()
+{
+    // Exercise the generic syntax at this initializer.
+    val p = Pair<Pair<int, int>, int {
+        Value1: 1,
+        Value2: 2
+    };
+    return 0;
+}

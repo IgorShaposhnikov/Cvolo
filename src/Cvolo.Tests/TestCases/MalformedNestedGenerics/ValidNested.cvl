@@ -1,0 +1,20 @@
+// ValidNested (G10): ACCEPT: a named nested generic type and matching nested value compile.
+
+public struct Pair<T, R>
+{
+    public T Value1;
+    public R Value2;
+}
+
+int main()
+{
+    // Exercise the generic syntax at this initializer.
+    val p = Pair<Pair<int, int>, int> {
+        Value1: Pair<int, int> {
+            Value1: 1,
+            Value2: 2
+        },
+        Value2: 3
+    };
+    return 0;
+}

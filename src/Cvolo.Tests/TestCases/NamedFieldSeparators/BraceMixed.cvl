@@ -1,0 +1,16 @@
+// BraceMixed (S03): Mixed spelling has a single field identity and ordering.
+
+public struct Point
+{
+    public int X;
+    public int Y;
+}
+
+int main()
+{
+    val p = Point {
+        X: 10,
+        Y = 20
+    };
+    return p.X + p.Y - 30;
+}

@@ -1,0 +1,16 @@
+// BareGenericEquals (S14): Unspecialized Pair must still be rejected; values must not infer T/R.
+
+public struct Pair<T, R>
+{
+    public T Value1;
+    public R Value2;
+}
+
+int main()
+{
+    val p = Pair {
+        Value1 = 1,
+        Value2 = 2
+    };
+    return 0;
+}

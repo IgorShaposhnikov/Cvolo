@@ -2,9 +2,18 @@
 // Flag requires bool but receives int; BaseColor refers to the unknown Color type.
 // Expect CVL4135 for Color and CVL4019 for Flag, without dependent BaseColor errors.
 
-struct Point { bool Flag; Color BaseColor; }
-int main() {
+struct Point
+{
+    bool Flag;
+    Color BaseColor;
+}
+
+int main()
+{
     // The invalid Flag value is independent; BaseColor cannot be type-checked without Color.
-    val point = Point { Flag: 1, BaseColor: (R: 4) };
+    val point = Point {
+        Flag: 1,
+        BaseColor: (R: 4)
+    };
     return 0;
 }

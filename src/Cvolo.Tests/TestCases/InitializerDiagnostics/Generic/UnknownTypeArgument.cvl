@@ -2,9 +2,18 @@
 // MissingType is undeclared; this is a type-resolution failure, not a field conversion.
 // Expect the primary unresolved-type diagnostic and no fabricated CVL4019.
 
-public struct Pair<T, R> { public T Value1; public R Value2; }
-int main() {
+public struct Pair<T, R>
+{
+    public T Value1;
+    public R Value2;
+}
+
+int main()
+{
     // Intentional error: MissingType must not be treated as a valid instantiated field type.
-    val p = Pair<MissingType, int> { Value1: 1, Value2: 2 };
+    val p = Pair<MissingType, int> {
+        Value1: 1,
+        Value2: 2
+    };
     return 0;
 }

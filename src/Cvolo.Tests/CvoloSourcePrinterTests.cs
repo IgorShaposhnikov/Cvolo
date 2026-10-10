@@ -124,7 +124,7 @@ public sealed class CvoloSourcePrinterTests : CompilerTestBase
 			"if (ref opt is None) {",
 			"nameof(total)",
 			"typeof(Point)",
-			"var Runner rn = Runner { Speed: 5 };"
+			"var Runner rn = Runner { Speed = 5 };"
 		};
 
 		foreach (var marker in expectedMarkers)

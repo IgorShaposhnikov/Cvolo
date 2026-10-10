@@ -2,9 +2,18 @@
 // Both type arguments are explicit and both initializer values have type int.
 // Expect no errors; check and -O0/-O3 build/run must succeed with exit code 0.
 
-public struct Pair<T, R> { public T Value1; public R Value2; }
-int main() {
+public struct Pair<T, R>
+{
+    public T Value1;
+    public R Value2;
+}
+
+int main()
+{
     // A correctly specialized generic initializer must remain valid after diagnostic recovery changes.
-    val p = Pair<int, int> { Value1: 1, Value2: 2 };
+    val p = Pair<int, int> {
+        Value1: 1,
+        Value2: 2
+    };
     return p.Value1 - 1;
 }

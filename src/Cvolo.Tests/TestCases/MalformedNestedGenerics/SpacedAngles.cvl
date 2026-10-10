@@ -1,0 +1,17 @@
+// SpacedAngles (G02): REJECT: whitespace between the two opening angles cannot supply a missing type.
+
+public struct Pair<T, R>
+{
+    public T Value1;
+    public R Value2;
+}
+
+int main()
+{
+    // Exercise the generic syntax at this initializer.
+    val p = Pair< <int, int>, int> {
+        Value1: 1,
+        Value2: 2
+    };
+    return 0;
+}

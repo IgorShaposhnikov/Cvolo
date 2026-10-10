@@ -1,7 +1,15 @@
 // T07: an unresolved field type must not hide a duplicate field declaration.
 // BaseColor is declared twice, while its Color type is unresolved.
 // Expect the primary CVL4135 and a separate duplicate-field diagnostic.
-
 // There are two independent faults: missing type Color and duplicate name BaseColor.
-struct Point { Color BaseColor; Color BaseColor; }
-int main() { return 0; }
+
+struct Point
+{
+    Color BaseColor;
+    Color BaseColor;
+}
+
+int main()
+{
+    return 0;
+}

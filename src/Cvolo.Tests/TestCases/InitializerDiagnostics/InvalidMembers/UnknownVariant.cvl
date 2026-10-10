@@ -1,10 +1,18 @@
 // T08: ordinary tagged union variant with an unresolved payload type.
 // Choice.Broken is declared, but its payload type Missing does not exist.
 // Expect CVL4136 at the declaration and no false missing-variant error.
-
 // The variant name Broken exists; the error belongs to its payload type.
-union Choice { Missing Broken; int Valid; }
-int main() {
-    val choice = Choice { Broken: 1 };
+
+union Choice
+{
+    Missing Broken;
+    int Valid;
+}
+
+int main()
+{
+    val choice = Choice {
+        Broken: 1
+    };
     return 0;
 }

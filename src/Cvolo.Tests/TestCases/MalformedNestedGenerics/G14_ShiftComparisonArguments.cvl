@@ -1,8 +1,0 @@
-// G14: ACCEPT. An expression shift argument and a comparison argument cannot be interpreted as generic syntax.
-int Consume(int amount, bool condition) { return amount; }
-int main() {
-    // The comma and greater-than token belong to unrelated expressions.
-    val x = 1;
-    val result = Consume(x << 2, 3 > 2);
-    return 0;
-}

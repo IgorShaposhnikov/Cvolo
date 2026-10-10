@@ -1,0 +1,14 @@
+// ConstructorVsContextual (S24): Contextual fields and positional constructor calls are different syntax.
+
+public struct Point
+{
+    public int X;
+    public int Y;
+}
+
+int main()
+{
+    var Point p(X: 1, Y: 2);
+    val q = Point(1, 2);
+    return 0;
+}

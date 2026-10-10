@@ -1,0 +1,25 @@
+// NestedContextual (S09): Only the outer braced field uses equals; inner contextual fields use colons.
+
+public struct Color
+{
+    public int R;
+    public int G;
+    public int B;
+}
+
+public struct Point
+{
+    public int X;
+    public int Y;
+    public Color BaseColor;
+}
+
+int main()
+{
+    val p = Point {
+        X = 1,
+        Y = 2,
+        BaseColor = (R: 255, G: 0, B: 0)
+    };
+    return p.BaseColor.R - 255;
+}

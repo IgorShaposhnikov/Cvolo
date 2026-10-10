@@ -722,11 +722,12 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 			inputs.Add(new NativeLinkInput(forName, linkPath, null, requirement.Origin));
 			foreach (var runtimeFile in selection.Declaration.RuntimeFiles)
 			{
+				// CVL1707 must identify the failing runtime payload, not its link library.
 				runtimePlan.Add(new RuntimeStageEntry(
 					Path.GetFullPath(runtimeFile, project.ProjectDirectory),
 					Path.GetFileName(runtimeFile),
 					forName,
-					selection.Declaration.Path));
+					runtimeFile));
 			}
 
 			return true;

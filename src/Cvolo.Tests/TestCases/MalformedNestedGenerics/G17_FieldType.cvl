@@ -1,8 +1,0 @@
-// G17_FieldType: REJECT: malformed generic syntax in a declared field type has a parser root.
-public struct Pair<T, R> { public T Value1; public R Value2; }
-
-public struct Outer {
-    // A malformed field type must not become a constructed symbol.
-    public Pair< <int, int>, int> Bad;
-}
-int main() { return 0; }

@@ -1,11 +1,12 @@
 // T26, file 1/3: Point.BaseColor refers to Color from Color.cvl.
 // Color is not declared here but is available elsewhere in the compilation.
 // Expect Color to resolve after registering the other files, without CVL4135.
-
 // Do not mark BaseColor invalid before processing Color.cvl.
 // Fields are public because they are initialized from Main.cvl in another unit.
 // Access restrictions must not mask the forward-declaration behavior under test.
-public struct Point {
+
+public struct Point
+{
     public int X;
     public int Y;
     public Color BaseColor;

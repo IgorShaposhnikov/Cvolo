@@ -1,0 +1,11 @@
+// OptionNoneEquals (S12): Option None with void supports the equals separator.
+
+using System;
+
+int main()
+{
+    val o = Option<int> {
+        None = void
+    };
+    return 0;
+}

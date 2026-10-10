@@ -1,0 +1,13 @@
+// ArrayReplication (S07): Contextual array replication is not rewritten as a braced initializer.
+
+public struct Point
+{
+    public int X;
+    public int Y;
+}
+
+int main()
+{
+    var Point[3] ps(X: 1, Y: 2);
+    return 0;
+}

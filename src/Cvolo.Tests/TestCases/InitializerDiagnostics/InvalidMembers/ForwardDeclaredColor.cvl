@@ -1,11 +1,24 @@
 // T26: a field type can be declared later in the same compilation unit.
 // Point refers to Color, which is declared below the Point declaration.
 // Expect no CVL4135 or false CVL4093; nested initialization is valid.
-
 // Color is not declared yet, but must resolve once type declaration registration completes.
-struct Point { int X; int Y; Color BaseColor; }
-struct Color { int R; int G; int B; }
-int main() {
+
+struct Point
+{
+    int X;
+    int Y;
+    Color BaseColor;
+}
+
+struct Color
+{
+    int R;
+    int G;
+    int B;
+}
+
+int main()
+{
     var Point point(X: 10, Y: 20, BaseColor: (R: 255, G: 0, B: 0));
     return 0;
 }

@@ -1,0 +1,19 @@
+// IndependentGhost (S23): Unknown field type and genuinely absent Ghost produce separate independent roots.
+
+public struct Point
+{
+    public int X;
+    public int Y;
+    public Color BaseColor;
+}
+
+int main()
+{
+    val p = Point {
+        X = 1,
+        Y = 2,
+        BaseColor = (R: 255, G: 0, B: 0),
+        Ghost: 1
+    };
+    return 0;
+}

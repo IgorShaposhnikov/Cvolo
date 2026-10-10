@@ -2,8 +2,13 @@
 // The initializer is in a different document than the Color declaration in Types.cvl.
 // Expect no duplicate CVL4135 or fabricated CVL4093/CVL4019 in this document.
 
-int main() {
+int main()
+{
     // The root field type error belongs in Types.cvl, not at this use site.
-    val point = Point { X: 1, Y: 2, BaseColor: (R: 3) };
+    val point = Point {
+        X: 1,
+        Y: 2,
+        BaseColor: (R: 3)
+    };
     return 0;
 }

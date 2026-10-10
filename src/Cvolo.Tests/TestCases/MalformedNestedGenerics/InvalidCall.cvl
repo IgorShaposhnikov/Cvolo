@@ -1,0 +1,15 @@
+// InvalidCall (G16): REJECT: malformed call-site type arguments cannot instantiate a generic function.
+
+public int Identity<T>(T value)
+{
+    return value;
+}
+
+int main()
+{
+    // Missing type head is invalid even in a generic function call.
+    val x = Identity<<int,
+    int>,
+    int>(1);
+    return 0;
+}

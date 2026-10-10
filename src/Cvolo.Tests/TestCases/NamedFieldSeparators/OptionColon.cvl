@@ -1,0 +1,11 @@
+// OptionColon (S12): Option Some retains its original colon construction.
+
+using System;
+
+int main()
+{
+    val o = Option<int> {
+        Some: 42
+    };
+    return 0;
+}

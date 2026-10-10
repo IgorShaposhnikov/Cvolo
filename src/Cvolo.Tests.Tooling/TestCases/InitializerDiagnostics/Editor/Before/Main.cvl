@@ -1,10 +1,17 @@
 // T22, BEFORE edit: the old IDE snapshot refers to an unknown Color type.
 // BaseColor is declared, but its type Color has no definition yet.
 // Expect CVL4135 in the old snapshot only; diagnostic state must not leak between versions.
-
 // The absence of Color causes one primary diagnostic before applying the edit.
-struct Point { Color BaseColor; }
-int main() {
-    val point = Point { BaseColor: (R: 1) };
+
+struct Point
+{
+    Color BaseColor;
+}
+
+int main()
+{
+    val point = Point {
+        BaseColor: (R: 1)
+    };
     return 0;
 }

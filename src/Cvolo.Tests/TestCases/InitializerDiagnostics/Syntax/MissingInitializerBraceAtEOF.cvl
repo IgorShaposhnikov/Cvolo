@@ -2,7 +2,15 @@
 // The file ends before the closing brace and semicolon; no next token exists.
 // Expect an insertion diagnostic near EOF, without a compiler internal error.
 
-public struct Pair<T, R> { public T Value1; public R Value2; }
-int main() {
+public struct Pair<T, R>
+{
+    public T Value1;
+    public R Value2;
+}
+
+int main()
+{
     // Intentional EOF after this line: do not append closing tokens or further comments.
-    val p = Pair<int, int> { Value1: 1, Value2: 2
+    val p = Pair<int, int> {
+        Value1: 1,
+        Value2: 2

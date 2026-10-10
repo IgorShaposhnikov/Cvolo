@@ -1386,9 +1386,9 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			case CvoloParser.ParenthesizedStructInitializerContext parenCtx:
 				{
 					var initializers = new List<MemberInitializerSyntax>();
-					if (parenCtx.structInitializerList() is { } listCtx)
+					if (parenCtx.parenFieldInitializerList() is { } listCtx)
 					{
-						foreach (var memberInit in listCtx.structMemberInitializer())
+						foreach (var memberInit in listCtx.parenFieldInitializer())
 						{
 							var memberName = memberInit.Identifier().GetText();
 							var expr = BuildExpression(memberInit.expression());
@@ -1558,9 +1558,9 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 					}
 
 					var initializers = new List<MemberInitializerSyntax>();
-					if (structInitCtx.structInitializerList() is { } listCtx)
+					if (structInitCtx.bracedFieldInitializerList() is { } listCtx)
 					{
-						foreach (var memberInit in listCtx.structMemberInitializer())
+						foreach (var memberInit in listCtx.bracedFieldInitializer())
 						{
 							var memberName = memberInit.Identifier().GetText();
 							var expr = BuildExpression(memberInit.expression());
@@ -1889,10 +1889,10 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			var name = context.Identifier().GetText();
 
 			ExpressionSyntax valueExpr;
-			if (context.structInitializerList() is { } listCtx)
+			if (context.parenFieldInitializerList() is { } listCtx)
 			{
 				var initializers = new List<MemberInitializerSyntax>();
-				foreach (var memberInit in listCtx.structMemberInitializer())
+				foreach (var memberInit in listCtx.parenFieldInitializer())
 				{
 					var memberName = memberInit.Identifier().GetText();
 					var fieldExpr = BuildExpression(memberInit.expression());
@@ -2315,6 +2315,11 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			if (TryReportMissingDelimiter(recognizer, offendingSymbol))
 				return;
 
+			// In a named-field rule the owner determines which separators are legal.
+			// Do not treat == or += as a field assignment, and do not relax (X: ...).
+			if (TryReportInvalidFieldSeparator(recognizer, offendingSymbol, span))
+				return;
+
 			var simplified = SimplifyMessage(offendingSymbol, msg);
 			var diagnosticId = offendingSymbol is { Type: TokenConstants.EOF }
 				? DiagnosticIds.UnexpectedEndOfFile
@@ -2331,6 +2336,31 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		/// operator token. Returns the combined <c>??=</c> span so the highlight covers the whole
 		/// unsupported operator rather than just its tail.
 		/// </summary>
+		private bool TryReportInvalidFieldSeparator(IRecognizer recognizer, IToken? offending, TextSpan span)
+		{
+			if (recognizer is not Parser parser || offending is null)
+				return false;
+			var expected = parser.GetExpectedTokens();
+			for (var owner = parser.Context; owner is not null; owner = owner.Parent as ParserRuleContext)
+			{
+				if (owner is CvoloParser.BracedFieldInitializerContext)
+				{
+					if (!expected.Contains(CvoloLexer.COLON) && !expected.Contains(CvoloLexer.ASSIGN))
+						return false;
+					diagnostics.Report(context, span, "Expected ':' or '=' after field name.", DiagnosticIds.ExpectedToken);
+					return true;
+				}
+				if (owner is CvoloParser.ParenFieldInitializerContext)
+				{
+					if (!expected.Contains(CvoloLexer.COLON))
+						return false;
+					diagnostics.Report(context, span, "Expected ':' after field name.", DiagnosticIds.ExpectedToken);
+					return true;
+				}
+			}
+			return false;
+		}
+
 		private bool TryReportCoalesceAssign(IToken? offendingSymbol, TextSpan span, out TextSpan coalesceSpan)
 		{
 			coalesceSpan = span;

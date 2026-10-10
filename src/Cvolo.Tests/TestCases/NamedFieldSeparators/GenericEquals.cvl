@@ -1,0 +1,16 @@
+// GenericEquals (S13): Specialized generics accept equals without inferring any type arguments.
+
+public struct Pair<T, R>
+{
+    public T Value1;
+    public R Value2;
+}
+
+int main()
+{
+    val p = Pair<int, int> {
+        Value1 = 1,
+        Value2 = 2
+    };
+    return 0;
+}

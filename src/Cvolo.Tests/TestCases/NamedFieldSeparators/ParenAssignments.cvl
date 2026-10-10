@@ -1,0 +1,13 @@
+// ParenAssignments (S25): Parentheses with equals must not manufacture field initializer syntax.
+
+public struct Point
+{
+    public int X;
+    public int Y;
+}
+
+int main()
+{
+    var Point p(X = 1, Y = 2);
+    return 0;
+}

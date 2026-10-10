@@ -1,0 +1,13 @@
+// ParenEquals (S08): The two assignment expressions must not become named field initializers.
+
+public struct Point
+{
+    public int X;
+    public int Y;
+}
+
+int main()
+{
+    var Point p(X = 1, Y = 2);
+    return 0;
+}

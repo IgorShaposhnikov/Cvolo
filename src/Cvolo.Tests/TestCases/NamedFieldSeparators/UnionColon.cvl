@@ -1,0 +1,15 @@
+// UnionColon (S11): A tagged union accepts its existing colon-labeled active variant.
+
+public union Choice
+{
+    public int A;
+    public void B;
+}
+
+int main()
+{
+    val c = Choice {
+        A: 42
+    };
+    return 0;
+}

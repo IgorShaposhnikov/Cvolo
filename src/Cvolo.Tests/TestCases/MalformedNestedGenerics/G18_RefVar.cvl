@@ -1,8 +1,0 @@
-// G18_RefVar: REJECT: malformed nested angles in a refvar type must not build a usable type.
-public struct Pair<T, R> { public T Value1; public R Value2; }
-
-int main() {
-    // Invalid syntax must fail before this wrapper type binds.
-    refvar Pair< <int, int>, int> item;
-    return 0;
-}

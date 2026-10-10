@@ -2,9 +2,21 @@
 // BaseColor is declared but its Color type is missing; OtherColor is not declared at all.
 // Expect CVL4135 for Color and one CVL4093 for OtherColor only.
 
-struct Point { int X; int Y; Color BaseColor; }
-int main() {
+struct Point
+{
+    int X;
+    int Y;
+    Color BaseColor;
+}
+
+int main()
+{
     // BaseColor is not an absent member; only OtherColor is truly unknown.
-    val point = Point { X: 1, Y: 2, BaseColor: (R: 3), OtherColor: 9 };
+    val point = Point {
+        X: 1,
+        Y: 2,
+        BaseColor: (R: 3),
+        OtherColor: 9
+    };
     return 0;
 }

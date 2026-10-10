@@ -1,0 +1,16 @@
+// BraceEquals (S02): Both fields use the new equals separator. Must match S01.
+
+public struct Point
+{
+    public int X;
+    public int Y;
+}
+
+int main()
+{
+    val p = Point {
+        X = 10,
+        Y = 20
+    };
+    return p.X + p.Y - 30;
+}

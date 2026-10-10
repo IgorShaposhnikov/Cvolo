@@ -1,0 +1,16 @@
+// HeapEquals (S05): Heap-allocated aggregate literals use the same braced field rule.
+
+public struct Point
+{
+    public int X;
+    public int Y;
+}
+
+int main()
+{
+    var Point p = heap Point {
+        X = 100,
+        Y = 200
+    };
+    return 0;
+}

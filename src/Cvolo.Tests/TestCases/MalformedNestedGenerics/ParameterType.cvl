@@ -1,0 +1,18 @@
+// ParameterType (G17): REJECT: malformed generic syntax in a function parameter is a syntax error.
+
+public struct Pair<T, R>
+{
+    public T Value1;
+    public R Value2;
+}
+
+// Invalid parameter type cannot flow into call binding.
+int Consume(Pair< <int, int>, int> value)
+{
+    return 0;
+}
+
+int main()
+{
+    return 0;
+}

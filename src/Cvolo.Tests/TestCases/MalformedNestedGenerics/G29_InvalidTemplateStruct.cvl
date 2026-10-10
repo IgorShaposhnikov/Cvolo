@@ -1,8 +1,0 @@
-// G29_InvalidTemplateStruct: REJECT: malformed field type inside a generic struct template.
-public struct Pair<T, R> { public T Value1; public R Value2; }
-
-public struct Store<T> {
-    // Do not specialize a template with an invalid field type.
-    public Pair< <int, int>, T> Item;
-}
-int main() { return 0; }

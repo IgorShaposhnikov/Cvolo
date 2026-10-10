@@ -1,0 +1,13 @@
+// ContextualColons (S06): Declaration shorthand with contextual parentheses retains colon-only fields.
+
+public struct Point
+{
+    public int X;
+    public int Y;
+}
+
+int main()
+{
+    var Point p(X: 1, Y: 2);
+    return p.X + p.Y - 3;
+}

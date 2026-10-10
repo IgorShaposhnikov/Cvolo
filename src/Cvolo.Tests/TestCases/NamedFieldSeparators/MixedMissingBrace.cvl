@@ -1,0 +1,15 @@
+// MixedMissingBrace (S19): A missing brace following mixed fields should produce a delimiter diagnostic.
+
+public struct Point
+{
+    public int X;
+    public int Y;
+}
+
+int main()
+{
+    val p = Point {
+        X: 1,
+        Y = 2
+        return 0;
+    }

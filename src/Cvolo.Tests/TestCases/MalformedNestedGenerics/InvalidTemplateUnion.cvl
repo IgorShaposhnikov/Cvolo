@@ -1,0 +1,18 @@
+// InvalidTemplateUnion (G29): REJECT: malformed variant type inside a generic union template.
+
+public struct Pair<T, R>
+{
+    public T Value1;
+    public R Value2;
+}
+
+public union Choice<T>
+{
+    // Invalid nested type arguments must not create a successful variant layout.
+    Pair< <int, int>, T> Value;
+}
+
+int main()
+{
+    return 0;
+}

@@ -1,0 +1,21 @@
+// ReturnType (G17): REJECT: malformed generic syntax in a return type is a syntax error.
+
+public struct Pair<T, R>
+{
+    public T Value1;
+    public R Value2;
+}
+
+// Do not infer a type from a malformed return type.
+Pair< <int, int>, int> Factory()
+{
+    return Pair<int, int> {
+        Value1: 1,
+        Value2: 2
+    };
+}
+
+int main()
+{
+    return 0;
+}

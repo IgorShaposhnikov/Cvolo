@@ -1,0 +1,11 @@
+// OptionEquals (S12): Option Some can be constructed with equals without changing representation.
+
+using System;
+
+int main()
+{
+    val o = Option<int> {
+        Some = 42
+    };
+    return 0;
+}

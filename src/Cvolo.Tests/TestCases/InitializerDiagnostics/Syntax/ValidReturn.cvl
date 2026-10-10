@@ -2,7 +2,8 @@
 // The ordinary return 0; statement is syntactically complete.
 // Expect no CVL4173, CVL4174 or CVL4175 parser diagnostics.
 
-int main() {
+int main()
+{
     // This return is valid; recovery must not trigger merely on the return keyword.
     return 0;
 }

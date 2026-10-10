@@ -1,0 +1,23 @@
+// ValidDeep (G11): ACCEPT: several nested named generic types retain their identity.
+
+public struct Pair<T, R>
+{
+    public T Value1;
+    public R Value2;
+}
+
+int main()
+{
+    // Exercise the generic syntax at this initializer.
+    val p = Pair<Pair<Pair<int, int>, int>, int> {
+        Value1: Pair<Pair<int, int>, int> {
+            Value1: Pair<int, int> {
+                Value1: 1,
+                Value2: 2
+            },
+            Value2: 3
+        },
+        Value2: 4
+    };
+    return 0;
+}

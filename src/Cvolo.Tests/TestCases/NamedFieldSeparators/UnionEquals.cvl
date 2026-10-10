@@ -1,0 +1,15 @@
+// UnionEquals (S11): A tagged union accepts the same variant using equals.
+
+public union Choice
+{
+    public int A;
+    public void B;
+}
+
+int main()
+{
+    val c = Choice {
+        A = 42
+    };
+    return 0;
+}
