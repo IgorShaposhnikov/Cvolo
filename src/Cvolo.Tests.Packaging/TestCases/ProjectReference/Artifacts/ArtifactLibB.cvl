@@ -1,0 +1,8 @@
+// Leaf package-ready library. The consumer must link its compiled artifact
+// after its source file has been removed from the project checkout.
+namespace ArtifactLibB;
+
+public int BaseValue()
+{
+    return 40;
+}

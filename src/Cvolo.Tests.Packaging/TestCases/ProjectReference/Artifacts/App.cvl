@@ -1,0 +1,8 @@
+// The application must resolve transitive project-reference artifacts
+// without merging the removed library sources into its compilation.
+using ArtifactLibA;
+
+int main()
+{
+    return CombinedValue() - 42;
+}

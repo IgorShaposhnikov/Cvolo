@@ -1,0 +1,9 @@
+// Middle package-ready library. Its artifact depends on ArtifactLibB,
+// but the executable is built after both referenced sources are removed.
+using ArtifactLibB;
+namespace ArtifactLibA;
+
+public int CombinedValue()
+{
+    return BaseValue() + 2;
+}
