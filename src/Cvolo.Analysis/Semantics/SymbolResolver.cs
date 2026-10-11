@@ -847,11 +847,28 @@ internal static class SymbolResolver
 		if (position < span.Start || position > span.End)
 			return null;
 
+		// A type written in a parameter/field declaration may belong to an imported
+		// namespace. Direct ResolveType does not perform the compiler's `using` lookup,
+		// so relying on it alone incorrectly removes F12 from `refvar ImportedType x`.
 		var type = context.ResolveType(context.NormalizeGenericName(typeName));
-		if (type is null || index.FindType(type.Name) is not { } declaration)
-			return null;
+		var declaration = type is null ? null : index.FindType(type.Name);
+		if (declaration is null)
+		{
+			var writtenName = typeName.Trim();
+			if (writtenName.StartsWith("refvar ", StringComparison.Ordinal))
+				writtenName = writtenName[7..];
+			else if (writtenName.StartsWith("ref ", StringComparison.Ordinal))
+				writtenName = writtenName[4..];
 
-		return new ResolvedSymbol(KindOf(type), leaf, null, span, declaration, Display(declaration, type.Name));
+			if (!context.TryResolveTypeByLookupName(context.NormalizeGenericName(writtenName), context.CurrentUnit, out var importedType)
+				|| index.FindType(importedType.Name) is not { } importedDeclaration)
+				return null;
+
+			type = importedType;
+			declaration = importedDeclaration;
+		}
+
+		return new ResolvedSymbol(KindOf(type!), leaf, null, span, declaration, Display(declaration, type!.Name));
 	}
 
 	/// <summary>

@@ -66,6 +66,46 @@ public sealed class NavigationTests
 		}
 	}
 
+	/// <summary>
+	/// A parameter's type comes from an imported namespace, not the declaring
+	/// file's own namespace. F12 must resolve the type through the same `using`
+	/// lookup the compiler uses when it binds the declaration.
+	/// </summary>
+	[Fact]
+	public void ImportedTypeInRefvarParameter_NavigatesToOtherNamespace()
+	{
+		const string consumer = """
+			using Impetus.Core;
+			
+			namespace Impetus.Game.Reality;
+			
+			public void BuildWorldDrawCommand(refvar DrawBoxCommand command)
+			{
+			    command.X = 2.0f;
+			}
+			""";
+		const string types = """
+			namespace Impetus.Core;
+			
+			public struct DrawBoxCommand
+			{
+			    public float X;
+			}
+			""";
+
+		var x = Open(("Reality.cvl", consumer), ("Types.cvl", types));
+		using (x.Fixture)
+		{
+			var symbol = x.Document.GetSymbolAtPosition(At(consumer, "DrawBoxCommand command"));
+			Assert.NotNull(symbol);
+			Assert.Equal(ToolingSymbolKind.Struct, symbol!.Kind);
+
+			var definition = Assert.Single(x.Snapshot.GetDefinitions(symbol.SymbolId));
+			Assert.Equal(x.Project.GetDocumentId("Types.cvl"), definition.DocumentId);
+			Assert.Equal("DrawBoxCommand", x.Snapshot.GetDocument(definition.DocumentId).Text.GetText(definition.SelectionSpan));
+		}
+	}
+
 	[Fact]
 	public void StructFieldMember_ResolvesToFieldDeclaration()
 	{

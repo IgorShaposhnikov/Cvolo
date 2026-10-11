@@ -2,6 +2,7 @@ using Cvolo.Analysis.Symbols.Base;
 using Cvolo.Analysis.Symbols.Structs;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.Diagnostics;
+using static System.Net.Mime.MediaTypeNames;
 
 namespace Cvolo.Analysis.Passes.Validation;
 
