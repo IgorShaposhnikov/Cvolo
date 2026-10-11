@@ -1,6 +1,6 @@
 // INC A / A7: [NoAlias] on an unbound reference parameter must be recognized.
 // Expected: ACCEPT, output 42; emitted LLVM parameter carries 'noalias'.
-// Scope: checks attribute validation and emission, NOT call-site noalias proof.
+// Scope: attribute validation and emission, plus explicit unsafe call boundary.
 using System;
 
 unbound void Set([NoAlias] refvar int target)
@@ -12,7 +12,12 @@ int Main()
 {
     var int value = 0;
 
-    Set(refvar value);
+    // [NoAlias] is an optimizer promise: the call must be made explicitly unsafe.
+    // The local value has no competing alias in this test.
+    unsafe
+    {
+        Set(refvar value);
+    }
     Console.WriteLine(value);
 
     return 0;

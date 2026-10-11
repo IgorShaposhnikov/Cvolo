@@ -1,0 +1,17 @@
+// INC A / A7: an explicit LLVM noalias promise must not be callable from safe.
+// Expected: REJECT CVL1014 at the call, even for a single reference parameter.
+// Reason: a single pointer may also alias global or previously escaped storage.
+
+unbound void Set([NoAlias] refvar int target)
+{
+    target = 42;
+}
+
+int Main()
+{
+    var int value = 0;
+
+    // REJECT: safe code cannot assume the optimization precondition.
+    Set(refvar value);
+    return 0;
+}

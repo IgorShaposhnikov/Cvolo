@@ -1,0 +1,19 @@
+// INC A / A7: overlapping mutable references violate an explicit noalias contract.
+// Expected: REJECT CVL1014 at the call site (not a runtime check).
+// The safety gate is independent of the legacy exclusive-borrow checker.
+
+[NoAlias]
+unbound void SetBoth(refvar int first, refvar int second)
+{
+    first = 20;
+    second = 22;
+}
+
+int Main()
+{
+    var int value = 0;
+
+    // REJECT: both parameters refer to the same cell; safe cannot assert noalias.
+    SetBoth(refvar value, refvar value);
+    return 0;
+}

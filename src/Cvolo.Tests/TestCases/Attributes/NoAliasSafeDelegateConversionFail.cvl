@@ -1,0 +1,17 @@
+// INC A / A7: safe function-group conversion must not erase noalias preconditions.
+// Expected: REJECT CVL1015 at the conversion from Set to Setter.
+// A safe delegate could otherwise escape and invoke the function later.
+
+delegate void Setter(refvar int target);
+
+unbound void Set([NoAlias] refvar int target)
+{
+    target = 42;
+}
+
+int Main()
+{
+    // REJECT: creating a safe delegate would lose [NoAlias] at indirect calls.
+    Setter callback = Set;
+    return 0;
+}

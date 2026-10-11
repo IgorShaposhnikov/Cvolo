@@ -1,0 +1,18 @@
+// INC A / A7: [UnsafeBody] hides implementation details, not noalias preconditions.
+// Expected: REJECT CVL1014. The caller must explicitly enter unsafe.
+
+[UnsafeBody]
+[NoAlias]
+void Set(refvar int target)
+{
+    target = 42;
+}
+
+int Main()
+{
+    var int value = 0;
+
+    // REJECT: [NoAlias] remains a caller-side contract after [UnsafeBody].
+    Set(refvar value);
+    return 0;
+}

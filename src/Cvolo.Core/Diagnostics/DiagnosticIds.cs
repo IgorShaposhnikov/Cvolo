@@ -43,6 +43,12 @@ public static class DiagnosticIds
 
 	/// <summary>'unbound' modifier on a function with no ref/refvar parameters.</summary>
 	public const string UnboundNoRefParams = "CVL1010";
+
+	/// <summary>Calling a function with an explicit LLVM noalias contract requires unsafe capability.</summary>
+	public const string NoAliasCallRequiresUnsafe = "CVL1014";
+
+	/// <summary>A safe delegate cannot hide the unsafe precondition of an explicit noalias function.</summary>
+	public const string NoAliasSafeDelegateConversion = "CVL1015";
 	/// <summary>Auto-inference chose mutability for an unmarked extension method.</summary>
 	public const string AutoInferMutationWarning = "CVL1011";
 
@@ -1378,8 +1384,6 @@ public static class DiagnosticIds
 	/// </summary>
 	public const string UnknownAliasedMoveAssignment = "CVL4218";
 
-	/// <summary>
-	/// A generic aggregate initializer omitted mandatory explicit type arguments.
-	/// </summary>
+	/// <summary>A generic aggregate initializer omitted mandatory explicit type arguments.</summary>
 	public const string GenericInitializerRequiresTypeArguments = "CVL4219";
 }

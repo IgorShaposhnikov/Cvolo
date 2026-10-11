@@ -505,6 +505,20 @@ internal sealed class ExpressionValidator(
 					// API (form B) and are exempt, as are calls already inside an unsafe context.
 					// Enforce CVL1009: Calling a raw 'unsafe function' from code that is not in an unsafe context
 					// Note: [UnsafeBody] functions are encapsulated and exempt from this call-site restriction.
+					if (func.RequiresNoAliasPrecondition
+						&& (func.SafetyTier != SafetyTier.Unsafe || func.IsUnsafeBody))
+					{
+						// LLVM 'noalias' is a semantic promise, including possible accesses through
+						// globals or escaped aliases. Merely comparing argument expressions does
+						// not prove that promise. A caller must explicitly assume it in unsafe code.
+						_validation.RequireUnsafe(
+							context,
+							call,
+							UnsafeUsageKind.NoAliasContractCall,
+							$"Calling '{call.FunctionName}' with [NoAlias] reference parameters requires an unsafe context; the caller must guarantee LLVM noalias preconditions.",
+							DiagnosticIds.NoAliasCallRequiresUnsafe);
+					}
+
 					if (func.SafetyTier == SafetyTier.Unsafe && !func.IsUnsafeBody)
 					{
 						var isNativeAbiCall = func.IsNativeAbi;
@@ -2141,16 +2155,16 @@ internal sealed class ExpressionValidator(
 		switch (expression)
 		{
 			case IdentifierExpressionSyntax identifier:
-				{
-					var symbol = scope.Lookup(identifier.Name) as VariableSymbol
-						?? context.ResolveGlobalReference(identifier.Name, out _);
-					if (symbol is null && identifier.Name == "this")
-						symbol = scope.Lookup("this") as VariableSymbol;
-					if (symbol is null)
-						return false;
-					return symbol.Type is PointerTypeSymbol reference
-						? !reference.IsMutable : symbol.IsExplicitVal;
-				}
+			{
+				var symbol = scope.Lookup(identifier.Name) as VariableSymbol
+					?? context.ResolveGlobalReference(identifier.Name, out _);
+				if (symbol is null && identifier.Name == "this")
+					symbol = scope.Lookup("this") as VariableSymbol;
+				if (symbol is null)
+					return false;
+				return symbol.Type is PointerTypeSymbol reference
+					? !reference.IsMutable : symbol.IsExplicitVal;
+			}
 			case MemberAccessExpressionSyntax member:
 				return IsExplicitReadOnlyPath(member.Expression, scope);
 			case IndexExpressionSyntax index:
@@ -2905,6 +2919,17 @@ internal sealed class ExpressionValidator(
 			context.Diagnostics.Report(currentFileContext, groupRef.Span,
 				"Receiver delegation via 'refvar this' is unsupported for bound-method delegates.",
 				DiagnosticIds.RefvarThisDelegation);
+			return;
+		}
+
+		if (!delegateType.IsNative && selected.RequiresNoAliasPrecondition)
+		{
+			// A safe delegate can be stored and invoked after construction. Checking
+			// only the conversion site's unsafe depth would silently erase the
+			// [NoAlias] precondition at all later indirect calls.
+			context.Diagnostics.Report(currentFileContext, groupRef.Span,
+				"A function with [NoAlias] reference parameters cannot be converted to a safe delegate; its caller must satisfy an unsafe noalias contract.",
+				DiagnosticIds.NoAliasSafeDelegateConversion);
 			return;
 		}
 

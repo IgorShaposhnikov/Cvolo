@@ -1,4 +1,5 @@
 using Cvolo.Analysis.Symbols.Base;
+using Cvolo.Analysis.Symbols.Structs;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
 
@@ -65,6 +66,21 @@ public sealed class FunctionSymbol(
 	/// Intrinsic [NoAlias] marker - emitter attaches LLVM noalias to reference params (unbound/unsafe tiers).
 	/// </summary>
 	public bool IsNoAlias { get; set; }
+
+	/// <summary>
+	/// Whether the given parameter receives an explicit LLVM noalias promise.
+	/// Shared by call-site validation and LLVM emission so a newly supported
+	/// pointer kind cannot silently bypass the unsafe precondition.
+	/// </summary>
+	public bool EmitsNoAliasFor(ParameterSymbol parameter) =>
+		(IsNoAlias || parameter.IsNoAlias)
+		&& parameter.Type is (PointerTypeSymbol or RawPointerTypeSymbol);
+
+	/// <summary>
+	/// An explicit noalias pointer promise is an unsafe calling precondition,
+	/// including when the function body is hidden behind [UnsafeBody].
+	/// </summary>
+	public bool RequiresNoAliasPrecondition => Parameters.Any(EmitsNoAliasFor);
 
 	/// <summary>
 	/// Target LLVM intrinsic name when decorated with [Intrinsic("llvm.name")].

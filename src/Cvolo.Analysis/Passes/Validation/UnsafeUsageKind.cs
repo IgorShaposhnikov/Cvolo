@@ -37,6 +37,9 @@ internal enum UnsafeUsageKind
 	/// <summary>Call to a raw <c>unsafe fn</c> that is not an encapsulated <c>[UnsafeBody]</c>.</summary>
 	RawUnsafeCall,
 
+	/// <summary>Invocation requiring the explicit LLVM noalias pointer precondition.</summary>
+	NoAliasContractCall,
+
 	/// <summary>Indexing through a raw pointer.</summary>
 	RawPointerIndex,
 

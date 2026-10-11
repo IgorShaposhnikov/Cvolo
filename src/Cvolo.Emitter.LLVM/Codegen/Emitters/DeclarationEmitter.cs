@@ -486,8 +486,9 @@ internal sealed class DeclarationEmitter(
 
 			for (var i = 0; i < symbol.Parameters.Count; i++)
 			{
-				if ((symbol.IsNoAlias || symbol.Parameters[i].IsNoAlias)
-					&& symbol.Parameters[i].Type is PointerTypeSymbol or RawPointerTypeSymbol)
+				// Emit exactly the promise that validation gates at direct calls
+				// and safe function-group conversions.
+				if (symbol.EmitsNoAliasFor(symbol.Parameters[i]))
 				{
 					AddStringAttribute(llvmFunction, (LLVMAttributeIndex)(i + 1 + (nativePlan?.HasSRet == true ? 1 : 0)), "noalias");
 				}

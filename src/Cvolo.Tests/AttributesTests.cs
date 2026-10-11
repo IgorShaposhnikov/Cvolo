@@ -301,6 +301,59 @@ public sealed class AttributesTests : CompilerTestBase
 		Assert.Contains("42", runStdout);
 	}
 
+	/// <summary>
+	/// An explicit [NoAlias] parameter or function contract cannot be assumed by a
+	/// safe call. Even a single pointer could alias storage reachable elsewhere.
+	/// </summary>
+	[Theory]
+	[InlineData("NoAliasSafeSingleCallFail")]
+	[InlineData("NoAliasSafeOverlappingArgsFail")]
+	[InlineData("NoAliasSafeUnsafeBodyCallFail")]
+	public void NoAlias_Safe_Call_Requires_Explicit_Unsafe(string caseName)
+	{
+		var fileName = $"Attributes/{caseName}.cvl";
+		var (exitCode, _, stderr) = RunCompiler(fileName);
+
+		Assert.Equal(1, exitCode);
+		Assert.Contains("CVL1014", stderr);
+		Assert.Contains("requires an unsafe context", stderr);
+	}
+
+	/// <summary>
+	/// A safe delegate cannot store a function with an implicit noalias promise;
+	/// otherwise future delegate invocations could bypass the call-site gate.
+	/// </summary>
+	[Theory]
+	[InlineData("NoAliasSafeDelegateConversionFail")]
+	[InlineData("NoAliasUnsafeDelegateConversionFail")]
+	public void NoAlias_Safe_Delegate_Conversion_Is_Rejected(string caseName)
+	{
+		var fileName = $"Attributes/{caseName}.cvl";
+		var (exitCode, _, stderr) = RunCompiler(fileName);
+
+		Assert.Equal(1, exitCode);
+		Assert.Contains("CVL1015", stderr);
+	}
+
+	/// <summary>
+	/// Valid disjoint local references are a deliberate unsafe assertion. Compare
+	/// output at different optimization levels so LLVM's noalias promise cannot
+	/// silently change observable writes.
+	/// </summary>
+	[Theory]
+	[InlineData("-O0")]
+	[InlineData("-O3")]
+	public void NoAlias_Unsafe_Disjoint_Pointers_Run_At_All_Optimization_Levels(string optimization)
+	{
+		const string fileName = "Attributes/NoAliasUnsafeDisjointArgs.cvl";
+		var (exitCode, stdout, stderr) = RunCompiler(fileName, optimization);
+		AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
+
+		var (runCode, runStdout) = ExecuteBinary("NoAliasUnsafeDisjointArgs", "Attributes");
+		Assert.Equal(0, runCode);
+		Assert.Contains("42", runStdout);
+	}
+
 	[Theory]
 	[InlineData("NoAliasOnFunctionFail", "Attribute '[NoAlias]' cannot be applied in Safe context.")]
 	[InlineData("ParamAttrContextFail", "Attribute '[NoAlias]' cannot be applied in Safe context.")]

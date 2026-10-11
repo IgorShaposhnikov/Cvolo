@@ -1,0 +1,21 @@
+// INC A / A7: entering unsafe at conversion must not make a safe delegate sound.
+// Expected: REJECT CVL1015 even inside an unsafe block.
+// The resulting delegate could escape and later be invoked from safe code.
+
+delegate void Setter(refvar int target);
+
+unbound void Set([NoAlias] refvar int target)
+{
+    target = 42;
+}
+
+int Main()
+{
+    unsafe
+    {
+        // REJECT: a safe delegate cannot carry the noalias precondition.
+        Setter callback = Set;
+    }
+
+    return 0;
+}

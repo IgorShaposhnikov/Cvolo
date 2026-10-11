@@ -1,0 +1,27 @@
+// INC A / A7: an explicit unsafe call may assert a sound noalias contract.
+// Expected: ACCEPT, output "42" under both -O0 and -O3.
+// The two reference arguments point to distinct non-escaped local cells.
+
+using System;
+
+[NoAlias]
+unbound void SetBoth(refvar int first, refvar int second)
+{
+    first = 20;
+    second = 22;
+}
+
+int Main()
+{
+    var int left = 0;
+    var int right = 0;
+
+    // ACCEPT: the caller deliberately guarantees non-overlapping storage.
+    unsafe
+    {
+        SetBoth(refvar left, refvar right);
+    }
+
+    Console.WriteLine(left + right);
+    return 0;
+}
