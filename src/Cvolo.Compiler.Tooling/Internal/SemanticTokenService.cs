@@ -48,7 +48,7 @@ internal static class SemanticTokenService
 					if (position < 0)
 						continue;
 
-					var resolved = CompletionQuery.ResolveSymbol(analysis.BinderContext, unit, position);
+					var resolved = CompletionQuery.ResolveSymbol(analysis.BinderContext, unit, position, includeDocumentationAndType: false);
 					if (resolved is null)
 						continue;
 

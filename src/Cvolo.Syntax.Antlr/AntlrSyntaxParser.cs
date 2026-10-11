@@ -1183,8 +1183,17 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			context.finallyClause() is { } finallyCtx ? BuildBlockStatement(finallyCtx.blockStatement()) : null);
 	}
 
-	private ExpressionSyntax BuildExpression(CvoloParser.ExpressionContext context)
+	private ExpressionSyntax BuildExpression(CvoloParser.ExpressionContext? context)
 	{
+		// ANTLR error recovery can leave an expression child null while the enclosing statement is
+		// still being built (a bare identifier on its own line, an unfinished ternary `x ?`, an
+		// unfinished `x ??`). Building it unconditionally used to throw, which dropped the whole
+		// document's parse unit and wiped its semantic tokens and codelens. Synthesize a
+		// zero-length placeholder so the AST stays well-formed and the analyzer recovers until the
+		// missing expression is typed in.
+		if (context is null)
+			return new IdentifierExpressionSyntax(new TextSpan(0, 0), "");
+
 		switch (context)
 		{
 			case CvoloParser.StringLiteralExpressionContext strCtx:
@@ -1649,9 +1658,9 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				}
 			case CvoloParser.TernaryExpressionContext ternaryCtx:
 				{
-					var cond = BuildExpression(ternaryCtx.expression(0));
-					var thenExpr = BuildExpression(ternaryCtx.expression(1));
-					var elseExpr = BuildExpression(ternaryCtx.expression(2));
+					var cond = BuildOptionalOperand(ternaryCtx.expression(0), ternaryCtx);
+					var thenExpr = BuildOptionalOperand(ternaryCtx.expression(1), ternaryCtx);
+					var elseExpr = BuildOptionalOperand(ternaryCtx.expression(2), ternaryCtx);
 					return new TernaryExpressionSyntax(SpanOf(ternaryCtx), cond, thenExpr, elseExpr);
 				}
 			case CvoloParser.VoidLiteralExpressionContext voidCtx:
@@ -1738,8 +1747,8 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 	private ExpressionSyntax BuildCoalesceExpression(CvoloParser.OptionCoalescingExpressionContext context)
 	{
 		var leftContext = context.expression(0);
-		var left = BuildExpression(leftContext);
-		var right = BuildExpression(context.expression(1));
+		var left = BuildOptionalOperand(leftContext, context);
+		var right = BuildOptionalOperand(context.expression(1), context);
 
 		// Only a chain the grammar nested on its own is rotated; a parenthesized grouping is not.
 		if (leftContext is CvoloParser.OptionCoalescingExpressionContext && left is CoalesceExpressionSyntax inner)
@@ -1751,6 +1760,21 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		}
 
 		return new CoalesceExpressionSyntax(SpanOf(context), left, right);
+	}
+
+	// A ternary (`x ? y : z`) or option fallback (`x ?? y`) can be typed while the operator's other
+	// operands are still missing. ANTLR then reports no ExpressionContext for the not-yet-typed
+	// operand, and building it unconditionally used to throw (a NullReferenceException walking a null
+	// context), which dropped the whole document's parse unit and wiped its semantic tokens and
+	// codelens. Synthesize a zero-length placeholder so the AST stays well-formed and the analyzer
+	// recovers until the operand is typed.
+	private ExpressionSyntax BuildOptionalOperand(CvoloParser.ExpressionContext? operand, ParserRuleContext owner)
+	{
+		if (operand is { } ctx)
+			return BuildExpression(ctx);
+
+		var end = owner.Stop?.StopIndex ?? owner.Start?.StartIndex ?? -1;
+		return new IdentifierExpressionSyntax(new TextSpan(Math.Max(0, end + 1), 0), "");
 	}
 
 	private static string DecodeRawString(string text)
@@ -1881,12 +1905,18 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 
 	private VariableDeclarationSyntax BuildVariableDeclaration(CvoloParser.VariableDeclarationContext context)
 	{
+		// During error recovery ANTLR can hand back a variableDeclaration whose children are
+		// missing (a lone `W` on its own line is re-parsed as `W <next statement>`). The name and
+		// expression are therefore guarded; the empty name resolves to no symbol, so the analyzer
+		// recovers and the document keeps its semantic tokens and codelens until the edit is fixed.
+		var identifierOverride = context.Identifier()?.GetText() ?? "";
+
 		if (context.LPAREN() is not null)
 		{
 			var isMutable = context.VAR() is not null;
 			var typeCtx = context.type();
 			var baseTypeName = GetTypeName(typeCtx);
-			var name = context.Identifier().GetText();
+			var name = identifierOverride;
 
 			ExpressionSyntax valueExpr;
 			if (context.parenFieldInitializerList() is { } listCtx)
@@ -1935,21 +1965,21 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 
 		if (context.REFVAR() is not null)
 		{
-			var refVarName = context.Identifier().GetText();
+			var refVarName = identifierOverride;
 			var refVarExpr = BuildExpression(context.expression());
 			return new VariableDeclarationSyntax(SpanOf(context), isMutable: true, "refvar", refVarName, refVarExpr);
 		}
 
 		if (context.REF() is not null)
 		{
-			var refName = context.Identifier().GetText();
+			var refName = identifierOverride;
 			var refExpr = BuildExpression(context.expression());
 			return new VariableDeclarationSyntax(SpanOf(context), isMutable: false, "ref", refName, refExpr);
 		}
 
 		var isVarMutable = context.VAR() is not null;
 		var type = context.type() is not null ? GetTypeName(context.type()) : null;
-		var standardName = context.Identifier().GetText();
+		var standardName = identifierOverride;
 
 		ExpressionSyntax? initializer = null;
 		if (context.expression() is { } expr)

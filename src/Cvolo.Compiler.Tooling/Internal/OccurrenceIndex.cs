@@ -19,9 +19,10 @@ internal readonly record struct Occurrence(DocumentId DocumentId, TextSpan Span,
 /// <para>
 /// Candidate occurrences are discovered lexically, but an occurrence is only accepted once a
 /// compiler-backed resolver binds it, so comments, strings and unrelated same-spelling identifiers
-/// are never counted. Two resolvers are consulted in one pass: the navigation index, which covers
-/// every symbol the editor can navigate to, and then the binder, which is what reaches locals and
-/// parameters. Those two have no <see cref="SymbolId"/>, so they are keyed by their declaration node.
+/// are never counted. Every identifier is resolved exactly once through a lean resolution (no
+/// documentation/type enrichment, which hover-grade paths pay but a whole-project pass must not);
+/// symbols the navigation index covers yield <see cref="SymbolId"/> occurrences, while locals and
+/// parameters — which have no <see cref="SymbolId"/> — are keyed by their declaration node.
 /// </para>
 /// </summary>
 internal sealed class OccurrenceIndex
@@ -61,6 +62,124 @@ internal sealed class OccurrenceIndex
 		var bySymbol = new Dictionary<SymbolId, List<Occurrence>>();
 		var symbolOfDeclaration = new Dictionary<SyntaxNode, SymbolId>(ReferenceEqualityComparer.Instance);
 		var byDeclaration = new Dictionary<SyntaxNode, List<Occurrence>>(ReferenceEqualityComparer.Instance);
+var seen = new HashSet<(DocumentId DocumentId, int Start, int Length)>();
+
+			foreach (var documentId in snapshot.DocumentIds)
+			{
+				var document = snapshot.GetDocument(documentId);
+				var text = document.Text;
+				var source = text.ToString();
+
+			foreach (var token in IdentifierTokens(source))
+			{
+				var navigable = navigation.LookupOccurrence(documentId, token.StartIndex, out var resolved);
+				if (navigable is not null)
+				{
+					var span = navigable.SubjectSpan;
+					if (span.Length <= 0 || span.Start < 0 || span.End > text.Length)
+						continue;
+
+					if (!seen.Add((documentId, span.Start, span.Length)))
+						continue;
+
+					if (!bySymbol.TryGetValue(navigable.SymbolId, out var occurrences))
+					{
+						occurrences = [];
+						bySymbol[navigable.SymbolId] = occurrences;
+					}
+
+					var isDeclaration = declarationStarts.TryGetValue(navigable.SymbolId, out var starts)
+						&& starts.Contains((documentId, span.Start));
+
+					occurrences.Add(new Occurrence(documentId, span, isDeclaration));
+					symbolOfDeclaration.TryAdd(navigation.Declaration(navigable.SymbolId), navigable.SymbolId);
+					continue;
+				}
+
+				// The navigation index has no entry for a local or a parameter, but the binder still
+				// resolves them, and the editor highlights them. The same lean resolve above already
+				// reached them, so no second resolution is needed.
+				if (context is null
+					|| !analysis.UnitsByDocument.TryGetValue(documentId, out var unit)
+					|| unit is null
+					|| resolved is null
+					|| resolved.Declaration is not VariableDeclarationSyntax and not ParameterSyntax)
+				{
+					continue;
+				}
+
+				var localSpan = resolved.SubjectSpan;
+				if (localSpan.Length <= 0 || localSpan.Start < 0 || localSpan.End > text.Length)
+					continue;
+
+				if (!seen.Add((documentId, localSpan.Start, localSpan.Length)))
+					continue;
+
+				if (!byDeclaration.TryGetValue(resolved.Declaration, out var localOccurrences))
+				{
+					localOccurrences = [];
+					byDeclaration[resolved.Declaration] = localOccurrences;
+				}
+
+				localOccurrences.Add(new Occurrence(
+					documentId,
+					new TextSpan(localSpan.Start, localSpan.Length),
+					IsNameOf(resolved.Declaration, source, localSpan)));
+			}
+		}
+
+		return new OccurrenceIndex(bySymbol, symbolOfDeclaration, byDeclaration);
+	}
+
+	/// <summary>
+	/// One symbol whose reference count a CodeLens shows. The name is the plain identifier spelling
+	/// the declaration uses, so candidate use sites can be found textually before any symbol
+	/// resolution is attempted.
+	/// </summary>
+	internal readonly record struct ReferenceCountTarget(SymbolId Symbol, string Name);
+
+	/// <summary>
+	/// Reference counts for a small set of requested symbols (the declarations of one edited
+	/// document). Unlike <see cref="Build"/>, which resolves every identifier in every document to
+	/// serve whole-project queries such as highlights, this resolves only tokens whose spelling
+	/// could be a use of one of the requested names, so CodeLens stays interactive even when the
+	/// project drags in tens of thousands of generated identifiers.
+	/// <para>
+	/// A generic declaration's type parameters are references to the generic symbol itself, so a
+	/// parameter name such as <c>T</c> is a candidate too; the accepted counts stay identical to
+	/// <see cref="ReferenceRenameService.GetReferences"/> because every candidate is confirmed with
+	/// the same full <see cref="NavigationIndex.Lookup"/> and the same declaration-span exclusion
+	/// that Find All References uses.
+	/// </para>
+	/// </summary>
+	internal static IReadOnlyDictionary<SymbolId, int> ReferenceCounts(
+		ProjectSnapshot snapshot,
+		NavigationIndex navigation,
+		IReadOnlyList<ReferenceCountTarget> targets)
+	{
+		var bySymbol = new Dictionary<SymbolId, ReferenceCountTarget>();
+		var candidateNames = new HashSet<string>(StringComparer.Ordinal);
+		var definitionSpans = new Dictionary<SymbolId, HashSet<(DocumentId DocumentId, TextSpan Span)>>();
+
+		foreach (var target in targets)
+		{
+			if (string.IsNullOrEmpty(target.Name))
+				continue;
+
+			bySymbol[target.Symbol] = target;
+			candidateNames.Add(target.Name);
+			foreach (var parameter in GenericParameterNames(navigation.Declaration(target.Symbol)))
+				candidateNames.Add(parameter);
+
+			if (!definitionSpans.ContainsKey(target.Symbol))
+			{
+				definitionSpans[target.Symbol] = navigation.Definitions(target.Symbol)
+					.Select(definition => (definition.DocumentId, definition.SelectionSpan))
+					.ToHashSet();
+			}
+		}
+
+		var counts = new Dictionary<SymbolId, int>();
 		var seen = new HashSet<(DocumentId DocumentId, int Start, int Length)>();
 
 		foreach (var documentId in snapshot.DocumentIds)
@@ -71,70 +190,46 @@ internal sealed class OccurrenceIndex
 
 			foreach (var token in IdentifierTokens(source))
 			{
+				if (!candidateNames.Contains(token.Text))
+					continue;
+
 				var resolved = navigation.Lookup(documentId, token.StartIndex);
-				if (resolved is not null)
-				{
-					var span = resolved.SubjectSpan;
-					if (span.Length <= 0 || span.Start < 0 || span.End > text.Length)
-						continue;
-
-					if (!seen.Add((documentId, span.Start, span.Length)))
-						continue;
-
-					if (!bySymbol.TryGetValue(resolved.SymbolId, out var occurrences))
-					{
-						occurrences = [];
-						bySymbol[resolved.SymbolId] = occurrences;
-					}
-
-					var isDeclaration = declarationStarts.TryGetValue(resolved.SymbolId, out var starts)
-						&& starts.Contains((documentId, span.Start));
-
-					occurrences.Add(new Occurrence(documentId, span, isDeclaration));
-					symbolOfDeclaration.TryAdd(navigation.Declaration(resolved.SymbolId), resolved.SymbolId);
+				if (resolved is null || !bySymbol.ContainsKey(resolved.SymbolId))
 					continue;
-				}
 
-				// The navigation index has no entry for a local or a parameter, but the binder still
-				// resolves them, and the editor highlights them, so the second pass uses the binder.
-				if (context is null
-					|| !analysis.UnitsByDocument.TryGetValue(documentId, out var unit)
-					|| unit is null)
-				{
+				var span = resolved.SubjectSpan;
+				if (span.Length <= 0 || span.Start < 0 || span.End > text.Length)
 					continue;
-				}
 
-				lock (context)
-				{
-					if (CompletionQuery.ResolveSymbol(context, unit, token.StartIndex) is not { } local)
-						continue;
+				if (definitionSpans[resolved.SymbolId].Contains((documentId, span)))
+					continue;
 
-					if (local.Declaration is not VariableDeclarationSyntax and not ParameterSyntax)
-						continue;
+				if (!seen.Add((documentId, span.Start, span.Length)))
+					continue;
 
-					var localSpan = local.SubjectSpan;
-					if (localSpan.Length <= 0 || localSpan.Start < 0 || localSpan.End > text.Length)
-						continue;
-
-					if (!seen.Add((documentId, localSpan.Start, localSpan.Length)))
-						continue;
-
-					if (!byDeclaration.TryGetValue(local.Declaration, out var localOccurrences))
-					{
-						localOccurrences = [];
-						byDeclaration[local.Declaration] = localOccurrences;
-					}
-
-					localOccurrences.Add(new Occurrence(
-						documentId,
-						new TextSpan(localSpan.Start, localSpan.Length),
-						IsNameOf(local.Declaration, source, localSpan)));
-				}
+				counts[resolved.SymbolId] = counts.TryGetValue(resolved.SymbolId, out var count) ? count + 1 : 1;
 			}
 		}
 
-		return new OccurrenceIndex(bySymbol, symbolOfDeclaration, byDeclaration);
+		return counts;
 	}
+
+	/// <summary>
+	/// The declared generic parameter names of a declaration, which are additional spellings a use
+	/// of the declaration may take. Non-generic declarations contribute none.
+	/// </summary>
+	private static IReadOnlyList<string> GenericParameterNames(SyntaxNode? declaration) => declaration switch
+	{
+		FunctionDeclarationSyntax function => function.GenericParameters,
+		StructDeclarationSyntax structure => structure.GenericParameters,
+		UnionDeclarationSyntax union => union.GenericParameters,
+		InterfaceDeclarationSyntax @interface => @interface.GenericParameters,
+		ProtocolDeclarationSyntax protocol => protocol.GenericParameters,
+		DelegateDeclarationSyntax @delegate => @delegate.GenericParameters,
+		TypeAliasDeclarationSyntax alias => alias.GenericParameters,
+		ExtensionDeclarationSyntax extension => extension.GenericParameters,
+		_ => [],
+	};
 
 	/// <summary>
 	/// The number of references to <paramref name="symbol"/>, excluding its own declaration. Zero is

@@ -98,6 +98,16 @@ finally
 	/// state as completion. Returns null when no trustworthy symbol is resolved.
 	/// </summary>
 	public static ResolvedSymbol? ResolveSymbol(BindingContext context, CompilationUnitSyntax unit, int position)
+		=> ResolveSymbol(context, unit, position, includeDocumentationAndType: true);
+
+	/// <summary>
+	/// Resolves the semantic symbol bound at <paramref name="position"/> using the same binding
+	/// state as completion. Returns null when no trustworthy symbol is resolved. Callers that only
+	/// need the symbol's identity and kind (for example semantic-token classification) can pass
+	/// <paramref name="includeDocumentationAndType"/> as false to skip the documentation scan and
+	/// declared-type resolution that hover-grade results require.
+	/// </summary>
+	public static ResolvedSymbol? ResolveSymbol(BindingContext context, CompilationUnitSyntax unit, int position, bool includeDocumentationAndType)
 	{
 		ArgumentNullException.ThrowIfNull(context);
 		ArgumentNullException.ThrowIfNull(unit);
@@ -113,7 +123,7 @@ finally
 		{
 			var state = new QueryState(context, unit, position);
 			var visible = BuildVisibleScopeMap(state);
-			return SymbolResolver.Resolve(context, unit, position, visible);
+			return SymbolResolver.Resolve(context, unit, position, visible, includeDocumentationAndType);
 		}
 		finally
 		{
@@ -677,6 +687,12 @@ finally
 		var labels = new SortedSet<string>(StringComparer.Ordinal);
 		var currentNamespace = state.Context.CurrentNamespace;
 		var activeUsings = state.Context.GetActiveUsings(state.Unit);
+
+		// A namespace alias declared with `using Alias = Namespace;` is itself usable as the
+		// prefix of a qualified name (`Alias.Member`), so it is offered alongside declared
+		// namespaces. GetActiveUsings intentionally excludes aliases, hence the separate source.
+		foreach (var alias in state.Context.GetNamespaceAliases(state.Unit).Keys)
+			labels.Add(alias);
 
 		foreach (var declared in state.Context.DeclaredNamespaces)
 		{

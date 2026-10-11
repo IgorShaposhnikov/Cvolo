@@ -109,6 +109,38 @@ internal sealed class NavigationIndex
 	}
 
 	/// <summary>
+	/// A single lean (no documentation/type enrichment, no builtin-operator walk) symbol resolution
+	/// meant only for whole-project passes such as CodeLens reference counting, which resolve every
+	/// identifier in every document and would otherwise pay hover-grade enrichment per token. A
+	/// navigable symbol returns an entry exactly as in <see cref="Lookup"/>, while <paramref
+	/// name="resolved"/> additionally reaches locals and parameters, which the navigation index
+	/// never sees.
+	/// </summary>
+	internal SymbolLookupResult? LookupOccurrence(DocumentId document, int position, out ResolvedSymbol? resolved)
+	{
+		resolved = null;
+		if (_binderContext is null || !_analysis.UnitsByDocument.TryGetValue(document, out var unit) || unit is null)
+			return null;
+
+		lock (_binderContext)
+		{
+			resolved = CompletionQuery.ResolveSymbol(_binderContext, unit, position, includeDocumentationAndType: false);
+		}
+
+		if (resolved is null || !_byDeclaration.TryGetValue(resolved.Declaration, out var entry))
+			return null;
+
+		return new SymbolLookupResult(
+			entry.Id,
+			new TextSpan(resolved.SubjectSpan.Start, resolved.SubjectSpan.Length),
+			MapKind(resolved.Kind),
+			resolved.Name,
+			resolved.DisplayText,
+			resolved.Documentation,
+			NativeInteropFor(resolved.Declaration));
+	}
+
+	/// <summary>
 	/// The compiler-resolved type of the symbol at <paramref name="position"/>, when the
 	/// compiler's own binding proves one. This is the single place the type crosses from the
 	/// analysis layer into Tooling; callers must treat a null as "unavailable" rather than

@@ -39,6 +39,11 @@ internal sealed class AnalyzedProject
 /// </summary>
 internal static class BinderAdapter
 {
+	// Parsed AST units are shared across snapshots (see ParserAdapter's parse cache), and binding
+	// mutates a small, deterministic amount of node state. Serialize binding so two analyses never
+	// touch the same cached unit concurrently.
+	private static readonly object BindLock = new();
+
 	/// <summary>
 	/// Analyzes <paramref name="snapshot"/> by parsing all documents and binding the parsed units
 	/// (so the binder context is available to completion even when an unrelated document has parse
@@ -90,7 +95,10 @@ internal static class BinderAdapter
 
 			binder.Context.BaseSourcePaths.UnionWith(snapshot.BaseSourceFiles.Select(Path.GetFullPath));
 
-			binder.Bind(allUnits);
+			lock (BindLock)
+			{
+				binder.Bind(allUnits);
+			}
 			binderContext = binder.Context;
 
 			// Bind diagnostics are surfaced only when every document parsed cleanly, matching the

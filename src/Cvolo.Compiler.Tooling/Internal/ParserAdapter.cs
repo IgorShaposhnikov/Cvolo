@@ -10,6 +10,41 @@ namespace Cvolo.Compiler.Tooling.Internal;
 /// </summary>
 internal static class ParserAdapter
 {
+	// Parsing dominates a cold project analysis (all documents re-parsed). The tooling re-parses the
+	// whole snapshot on every edit and for each completion recovery probe, but only a single document
+	// actually changes between snapshots. Caching the parse by (path, text) lets unchanged documents
+	// reuse their AST unit and compilation context; the binder reads the parsed unit and only mutates
+	// it deterministically (ResolvedStructTypeName), so a cached unit is safe to re-bind.
+	private static readonly object CacheLock = new();
+	private static readonly Dictionary<(string FilePath, string Text), (CompilationUnitSyntax? Unit, DiagnosticBag Diagnostics)> ParseCache = new();
+	private const int ParseCacheLimit = 256;
+
+	private static (CompilationUnitSyntax? Unit, DiagnosticBag Diagnostics) ParseOne(string filePath, string text)
+	{
+		var key = (filePath, text);
+
+		lock (CacheLock)
+		{
+			if (ParseCache.TryGetValue(key, out var cached))
+				return cached;
+		}
+
+		var context = new CompilationContext(text, filePath);
+		var parser = new AntlrSyntaxParser();
+		var unit = parser.Parse(context);
+		var entry = (unit, parser.Diagnostics);
+
+		lock (CacheLock)
+		{
+			if (ParseCache.Count >= ParseCacheLimit)
+				ParseCache.Clear();
+
+			ParseCache[key] = entry;
+		}
+
+		return entry;
+	}
+
 	/// <summary>
 	/// Parses all <paramref name="documents"/> (one parser instance per document).
 	/// Returns the non-null AST units, the per-document unit map (null where a document failed to
@@ -29,9 +64,7 @@ internal static class ParserAdapter
 
 		foreach (var (docId, doc) in documents)
 		{
-			var context = new CompilationContext(doc.Text.ToString(), doc.FilePath);
-			var parser = new AntlrSyntaxParser();
-			var unit = parser.Parse(context);
+			var (unit, diagnostics) = ParseOne(doc.FilePath, doc.Text.ToString());
 
 			unitsByDocument[docId] = unit;
 
@@ -39,7 +72,7 @@ internal static class ParserAdapter
 				units.Add(unit);
 
 			allDiagnostics.AddRange(DiagnosticAdapter.ConvertDiagnostics(
-				parser.Diagnostics, docByFilePath));
+				diagnostics, docByFilePath));
 		}
 
 		return (units, unitsByDocument, allDiagnostics);

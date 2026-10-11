@@ -7,9 +7,9 @@ namespace Cvolo.Compiler.Tooling.Internal;
 
 /// <summary>
 /// Computes the editor CodeLens entries for a whole document in one batched pass. Reference counts
-/// come from the snapshot's single project-wide occurrence index, and layout comes from the
-/// compiler's authoritative layout service, so the numbers shown in the editor are the same numbers
-/// <c>sizeof</c>, <c>alignof</c> and <c>offsetof</c> report.
+/// are resolved lazily, one pass per requested symbol rather than one whole-project occurrence scan,
+/// and layout comes from the compiler's authoritative layout service, so the numbers shown in the
+/// editor are the same numbers <c>sizeof</c>, <c>alignof</c> and <c>offsetof</c> report.
 /// </summary>
 internal static class CodeLensService
 {
@@ -34,16 +34,39 @@ internal static class CodeLensService
 
 		var navigation = snapshot.GetNavigationIndex();
 		var context = snapshot.GetAnalysis().BinderContext;
-		var occurrences = context is null ? null : snapshot.GetOccurrenceIndex();
+		var symbols = TypeLayoutView.Flatten(navigation.DocumentSymbols(document.Id)).ToList();
+
+		// Reference counts are gathered for exactly the lenses this document will show: the whole
+		// occurrence index exists to serve whole-project queries such as highlights, and building it
+		// just to count a dozen names drags in every generated identifier in the project.
+		IReadOnlyDictionary<SymbolId, int> referenceCounts = new Dictionary<SymbolId, int>();
+		var referenceCountsAvailable = false;
+		if (options.References && context is not null)
+		{
+			var targets = new List<OccurrenceIndex.ReferenceCountTarget>(symbols.Count);
+			foreach (var (symbol, _) in symbols)
+			{
+				if (!ShouldShowReferences(options, symbol.Kind, navigation.Declaration(symbol.SymbolId)))
+					continue;
+
+				targets.Add(new OccurrenceIndex.ReferenceCountTarget(
+					symbol.SymbolId,
+					symbol.Name));
+			}
+
+			referenceCounts = OccurrenceIndex.ReferenceCounts(snapshot, navigation, targets);
+			referenceCountsAvailable = true;
+		}
+
 		var result = new List<ToolingCodeLensInfo>();
 
-		foreach (var (symbol, owner) in TypeLayoutView.Flatten(navigation.DocumentSymbols(document.Id)))
+		foreach (var (symbol, owner) in symbols)
 		{
 			var declaration = navigation.Declaration(symbol.SymbolId);
 
-			if (options.References && occurrences is not null && ShouldShowReferences(options, symbol.Kind, declaration))
+			if (options.References && referenceCountsAvailable && ShouldShowReferences(options, symbol.Kind, declaration))
 			{
-				var count = occurrences.ReferenceCount(symbol.SymbolId);
+				var count = referenceCounts.TryGetValue(symbol.SymbolId, out var found) ? found : 0;
 				result.Add(new ToolingCodeLensInfo(
 					symbol.SelectionSpan,
 					ToolingCodeLensKind.References,

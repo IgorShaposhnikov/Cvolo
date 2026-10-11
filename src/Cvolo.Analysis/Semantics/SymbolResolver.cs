@@ -23,7 +23,8 @@ internal static class SymbolResolver
 		BindingContext context,
 		CompilationUnitSyntax unit,
 		int position,
-		Dictionary<string, ScopedVariable> visible)
+		Dictionary<string, ScopedVariable> visible,
+		bool includeDocumentationAndType = true)
 	{
 		var source = unit.Context.Source;
 		var index = DeclarationIndex.For(context);
@@ -57,11 +58,13 @@ internal static class SymbolResolver
 
 		return result is null
 			? null
-			: result with
-			{
-				Documentation = ExtractDocumentation(DeclaringSource(context, result.Declaration, source), result.Declaration.Span.Start),
-				ResolvedType = TypeOf(context, visible, result.Declaration),
-			};
+			: includeDocumentationAndType
+				? result with
+				{
+					Documentation = ExtractDocumentation(DeclaringSource(context, result.Declaration, source), result.Declaration.Span.Start),
+					ResolvedType = TypeOf(context, visible, result.Declaration),
+				}
+				: result;
 	}
 
 	/// <summary>
@@ -588,12 +591,30 @@ internal static class SymbolResolver
 					return dottedVariant;
 			}
 
+			// The receiver may be a single namespace segment — a bare namespace or a bare
+			// namespace alias such as `GL` in `GL.ColorBufferBit` — so the whole dotted name is
+			// the namespace path in that case. ResolveQualifiedGlobal already expands a bare
+			// alias through ResolveNamespacePathAlias, so it resolves `GL.ColorBufferBit` where
+			// the old `separator > 0` guard left the single-segment receiver unreachable.
 			var separator = dotted.LastIndexOf('.');
-			if (separator > 0 && context.ResolveQualifiedGlobal(dotted[..separator], memberName) is { } qualifiedGlobal)
+			var namespacePath = separator > 0 ? dotted[..separator] : dotted;
+			if (context.ResolveQualifiedGlobal(namespacePath, memberName) is { } qualifiedGlobal)
 			{
 				var declaration = FindGlobalDeclaration(context, qualifiedGlobal);
 				if (declaration is not null)
 					return new ResolvedSymbol(ResolvedSymbolKind.Global, memberName, null, subject, declaration, Display(declaration, qualifiedGlobal.Type.Name));
+			}
+
+			// A free function reached through a namespace path or a namespace alias, such as
+			// `Window.WindowHint(...)` where `using Window = GLFW;`. The receiver names a
+			// namespace, not a type, so the global-variable and associated-type paths above
+			// cannot resolve it; the compiler registers the callable in OverloadedFunctions
+			// under the alias-expanded mangled name.
+			var canonicalMemberName = context.ExpandNamespaceAlias(unit, $"{namespacePath}.{memberName}");
+			if (context.OverloadedFunctions.TryGetValue(canonicalMemberName, out var qualifiedOverloads) && qualifiedOverloads.Count > 0
+				&& index.FindFunction(qualifiedOverloads[0].Name) is { } qualifiedFunction)
+			{
+				return new ResolvedSymbol(ResolvedSymbolKind.Function, memberName, null, subject, qualifiedFunction, Display(qualifiedFunction, qualifiedOverloads[0].ReturnType.Name));
 			}
 
 			// A receiver written as a type name selects that type's callables. A member that

@@ -92,4 +92,46 @@ public sealed class ParserRecoveryTests
 		var completionPosition = text.IndexOf("val y", StringComparison.Ordinal) + "val ".Length;
 		Assert.NotEmpty(document.GetCompletions(completionPosition).Candidates);
 	}
+
+	[Fact]
+	public void IncompleteTernary_KeepsTheDocumentUnitAlive()
+	{
+		var (document, text) = Open("1 ? 2 :");
+
+		var tokens = Tokens(document);
+		Assert.Contains(tokens, token => token.Text == "Widget" && token.Kind == ToolingSymbolKind.Struct);
+		Assert.Contains(tokens, token => token.Text == "Make" && token.Kind == ToolingSymbolKind.AssociatedFunction);
+
+		var completionPosition = text.IndexOf("val y", StringComparison.Ordinal) + "val ".Length;
+		Assert.NotEmpty(document.GetCompletions(completionPosition).Candidates);
+	}
+
+	[Fact]
+	public void IncompleteCoalesce_KeepsTheDocumentUnitAlive()
+	{
+		var (document, text) = Open("1 ??");
+
+		var tokens = Tokens(document);
+		Assert.Contains(tokens, token => token.Text == "Widget" && token.Kind == ToolingSymbolKind.Struct);
+		Assert.Contains(tokens, token => token.Text == "Make" && token.Kind == ToolingSymbolKind.AssociatedFunction);
+
+		var completionPosition = text.IndexOf("val y", StringComparison.Ordinal) + "val ".Length;
+		Assert.NotEmpty(document.GetCompletions(completionPosition).Candidates);
+	}
+
+	[Fact]
+	public void BareIdentifierStatement_KeepsTheDocumentUnitAlive()
+	{
+		var text = Head + "\nint main() { W\n Widget.Make<int>(); val y = 1; return 0; }\n";
+		var fixture = TempProject.Create(("Main.cvl", text));
+		var project = CvoloWorkspace.Create().OpenProject(fixture.ProjectFilePath);
+		var document = project.InitialSnapshot.GetDocument(project.GetDocumentId("Main.cvl"));
+
+		var tokens = Tokens(document);
+		Assert.Contains(tokens, token => token.Text == "Widget" && token.Kind == ToolingSymbolKind.Struct);
+		Assert.Contains(tokens, token => token.Text == "Make" && token.Kind == ToolingSymbolKind.AssociatedFunction);
+
+		var completionPosition = text.IndexOf("val y", StringComparison.Ordinal) + "val ".Length;
+		Assert.NotEmpty(document.GetCompletions(completionPosition).Candidates);
+	}
 }

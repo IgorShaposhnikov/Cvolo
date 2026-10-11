@@ -123,4 +123,70 @@ public sealed class NamespaceAliasToolingTests
 		// The declaration target is the alias name only - never the target namespace text.
 		Assert.Equal("Native", document.Text.GetText(definition.SelectionSpan));
 	}
+
+	[Fact]
+	public void AliasCompletion_AtBarePrefix_OffersTheAliasItself()
+	{
+		var result = Complete(
+			"using Window = GLFW;\n" +
+			"namespace App;\n" +
+			"int main() { Win|; }\n",
+			("GLFW.cvl", "namespace GLFW;\npublic int Handle;\n"));
+
+		// A namespace alias is a usable prefix of a qualified name, so it must be offered
+		// alongside declared namespaces rather than only being reachable after `Alias.`.
+		Assert.True(Contains(result, "Window", CompletionKind.Namespace));
+	}
+
+	[Fact]
+	public void AliasNavigation_AtAliasedGlobal_GoesToTheGlobalDeclaration()
+	{
+		const string source =
+			"using GL = OpenGL;\n" +
+			"namespace App;\n" +
+			"int main() { return GL.ColorBufferBit; }\n";
+
+		using var fixture = TempProject.Create(
+			("Main.cvl", source),
+			("OpenGL.cvl", "namespace OpenGL;\npublic global uint ColorBufferBit = 0x00004000U;\n"));
+		var project = CvoloWorkspace.Create().OpenProject(fixture.ProjectFilePath);
+		var snapshot = project.InitialSnapshot;
+		var document = snapshot.GetDocument(project.GetDocumentId("Main.cvl"));
+
+		var position = At(source, "GL.ColorBufferBit") + "GL.".Length;
+		var symbol = document.GetSymbolAtPosition(position);
+		Assert.NotNull(symbol);
+		Assert.Equal(ToolingSymbolKind.Global, symbol!.Kind);
+
+		var definition = Assert.Single(snapshot.GetDefinitions(symbol.SymbolId));
+		Assert.Equal(
+			"ColorBufferBit",
+			snapshot.GetDocument(definition.DocumentId).Text.GetText(definition.SelectionSpan));
+	}
+
+	[Fact]
+	public void AliasNavigation_AtAliasedFreeFunction_GoesToTheFunctionDeclaration()
+	{
+		const string source =
+			"using Window = GLFW;\n" +
+			"namespace App;\n" +
+			"int main() { return Window.WindowHint(1, 2); }\n";
+
+		using var fixture = TempProject.Create(
+			("Main.cvl", source),
+			("GLFW.cvl", "namespace GLFW;\npublic int WindowHint(int hint, int value) { return hint + value; }\n"));
+		var project = CvoloWorkspace.Create().OpenProject(fixture.ProjectFilePath);
+		var snapshot = project.InitialSnapshot;
+		var document = snapshot.GetDocument(project.GetDocumentId("Main.cvl"));
+
+		var position = At(source, "Window.WindowHint") + "Window.".Length;
+		var symbol = document.GetSymbolAtPosition(position);
+		Assert.NotNull(symbol);
+		Assert.Equal(ToolingSymbolKind.Function, symbol!.Kind);
+
+		var definition = Assert.Single(snapshot.GetDefinitions(symbol.SymbolId));
+		Assert.Equal(
+			"WindowHint",
+			snapshot.GetDocument(definition.DocumentId).Text.GetText(definition.SelectionSpan));
+	}
 }
