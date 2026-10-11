@@ -1,0 +1,27 @@
+// INC A / A5: normal typed variables are not automatically read-only paths.
+// Expected: ACCEPT, output 42.
+// Regression: enforcing val/ref must not reject ordinary field or array writes.
+using System;
+
+struct Stats
+{
+    int Health;
+    int Armor;
+}
+
+int Main()
+{
+    // A typed binding without explicit 'val' supports ordinary mutation.
+    Stats player = Stats { Health: 20, Armor: 10 };
+    player.Health = 32;
+    player.Armor += 10;
+
+    // A fixed-array element is not inherently a read-only access path.
+    int[3] scores;
+    scores[0] = 10;
+    scores[1] = 12;
+    scores[2] = 10;
+
+    Console.WriteLine(player.Health + scores[0]);
+    return 0;
+}

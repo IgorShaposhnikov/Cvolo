@@ -131,10 +131,17 @@ internal sealed class FunctionDeclarationRegistrar(BindingContext context)
 			return;
 		}
 
+		// Attribute validation must use the callable's effective safety tier, including
+		// native ABI and [UnsafeBody]. Previously CreateParameter defaulted to Safe,
+		// incorrectly rejecting [NoAlias] on unbound/unsafe parameters.
+		var parameterTier = func.CallingConvention is not null ||
+			func.Attributes.Any(a => _attributes.NormalizeName(a.Name) == "UnsafeBody")
+			? SafetyTier.Unsafe
+			: func.Modifier ?? SafetyTier.Safe;
 		var parameters = new List<ParameterSymbol>();
 		foreach (var param in func.Parameters)
 		{
-			var paramSymbol = CreateParameter(param);
+			var paramSymbol = CreateParameter(param, parameterTier);
 			if (paramSymbol is null)
 			{
 				ReportDeclarationDiagnostic(param, $"Unknown parameter type '{param.Type}'", DiagnosticIds.UnknownParameterType);
@@ -219,7 +226,7 @@ internal sealed class FunctionDeclarationRegistrar(BindingContext context)
 		var suppressedWarnings = new List<string>();
 
 		_attributes.ApplyFunctionAttributes(
-			_attributes.Verify(func.Attributes, "Function", suppressedWarnings, safetyTier),
+			_attributes.Verify(func.Attributes, "Function", suppressedWarnings, parameterTier),
 			newSymbol,
 			suppressedWarnings,
 			func.Attributes);
@@ -287,7 +294,7 @@ internal sealed class FunctionDeclarationRegistrar(BindingContext context)
 	/// <summary>
 	/// Resolves a callable parameter type, validates its declaration attributes, and constructs its symbol.
 	/// </summary>
-	public ParameterSymbol? CreateParameter(ParameterSyntax param)
+	public ParameterSymbol? CreateParameter(ParameterSyntax param, SafetyTier safetyTier = SafetyTier.Safe)
 	{
 		var paramType = context.ResolveType(param.Type);
 		if (paramType is null)
@@ -295,7 +302,7 @@ internal sealed class FunctionDeclarationRegistrar(BindingContext context)
 
 		var symbol = new ParameterSymbol(param.Name, paramType);
 		var paramSuppressedWarnings = new List<string>();
-		if (_attributes.Verify(param.Attributes, "Parameter", paramSuppressedWarnings).Contains("NoAlias"))
+		if (_attributes.Verify(param.Attributes, "Parameter", paramSuppressedWarnings, safetyTier).Contains("NoAlias"))
 			symbol.IsNoAlias = true;
 
 		return symbol;
@@ -670,8 +677,8 @@ internal sealed class FunctionDeclarationRegistrar(BindingContext context)
 		var paramTypes = new List<TypeSymbol>();
 		foreach (var p in func.Parameters)
 		{
-			if (CreateParameter(p) is { } paramSymbol)
-				paramTypes.Add(paramSymbol.Type);
+			if (context.ResolveType(p.Type) is { } paramType)
+				paramTypes.Add(paramType);
 		}
 
 		var overloadedMangledName = context.GetOverloadedMangledName(mangledName, paramTypes);

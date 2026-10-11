@@ -1,0 +1,18 @@
+// INC A / A5: ref is read-only for elements reached through its fields.
+// Expected: REJECT - write through a ref parameter into a fixed array.
+// Regression: member + index access must preserve the read-only path.
+struct Box
+{
+    int[2] Values;
+}
+
+void Inspect(ref Box box)
+{
+    // REJECT: box.Values[0] is accessed through read-only 'box'.
+    box.Values[0] = 10;
+}
+
+int Main()
+{
+    return 0;
+}

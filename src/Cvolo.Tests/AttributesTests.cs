@@ -257,6 +257,50 @@ public sealed class AttributesTests : CompilerTestBase
 		Assert.DoesNotContain("!tbaa", stdout.Replace("\r\n", "\n"));
 	}
 
+	/// <summary>
+	/// INC A / A7: declarations with explicit noalias in unbound/unsafe tiers
+	/// must retain the attribute in emitted LLVM IR.
+	/// This does NOT test the noalias precondition at the call site.
+	/// </summary>
+	[Theory]
+	[InlineData("NoAliasParameterUnbound")]
+	[InlineData("NoAliasParameterUnsafe")]
+	[InlineData("NoAliasParameterUnsafeBody")]
+	[InlineData("NoAliasFunctionUnsafeBody")]
+	public void NoAlias_Parameter_Tier_Is_Accepted_And_Emits_LLVM_Attribute(string caseName)
+	{
+		var fileName = $"Attributes/{caseName}.cvl";
+		var (exitCode, ir, stderr) = RunCompiler(fileName, "--llvm", "--emit-ir", "-O0");
+		AssertCompilationSucceeded(exitCode, ir, stderr, fileName);
+
+		// Inspect the declared function, rather than checking compilation alone.
+		var functionName = caseName switch
+		{
+			"NoAliasParameterUnbound" => "Set",
+			"NoAliasParameterUnsafe" => "SetUnsafe",
+			_ => "SetUnsafeBody"
+		};
+
+		Assert.Contains($"@{functionName}", ir);
+		Assert.Contains("noalias", ir);
+	}
+
+	/// <summary>
+	/// INC A / A7: the unbound [NoAlias] declaration must also compile and
+	/// execute as an ordinary function call with the correct refvar qualifier.
+	/// </summary>
+	[Fact]
+	public void NoAlias_Unbound_Parameter_Accepts_And_Runs()
+	{
+		const string fileName = "Attributes/NoAliasParameterUnbound.cvl";
+		var (exitCode, stdout, stderr) = RunCompiler(fileName);
+		AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
+
+		var (runCode, runStdout) = ExecuteBinary("NoAliasParameterUnbound", "Attributes");
+		Assert.Equal(0, runCode);
+		Assert.Contains("42", runStdout);
+	}
+
 	[Theory]
 	[InlineData("NoAliasOnFunctionFail", "Attribute '[NoAlias]' cannot be applied in Safe context.")]
 	[InlineData("ParamAttrContextFail", "Attribute '[NoAlias]' cannot be applied in Safe context.")]

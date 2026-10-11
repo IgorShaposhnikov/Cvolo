@@ -224,7 +224,10 @@ public abstract class AstRewriterBase
 		if (node is VariableDeclarationSyntax varDecl)
 		{
 			var init = varDecl.Initializer != null ? (ExpressionSyntax)Rewrite(varDecl.Initializer) : null;
-			return new VariableDeclarationSyntax(varDecl.Span, varDecl.IsMutable, varDecl.Type, varDecl.Name, init);
+			// Preserve the source-level `val` qualifier across every AST rewrite.
+			// Dropping it makes nested-field writes through `val` invisible to validation.
+			return new VariableDeclarationSyntax(varDecl.Span, varDecl.IsMutable, varDecl.Type,
+				varDecl.Name, init, varDecl.IsExplicitVal);
 		}
 
 		if (node is CallExpressionSyntax call)

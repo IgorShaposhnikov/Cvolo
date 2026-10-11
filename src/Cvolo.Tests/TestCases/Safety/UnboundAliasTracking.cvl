@@ -1,0 +1,27 @@
+// INC A / A3/A7: unbound permits ordinary overlapping mutable borrows.
+// Expected: ACCEPT, output 42.
+// Regression: alias bookkeeping and safe-tier exclusivity are separate concerns.
+using System;
+
+unbound void Update(refvar int target)
+{
+    var int local = 0;
+
+    // Two writable aliases to the same local are permitted in unbound.
+    refvar left = refvar local;
+    refvar right = refvar local;
+
+    left = 10;
+    right = left + 32;
+    target = local;
+}
+
+int Main()
+{
+    var int value = 0;
+
+    Update(refvar value);
+    Console.WriteLine(value);
+
+    return 0;
+}

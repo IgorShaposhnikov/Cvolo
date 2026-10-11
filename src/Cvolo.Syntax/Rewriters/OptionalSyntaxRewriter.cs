@@ -65,7 +65,7 @@ public sealed class OptionalSyntaxRewriter(bool strictOption, DiagnosticBag diag
 				rewrittenInit = (ExpressionSyntax)Rewrite(rewrittenInit);
 
 			TrackLocal(varDecl.Name, varDecl.Type);
-			return new VariableDeclarationSyntax(varDecl.Span, varDecl.IsMutable, rewrittenType, varDecl.Name, rewrittenInit);
+			return new VariableDeclarationSyntax(varDecl.Span, varDecl.IsMutable, rewrittenType, varDecl.Name, rewrittenInit, varDecl.IsExplicitVal);
 		}
 
 		if (node is GlobalVariableDeclarationSyntax globalDecl)

@@ -1923,11 +1923,13 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 
 				var countExpr = new IntegerLiteralExpressionSyntax(SpanOf(arrayCtx), (ulong)countVal);
 				var implicitInitializer = new ArrayReplicationExpressionSyntax(SpanOf(context), valueExpr, countExpr);
-				return new VariableDeclarationSyntax(SpanOf(context), isMutable, baseTypeName, name, implicitInitializer);
+				return new VariableDeclarationSyntax(SpanOf(context), isMutable, baseTypeName, name, implicitInitializer,
+					isExplicitVal: context.VAL() is not null);
 			}
 			else
 			{
-				return new VariableDeclarationSyntax(SpanOf(context), isMutable, baseTypeName, name, valueExpr);
+				return new VariableDeclarationSyntax(SpanOf(context), isMutable, baseTypeName, name, valueExpr,
+					isExplicitVal: context.VAL() is not null);
 			}
 		}
 
@@ -1953,7 +1955,8 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		if (context.expression() is { } expr)
 			initializer = BuildExpression(expr);
 
-		return new VariableDeclarationSyntax(SpanOf(context), isVarMutable, type, standardName, initializer);
+		return new VariableDeclarationSyntax(SpanOf(context), isVarMutable, type, standardName, initializer,
+			isExplicitVal: context.VAL() is not null);
 	}
 
 	private IfStatementSyntax BuildIfStatement(CvoloParser.IfStatementContext context)

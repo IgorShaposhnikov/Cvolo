@@ -1,0 +1,18 @@
+// INC A / A5: ref gives read-only access, including through member paths.
+// Expected: REJECT - write through a read-only ref parameter.
+// Regression: checking only direct assignments to the ref name is insufficient.
+struct Box
+{
+    int Value;
+}
+
+void Inspect(ref Box box)
+{
+    // REJECT: box.Value is reached through read-only 'ref Box box'.
+    box.Value = 10;
+}
+
+int Main()
+{
+    return 0;
+}

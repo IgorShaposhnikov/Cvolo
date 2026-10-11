@@ -8,11 +8,16 @@ public sealed class VariableDeclarationSyntax(
 	bool isMutable,
 	string? type,
 	string name,
-	ExpressionSyntax? initializer) : SyntaxNode(span)
+	ExpressionSyntax? initializer,
+	bool isExplicitVal = false) : SyntaxNode(span)
 {
 	public override SyntaxKind Kind => SyntaxKind.VariableDeclaration;
 
 	public bool IsMutable { get; } = isMutable;
+	/// <summary>
+	/// True for an explicit `val` qualifier; bare typed declarations retain legacy member-write behavior.
+	/// </summary>
+	public bool IsExplicitVal { get; } = isExplicitVal;
 	public string? Type { get; } = type;
 	public string Name { get; } = name;
 	public ExpressionSyntax? Initializer { get; } = initializer;

@@ -1,0 +1,19 @@
+// INC A / A7: [NoAlias] on an unbound reference parameter must be recognized.
+// Expected: ACCEPT, output 42; emitted LLVM parameter carries 'noalias'.
+// Scope: checks attribute validation and emission, NOT call-site noalias proof.
+using System;
+
+unbound void Set([NoAlias] refvar int target)
+{
+    target = 42;
+}
+
+int Main()
+{
+    var int value = 0;
+
+    Set(refvar value);
+    Console.WriteLine(value);
+
+    return 0;
+}

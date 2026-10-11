@@ -759,6 +759,7 @@ internal sealed class StatementValidator(
 		var varSymbol = new VariableSymbol(varDecl.Name, resolvedType, varDecl.IsMutable)
 		{
 			IsInitialized = varDecl.Initializer != null,
+			IsExplicitVal = varDecl.IsExplicitVal,
 			IsHeapAllocated = varDecl.Initializer is HeapAllocationExpressionSyntax or HeapArrayAllocationExpressionSyntax
 		};
 

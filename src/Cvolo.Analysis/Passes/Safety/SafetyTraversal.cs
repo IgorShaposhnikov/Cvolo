@@ -204,6 +204,17 @@ internal sealed class SafetyTraversal(
 				break;
 
 			case CallExpressionSyntax call:
+				// Qualified receiver calls store their target as a string, not an
+				// IdentifierExpressionSyntax child. Verify the root object has not
+				// been moved, just as we verify a receiver mentioned in an argument.
+				var receiverDot = call.FunctionName.IndexOf('.');
+				if (receiverDot > 0)
+				{
+					var receiverName = call.FunctionName[..receiverDot];
+					if (scope.Lookup(receiverName) is VariableSymbol ||
+						context.ResolveGlobalReference(receiverName, out _) is not null)
+						moves.VerifyReadable(new IdentifierExpressionSyntax(call.Span, receiverName), scope);
+				}
 				foreach (var arg in call.Arguments)
 				{
 					CheckExpressionSafety(arg, scope);

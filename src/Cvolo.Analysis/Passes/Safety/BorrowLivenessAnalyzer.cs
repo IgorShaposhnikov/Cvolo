@@ -1,5 +1,4 @@
 using Cvolo.Core.AST.Base;
-using Cvolo.Core.AST.Declarations;
 using Cvolo.Core.AST.Expressions;
 using Cvolo.Core.AST.Statements;
 using Cvolo.Core.Diagnostics;
@@ -13,10 +12,12 @@ namespace Cvolo.Analysis.Passes.Safety;
 /// </summary>
 internal sealed class BorrowLivenessAnalyzer(
 	IReadOnlyDictionary<string, (string BorrowedName, bool IsMutable, int LastUseEnd, TextSpan DeclSpan)> activeRefs,
-	Action<string> removeBorrower)
+	Action<string> removeBorrower,
+	Func<string, bool>? isProtectedBorrow = null)
 {
 	private readonly IReadOnlyDictionary<string, (string BorrowedName, bool IsMutable, int LastUseEnd, TextSpan DeclSpan)> _activeRefs = activeRefs;
 	private readonly Action<string> _removeBorrower = removeBorrower;
+	private readonly Func<string, bool> _isProtectedBorrow = isProtectedBorrow ?? (_ => false);
 
 	/// <summary>
 	/// Releases active references whose names are not used by the current or any later statement in
@@ -31,6 +32,12 @@ internal sealed class BorrowLivenessAnalyzer(
 		foreach (var kv in _activeRefs)
 		{
 			var refName = kv.Key;
+			// A borrowed name defined in an enclosing block may still be used
+			// after this block, or at the start of another loop iteration.
+			// This local scan cannot prove otherwise: defer its release to
+			// the enclosing block's own NLL scan.
+			if (_isProtectedBorrow(refName))
+				continue;
 			var hasUseAfterCurrent = false;
 
 			for (var j = startIndex; j < stmts.Count; j++)
@@ -50,48 +57,36 @@ internal sealed class BorrowLivenessAnalyzer(
 			_removeBorrower(refName);
 	}
 
-	/// <summary>Checks recursively whether an expression references the supplied identifier.</summary>
+	/// <summary>
+	/// Checks whether an expression references a binding before the non-lexical borrow can end.
+	/// The parser stores <c>r.Method(...)</c> in <see cref="CallExpressionSyntax.FunctionName"/>,
+	/// not in a receiver AST child; checking only the call arguments can release <c>r</c>
+	/// immediately before its final use. For all other expressions, visit the actual AST children
+	/// rather than maintaining an incomplete whitelist as new expression forms are added.
+	/// </summary>
 	internal static bool ExpressionContainsRefUse(ExpressionSyntax expr, string refName)
 	{
-		return expr switch
-		{
-			IdentifierExpressionSyntax id => id.Name == refName,
-			MemberAccessExpressionSyntax m => ExpressionContainsRefUse(m.Expression, refName),
-			IndexExpressionSyntax idx => ExpressionContainsRefUse(idx.Left, refName) || ExpressionContainsRefUse(idx.Index, refName),
-			BorrowExpressionSyntax borrow => ExpressionContainsRefUse(borrow.Expression, refName),
-			CallExpressionSyntax call => call.Arguments.Any(a => ExpressionContainsRefUse(a, refName)),
-			BinaryExpressionSyntax bin => ExpressionContainsRefUse(bin.Left, refName) || ExpressionContainsRefUse(bin.Right, refName),
-			StructInitializationExpressionSyntax init => init.Initializers.Any(f => ExpressionContainsRefUse(f.Expression, refName)),
-			_ => false
-		};
+		if (expr is IdentifierExpressionSyntax id && id.Name == refName)
+			return true;
+
+		if (expr is CallExpressionSyntax call &&
+			(call.FunctionName == refName || call.FunctionName.StartsWith(refName + ".", StringComparison.Ordinal)))
+			return true;
+
+		return expr.GetChildren().Any(child => NodeContainsRefUse(child, refName));
 	}
 
-	/// <summary>Checks recursively whether a syntax node references the supplied identifier.</summary>
+	/// <summary>
+	/// Conservatively searches a statement or expression for a live reference use, including
+	/// switch arms, optional chains, coalescing, catch bodies and labelled blocks. Declared
+	/// bindings/shadowing remain a separate provenance problem; this scan never uses a missing
+	/// child as evidence that a borrow can safely end.
+	/// </summary>
 	private static bool NodeContainsRefUse(SyntaxNode node, string refName)
 	{
-		return node switch
-		{
-			BlockStatementSyntax block => block.Statements.Any(s => NodeContainsRefUse(s, refName)),
-			IfStatementSyntax ifStmt =>
-				NodeContainsRefUse(ifStmt.Condition, refName) ||
-				NodeContainsRefUse(ifStmt.ThenStatement, refName) ||
-				(ifStmt.ElseClause != null && NodeContainsRefUse(ifStmt.ElseClause.Body, refName)),
-			WhileStatementSyntax whileStmt =>
-				NodeContainsRefUse(whileStmt.Condition, refName) ||
-				NodeContainsRefUse(whileStmt.Body, refName),
-			ForStatementSyntax forStmt =>
-				(forStmt.Initializer != null && NodeContainsRefUse(forStmt.Initializer, refName)) ||
-				NodeContainsRefUse(forStmt.Condition, refName) ||
-				NodeContainsRefUse(forStmt.Increment, refName) ||
-				NodeContainsRefUse(forStmt.Body, refName),
-			ForEachStatementSyntax forEach =>
-				NodeContainsRefUse(forEach.Collection, refName) ||
-				NodeContainsRefUse(forEach.Body, refName),
-			ReturnStatementSyntax ret => ret.Expression != null && ExpressionContainsRefUse(ret.Expression, refName),
-			ExpressionStatementSyntax exprStmt => ExpressionContainsRefUse(exprStmt.Expression, refName),
-			VariableDeclarationSyntax varDecl => varDecl.Initializer != null && ExpressionContainsRefUse(varDecl.Initializer, refName),
-			ExpressionSyntax expr => ExpressionContainsRefUse(expr, refName),
-			_ => false
-		};
+		if (node is ExpressionSyntax expr)
+			return ExpressionContainsRefUse(expr, refName);
+
+		return node.GetChildren().Any(child => NodeContainsRefUse(child, refName));
 	}
 }

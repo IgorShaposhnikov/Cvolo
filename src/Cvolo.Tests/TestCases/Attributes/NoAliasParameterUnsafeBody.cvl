@@ -1,0 +1,13 @@
+// INC A / A7: [UnsafeBody] permits [NoAlias] on the function parameter.
+// Expected: ACCEPT; emitted LLVM parameter carries 'noalias'.
+// This intentionally does not exercise aliasing at a call site.
+[UnsafeBody]
+void SetUnsafeBody([NoAlias] refvar int target)
+{
+    target = 17;
+}
+
+int Main()
+{
+    return 0;
+}

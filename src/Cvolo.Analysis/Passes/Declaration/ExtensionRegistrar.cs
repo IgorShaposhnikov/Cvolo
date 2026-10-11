@@ -183,13 +183,16 @@ internal sealed class ExtensionRegistrar(
 			// 1. Inject the implicit first parameter: "this"
 			// It starts as a read-only pointer. The ValidationPass will upgrade it to mutable if needed!
 			// Associated functions skip this entirely: they are receiverless by construction.
+			var methodTier = method.Modifier ?? SafetyTier.Safe;
+			if (method.Attributes.Any(a => _attributes.NormalizeName(a.Name) == "UnsafeBody"))
+				methodTier = SafetyTier.Unsafe;
 			var parameters = new List<ParameterSymbol>();
 			if (!isAssociated)
 				parameters.Add(new ParameterSymbol("this", new PointerTypeSymbol(extendedType, isMutable: false)));
 
 			foreach (var param in method.Parameters)
 			{
-				var paramSymbol = functions.CreateParameter(param);
+				var paramSymbol = functions.CreateParameter(param, methodTier);
 				if (paramSymbol is null)
 				{
 					ReportDeclarationDiagnostic(param, $"Unknown parameter type '{param.Type}'", DiagnosticIds.UnknownParameterType);
@@ -227,7 +230,7 @@ internal sealed class ExtensionRegistrar(
 			};
 			var methodSuppressedWarnings = new List<string>();
 			_attributes.ApplyFunctionAttributes(
-				_attributes.Verify(method.Attributes, isDestructor ? "Destructor" : "Method", methodSuppressedWarnings),
+				_attributes.Verify(method.Attributes, isDestructor ? "Destructor" : "Method", methodSuppressedWarnings, methodTier),
 				newSymbol,
 				methodSuppressedWarnings,
 				method.Attributes);

@@ -1,0 +1,37 @@
+// INC A / A1: a method receiver cannot be used after ownership transfer.
+// Expected: REJECT - use of moved variable 'owner'.
+// Regression: move analysis must inspect instance receivers, not just call arguments.
+using System;
+
+struct Resource
+{
+    int Value;
+}
+
+extension Resource
+{
+    ~Resource()
+    {
+    }
+
+    int Read(ref this)
+    {
+        return Value;
+    }
+}
+
+void Consume(Resource resource)
+{
+}
+
+int Main()
+{
+    var Resource owner = Resource { Value: 42 };
+
+    Consume(owner);
+
+    // REJECT: Consume moved owner; a method call must not revive it.
+    Console.WriteLine(owner.Read());
+
+    return 0;
+}

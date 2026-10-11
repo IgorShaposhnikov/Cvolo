@@ -18,6 +18,9 @@ internal sealed class BorrowTracker(BindingContext context, Func<ExpressionSynta
 	private readonly List<BorrowSymbol> _activeBorrows = [];
 	private readonly Dictionary<string, (string BorrowedName, bool IsMutable, int LastUseEnd, TextSpan DeclSpan)> _activeRefs = [];
 	private readonly Dictionary<string, HashSet<string>> _parentLocks = [];
+	// Entry snapshots protect outer references from inner-block NLL scans that
+	// cannot see uses after the inner block or on a loop backedge.
+	private readonly Stack<HashSet<string>> _protectedRefScopes = [];
 	private readonly Func<ExpressionSyntax, string?> _getBaseIdentifierName = getBaseIdentifierName;
 	private readonly Func<SafetyTier> _getCurrentTier = getCurrentTier;
 	private BorrowLivenessAnalyzer? _livenessAnalyzer;
@@ -25,7 +28,8 @@ internal sealed class BorrowTracker(BindingContext context, Func<ExpressionSynta
 	/// <summary>
 	/// Provides non-lexical borrow-use scanning over the shared active-reference state.
 	/// </summary>
-	private BorrowLivenessAnalyzer LivenessAnalyzer => _livenessAnalyzer ??= new BorrowLivenessAnalyzer(_activeRefs, RemoveBorrower);
+	private BorrowLivenessAnalyzer LivenessAnalyzer => _livenessAnalyzer ??= new BorrowLivenessAnalyzer(_activeRefs, RemoveBorrower,
+		name => _protectedRefScopes.Any(scope => scope.Contains(name)));
 
 	/// <summary>Snapshot used to release borrows and reference names created inside one lexical block.
 	/// </summary>
@@ -39,13 +43,19 @@ internal sealed class BorrowTracker(BindingContext context, Func<ExpressionSynta
 		_activeBorrows.Clear();
 		_activeRefs.Clear();
 		_parentLocks.Clear();
+		_protectedRefScopes.Clear();
 	}
 
 	/// <summary>Returns whether a value currently has one or more child-reference locks.</summary>
 	public bool HasParentLock(string name) => _parentLocks.ContainsKey(name);
 
 	/// <summary>Captures the borrow state visible on entry to a lexical block.</summary>
-	public BlockState CaptureBlockState() => new(_activeBorrows.Count, new HashSet<string>(_activeRefs.Keys));
+	public BlockState CaptureBlockState()
+	{
+		var state = new BlockState(_activeBorrows.Count, new HashSet<string>(_activeRefs.Keys));
+		_protectedRefScopes.Push(state.RefNames);
+		return state;
+	}
 
 	/// <summary>
 	/// Releases borrows and reference names introduced after a block snapshot and returns the names
@@ -53,6 +63,9 @@ internal sealed class BorrowTracker(BindingContext context, Func<ExpressionSynta
 	/// </summary>
 	public IReadOnlyList<string> ExitBlock(BlockState state)
 	{
+		// The child block has finished: outer borrows become eligible for
+		// release when control returns to the enclosing block's NLL scan.
+		_protectedRefScopes.Pop();
 		if (_activeBorrows.Count > state.BorrowCount)
 			_activeBorrows.RemoveRange(state.BorrowCount, _activeBorrows.Count - state.BorrowCount);
 
@@ -81,16 +94,24 @@ internal sealed class BorrowTracker(BindingContext context, Func<ExpressionSynta
 	/// </summary>
 	public void VerifyDeclarationBorrow(VariableDeclarationSyntax varDecl)
 	{
-		// Borrow exclusivity checks are disabled in unbound and unsafe tiers.
-		if (_getCurrentTier() != SafetyTier.Safe)
-			return;
-
 		if ((varDecl.Type == "refvar" || varDecl.Type == "ref") && varDecl.Initializer is BorrowExpressionSyntax borrow)
 		{
 			var borrowedName = _getBaseIdentifierName(borrow.Expression);
 			if (borrowedName != null)
 			{
 				var isMutable = varDecl.Type == "refvar";
+
+				// The unbound tier suspends *exclusive* borrow diagnostics, not provenance
+				// bookkeeping. Record its syntactic origin and NLL lifetime without
+				// registering a parent lock (which would re-enable old XOR restrictions).
+				// Unsafe keeps the legacy responsibility for its raw-pointer accesses.
+				if (_getCurrentTier() == SafetyTier.Unbound)
+				{
+					_activeRefs[varDecl.Name] = (borrowedName, isMutable, varDecl.Span.End, varDecl.Span);
+					return;
+				}
+				if (_getCurrentTier() != SafetyTier.Safe)
+					return;
 
 				// Array Index Locking: borrowing any element blocks all other element borrows.
 				var isIndexBorrow = borrow.Expression is IndexExpressionSyntax;

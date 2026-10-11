@@ -1,0 +1,24 @@
+// INC A / A5: refvar allows a function to write through its access path.
+// Expected: ACCEPT, output 42.
+// Regression: read-only enforcement must not reject legitimate refvar writes.
+using System;
+
+struct Box
+{
+    int Value;
+}
+
+void Update(refvar Box box)
+{
+    box.Value = 42;
+}
+
+int Main()
+{
+    var Box box = Box { Value: 0 };
+
+    Update(refvar box);
+    Console.WriteLine(box.Value);
+
+    return 0;
+}

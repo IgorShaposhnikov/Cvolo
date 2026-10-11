@@ -659,7 +659,7 @@ public sealed class DeferRewriter(DiagnosticBag diagnostics, CompilationContext 
 	private VariableDeclarationSyntax CloneVarDecl(VariableDeclarationSyntax varDecl)
 	{
 		return new VariableDeclarationSyntax(varDecl.Span, varDecl.IsMutable, varDecl.Type, varDecl.Name,
-			varDecl.Initializer != null ? CloneExpression(varDecl.Initializer) : null);
+			varDecl.Initializer != null ? CloneExpression(varDecl.Initializer) : null, varDecl.IsExplicitVal);
 	}
 
 	private MemberInitializerSyntax CloneMemberInit(MemberInitializerSyntax init)

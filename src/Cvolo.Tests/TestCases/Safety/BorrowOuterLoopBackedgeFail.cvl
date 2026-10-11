@@ -1,0 +1,35 @@
+// INC A / A4: a loop back-edge is a future use of an outer field borrow.
+// Expected: REJECT - the resource cannot be replaced while the borrow is live.
+// Regression: a scan of only the current loop body must not end the borrow.
+using System;
+
+struct Resource
+{
+    int Value;
+}
+
+extension Resource
+{
+    ~Resource()
+    {
+    }
+}
+
+int Main()
+{
+    var Resource owner = Resource { Value: 5 };
+    ref borrowed = ref owner.Value;
+    var int counter = 0;
+
+    while (counter < 2)
+    {
+        // The next loop iteration reads the same borrowed field again.
+        Console.WriteLine(borrowed);
+
+        // REJECT: owner replacement would invalidate that future read.
+        owner = Resource { Value: 9 };
+        counter = counter + 1;
+    }
+
+    return 0;
+}

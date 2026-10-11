@@ -1,0 +1,17 @@
+// INC A / A5: an explicitly declared val has a read-only access path.
+// Expected: REJECT - member mutation through val is forbidden.
+// Regression: AST rewriting must preserve the explicit-val declaration flag.
+struct Box
+{
+    int Value;
+}
+
+int Main()
+{
+    val Box box = Box { Value: 1 };
+
+    // REJECT: a val binding does not permit mutation of box.Value.
+    box.Value = 10;
+
+    return 0;
+}

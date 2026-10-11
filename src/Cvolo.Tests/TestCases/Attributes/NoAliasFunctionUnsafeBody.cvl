@@ -1,0 +1,14 @@
+// INC A / A7: function-level [NoAlias] is permitted with [UnsafeBody].
+// Expected: ACCEPT; the LLVM emission test inspects the noalias attribute.
+// This is an attribute-placement test, not a proof of safe aliasing.
+[UnsafeBody]
+[NoAlias]
+void SetUnsafeBody(refvar int target)
+{
+    target = 17;
+}
+
+int Main()
+{
+    return 0;
+}

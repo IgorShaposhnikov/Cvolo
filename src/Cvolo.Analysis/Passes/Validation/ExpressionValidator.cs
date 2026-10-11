@@ -634,7 +634,22 @@ internal sealed class ExpressionValidator(
 								?? context.ResolveGlobalReference(id.Name, out _);
 							if (varSymbol is not null)
 							{
-								var isMutable = varSymbol.IsMutable || (varSymbol.Type is PointerTypeSymbol ptr && ptr.IsMutable);
+								// A reference's write capability comes from ref/refvar, not the
+								// mutability of the local slot which stores its pointer.
+								// Reference *rebinding* writes the pointer slot; assigning an
+								// ordinary value through the reference writes the referent.
+								// A writable `var ref T` or `global ref T` may rebind even
+								// though it cannot mutate the referenced T.
+								var rebindsReference = varSymbol.Type is PointerTypeSymbol &&
+									(GetType(bin.Right, scope) is PointerTypeSymbol ||
+									 bin.Right is BorrowExpressionSyntax);
+								// A local `refvar T` binding remains writable even when the
+								// source declaration did not use the separate `var` keyword.
+								// For `ref T`, only an explicitly mutable pointer slot (`var ref T`)
+								// can be rebound; writes through `ref T` remain forbidden.
+								var isMutable = varSymbol.Type is PointerTypeSymbol ptr
+									? ptr.IsMutable || (rebindsReference && varSymbol.IsMutable)
+									: varSymbol.IsMutable;
 								if (!isMutable)
 								{
 									var currentFileContext = context.FileContexts[context.CurrentUnit!];
@@ -670,6 +685,21 @@ internal sealed class ExpressionValidator(
 						else
 						{
 							Check(bin.Left, scope);
+
+							// Reject writes only through an explicitly read-only access path.
+							// A bare typed local (e.g. `Player p`) is not an explicit `val`:
+							// its fields remain mutable under the existing v0.0.21 contract.
+							// Keep copied slice capabilities outside INC A.
+							if ((bin.Left is MemberAccessExpressionSyntax ||
+								bin.Left is IndexExpressionSyntax { Left: var indexedBase } &&
+								GetType(indexedBase, scope) is ArrayTypeSymbol) &&
+							IsExplicitReadOnlyPath(bin.Left, scope))
+							{
+								var currentFileContext = context.FileContexts[context.CurrentUnit!];
+								context.Diagnostics.Report(currentFileContext, bin.Left.Span,
+									"Cannot assign through a read-only reference or immutable access path.",
+									DiagnosticIds.CannotAssignToImmutableVariable);
+							}
 						}
 					}
 					else
@@ -1871,8 +1901,7 @@ internal sealed class ExpressionValidator(
 
 		var type = context.ResolveType(expr.StructTypeName);
 		result = BindStructInitializer(expr, scope, type);
-		_resolvedInitializers[key] = result;
-		// Even null (failed bind) is cached.
+		_resolvedInitializers[key] = result; // Even null (failed bind) is cached.
 		return result;
 	}
 
@@ -1909,7 +1938,6 @@ internal sealed class ExpressionValidator(
 					$"Generic type '{expr.StructTypeName}' requires explicit type arguments.", DiagnosticIds.GenericInitializerRequiresTypeArguments);
 				return null;
 			}
-
 			if (defaultArguments.Count > 0)
 			{
 				type = context.ResolveType($"{expr.StructTypeName}<{string.Join(", ", defaultArguments)}>");
@@ -2101,6 +2129,35 @@ internal sealed class ExpressionValidator(
 		}
 
 		return new PointerTypeSymbol(innerType, expr.IsMutable);
+	}
+
+	/// <summary>
+	/// Detects source-level `val` and readonly `ref` access paths without treating a
+	/// legacy bare typed binding as deeply immutable. This intentionally does
+	/// not reclassify slices or raw pointers in INC A.
+	/// </summary>
+	private bool IsExplicitReadOnlyPath(ExpressionSyntax expression, SymbolTable scope)
+	{
+		switch (expression)
+		{
+			case IdentifierExpressionSyntax identifier:
+				{
+					var symbol = scope.Lookup(identifier.Name) as VariableSymbol
+						?? context.ResolveGlobalReference(identifier.Name, out _);
+					if (symbol is null && identifier.Name == "this")
+						symbol = scope.Lookup("this") as VariableSymbol;
+					if (symbol is null)
+						return false;
+					return symbol.Type is PointerTypeSymbol reference
+						? !reference.IsMutable : symbol.IsExplicitVal;
+				}
+			case MemberAccessExpressionSyntax member:
+				return IsExplicitReadOnlyPath(member.Expression, scope);
+			case IndexExpressionSyntax index:
+				return IsExplicitReadOnlyPath(index.Left, scope);
+			default:
+				return false;
+		}
 	}
 
 	/// <summary>
@@ -2456,9 +2513,7 @@ internal sealed class ExpressionValidator(
 	/// chain's own presence and the member's presence are independent facts and both must survive.
 	/// </remarks>
 	private UnionTypeSymbol? ResolveLiftedOption(TypeSymbol memberType)
-	{
-		return context.ResolveType($"Option<{memberType.Name}>") as UnionTypeSymbol;
-	}
+		=> context.ResolveType($"Option<{memberType.Name}>") as UnionTypeSymbol;
 
 	private ResolvedOptionalChainExpression CacheOptionalChainError(
 		OptionalChainExpressionSyntax chain,
@@ -2529,9 +2584,7 @@ internal sealed class ExpressionValidator(
 		return resolved;
 	}
 
-	/// <summary>
-	/// Reports the one primary diagnostic retained by a final error-bound binary operation.
-	/// </summary>
+	/// <summary>Reports the one primary diagnostic retained by a final error-bound binary operation.</summary>
 	private void ReportBinaryBindingError(ResolvedBinaryExpression resolved)
 	{
 		switch (resolved.ErrorKind)
@@ -3182,7 +3235,6 @@ internal sealed class ExpressionValidator(
 	{
 		if (expr.ResolvedStructTypeName is null)
 			return;
-
 		var type = context.ResolveType(expr.ResolvedStructTypeName);
 		if (type is not StructTypeSymbol structType)
 			return;

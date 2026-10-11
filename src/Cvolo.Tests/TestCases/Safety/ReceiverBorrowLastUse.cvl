@@ -1,0 +1,28 @@
+// INC A / A4: an instance method call counts as a use of its ref receiver.
+// Expected: ACCEPT, output 42.
+// Regression: receiver-only calls must not release the borrow before the call.
+using System;
+
+struct Box
+{
+    int Value;
+}
+
+extension Box
+{
+    int Read(ref this)
+    {
+        return Value;
+    }
+}
+
+int Main()
+{
+    var Box box = Box { Value: 42 };
+    ref reader = ref box;
+
+    // The receiver is referenced by 'reader.Read()', not by an argument.
+    Console.WriteLine(reader.Read());
+
+    return 0;
+}

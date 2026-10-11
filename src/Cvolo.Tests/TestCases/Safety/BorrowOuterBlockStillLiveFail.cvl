@@ -1,0 +1,33 @@
+// INC A / A4: a borrow created outside an inner block must remain live.
+// Expected: REJECT - replacing the resource would invalidate the field borrow.
+// Regression: scanning only the inner block must not release the outer borrow.
+using System;
+
+struct Resource
+{
+    int Value;
+}
+
+extension Resource
+{
+    ~Resource()
+    {
+    }
+}
+
+int Main()
+{
+    var Resource owner = Resource { Value: 5 };
+    ref borrowed = ref owner.Value;
+
+    {
+        Console.WriteLine(borrowed);
+        var int unrelated = 1;
+    }
+
+    // REJECT: borrowed is still used below, after the inner block ends.
+    owner = Resource { Value: 9 };
+    Console.WriteLine(borrowed);
+
+    return 0;
+}

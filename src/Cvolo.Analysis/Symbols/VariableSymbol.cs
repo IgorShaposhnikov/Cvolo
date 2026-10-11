@@ -6,6 +6,10 @@ public sealed class VariableSymbol(string name, TypeSymbol type, bool isMutable)
 {
 	public TypeSymbol Type { get; } = type;
 	public bool IsMutable { get; } = isMutable;
+	/// <summary>
+	/// Source-level `val` (distinct from a legacy bare typed declaration).
+	/// </summary>
+	public bool IsExplicitVal { get; set; }
 	public bool IsMoved { get; set; } = false;
 	public OriginKind Origin { get; set; } = OriginKind.Local;
 	public bool IsHeapAllocated { get; set; } = false;
@@ -13,10 +17,14 @@ public sealed class VariableSymbol(string name, TypeSymbol type, bool isMutable)
 	public bool IsGlobal { get; set; } = false;
 	public bool IsRawPointer { get; set; } = false;
 
-	/// <summary>The namespace that declared this global; null for the global (root) namespace.</summary>
+	/// <summary>
+	/// The namespace that declared this global; null for the global (root) namespace.
+	/// </summary>
 	public string? DeclaringNamespace { get; set; }
 
-	/// <summary>Fully-qualified name ("Ns.Sub.Name", or just "Name" for the root namespace).</summary>
+	/// <summary>
+	/// Fully-qualified name ("Ns.Sub.Name", or just "Name" for the root namespace).
+	/// </summary>
 	public string QualifiedGlobalName =>
 		string.IsNullOrEmpty(DeclaringNamespace) ? Name : $"{DeclaringNamespace}.{Name}";
 
@@ -39,15 +47,23 @@ public sealed class VariableSymbol(string name, TypeSymbol type, bool isMutable)
 	/// </summary>
 	public string? CallingConvention { get; set; }
 
-	/// <summary>Native library the foreign global binds to, from the enclosing extern block's [LibraryImport].</summary>
+	/// <summary>
+	/// Native library the foreign global binds to, from the enclosing extern block's [LibraryImport].
+	/// </summary>
 	public string? LibraryName { get; set; }
 
-	/// <summary>Optional explicit Windows library path for this foreign global's native library.</summary>
+	/// <summary>
+	/// Optional explicit Windows library path for this foreign global's native library.
+	/// </summary>
 	public string? WinPath { get; set; }
 
-	/// <summary>Optional explicit Linux library path for this foreign global's native library.</summary>
+	/// <summary>
+	/// Optional explicit Linux library path for this foreign global's native library.
+	/// </summary>
 	public string? LinuxPath { get; set; }
 
-	/// <summary>Optional explicit macOS library path for this foreign global's native library.</summary>
+	/// <summary>
+	/// Optional explicit macOS library path for this foreign global's native library.
+	/// </summary>
 	public string? MacPath { get; set; }
 }

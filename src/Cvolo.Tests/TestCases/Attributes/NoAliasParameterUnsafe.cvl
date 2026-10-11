@@ -1,0 +1,12 @@
+// INC A / A7: [NoAlias] may be attached to an unsafe refvar parameter.
+// Expected: ACCEPT; emitted LLVM parameter carries 'noalias'.
+// This checks declaration metadata, not whether overlapping calls are legal.
+unsafe void SetUnsafe([NoAlias] refvar int target)
+{
+    target = 17;
+}
+
+int Main()
+{
+    return 0;
+}
