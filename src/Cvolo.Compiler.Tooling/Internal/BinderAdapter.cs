@@ -60,8 +60,8 @@ internal static class BinderAdapter
 			docByFilePath[doc.FilePath] = docId;
 		}
 
-		// Parse all files.
-		var (units, unitsByDocument, parseDiagnostics) = ParserAdapter.ParseAll(snapshot.Documents);
+		// Parse all files (generation-owned text when the snapshot came from a frozen capture).
+		var (units, unitsByDocument, parseDiagnostics) = snapshot.ParseAll();
 		allDiagnostics.AddRange(parseDiagnostics);
 
 		BindingContext? binderContext = null;

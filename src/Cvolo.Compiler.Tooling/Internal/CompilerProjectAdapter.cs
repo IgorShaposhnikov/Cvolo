@@ -27,7 +27,8 @@ internal static class CompilerProjectAdapter
 		PackageCache? packageCache = null,
 		IReadOnlyDictionary<string, string>? sourceOverrides = null,
 		IReadOnlyDictionary<string, DocumentId>? existingDocumentIds = null,
-		bool allowRestore = true)
+		bool allowRestore = true,
+		Func<string, string>? readText = null)
 	{
 		var semanticRoot = Directory.Exists(projectPath)
 			? Path.GetFullPath(projectPath)
@@ -60,7 +61,7 @@ internal static class CompilerProjectAdapter
 			var fullPath = Path.GetFullPath(file);
 			var text = sourceOverrides is not null && sourceOverrides.TryGetValue(fullPath, out var overrideText)
 				? overrideText
-				: File.ReadAllText(fullPath);
+				: (readText ?? File.ReadAllText)(fullPath);
 			var sourceText = SourceText.From(text);
 			var docId = existingDocumentIds is not null && existingDocumentIds.TryGetValue(fullPath, out var existing)
 				? existing

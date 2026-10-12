@@ -19,14 +19,17 @@ internal static class ParserAdapter
 	private static readonly Dictionary<(string FilePath, string Text), (CompilationUnitSyntax? Unit, DiagnosticBag Diagnostics)> ParseCache = new();
 	private const int ParseCacheLimit = 256;
 
-	private static (CompilationUnitSyntax? Unit, DiagnosticBag Diagnostics) ParseOne(string filePath, string text)
+	private static (CompilationUnitSyntax? Unit, DiagnosticBag Diagnostics) ParseOne(string filePath, string text, bool useCache)
 	{
 		var key = (filePath, text);
 
-		lock (CacheLock)
+		if (useCache)
 		{
-			if (ParseCache.TryGetValue(key, out var cached))
-				return cached;
+			lock (CacheLock)
+			{
+				if (ParseCache.TryGetValue(key, out var cached))
+					return cached;
+			}
 		}
 
 		var context = new CompilationContext(text, filePath);
@@ -34,12 +37,15 @@ internal static class ParserAdapter
 		var unit = parser.Parse(context);
 		var entry = (unit, parser.Diagnostics);
 
-		lock (CacheLock)
+		if (useCache)
 		{
-			if (ParseCache.Count >= ParseCacheLimit)
-				ParseCache.Clear();
+			lock (CacheLock)
+			{
+				if (ParseCache.Count >= ParseCacheLimit)
+					ParseCache.Clear();
 
-			ParseCache[key] = entry;
+				ParseCache[key] = entry;
+			}
 		}
 
 		return entry;
@@ -51,6 +57,17 @@ internal static class ParserAdapter
 	/// parse), and the combined parse diagnostics across all documents.
 	/// </summary>
 	public static (IReadOnlyList<CompilationUnitSyntax> Units, IReadOnlyDictionary<DocumentId, CompilationUnitSyntax?> UnitsByDocument, IReadOnlyList<Diagnostic> Diagnostics) ParseAll(IReadOnlyDictionary<DocumentId, DocumentSnapshot> documents)
+		=> Parse(documents, useCache: true);
+
+	/// <summary>
+	/// Parses all <paramref name="documents"/> without consulting or populating the process-wide parse
+	/// cache. Every call allocates fresh <see cref="CompilationUnitSyntax"/> instances so that no live
+	/// syntax object is shared between two independently bindable generations.
+	/// </summary>
+	public static (IReadOnlyList<CompilationUnitSyntax> Units, IReadOnlyDictionary<DocumentId, CompilationUnitSyntax?> UnitsByDocument, IReadOnlyList<Diagnostic> Diagnostics) ParseFresh(IReadOnlyDictionary<DocumentId, DocumentSnapshot> documents)
+		=> Parse(documents, useCache: false);
+
+	private static (IReadOnlyList<CompilationUnitSyntax> Units, IReadOnlyDictionary<DocumentId, CompilationUnitSyntax?> UnitsByDocument, IReadOnlyList<Diagnostic> Diagnostics) Parse(IReadOnlyDictionary<DocumentId, DocumentSnapshot> documents, bool useCache)
 	{
 		var units = new List<CompilationUnitSyntax>();
 		var unitsByDocument = new Dictionary<DocumentId, CompilationUnitSyntax?>();
@@ -64,7 +81,7 @@ internal static class ParserAdapter
 
 		foreach (var (docId, doc) in documents)
 		{
-			var (unit, diagnostics) = ParseOne(doc.FilePath, doc.Text.ToString());
+			var (unit, diagnostics) = ParseOne(doc.FilePath, doc.Text.ToString(), useCache);
 
 			unitsByDocument[docId] = unit;
 

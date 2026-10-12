@@ -83,6 +83,28 @@ public sealed class CvoloWorkspace
 		return new CvoloProject(this, projectId, absolutePath, snapshot);
 	}
 
+	/// <summary>
+	/// Captures the complete semantic universe for <paramref name="request"/> through
+	/// <paramref name="reader"/>, recording every byte consumed. The returned capture can later be
+	/// built into a snapshot with <see cref="BuildSnapshotFromCaptureV1"/> without any further input
+	/// reads. Discovery (membership, packages, standard library) happens here, never during a build.
+	/// </summary>
+	public CaptureResult CaptureUniverseV1(ToolingCaptureRequest request, ICompilerInputReader reader)
+	{
+		return ToolingCaptureService.Capture(this, request, reader);
+	}
+
+	/// <summary>
+	/// Reconstructs a fresh, generation-owned snapshot from a frozen capture with no file-system
+	/// access. Every document and external unit is parsed anew, so the resulting snapshot shares no
+	/// live AST object with any other generation. Document ids are preserved from
+	/// <paramref name="priorProject"/> when the paths are unchanged.
+	/// </summary>
+	public BuildResult BuildSnapshotFromCaptureV1(FrozenUniverseCapture capture, CvoloProject? priorProject = null)
+	{
+		return ToolingCaptureService.Build(this, capture, priorProject);
+	}
+
 	private CvoloProject OpenProjectCore(string projectPath, IReadOnlyList<string> libraryPaths, PackageCache? packageCache)
 	{
 		ArgumentNullException.ThrowIfNull(projectPath);

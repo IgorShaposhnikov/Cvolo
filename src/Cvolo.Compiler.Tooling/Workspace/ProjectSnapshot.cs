@@ -1,6 +1,7 @@
 using Cvolo.Compiler.Tooling.Completion;
 using Cvolo.Compiler.Tooling.Internal;
 using Cvolo.Core.AST.Base;
+using Cvolo.Core.Diagnostics;
 using Cvolo.Projects;
 
 namespace Cvolo.Compiler.Tooling;
@@ -15,6 +16,7 @@ public sealed class ProjectSnapshot
 	private readonly IReadOnlyDictionary<DocumentId, DocumentSnapshot> _documents;
 	private readonly IReadOnlyList<ExternalSemanticUnit> _externalUnits;
 	private readonly IReadOnlyList<PackageSourceDocument> _packageSources;
+	private readonly (IReadOnlyList<CompilationUnitSyntax> Units, IReadOnlyDictionary<DocumentId, CompilationUnitSyntax?> UnitsByDocument, IReadOnlyList<Diagnostic> Diagnostics)? _preparsed;
 	private readonly Lazy<AnalyzedProject> _lazyAnalysis;
 	private readonly Lazy<NavigationIndex> _lazyNavigation;
 	private readonly Lazy<CodeFixIndex> _lazyCodeFixes;
@@ -39,20 +41,22 @@ public sealed class ProjectSnapshot
 		IReadOnlyDictionary<DocumentId, DocumentSnapshot> documents,
 		IReadOnlyList<ExternalSemanticUnit> externalUnits,
 		IReadOnlyList<PackageSourceDocument> packageSources,
-		IReadOnlyList<string> baseSourceFiles)
+		IReadOnlyList<string> baseSourceFiles,
+		(IReadOnlyList<CompilationUnitSyntax> Units, IReadOnlyDictionary<DocumentId, CompilationUnitSyntax?> UnitsByDocument, IReadOnlyList<Diagnostic> Diagnostics)? preparsed)
 	{
 		ProjectId = projectId;
 		_documents = documents;
 		_externalUnits = externalUnits;
 		_packageSources = packageSources;
 		BaseSourceFiles = baseSourceFiles;
+		_preparsed = preparsed;
 		DocumentIds = [.. documents.Keys];
 		_lazyAnalysis = new Lazy<AnalyzedProject>(() => BinderAdapter.AnalyzeSnapshot(this));
 		_lazyNavigation = new Lazy<NavigationIndex>(() => NavigationIndex.Build(this));
 		_lazyCodeFixes = new Lazy<CodeFixIndex>(() => CodeFixIndex.Build(this));
 		_lazyOccurrences = new Lazy<OccurrenceIndex>(() => OccurrenceIndex.Build(this));
 		_lazyParsedUnits = new Lazy<IReadOnlyDictionary<DocumentId, CompilationUnitSyntax?>>(
-			() => ParserAdapter.ParseAll(_documents).UnitsByDocument);
+			() => ParseAll().UnitsByDocument);
 	}
 
 	internal static ProjectSnapshot CreateOwned(
@@ -60,14 +64,36 @@ public sealed class ProjectSnapshot
 		IReadOnlyDictionary<DocumentId, DocumentSnapshot> documents,
 		IReadOnlyList<ExternalSemanticUnit>? externalUnits = null,
 		IReadOnlyList<PackageSourceDocument>? packageSources = null,
-		IReadOnlyList<string>? baseSourceFiles = null)
+		IReadOnlyList<string>? baseSourceFiles = null,
+		(IReadOnlyList<CompilationUnitSyntax> Units, IReadOnlyDictionary<DocumentId, CompilationUnitSyntax?> UnitsByDocument, IReadOnlyList<Diagnostic> Diagnostics)? preparsed = null)
 	{
-		var snapshot = new ProjectSnapshot(projectId, documents, externalUnits ?? [], packageSources ?? [], baseSourceFiles ?? []);
+		var snapshot = new ProjectSnapshot(projectId, documents, externalUnits ?? [], packageSources ?? [], baseSourceFiles ?? [], preparsed);
 
 		foreach (var document in snapshot.Documents.Values)
 			document.OwningSnapshot = snapshot;
 
 		return snapshot;
+	}
+
+	/// <summary>
+	/// Returns the parsed syntax for every document in this snapshot. When the snapshot was built
+	/// from a frozen capture its generation-owned parse is returned directly; otherwise the
+	/// process-wide parse cache is consulted.
+	/// </summary>
+	internal (IReadOnlyList<CompilationUnitSyntax> Units, IReadOnlyDictionary<DocumentId, CompilationUnitSyntax?> UnitsByDocument, IReadOnlyList<Diagnostic> Diagnostics) ParseAll()
+	{
+		return _preparsed ?? ParserAdapter.ParseAll(_documents);
+	}
+
+	/// <summary>
+	/// Forces the full semantic analysis of this snapshot and returns an opaque handle proving the
+	/// snapshot is ready to answer semantic queries. This is synchronous and blocking; callers must
+	/// only invoke it on a bounded worker.
+	/// </summary>
+	public AnalysisReadyHandleV1 PrepareAnalysisV1()
+	{
+		_ = GetAnalysis();
+		return new AnalysisReadyHandleV1(this);
 	}
 
 	internal AnalyzedProject GetAnalysis()
