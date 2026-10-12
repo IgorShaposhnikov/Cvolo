@@ -18,11 +18,17 @@ public enum CapturedExternalUnitKind
 /// <param name="SourceOverrides">Authoritative in-memory text (editor overlays) keyed by full source path.</param>
 /// <param name="LibraryPaths">Explicit library roots supplied by the host.</param>
 /// <param name="RequestedTarget">Requested target descriptor. <see langword="null"/> or a host/default value is supported by P1.</param>
+/// <param name="AllowRestore">
+/// When <see langword="true"/>, a manifest-backed project may restore missing packages while capturing.
+/// Defaults to <see langword="false"/> so an incremental capture never triggers package restore as a
+/// side effect; callers that want capture-time materialization opt in explicitly.
+/// </param>
 public sealed record ToolingCaptureRequest(
 	string ProjectPath,
 	IReadOnlyDictionary<string, string>? SourceOverrides = null,
 	IReadOnlyList<string>? LibraryPaths = null,
-	string? RequestedTarget = null);
+	string? RequestedTarget = null,
+	bool AllowRestore = false);
 
 /// <summary>
 /// The provenance class of a captured source file. Tooling-owned so the public capture API does

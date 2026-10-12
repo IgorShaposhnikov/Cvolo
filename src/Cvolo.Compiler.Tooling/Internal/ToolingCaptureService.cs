@@ -36,7 +36,7 @@ internal static class ToolingCaptureService
 				packageCache: null,
 				sourceOverrides: request.SourceOverrides,
 				existingDocumentIds: null,
-				allowRestore: true,
+				allowRestore: request.AllowRestore,
 				readText: reader.ReadAllText);
 
 			var baseSet = new HashSet<string>(baseSourceFiles, PathComparer);
