@@ -793,6 +793,13 @@ internal static class SymbolResolver
 					?? OnName(op.OperatorSpan, op.DisplayName, position, ResolvedSymbolKind.Operator, op, Display(op, op.ReturnType));
 			case DestructorDeclarationSyntax destructor:
 				return OnName(NameSpan(source, destructor.Span, destructor.StructName, fromEnd: false), destructor.StructName, position, ResolvedSymbolKind.Destructor, destructor, Display(destructor, destructor.StructName), destructor.StructName);
+			// Imported extern functions: the standalone `extern` declaration and a member of an
+			// importing `extern "C"`/`extern "system"` block. Resolving the declaration name keeps
+			// the symbol identity (and the import direction) available to navigation and tokens.
+			case ExternDeclarationSyntax externDeclaration:
+				return OnName(NameSpan(source, externDeclaration.Span, externDeclaration.Name, fromEnd: false), externDeclaration.Name, position, ResolvedSymbolKind.Function, externDeclaration, Display(externDeclaration, externDeclaration.ReturnType));
+			case ExternBlockFunctionSyntax externFunction:
+				return OnName(NameSpan(source, externFunction.Span, externFunction.Name, fromEnd: false), externFunction.Name, position, ResolvedSymbolKind.Function, externFunction, Display(externFunction, externFunction.ReturnType));
 			case ExtensionDeclarationSyntax extension:
 				return ResolveConformance(context, index, source, extension, position)
 					?? ResolveGenericDeclaration(context, index, source, extension, extension.Span, extension.GenericParameters, null, extension.GenericParameterDefaults, position)

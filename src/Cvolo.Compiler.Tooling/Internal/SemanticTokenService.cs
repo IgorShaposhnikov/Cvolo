@@ -291,6 +291,13 @@ internal static class SemanticTokenService
 				modifiers |= SemanticTokenModifiers.Readonly | SemanticTokenModifiers.Constant;
 		}
 
+		// A true imported extern function: the declaration node itself proves the import
+		// direction. An `expose extern` export, a native-ABI (`unsafe "C"`) Cvolo function with a
+		// body, a delegate, a delegate-valued variable, a loader or a wrapper is a different node
+		// kind and never reaches this marker.
+		if (resolved?.Declaration is ExternDeclarationSyntax or ExternBlockFunctionSyntax)
+			modifiers |= SemanticTokenModifiers.ExternFunction;
+
 		return modifiers;
 	}
 
@@ -311,6 +318,8 @@ internal static class SemanticTokenService
 			VariableDeclarationSyntax variable => variable.Name,
 			ParameterSyntax parameter => parameter.Name,
 			GlobalVariableDeclarationSyntax global => global.Name,
+			ExternDeclarationSyntax externDeclaration => externDeclaration.Name,
+			ExternBlockFunctionSyntax externFunction => externFunction.Name,
 			StructFieldSyntax structField => structField.Name,
 			UnionFieldSyntax unionField => unionField.Name,
 			EnumVariantDeclarationSyntax enumVariant => enumVariant.Name,
@@ -385,6 +394,14 @@ internal static class SemanticTokenService
 					yield return globalType;
 				if (TryIndexOf(source, global.Span, global.Name, out var globalName))
 					yield return globalName;
+				break;
+			case ExternDeclarationSyntax externDeclaration:
+				if (TryIndexOf(source, externDeclaration.Span, externDeclaration.Name, out var externName))
+					yield return externName;
+				break;
+			case ExternBlockFunctionSyntax externFunction:
+				if (TryIndexOf(source, externFunction.Span, externFunction.Name, out var externFunctionName))
+					yield return externFunctionName;
 				break;
 			case StructDeclarationSyntax structDeclaration:
 				if (TryIndexOf(source, structDeclaration.Span, structDeclaration.Name, out var structName))

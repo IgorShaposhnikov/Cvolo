@@ -18,6 +18,15 @@ public enum SemanticTokenModifiers
 	/// <c>val</c>, a field, a property or an enum member.
 	/// </summary>
 	Constant = 1 << 3,
+
+	/// <summary>
+	/// The occurrence is the name of a compiler-proven imported <c>extern</c> function: a
+	/// standalone <c>extern</c> declaration or a member of an importing <c>extern "C"</c>/
+	/// <c>extern "system"</c> block whose implementation lives outside Cvolo. An <c>expose
+	/// extern</c> export, a native-ABI (<c>unsafe "C"</c>) Cvolo function with a body, a
+	/// delegate, a delegate-valued variable, a loader or a Cvolo wrapper never carries this.
+	/// </summary>
+	ExternFunction = 1 << 4,
 }
 
 /// <summary>
