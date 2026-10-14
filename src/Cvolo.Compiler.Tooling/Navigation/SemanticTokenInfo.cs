@@ -11,6 +11,13 @@ public enum SemanticTokenModifiers
 	Declaration = 1 << 0,
 	Readonly = 1 << 1,
 	Static = 1 << 2,
+
+	/// <summary>
+	/// The occurrence denotes a compiler-proven compile-time constant: an immutable
+	/// top-level <c>global</c> (immutable storage), never a mutable global, a local
+	/// <c>val</c>, a field, a property or an enum member.
+	/// </summary>
+	Constant = 1 << 3,
 }
 
 /// <summary>

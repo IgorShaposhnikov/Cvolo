@@ -1,5 +1,6 @@
 using Cvolo.Analysis;
 using Cvolo.Analysis.Completion;
+using Cvolo.Analysis.Semantics;
 using Cvolo.Analysis.Symbols.Base;
 using Cvolo.Analysis.Symbols.Structs;
 using Cvolo.Core.AST.Base;
@@ -56,7 +57,7 @@ internal static class SemanticTokenService
 					if (span.Length <= 0 || !seen.Add((span.Start, span.Length)))
 						continue;
 
-					tokens.Add(new SemanticTokenInfo(span, NavigationIndex.MapKind(resolved.Kind), ModifiersFor(node, source, span)));
+					tokens.Add(new SemanticTokenInfo(span, NavigationIndex.MapKind(resolved.Kind), ModifiersFor(node, source, span, resolved)));
 				}
 			}
 		}
@@ -263,7 +264,7 @@ internal static class SemanticTokenService
 		tokens.Add(new SemanticTokenInfo(new TextSpan(span.Start, span.Length), kind, SemanticTokenModifiers.None));
 	}
 
-	private static SemanticTokenModifiers ModifiersFor(SyntaxNode node, string source, TextSpan span)
+	private static SemanticTokenModifiers ModifiersFor(SyntaxNode node, string source, TextSpan span, ResolvedSymbol? resolved)
 	{
 		var modifiers = IsDeclarationName(node, source, span) ? SemanticTokenModifiers.Declaration : SemanticTokenModifiers.None;
 
@@ -277,6 +278,17 @@ internal static class SemanticTokenService
 				if (!global.IsMutable)
 					modifiers |= SemanticTokenModifiers.Readonly;
 				break;
+		}
+
+		// A constant is a compiler-proven immutable top-level global. Deriving this from the
+		// resolved declaration (not the spelling, casing or an immutable local `val`) keeps the
+		// classification identical at the declaration and every usage occurrence, including
+		// usages reached through a namespace or a namespace alias.
+		if (resolved?.Declaration is GlobalVariableDeclarationSyntax globalDeclaration)
+		{
+			modifiers |= SemanticTokenModifiers.Static;
+			if (!globalDeclaration.IsMutable)
+				modifiers |= SemanticTokenModifiers.Readonly | SemanticTokenModifiers.Constant;
 		}
 
 		return modifiers;
