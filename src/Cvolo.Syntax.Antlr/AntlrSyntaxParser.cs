@@ -17,6 +17,12 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 	private CompilationContext? _compilationContext;
 	private int _malformedGenericSourceOffset = -1;
 
+	// Spans ANTLR handed us that cannot be mapped onto the original source text (negative
+	// offsets, or offsets/lengths beyond the buffer) for a non-EOF token. These are internal
+	// faults, recorded for telemetry/tests and deliberately *not* relocated to EOF or 0 in the
+	// outward diagnostics, so a broken coordinate never silently misplaces a red squiggle.
+	private readonly List<TextSpan> _rejectedImpossibleSpans = new();
+
 	// Unsuffixed integer magnitudes in (long.MaxValue, ulong.MaxValue] are valid only as the operand
 	// of a direct unary minus (the signed-minimum exception). They are tracked here until either a
 	// unary minus consumes them or the parse finishes and they are still unresolved.
@@ -24,11 +30,19 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 
 	public DiagnosticBag Diagnostics => _diagnostics;
 
+	/// <summary>
+	/// Original-source spans the lexer/parser reported with coordinates that cannot exist in the
+	/// source (non-EOF token with a negative/overflowing start or length). The corresponding
+	/// outward diagnostic is omitted rather than relocated; this list is the test/telemetry hook.
+	/// </summary>
+	public IReadOnlyList<TextSpan> RejectedImpossibleSpans => _rejectedImpossibleSpans;
+
 	public CompilationUnitSyntax? Parse(CompilationContext context)
 	{
 		_compilationContext = context;
 		_pendingSignedMagnitudeOffsets.Clear();
 		_malformedGenericSourceOffset = -1;
+		_rejectedImpossibleSpans.Clear();
 		var inputStream = new AntlrInputStream(context.Source);
 		var lexer = new CvoloLexer(inputStream);
 
@@ -37,7 +51,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		// floods the language server's stderr on every reparse. Route lexer errors into the same
 		// diagnostic pipeline as parser errors so they become real editor diagnostics instead.
 		lexer.RemoveErrorListeners();
-		lexer.AddErrorListener(new LexerErrorListener(_diagnostics, context));
+		lexer.AddErrorListener(new LexerErrorListener(_diagnostics, context, _rejectedImpossibleSpans));
 
 		var tokenStream = new CommonTokenStream(lexer);
 		tokenStream.Fill();
@@ -63,7 +77,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			{
 				var recoveryLexer = new CvoloLexer(new AntlrInputStream(recoverySource));
 				recoveryLexer.RemoveErrorListeners();
-				recoveryLexer.AddErrorListener(new LexerErrorListener(_diagnostics, context));
+				recoveryLexer.AddErrorListener(new LexerErrorListener(_diagnostics, context, _rejectedImpossibleSpans));
 				tokenStream = new CommonTokenStream(recoveryLexer);
 				tokenStream.Fill();
 			}
@@ -72,7 +86,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		var parser = new CvoloParser(tokenStream);
 
 		parser.RemoveErrorListeners();
-		var errorListener = new SyntaxErrorListener(_diagnostics, context, tokenStream);
+		var errorListener = new SyntaxErrorListener(_diagnostics, context, tokenStream, _rejectedImpossibleSpans);
 		parser.AddErrorListener(errorListener);
 		if (invalidGeneric is { } malformed)
 			errorListener.SuppressGenericRecovery(malformed.RecoveryStart, malformed.RecoveryEnd);
@@ -2220,7 +2234,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 	// Turns a lexer "token recognition error" into a CVL1911 diagnostic anchored on the offending
 	// character. The default ANTLR listener writes to the console, which the compiler driver never
 	// sees and the language server spams to stderr on every reparse.
-	private sealed class LexerErrorListener(DiagnosticBag diagnostics, CompilationContext context) : IAntlrErrorListener<int>
+	private sealed class LexerErrorListener(DiagnosticBag diagnostics, CompilationContext context, List<TextSpan> rejectedImpossibleSpans) : IAntlrErrorListener<int>
 	{
 		public void SyntaxError(TextWriter output, IRecognizer recognizer, int offendingSymbol, int line, int charPositionInLine, string msg, RecognitionException e)
 		{
@@ -2233,12 +2247,22 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				? bad.InputStream.Index - bad.StartIndex
 				: 1;
 
-			if (start < 0)
-				start = 0;
-			if (start > source.Length)
-				start = source.Length;
-			if (length < 1)
+			// A lexer fault with coordinates that cannot exist in the source is not silently
+			// relocated to offset 0. Prefer the defensible line/column mapping the lexer already
+			// gives us; only an unusable mapping is recorded as an internal fault and dropped.
+			if (start < 0 || start > source.Length || length < 1 || start + length > source.Length)
+			{
+				var fallback = OffsetOf(source, line, charPositionInLine);
+				if (fallback < 0 || fallback > source.Length)
+				{
+					rejectedImpossibleSpans.Add(new TextSpan(start, length));
+					return;
+				}
+
+				start = fallback;
 				length = 1;
+			}
+
 			if (start + length > source.Length)
 				length = source.Length - start;
 			if (length < 1)
@@ -2269,7 +2293,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		}
 	}
 
-	private sealed class SyntaxErrorListener(DiagnosticBag diagnostics, CompilationContext context, CommonTokenStream tokenStream) : BaseErrorListener
+	private sealed class SyntaxErrorListener(DiagnosticBag diagnostics, CompilationContext context, CommonTokenStream tokenStream, List<TextSpan> rejectedImpossibleSpans) : BaseErrorListener
 	{
 		// Each anchored fault (a malformed literal ANTLR skips, or the unsupported `??=`)
 		// opens a bounded original-source recovery region. Later parser errors are treated
@@ -2304,8 +2328,21 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				return;
 			if (offendingSymbol is { Type: CvoloLexer.DOT })
 				RejectedDotIndices.Add(offendingSymbol.StartIndex);
+
+			var isEof = offendingSymbol is { Type: TokenConstants.EOF };
 			var start = offendingSymbol?.StartIndex ?? 0;
-			var length = offendingSymbol?.Type == TokenConstants.EOF ? 0 : offendingSymbol?.Text?.Length ?? 0;
+			var length = isEof ? 0 : offendingSymbol?.Text?.Length ?? 0;
+
+			// A non-EOF token whose coordinates cannot exist in the source is an internal fault:
+			// record it and omit the outward diagnostic rather than silently clamping the span to
+			// [0, Length] or relocating it to EOF. EOF and missing-token insertion points are the
+			// only mappings allowed to be defensively clamped.
+			if (offendingSymbol is not null && !isEof
+				&& (start < 0 || length < 0 || start > context.Source.Length || start + length > context.Source.Length))
+			{
+				rejectedImpossibleSpans.Add(new TextSpan(start, length < 0 ? 0 : length));
+				return;
+			}
 
 			if (start < 0)
 				start = 0;
