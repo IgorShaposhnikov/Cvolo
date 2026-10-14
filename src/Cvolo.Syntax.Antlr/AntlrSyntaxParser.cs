@@ -2271,7 +2271,11 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 
 	private sealed class SyntaxErrorListener(DiagnosticBag diagnostics, CompilationContext context, CommonTokenStream tokenStream) : BaseErrorListener
 	{
-		private readonly HashSet<int> _cascadeLines = new();
+		// Each anchored fault (a malformed literal ANTLR skips, or the unsupported `??=`)
+		// opens a bounded original-source recovery region. Later parser errors are treated
+		// as a cascade only when they sit on the same physical line *before* any statement
+		// boundary, so an independent fault later on the same line is still reported.
+		private readonly List<(int AnchorTokenIndex, int Line)> _recoveryRegions = new();
 		private readonly HashSet<(int Position, int Token)> _missingDelimiters = new();
 		private int _genericRecoveryStart = -1;
 		private int _genericRecoveryEnd = -1;
@@ -2316,16 +2320,16 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 
 			// The lexer emits dedicated `Bad*` tokens for malformed literals. The parser may skip
 			// such a token and report the resulting cascade on a later token (e.g. the `:`/`)` in
-			// `n(1value: 0)`). Anchor that error on the malformed literal instead, and drop the
-			// remaining cascade errors on the same line so the red highlight lands on the real
-			// problem rather than on unrelated punctuation.
+			// `n(1value: 0)`). Anchor that error on the malformed literal instead and open a
+			// bounded recovery region so only the genuine cascade inside the same statement is
+			// quieted; an independent error later on the same line still surfaces.
 			var anchor = FindPrecedingBadLiteral(offendingSymbol);
 			if (anchor is not null)
 			{
 				span = new TextSpan(anchor.StartIndex, anchor.Text!.Length);
-				_cascadeLines.Add(line);
+				RecordRecoveryRegion(anchor, line);
 			}
-			else if (_cascadeLines.Contains(line))
+			else if (IsInRecoveryRegion(offendingSymbol, line))
 			{
 				return;
 			}
@@ -2338,7 +2342,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				diagnostics.Report(context, coalesceAssignSpan,
 					"The fallback assignment operator '??=' is not supported. Write 'target = target ?? value' instead.",
 					DiagnosticIds.CoalesceAssignIsNotSupported);
-				_cascadeLines.Add(line);
+				RecordRecoveryRegion(offendingSymbol!, line);
 				return;
 			}
 
@@ -2523,6 +2527,58 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 
 		private static bool IsBadLiteralToken(int type) => type is
 			CvoloLexer.BadIntegerSuffix or CvoloLexer.BadDoubleLiteral or CvoloLexer.BadLeadingUnderscoreNumber or CvoloLexer.TrailingUnderInteger;
+
+		/// <summary>
+		/// Opens (or refreshes) the bounded original-source recovery region of an anchored fault.
+		/// The anchor token index and physical line are recorded so a later parser error can be
+		/// classified as a recovery cascade of this exact fault.
+		/// </summary>
+		private void RecordRecoveryRegion(IToken anchor, int line)
+		{
+			for (var i = 0; i < _recoveryRegions.Count; i++)
+			{
+				if (_recoveryRegions[i].AnchorTokenIndex == anchor.TokenIndex)
+					return;
+			}
+
+			_recoveryRegions.Add((anchor.TokenIndex, line));
+		}
+
+		/// <summary>
+		/// True when <paramref name="offending"/> is a recovery cascade of a previously anchored
+		/// fault: same physical line, later in the token stream, and no statement boundary
+		/// (<c>;</c>, <c>{</c>, <c>}</c>) crossed in between. A statement boundary proves the parser
+		/// has finished the damaged construct, so an error past it is an independent fault.
+		/// </summary>
+		private bool IsInRecoveryRegion(IToken? offending, int line)
+		{
+			if (offending is null || offending.TokenIndex < 0)
+				return false;
+
+			foreach (var (anchorIndex, anchorLine) in _recoveryRegions)
+			{
+				if (anchorLine != line || offending.TokenIndex <= anchorIndex)
+					continue;
+				if (!HasStatementBoundaryBetween(anchorIndex, offending.TokenIndex))
+					return true;
+			}
+
+			return false;
+		}
+
+		private bool HasStatementBoundaryBetween(int fromExclusive, int toExclusive)
+		{
+			for (var i = fromExclusive + 1; i < toExclusive; i++)
+			{
+				var token = tokenStream.Get(i);
+				if (token.Channel != Lexer.DefaultTokenChannel)
+					continue;
+				if (token.Type is CvoloLexer.SEMI or CvoloLexer.LBRACE or CvoloLexer.RBRACE)
+					return true;
+			}
+
+			return false;
+		}
 	}
 
 	private UsingDirectiveSyntax BuildUsingDirective(CvoloParser.UsingDirectiveContext context)
