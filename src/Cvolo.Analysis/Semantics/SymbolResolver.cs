@@ -425,7 +425,10 @@ internal static class SymbolResolver
 	/// <summary>
 	/// Resolves a callee written on a type receiver. A member that declares its own type
 	/// parameters is parked as a template on its owner instead of entering the associated overload
-	/// table, so the template table is consulted first.
+	/// table, so the template table is consulted first. A receiver that names a namespace or a
+	/// namespace alias instead of a type — <c>Native.DeleteShader(...)</c> where
+	/// <c>using Native = OpenGL.Native;</c> — is a global-variable call, mirroring the
+	/// member-access path so a namespace-qualified delegate-valued slot stays navigable.
 	/// </summary>
 	private static ResolvedSymbol? ResolveCalleeMember(
 		BindingContext context,
@@ -445,6 +448,18 @@ internal static class SymbolResolver
 			return ownerType is EnumTypeSymbol enumType && enumType.FindVariant(memberName) is not null
 				? ResolveEnumVariant(index, enumType, memberName, subject)
 				: null;
+		}
+
+		// A receiver that names a namespace or a namespace alias and selects a global variable,
+		// such as `Native.DeleteShader(...)` where `using Native = OpenGL.Native;` and the member is
+		// a delegate-valued loader slot. The receiver is not a type, so the type-receiver path above
+		// cannot reach it; ResolveQualifiedGlobal expands a bare alias through the same machinery the
+		// member-access path uses. Navigation must land on the global declaration, never on a
+		// same-named wrapper function or the delegate type itself.
+		if (context.ResolveQualifiedGlobal(receiverName, memberName) is { } qualifiedGlobal
+			&& FindGlobalDeclaration(context, qualifiedGlobal) is { } globalDeclaration)
+		{
+			return new ResolvedSymbol(ResolvedSymbolKind.Global, memberName, null, subject, globalDeclaration, Display(globalDeclaration, qualifiedGlobal.Type.Name));
 		}
 
 		// A receiver that is a value typed by one of the enclosing template's own type parameters is
