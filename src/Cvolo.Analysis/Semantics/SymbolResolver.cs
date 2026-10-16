@@ -54,7 +54,7 @@ internal static class SymbolResolver
 		else if (node is OffsetofExpressionSyntax offsetofExpression)
 			result = ResolveOffsetof(context, index, source, offsetofExpression, position);
 		else
-			result = ResolveDeclarationName(context, unit, index, source, node, position);
+			result = ResolveDeclarationName(context, unit, index, source, node, position, visible);
 
 		return result is null
 			? null
@@ -221,7 +221,7 @@ internal static class SymbolResolver
 				return null;
 
 			var kind = scoped.Origin == OriginKind.Parameter ? ResolvedSymbolKind.Parameter : ResolvedSymbolKind.Local;
-			return new ResolvedSymbol(kind, identifier.Name, null, identifier.Span, scoped.Declaration, Display(scoped.Declaration, scoped.Type?.Name ?? identifier.Name));
+			return new ResolvedSymbol(kind, identifier.Name, null, identifier.Span, scoped.Declaration, DisplayScoped(scoped.Type, scoped.Declaration, identifier.Name));
 		}
 
 		var global = context.ResolveGlobalReference(identifier.Name, out _);
@@ -547,7 +547,7 @@ internal static class SymbolResolver
 				null,
 				subject,
 				scoped.Declaration,
-				Display(scoped.Declaration, scoped.Type?.Name ?? receiverName))
+				DisplayScoped(scoped.Type, scoped.Declaration, receiverName))
 			: null;
 	}
 
@@ -776,7 +776,7 @@ internal static class SymbolResolver
 		return null;
 	}
 
-	private static ResolvedSymbol? ResolveDeclarationName(BindingContext context, CompilationUnitSyntax unit, DeclarationIndex index, string source, SyntaxNode node, int position)
+	private static ResolvedSymbol? ResolveDeclarationName(BindingContext context, CompilationUnitSyntax unit, DeclarationIndex index, string source, SyntaxNode node, int position, Dictionary<string, ScopedVariable> visible)
 	{
 		switch (node)
 		{
@@ -838,7 +838,7 @@ internal static class SymbolResolver
 					?? OnName(NameSpan(source, global.Span, global.Name, fromEnd: false), global.Name, position, ResolvedSymbolKind.Global, global, Display(global, global.Name));
 			case VariableDeclarationSyntax variable:
 				return ResolveTypeReference(context, index, source, variable.Span, variable.Type, position)
-					?? OnName(NameSpan(source, variable.Span, variable.Name, fromEnd: false), variable.Name, position, ResolvedSymbolKind.Local, variable, Display(variable, variable.Name));
+					?? OnName(NameSpan(source, variable.Span, variable.Name, fromEnd: false), variable.Name, position, ResolvedSymbolKind.Local, variable, DisplayLocal(context, visible, variable));
 			case ParameterSyntax parameter:
 				return ResolveTypeReference(context, index, source, parameter.Span, parameter.Type, position)
 					?? OnName(NameSpan(source, parameter.Span, parameter.Name, fromEnd: false), parameter.Name, position, ResolvedSymbolKind.Parameter, parameter, Display(parameter, parameter.Name));
@@ -1188,6 +1188,27 @@ internal static class SymbolResolver
 		DelegateDeclarationSyntax delegateDeclaration => $"{(delegateDeclaration.IsNative ? $"unsafe \"{delegateDeclaration.CallingConvention ?? "C"}\" " : string.Empty)}delegate {delegateDeclaration.ReturnType} {delegateDeclaration.Name}{Generic(delegateDeclaration.GenericParameters)}({ParameterList(delegateDeclaration.Parameters)})",
 		_ => fallback,
 	};
+
+	/// <summary>
+	/// Display text for a local declaration. A <c>var</c> declaration is shown with the type the
+	/// compiler inferred from its initializer (or <c>var</c> when inference is unavailable) rather
+	/// than echoing the <c>var</c> spelling, so hover and tokens never present a placeholder as the
+	/// value's type.
+	/// </summary>
+	private static string DisplayLocal(BindingContext context, Dictionary<string, ScopedVariable> visible, VariableDeclarationSyntax variable)
+		=> variable.Type is { Length: > 0 } declared && declared != "var"
+			? $"{declared} {variable.Name}"
+			: $"{TypeOf(context, visible, variable)?.Name ?? "var"} {variable.Name}";
+
+	/// <summary>
+	/// Display text for a scoped value (local or parameter) resolved through the visible value
+	/// scope. Uses the compiler-resolved type when the declared type is <c>var</c>, and the written
+	/// type otherwise; falls back to <see cref="Display"/> for declarations that are not values.
+	/// </summary>
+	private static string DisplayScoped(TypeSymbol? resolvedType, SyntaxNode declaration, string fallback)
+		=> declaration is VariableDeclarationSyntax variable && (variable.Type is not { Length: > 0 } declared || declared == "var")
+			? $"{resolvedType?.Name ?? "var"} {variable.Name}"
+			: Display(declaration, resolvedType?.Name ?? fallback);
 
 	private static string ParameterList(IReadOnlyList<ParameterSyntax> parameters)
 		=> string.Join(", ", parameters.Select(p => $"{p.Type} {p.Name}"));
