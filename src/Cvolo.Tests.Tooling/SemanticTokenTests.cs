@@ -66,6 +66,28 @@ public sealed class SemanticTokenTests
 	}
 
 	[Fact]
+	public void TypedLocalDeclaration_ClassifiesNameAsLocalAndTypeSeparately()
+	{
+		const string s = "struct Window { int Width; }\nint main() { Window window = Window { Width = 1 }; return window.Width; }\n";
+		var x = Open(s);
+		using (x.Fixture)
+		{
+			var tokens = x.Document.GetSemanticTokens();
+
+			// The declared local name 'window' is a Local, never a Parameter, even though it sits
+			// next to a type name in a declaration.
+			var windowTokens = WithText(x.Document, tokens, "window");
+			Assert.NotEmpty(windowTokens);
+			Assert.All(windowTokens, t => Assert.Equal(ToolingSymbolKind.Local, t.Kind));
+
+			// 'Window' is a type occurrence, distinct from the local that shares its spelling.
+			var typeTokens = WithText(x.Document, tokens, "Window");
+			Assert.NotEmpty(typeTokens);
+			Assert.Contains(typeTokens, t => t.Kind == ToolingSymbolKind.Struct);
+		}
+	}
+
+	[Fact]
 	public void UnresolvedIdentifier_IsOmitted()
 	{
 		const string s = "int main() { return Missing; }\n";
