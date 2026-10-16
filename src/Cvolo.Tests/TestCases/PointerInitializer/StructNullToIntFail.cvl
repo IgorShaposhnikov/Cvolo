@@ -1,0 +1,12 @@
+// `null` is only valid for a pointer-like field. Assigning it to an int field is a type
+// error even in unsafe code.
+struct Bag {
+    int Value;
+}
+
+int main() {
+    unsafe {
+        Bag b = Bag { Value = null };
+    }
+    return 0;
+}

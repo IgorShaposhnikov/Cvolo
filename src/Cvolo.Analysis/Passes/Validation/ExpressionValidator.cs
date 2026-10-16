@@ -2064,6 +2064,16 @@ internal sealed class ExpressionValidator(
 	}
 
 	/// <summary>
+	/// A <c>null</c> literal converts to a raw pointer or an Option union field. Conversion
+	/// legality is decided here; whether the use site is *allowed* is a separate safety question
+	/// (an unsafe context is required for a raw pointer), reported independently by the safety
+	/// pass, so an allowed conversion must not also raise a field-initializer mismatch.
+	/// </summary>
+	private static bool IsValidNullFieldValue(TypeSymbol fieldType, TypeSymbol initType) =>
+		initType.Equals(TypeSymbol.Null) &&
+		(fieldType is RawPointerTypeSymbol || (fieldType is UnionTypeSymbol union && union.IsOption));
+
+	/// <summary>
 	/// Classifies <c>T*[index]</c> as a raw-pointer storage access. Raw-pointer indexing is a
 	/// genuine unsafe operation in its own right, so it is recorded through the canonical
 	/// <see cref="ValidationContext.RequireUnsafe"/> path whether the value is read, written, or
@@ -2229,9 +2239,7 @@ internal sealed class ExpressionValidator(
 			var initType = field.Type is DelegateTypeSymbol || init.Expression is DefaultExpressionSyntax ? null : GetType(init.Expression, scope);
 			if (initType is not null && !TypesAssignable(field.Type, initType))
 			{
-				var isValidNull = initType.Equals(TypeSymbol.Null) &&
-								  (field.Type is RawPointerTypeSymbol ||
-								  (field.Type is UnionTypeSymbol union && union.IsOption));
+				var isValidNull = IsValidNullFieldValue(field.Type, initType);
 
 				if (!isValidNull)
 				{
@@ -2308,10 +2316,17 @@ internal sealed class ExpressionValidator(
 			// group/lambda check above already verified assignability. Defaults were
 			// checked against the field type inside BindFieldSlotDefault.
 			var initType = field.Type is DelegateTypeSymbol || init.Expression is DefaultExpressionSyntax ? null : GetType(init.Expression, scope);
-			if (initType is not null && !TypesAssignable(field.Type, initType))
+			if (initType is not null && !TypesAssignable(field.Type, initType) && !IsValidNullFieldValue(field.Type, initType))
 			{
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
-				context.Diagnostics.Report(currentFileContext, init.Span, $"Cannot initialize field '{init.MemberName}' of type '{field.Type.Name}' with value of type '{initType.Name}'", DiagnosticIds.CannotInitializeFieldOfTypeWithValueOfType);
+				if (_validation.UnsafeDepth > 0 && initType.Equals(TypeSymbol.Null))
+				{
+					context.Diagnostics.Report(currentFileContext, init.Span, "The 'null' literal requires a pointer type (Option or raw pointer).", DiagnosticIds.TheNullLiteralRequiresAPointerTypeOptionOrRawPointer);
+				}
+				else
+				{
+					context.Diagnostics.Report(currentFileContext, init.Span, $"Cannot initialize field '{init.MemberName}' of type '{field.Type.Name}' with value of type '{initType.Name}'", DiagnosticIds.CannotInitializeFieldOfTypeWithValueOfType);
+				}
 			}
 		}
 

@@ -1,0 +1,11 @@
+// Outside unsafe code, a null raw-pointer field is rejected by the safety rule alone
+// (CVL1104). It must NOT also produce a field-initializer type mismatch (CVL4019).
+struct Window {
+    void* Ptr;
+    int Width;
+}
+
+int main() {
+    Window w = Window { Ptr = null, Width = 1 };
+    return 0;
+}

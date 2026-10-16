@@ -1,0 +1,13 @@
+// An integer is not assignable to a raw pointer field; the null allowance must not make the
+// struct initializer accept arbitrary values.
+struct Window {
+    void* Ptr;
+    int Width;
+}
+
+int main() {
+    unsafe {
+        Window w = Window { Ptr = 5, Width = 1 };
+    }
+    return 0;
+}

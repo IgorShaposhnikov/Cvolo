@@ -1,0 +1,16 @@
+using System;
+
+// A raw pointer field may be initialized with `null` inside unsafe code: the conversion is
+// legal and the use site is in the unsafe tier.
+struct Window {
+    void* Ptr;
+    int Width;
+}
+
+int main() {
+    unsafe {
+        Window w = Window { Ptr = null, Width = 42 };
+        Console.WriteLine(w.Width);
+    }
+    return 0;
+}

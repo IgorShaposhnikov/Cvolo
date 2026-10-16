@@ -1,0 +1,15 @@
+using System;
+
+// `int*` is also a raw pointer, so the same null allowance applies in unsafe code.
+struct Slots {
+    int* Ptr;
+    int Count;
+}
+
+int main() {
+    unsafe {
+        Slots s = Slots { Ptr = null, Count = 7 };
+        Console.WriteLine(s.Count);
+    }
+    return 0;
+}
