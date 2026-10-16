@@ -1,3 +1,8 @@
+using Cvolo.Analysis;
+using Cvolo.Analysis.Passes.Validation;
+using Cvolo.Analysis.Symbols.Base;
+using Cvolo.Analysis.Symbols.Structs;
+using Cvolo.Analysis.VisibilityChecks;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
 using Cvolo.Core.AST.Expressions;
@@ -58,6 +63,14 @@ internal sealed class CodeFixIndex
 
 	private void Add(DocumentId documentId, Diagnostic diagnostic, string title, IReadOnlyList<CodeFixEdit> edits)
 	{
+		// A single root cause can raise several diagnostics at the same span (for example one
+		// missing-initializer diagnostic per field). They yield the same fix, so keep one entry.
+		if (_byDocument.TryGetValue(documentId, out var existing)
+			&& existing.Any(entry => entry.Title == title && entry.Diagnostic.Location.Span == diagnostic.Location.Span))
+		{
+			return;
+		}
+
 		var id = new CodeFixId(_token, _nextId++);
 		var entry = new CodeFixEntry(id, title, diagnostic, edits);
 
@@ -123,6 +136,8 @@ internal static class CodeFixRegistry
 				return TryCreateFloatSuffixFix(document, diagnostic, out suggestions);
 			case CoreDiagnosticIds.UnresolvedFunctionCall:
 				return TryCreateAddUsingFix(document, diagnostic, out suggestions);
+			case CoreDiagnosticIds.MissingInitializerForFieldOfStruct:
+				return TryCreateMissingFieldFix(document, diagnostic, out suggestions);
 			default:
 				suggestions = [];
 				return false;
@@ -185,6 +200,133 @@ internal static class CodeFixRegistry
 
 		suggestions = result;
 		return true;
+	}
+
+	/// <summary>
+	/// Offers to fill in the fields a struct literal omitted. The fix is only produced when every
+	/// missing field is proven defaultable by the compiler: a local field is analyzed on the spot,
+	/// and an imported field must carry a defaultability certificate that still matches the
+	/// imported declaration. If any missing field cannot be proven (or lives in an unknown state),
+	/// no fix is offered rather than synthesizing a value the language would not accept.
+	/// </summary>
+	private static bool TryCreateMissingFieldFix(DocumentSnapshot document, Diagnostic diagnostic, out IReadOnlyList<CodeFixSuggestion> suggestions)
+	{
+		suggestions = [];
+
+		var snapshot = document.OwningSnapshot;
+
+		if (snapshot is null)
+			return false;
+
+		var analysis = snapshot.GetAnalysis();
+
+		if (analysis.BinderContext is not { } context)
+			return false;
+
+		if (!analysis.UnitsByDocument.TryGetValue(document.Id, out var unit) || unit is null)
+			return false;
+
+		var target = diagnostic.Location.Span;
+		StructInitializationExpressionSyntax? initializer = null;
+
+		foreach (var node in Descendants(unit))
+		{
+			if (node is StructInitializationExpressionSyntax candidate
+				&& candidate.Span.Start == target.Start
+				&& candidate.Span.Length == target.Length)
+			{
+				initializer = candidate;
+				break;
+			}
+		}
+
+		if (initializer is null)
+			return false;
+
+		var previousUnit = context.CurrentUnit;
+		var previousNamespace = context.CurrentNamespace;
+		context.CurrentUnit = unit;
+		context.CurrentNamespace = unit.NamespaceDeclaration?.Name;
+
+		try
+		{
+			if (context.ResolveType(context.NormalizeGenericName(initializer.StructTypeName)) is not StructTypeSymbol structType)
+				return false;
+
+			var supplied = new HashSet<string>(StringComparer.Ordinal);
+
+			foreach (var member in initializer.Initializers)
+				supplied.Add(member.MemberName);
+
+			var declaringUnit = GetDeclaringUnit(context, structType);
+			var analyzer = new DefaultabilityAnalyzer();
+			var missing = new List<StructFieldSymbol>();
+
+			foreach (var field in structType.Fields)
+			{
+				if (supplied.Contains(field.Name))
+					continue;
+
+				if (!VisibilityChecker.IsAccessible(field.Visibility, context.CurrentUnit, declaringUnit))
+					continue;
+
+				if (!IsProvenDefaultable(context, analyzer, field.Type))
+					return false;
+
+				missing.Add(field);
+			}
+
+			if (missing.Count == 0)
+				return false;
+
+			var literal = document.Text.GetText(new TextSpan(initializer.Span.Start, initializer.Span.Length));
+			var closeBrace = literal.LastIndexOf('}');
+
+			if (closeBrace < 0)
+				return false;
+
+			var insertAt = initializer.Span.Start + closeBrace;
+			var separator = initializer.Initializers.Count > 0 ? ", " : " ";
+			var inserted = string.Join(", ", missing.Select(field => $"{field.Name} = default({field.Type.Name})"));
+			var edit = new CodeFixEdit(document.Id, new TextSpan(insertAt, 0), separator + inserted);
+			var title = missing.Count == 1
+				? "Initialize missing field with a default value"
+				: "Initialize missing fields with default values";
+
+			suggestions = [new CodeFixSuggestion(title, [edit])];
+			return true;
+		}
+		finally
+		{
+			context.CurrentUnit = previousUnit;
+			context.CurrentNamespace = previousNamespace;
+		}
+	}
+
+	private static bool IsProvenDefaultable(BindingContext context, DefaultabilityAnalyzer analyzer, TypeSymbol type)
+	{
+		if (ImportedDefaultCertificateResolver.IsImported(context, type))
+		{
+			return ImportedDefaultCertificateResolver.TryResolve(context, type, out var eligible, out _, out var fingerprintMatches)
+				&& eligible && fingerprintMatches;
+		}
+
+		var plan = analyzer.GetDefaultPlan(type, GeneralFormationContext.Instance, SafetyTier.Safe,
+			candidate => ImportedDefaultCertificateResolver.IsImported(context, candidate));
+		return plan.IsEligible;
+	}
+
+	private static CompilationUnitSyntax? GetDeclaringUnit(BindingContext context, TypeSymbol type)
+	{
+		if (context.SymbolUnits.TryGetValue(type.Name, out var direct))
+			return direct;
+
+		var genericIndex = type.Name.IndexOf('<');
+
+		if (genericIndex > 0 && context.SymbolUnits.TryGetValue(type.Name[..genericIndex], out var template))
+			return template;
+
+		return null;
 	}
 
 	private static string? FindCalledFunctionName(CompilationUnitSyntax unit, TextSpan argumentListSpan, SourceText text)

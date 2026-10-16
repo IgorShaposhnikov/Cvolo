@@ -135,4 +135,34 @@ public sealed class CodeFixTests
 
 		Assert.Contains("using Widgets;", edit.NewText, StringComparison.Ordinal);
 	}
+
+	private const string MissingFieldSource = "struct Window\n{\n    int Width;\n    int Height;\n}\n\nint main()\n{\n    Window w = Window { Width = 1 };\n    return 0;\n}\n";
+
+	[Fact]
+	public void GetCodeFixes_OnMissingInitializer_ReturnsDefaultValueInsertion()
+	{
+		var (snapshot, document, documentId) = Open(MissingFieldSource);
+
+		Assert.Contains(document.GetDiagnostics(), d => d.Id == "CVL4081");
+		var fix = Assert.Single(document.GetCodeFixes(0, document.Text.Length));
+
+		Assert.False(string.IsNullOrWhiteSpace(fix.Title));
+
+		var success = Assert.IsType<CodeFixSuccess>(snapshot.ResolveCodeFix(fix.Id));
+		var edit = Assert.Single(success.Edits);
+
+		Assert.Equal(documentId, edit.Document);
+		Assert.Equal(0, edit.Span.Length);
+		Assert.Contains("Height = default(int)", edit.NewText, StringComparison.Ordinal);
+	}
+
+	[Fact]
+	public void GetCodeFixes_OnMissingRawPointerInitializer_DoesNotOfferFix()
+	{
+		const string source = "struct Window\n{\n    void* Ptr;\n    int Width;\n}\n\nint main()\n{\n    Window w = Window { Width = 1 };\n    return 0;\n}\n";
+		var (_, document, _) = Open(source);
+
+		Assert.Contains(document.GetDiagnostics(), d => d.Id == "CVL4081");
+		Assert.Empty(document.GetCodeFixes(0, document.Text.Length));
+	}
 }
