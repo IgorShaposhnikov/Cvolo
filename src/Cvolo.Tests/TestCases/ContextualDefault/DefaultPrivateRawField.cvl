@@ -1,0 +1,16 @@
+// A private raw-pointer field still receives the embedded formation that a struct
+// default grants to its fields; privacy does not block the structural recipe.
+using System;
+
+struct Window
+{
+    private void* Ptr;
+    int Width;
+}
+
+int main()
+{
+    Window w = default(Window);
+    Console.WriteLine("0");
+    return 0;
+}

@@ -26,6 +26,8 @@ public sealed class ContextualDefaultTests : CompilerTestBase
 	[InlineData("GenericBoxIntDefault", "0")]
 	[InlineData("GenericBoxVoidPtrDefault", "ok")]
 	[InlineData("GenericExtensionDefaultOk", "0")]
+	[InlineData("DefaultPrivateCtorStruct", "0")]
+	[InlineData("DefaultPrivateRawField", "0")]
 	public void Execution_Success(string caseName, string expected)
 	{
 		var fileName = $"ContextualDefault/{caseName}.cvl";

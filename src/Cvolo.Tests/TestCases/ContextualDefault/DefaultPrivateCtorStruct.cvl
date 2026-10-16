@@ -1,0 +1,30 @@
+// A structural struct default forms the fields directly; it neither runs a user
+// constructor nor is blocked by private fields or a private constructor.
+using System;
+
+struct Secret
+{
+    private int Value;
+    private int Other;
+}
+
+extension Secret
+{
+    private Secret(int value)
+    {
+        this.Value = value;
+        this.Other = 0;
+    }
+
+    int Total()
+    {
+        return this.Value + this.Other;
+    }
+}
+
+int main()
+{
+    Secret s = default(Secret);
+    Console.WriteLine($"{s.Total()}");
+    return 0;
+}
