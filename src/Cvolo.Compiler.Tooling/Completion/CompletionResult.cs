@@ -144,6 +144,9 @@ public sealed record CompletionInsertionPlan(IReadOnlyList<CompletionInsertSegme
 /// supports snippets and a <see cref="InsertionPlan"/> is present, the protocol layer encodes that
 /// plan as a snippet instead. <see cref="ItemId"/> is non-null only for callable candidates that can
 /// be resolved on demand, and is null for keywords and other synthetic candidates.
+/// <see cref="FilterText"/> is set only when the client must be told a different string to match
+/// against than the label (for example the remaining aggregate fields offered after a typed prefix
+/// matched none of them); null means the client matches against the label.
 /// </summary>
 public sealed record CompletionCandidate(
 	CompletionItemId? ItemId,
@@ -152,7 +155,8 @@ public sealed record CompletionCandidate(
 	CompletionKind Kind,
 	string? Detail,
 	CompletionInsertionPlan? InsertionPlan,
-	CompletionResolvableFields ResolvableFields);
+	CompletionResolvableFields ResolvableFields,
+	string? FilterText = null);
 
 /// <summary>
 /// The result of a completion query: the range of source that a pending edit replaces (the typed

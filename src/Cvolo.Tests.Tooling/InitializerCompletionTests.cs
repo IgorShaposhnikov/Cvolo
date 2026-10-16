@@ -128,4 +128,70 @@ public sealed class InitializerCompletionTests
 		Assert.Contains(result.Candidates, c => c.Label == "Pitch" && c.Kind == CompletionKind.StructField);
 		Assert.DoesNotContain(result.Candidates, c => c.Label == "getchar");
 	}
+
+	[Fact]
+	public void AggregateInitializer_UnmatchedPrefix_FallsBackToAllRemainingFields()
+	{
+		var result = Complete(
+			"struct Window { void* glfwWindow; int Width; }\n" +
+			"int getchar(int c) { return c; }\n" +
+			"int main() { Window w = Window { s| }; return 0; }\n");
+
+		Assert.Contains(result.Candidates, c => c.Label == "glfwWindow" && c.Kind == CompletionKind.StructField);
+		Assert.Contains(result.Candidates, c => c.Label == "Width" && c.Kind == CompletionKind.StructField);
+		Assert.DoesNotContain(result.Candidates, c => c.Label == "getchar");
+		Assert.Equal(1, result.ReplacementRange.Length);
+
+		// A filtering client must still be shown these items: the filter text carries the typed
+		// prefix so the label matches the client's own word query.
+		var field = Assert.Single(result.Candidates, c => c.Label == "glfwWindow");
+		Assert.Equal("sglfwWindow", field.FilterText);
+	}
+
+	[Fact]
+	public void AggregateInitializer_MatchingPrefix_KeepsOnlyMatchingFields()
+	{
+		var result = Complete(
+			"struct Window { void* glfwWindow; int Width; }\n" +
+			"int main() { Window w = Window { W| }; return 0; }\n");
+
+		Assert.Contains(result.Candidates, c => c.Label == "Width" && c.Kind == CompletionKind.StructField);
+		Assert.DoesNotContain(result.Candidates, c => c.Label == "glfwWindow");
+		var field = Assert.Single(result.Candidates, c => c.Label == "Width");
+		Assert.Null(field.FilterText);
+	}
+
+	[Fact]
+	public void AggregateInitializer_UnmatchedPrefix_ExcludesAlreadySuppliedFields()
+	{
+		var result = Complete(
+			"struct Window { void* glfwWindow; int Width; }\n" +
+			"int main() { Window w = Window { glfwWindow = default, s| }; return 0; }\n");
+
+		Assert.Contains(result.Candidates, c => c.Label == "Width" && c.Kind == CompletionKind.StructField);
+		Assert.DoesNotContain(result.Candidates, c => c.Label == "glfwWindow");
+	}
+
+	[Fact]
+	public void AggregateInitializer_UnresolvedType_YieldsNoFieldFallback()
+	{
+		var result = Complete(
+			"int main() { Missing w = Missing { s| }; return 0; }\n");
+
+		Assert.DoesNotContain(result.Candidates, c => c.Kind == CompletionKind.StructField);
+	}
+
+	[Fact]
+	public void AggregateInitializer_EmptySlot_OffersAllFieldsWithoutFilterOverride()
+	{
+		var result = Complete(
+			"struct Window { void* glfwWindow; int Width; }\n" +
+			"int main() { Window w = Window { | }; return 0; }\n");
+
+		Assert.Contains(result.Candidates, c => c.Label == "glfwWindow" && c.Kind == CompletionKind.StructField);
+		Assert.Contains(result.Candidates, c => c.Label == "Width" && c.Kind == CompletionKind.StructField);
+		Assert.All(
+			result.Candidates.Where(c => c.Kind == CompletionKind.StructField),
+			c => Assert.Null(c.FilterText));
+	}
 }

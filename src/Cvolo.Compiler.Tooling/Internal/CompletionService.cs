@@ -265,6 +265,31 @@ internal static class CompletionService
 			candidate.Kind == Completion.CompletionKind.Function &&
 			candidate.Label is "sizeof" or "alignof" or "offsetof");
 
+		// A field-name slot whose typed prefix matches none of the aggregate's fields must not
+		// collapse to an empty list: that hides the creatable fields entirely. Fall back to the
+		// remaining eligible fields, tagged with a client filter text that keeps them visible
+		// under the typed prefix while the replacement range stays the typed prefix. A filtering
+		// client (VS Code) would otherwise drop every item that does not match its own query.
+		if (queryContext == AnalysisContext.Initializer
+			&& !candidates.Any(candidate =>
+				candidate.Kind is Completion.CompletionKind.StructField or Completion.CompletionKind.UnionVariant))
+		{
+			foreach (var candidate in queryCandidates)
+			{
+				if (candidate.Kind is not (AnalysisKind.StructField or AnalysisKind.UnionVariant))
+					continue;
+
+				var kind = MapKind(candidate.Kind);
+				if (!seen.Add((candidate.Label, kind)))
+					continue;
+
+				candidates.Add(new Completion.CompletionCandidate(
+					null, candidate.Label, candidate.InsertText, kind,
+					candidate.Detail, null, CompletionResolvableFields.None,
+					textContext.Prefix + candidate.Label));
+			}
+		}
+
 		if (textContext.IsTypeContext)
 		{
 			candidates.RemoveAll(candidate =>
