@@ -261,6 +261,20 @@ internal static class CompletionService
 				null, null, CompletionResolvableFields.None));
 		}
 
+		// A raw-pointer field rejects `null` in safe code, so do not offer a keyword the compiler
+		// will refuse. An unsafe or embedded raw-pointer slot still accepts it.
+		if (textContext.IsAggregateInitializerValue
+			&& textContext.AggregateInitializerFieldName is { } slotField
+			&& textContext.AggregateInitializerTypeName is { } slotType
+			&& unit is { } slotUnit
+			&& analysis.BinderContext is { } slotContext
+			&& CompletionQuery.IsRawPointerInitializerField(slotContext, slotType, slotField)
+			&& !CompletionQuery.IsWithinUnsafeRegion(slotUnit, position))
+		{
+			candidates.RemoveAll(candidate =>
+				candidate.Kind == Completion.CompletionKind.Keyword && candidate.Label == "null");
+		}
+
 		candidates.RemoveAll(candidate =>
 			candidate.Kind == Completion.CompletionKind.Function &&
 			candidate.Label is "sizeof" or "alignof" or "offsetof");

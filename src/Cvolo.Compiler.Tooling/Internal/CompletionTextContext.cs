@@ -49,6 +49,18 @@ internal sealed record CompletionTextContext(
 	/// </summary>
 	internal bool IsTypeArgumentContext { get; init; }
 
+	/// <summary>
+	/// The field name being assigned when the cursor sits in an aggregate initializer value slot
+	/// (<c>Window { Ptr = | }</c>), when it can be read from the surrounding tokens.
+	/// </summary>
+	internal string? AggregateInitializerFieldName { get; init; }
+
+	/// <summary>
+	/// The aggregate type name of the enclosing initializer value slot, when it can be read from
+	/// the surrounding tokens.
+	/// </summary>
+	internal string? AggregateInitializerTypeName { get; init; }
+
 	internal static CompletionTextContext Analyze(SourceText text, int position)
 	{
 		var context = AnalyzeCore(text, position);
@@ -59,8 +71,15 @@ internal sealed record CompletionTextContext(
 		}
 
 		var tokens = Lex(text.ToString());
-		if (DetectAggregateInitializerValue(tokens, position))
-			context = context with { IsAggregateInitializerValue = true };
+		if (DetectAggregateInitializerValue(tokens, position, out var valueField, out var valueType))
+		{
+			context = context with
+			{
+				IsAggregateInitializerValue = true,
+				AggregateInitializerFieldName = valueField,
+				AggregateInitializerTypeName = valueType,
+			};
+		}
 		if (DetectAggregateInitializerName(tokens, position))
 			context = context with { IsAggregateInitializerName = true };
 		if (DetectDeclarationNameContext(tokens, position))
@@ -211,22 +230,39 @@ internal sealed record CompletionTextContext(
 
 	/// <summary>
 	/// The cursor is in a field-value slot when the last significant token before it is the
-	/// <c>=</c> or <c>:</c> written after a field name inside a braced initializer.
+	/// <c>=</c> or <c>:</c> written after a field name inside a braced initializer. Also reads the
+	/// field name and the enclosing aggregate type name from the surrounding tokens so the
+	/// expected value type can be judged even when the parser dropped the initializer node.
 	/// </summary>
-	private static bool DetectAggregateInitializerValue(IList<IToken> tokens, int position)
+	private static bool DetectAggregateInitializerValue(
+		IList<IToken> tokens, int position, out string? fieldName, out string? typeName)
 	{
-		for (var i = tokens.Count - 1; i >= 0; i--)
-		{
-			var t = tokens[i];
-			if (t.Channel != Lexer.DefaultTokenChannel || t.Type == TokenConstants.EOF || t.Type == CvoloLexer.WS)
-				continue;
-			if (t.StopIndex >= position)
-				continue;
+		fieldName = null;
+		typeName = null;
 
-			return t.Type is CvoloLexer.ASSIGN or CvoloLexer.COLON;
+		var assignIndex = LastSignificantIndexBefore(tokens, position);
+		if (assignIndex < 0 || tokens[assignIndex].Type is not (CvoloLexer.ASSIGN or CvoloLexer.COLON))
+			return false;
+
+		var nameIndex = PreviousSignificantIndex(tokens, assignIndex);
+		if (nameIndex < 0)
+			return true;
+
+		if (tokens[nameIndex].Type == CvoloLexer.Identifier)
+			fieldName = tokens[nameIndex].Text;
+
+		var braceIndex = PreviousSignificantIndex(tokens, nameIndex);
+		while (braceIndex >= 0 && tokens[braceIndex].Type == CvoloLexer.COMMA)
+			braceIndex = PreviousSignificantIndex(tokens, braceIndex);
+
+		if (braceIndex >= 0 && tokens[braceIndex].Type == CvoloLexer.LBRACE)
+		{
+			var typeIndex = PreviousSignificantIndex(tokens, braceIndex);
+			if (typeIndex >= 0 && tokens[typeIndex].Type == CvoloLexer.Identifier)
+				typeName = tokens[typeIndex].Text;
 		}
 
-		return false;
+		return true;
 	}
 
 	/// <summary>

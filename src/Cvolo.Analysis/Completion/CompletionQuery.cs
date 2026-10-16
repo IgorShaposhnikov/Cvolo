@@ -1404,6 +1404,55 @@ finally
 	}
 
 	/// <summary>
+	/// Resolves the declared type of a member of an aggregate literal, or <c>null</c> when the
+	/// aggregate type or the field is unknown. Used to reason about a value slot's expected type
+	/// without depending on the recovered initializer node surviving the parser.
+	/// </summary>
+	public static TypeSymbol? ResolveInitializerFieldType(
+		BindingContext context, string typeName, string fieldName)
+	{
+		var owner = context.ResolveType(context.NormalizeGenericName(typeName));
+		return owner switch
+		{
+			StructTypeSymbol structure => structure.FindField(fieldName)?.Type,
+			UnionTypeSymbol union => union.FindField(fieldName)?.Type,
+			_ => null,
+		};
+	}
+
+	/// <summary>
+	/// True when the named field of the named aggregate literal is a raw pointer, so a value slot
+	/// for it must respect the raw-pointer null rule.
+	/// </summary>
+	public static bool IsRawPointerInitializerField(
+		BindingContext context, string typeName, string fieldName)
+		=> ResolveInitializerFieldType(context, typeName, fieldName) is RawPointerTypeSymbol;
+
+	/// <summary>
+	/// True when the position sits inside an effective unsafe region: an <c>unsafe</c> block or a
+	/// function whose modifier is <c>unsafe</c>.
+	/// </summary>
+	public static bool IsWithinUnsafeRegion(SyntaxNode node, int position)
+	{
+		if (!Touching(node.Span, position))
+			return false;
+
+		if (node is UnsafeBlockStatementSyntax)
+			return true;
+
+		if (node is FunctionDeclarationSyntax function && function.Modifier == SafetyTier.Unsafe)
+			return true;
+
+		foreach (var child in node.GetChildren())
+		{
+			if (IsWithinUnsafeRegion(child, position))
+				return true;
+		}
+
+		return false;
+	}
+
+	/// <summary>
 	/// Offers only the eligible instance fields of the aggregate being initialized. Supplied fields
 	/// are excluded, accessibility is honored, and no ambient globals or functions leak in. The
 	/// insertion text appends <c> = </c> so the field value can be filled immediately.
