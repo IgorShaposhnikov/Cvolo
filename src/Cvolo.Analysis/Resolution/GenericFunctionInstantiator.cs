@@ -64,9 +64,9 @@ internal sealed class GenericFunctionInstantiator(
 	{
 		// Resolve the template's fully qualified mangled name (e.g. BankSystem.IO.PrintAccountInfo)
 		var templateMangledName = ResolveFunctionTemplateName(templateDecl.Name, scope)!;
-		var rawName = $"{templateMangledName}<{string.Join(",", typeArgs.Select(t => t.Name))}>";
-		// Canonical Name
-		var instName = context.NormalizeGenericName(rawName);
+		// Canonical identity: the selected definition plus the ordered concrete type arguments.
+		var identity = MonomorphizationIdentity.For(templateMangledName, typeArgs.Select(t => t.Name));
+		var instName = context.NormalizeGenericName(identity.CanonicalKey);
 
 		if (context.MonomorphizedFunctions.TryGetValue(instName, out var existing))
 			return existing;
@@ -200,8 +200,8 @@ internal sealed class GenericFunctionInstantiator(
 
 		// Canonical global name, shared by the symbol, the AST node the emitter consumes, and the
 		// per-node name table used to associate them.
-		var instName = context.NormalizeGenericName(
-			$"{template.BaseMangledName}<{string.Join(",", typeArgs.Select(t => t.Name))}>");
+		var identity = MonomorphizationIdentity.For(template.BaseMangledName, typeArgs.Select(t => t.Name));
+		var instName = context.NormalizeGenericName(identity.CanonicalKey);
 
 		var isAssociated = method.IsAssociated;
 		var overloadTable = isAssociated ? context.AssociatedFunctions : context.OverloadedFunctions;
@@ -482,8 +482,8 @@ internal sealed class GenericFunctionInstantiator(
 		FunctionDeclarationSyntax templateDecl, Dictionary<string, TypeSymbol> substitutionMap, SymbolTable scope,
 	string templateMangledName)
 	{
-		var rawName = $"{templateMangledName}<{string.Join(",", substitutionMap.Values.Select(t => t.Name))}>";
-		var instName = context.NormalizeGenericName(rawName);
+		var identity = MonomorphizationIdentity.For(templateMangledName, substitutionMap.Values.Select(t => t.Name));
+		var instName = context.NormalizeGenericName(identity.CanonicalKey);
 
 		if (context.MonomorphizedFunctions.TryGetValue(instName, out var existing))
 			return existing;
