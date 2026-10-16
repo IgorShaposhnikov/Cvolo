@@ -120,6 +120,48 @@ public sealed class ImportedDefaultabilityToolingTests
 		}
 	}
 
+	[Fact]
+	public void ImportedStructWithStaleCertificateFingerprint_ReportsUnverified()
+	{
+		var root = CreateRoot();
+		var libraries = Path.Combine(root, "libs");
+		Directory.CreateDirectory(libraries);
+		try
+		{
+			WriteLibrary(
+				Path.Combine(libraries, "Lib.cvlib"),
+				new PackageApiStruct
+				{
+					Name = "Point",
+					Fields =
+					[
+						new PackageApiStructField("int", "X", Visibility.Public),
+						new PackageApiStructField("int", "Y", Visibility.Public),
+					],
+					// Eligible, but the fingerprint does not match the declaration the consumer
+					// actually rehydrated: the proof belongs to a different layout, so it cannot
+					// be trusted and must fail closed.
+					Defaultability = new PackageApiDefaultability
+					{
+						State = PackageApiDefaultability.Eligible,
+						Fingerprint = "0000000000000000",
+					},
+				});
+
+			const string source = "using Lib;\nint main() { Point p = default(Point); return p.X; }\n";
+			File.WriteAllText(Path.Combine(root, "Main.cvl"), source);
+
+			var diagnostics = Analyze(root, "Main.cvl");
+
+			Assert.Contains(diagnostics, d => d.Id == "CVL4197");
+			Assert.DoesNotContain(diagnostics, d => d.Id == "CVL4196");
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
 	private static IReadOnlyList<Diagnostic> Analyze(string root, string documentName)
 	{
 		var project = CvoloWorkspace.Create().OpenProject(root, ["libs"]);
