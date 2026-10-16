@@ -45,4 +45,33 @@ public sealed class UnionTypeNameCompletionTests
 
 		Assert.Contains(result.Candidates, c => c.Label == "None" && c.Kind == CompletionKind.UnionVariant);
 	}
+
+	// An explicit generic receiver must resolve independently of any expected-type inference.
+	[Fact]
+	public void ExplicitGenericReceiver_OffersVariants()
+	{
+		var result = Complete(
+			"int main() {\n" +
+			"    Option<int> x = Option<int>.|\n" +
+			"    return 0;\n" +
+			"}\n");
+
+		Assert.Contains(result.Candidates, c => c.Label == "None" && c.Kind == CompletionKind.UnionVariant);
+		Assert.Contains(result.Candidates, c => c.Label == "Some" && c.Kind == CompletionKind.UnionVariant);
+	}
+
+	// A local variable that shadows the type name turns `Option.` into a value member access, so
+	// the union's variants must not be offered.
+	[Fact]
+	public void TypeQualifiedReceiver_ShadowedByLocal_DoesNotOfferVariants()
+	{
+		var result = Complete(
+			"int main() {\n" +
+			"    int Option = 1;\n" +
+			"    Option.|\n" +
+			"    return 0;\n" +
+			"}\n");
+
+		Assert.DoesNotContain(result.Candidates, c => c.Label == "None" && c.Kind == CompletionKind.UnionVariant);
+	}
 }

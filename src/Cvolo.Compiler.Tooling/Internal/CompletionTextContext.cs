@@ -34,6 +34,14 @@ internal sealed record CompletionTextContext(
 	/// </summary>
 	internal bool IsDeclarationNameContext { get; init; }
 
+	/// <summary>
+	/// True when the cursor sits in the field-name slot of an aggregate literal, including an
+	/// incomplete one where the parser lost the initializer node (for example
+	/// <c>Player { Body = 1, | }</c> or <c>Player { d| }</c>). Such a slot must offer the
+	/// aggregate's own fields and never fall back to globals, functions, or keywords.
+	/// </summary>
+	internal bool IsAggregateInitializerName { get; init; }
+
 	internal static CompletionTextContext Analyze(SourceText text, int position)
 	{
 		var context = AnalyzeCore(text, position);
@@ -46,6 +54,8 @@ internal sealed record CompletionTextContext(
 		var tokens = Lex(text.ToString());
 		if (DetectAggregateInitializerValue(tokens, position))
 			context = context with { IsAggregateInitializerValue = true };
+		if (DetectAggregateInitializerName(tokens, position))
+			context = context with { IsAggregateInitializerName = true };
 		if (DetectDeclarationNameContext(tokens, position))
 			context = context with { IsDeclarationNameContext = true };
 		return context;
@@ -69,6 +79,100 @@ internal sealed record CompletionTextContext(
 		}
 
 		return false;
+	}
+
+	/// <summary>
+	/// The cursor is in the field-name slot of an aggregate literal when the last significant
+	/// token before it is <c>{</c>, <c>,</c>, or an identifier, and the innermost unmatched
+	/// <c>{</c> is opened by an aggregate type name (an identifier, a nullable <c>?</c>, or a
+	/// generic name ending in <c>&gt;</c>). Combined with the AST initializer check, this also
+	/// recognises incomplete input whose initializer node the parser dropped.
+	/// </summary>
+	private static bool DetectAggregateInitializerName(IList<IToken> tokens, int position)
+	{
+		var lastIndex = -1;
+		for (var i = 0; i < tokens.Count; i++)
+		{
+			var t = tokens[i];
+			if (t.Channel != Lexer.DefaultTokenChannel || t.Type == TokenConstants.EOF || t.Type == CvoloLexer.WS)
+				continue;
+			if (t.StopIndex >= position)
+				continue;
+			lastIndex = i;
+		}
+
+		if (lastIndex < 0)
+			return false;
+
+		var lastType = tokens[lastIndex].Type;
+		if (lastType != CvoloLexer.LBRACE && lastType != CvoloLexer.COMMA && lastType != CvoloLexer.Identifier)
+			return false;
+
+		var depth = 0;
+		for (var i = lastIndex; i >= 0; i--)
+		{
+			var t = tokens[i];
+			if (t.Channel != Lexer.DefaultTokenChannel || t.Type == TokenConstants.EOF || t.Type == CvoloLexer.WS)
+				continue;
+
+			if (t.Type == CvoloLexer.RBRACE)
+			{
+				depth++;
+				continue;
+			}
+
+			if (t.Type != CvoloLexer.LBRACE)
+				continue;
+
+			if (depth > 0)
+			{
+				depth--;
+				continue;
+			}
+
+			var prevIndex = PreviousSignificantIndex(tokens, i);
+			if (prevIndex < 0)
+				return false;
+
+			var prev = tokens[prevIndex];
+			return prev.Type == CvoloLexer.Identifier
+				|| prev.Type == CvoloLexer.QMARK
+				|| (prev.Text.Length > 0 && prev.Text[^1] == '>');
+		}
+
+		return false;
+	}
+
+	private static int PreviousSignificantIndex(IList<IToken> tokens, int index)
+	{
+		for (var i = index - 1; i >= 0; i--)
+		{
+			var t = tokens[i];
+			if (t.Channel != Lexer.DefaultTokenChannel || t.Type == TokenConstants.EOF || t.Type == CvoloLexer.WS)
+				continue;
+			return i;
+		}
+
+		return -1;
+	}
+
+	/// <summary>
+	/// Probe texts that complete an incomplete aggregate initializer so it parses: a placeholder
+	/// member is inserted at the cursor (everything before the cursor is untouched, so the
+	/// replacement span is preserved), optionally followed by a closing brace when the current
+	/// line leaves one open.
+	/// </summary>
+	internal static IEnumerable<string> GetInitializerProbeTexts(SourceText text, int position)
+	{
+		var source = text.ToString();
+		var insert = "__cvolo_probe__ = 0";
+		yield return source[..position] + insert + source[position..];
+
+		var rest = source[position..];
+		var lineEnd = rest.IndexOf('\n');
+		var line = lineEnd < 0 ? rest : rest[..lineEnd];
+		if (!line.Contains('}'))
+			yield return source[..position] + insert + " }" + source[position..];
 	}
 
 	/// <summary>

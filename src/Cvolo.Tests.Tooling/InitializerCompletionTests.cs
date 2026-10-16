@@ -67,4 +67,65 @@ public sealed class InitializerCompletionTests
 			!result.Candidates.Any(c => c.Kind == CompletionKind.StructField),
 			string.Join(", ", result.Candidates.Select(c => $"{c.Label}:{c.Kind}")));
 	}
+
+	// An incomplete initializer ending at a trailing comma is not parseable, so the parser loses
+	// the initializer node. The name slot after the comma still names a field and must offer the
+	// remaining fields — never an ambient local such as `deltaTime`.
+	[Fact]
+	public void AggregateInitializer_AfterTrailingComma_OffersRemainingFields()
+	{
+		var result = Complete(
+			"struct CharacterBody { float X; }\n" +
+			"struct Player { CharacterBody Body; float Yaw; float Pitch; }\n" +
+			"int main() { float deltaTime = 0; Player p = Player { Body = default, | }; return 0; }\n");
+
+		Assert.Contains(result.Candidates, c => c.Label == "Yaw" && c.Kind == CompletionKind.StructField);
+		Assert.Contains(result.Candidates, c => c.Label == "Pitch" && c.Kind == CompletionKind.StructField);
+		Assert.DoesNotContain(result.Candidates, c => c.Label == "Body");
+		Assert.DoesNotContain(result.Candidates, c => c.Label == "deltaTime");
+	}
+
+	[Fact]
+	public void AggregateInitializer_AfterTrailingCommaMultiline_OffersRemainingFields()
+	{
+		var result = Complete(
+			"struct CharacterBody { float X; }\n" +
+			"struct Player { CharacterBody Body; float Yaw; float Pitch; }\n" +
+			"int main()\n{\n" +
+			"    Player p = Player\n    {\n" +
+			"        Body = default,\n        |\n    };\n" +
+			"    return 0;\n}\n");
+
+		Assert.Contains(result.Candidates, c => c.Label == "Yaw" && c.Kind == CompletionKind.StructField);
+		Assert.Contains(result.Candidates, c => c.Label == "Pitch" && c.Kind == CompletionKind.StructField);
+		Assert.DoesNotContain(result.Candidates, c => c.Label == "Body");
+	}
+
+	[Fact]
+	public void AggregateInitializer_PartialName_OffersOnlyMatchingField()
+	{
+		var result = Complete(
+			"struct Player { float Yaw; float Pitch; }\n" +
+			"int main() { Player p = Player { Y| }; return 0; }\n");
+
+		Assert.Contains(result.Candidates, c => c.Label == "Yaw" && c.Kind == CompletionKind.StructField);
+		Assert.DoesNotContain(result.Candidates, c => c.Label == "Pitch");
+	}
+
+	[Fact]
+	public void AggregateInitializer_EmptyMultiline_OffersFieldsNotGlobals()
+	{
+		var result = Complete(
+			"struct CharacterBody { float X; }\n" +
+			"struct Player { CharacterBody Body; float Yaw; float Pitch; }\n" +
+			"int getchar(int c) { return c; }\n" +
+			"int main()\n{\n" +
+			"    Player p = Player\n    {\n        |\n    };\n" +
+			"    return 0;\n}\n");
+
+		Assert.Contains(result.Candidates, c => c.Label == "Body" && c.Kind == CompletionKind.StructField);
+		Assert.Contains(result.Candidates, c => c.Label == "Yaw" && c.Kind == CompletionKind.StructField);
+		Assert.Contains(result.Candidates, c => c.Label == "Pitch" && c.Kind == CompletionKind.StructField);
+		Assert.DoesNotContain(result.Candidates, c => c.Label == "getchar");
+	}
 }

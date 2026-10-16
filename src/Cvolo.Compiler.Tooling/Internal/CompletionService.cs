@@ -107,9 +107,9 @@ internal static class CompletionService
 			var recovered = TryRecoverUnit(project, doc, position);
 			if (recovered is null)
 			{
-				// The primary parse produced no unit. A member-shaped request can still be
-				// recovered by the probe below; anything else degrades to empty.
-				if (!textContext.IsMemberAccessContext)
+				// The primary parse produced no unit. A member-shaped or aggregate-initializer
+				// request can still be recovered by the probes below; anything else degrades to empty.
+				if (!textContext.IsMemberAccessContext && !textContext.IsAggregateInitializerName)
 					return new CompletionResult(span, []);
 			}
 			else
@@ -167,6 +167,32 @@ internal static class CompletionService
 			if (queryContext != AnalysisContext.Member)
 			{
 				queryContext = AnalysisContext.Member;
+				queryCandidates = [];
+			}
+		}
+
+		// An incomplete aggregate initializer (`Player { Body = 1, | }`, `Player { d| }`) can
+		// lose its initializer node to parser error recovery, so the query would otherwise fall
+		// through to the ambient value surface and leak globals, functions, or keywords into a
+		// slot that only names a field. Probe a parseable snapshot and offer the aggregate's own
+		// fields instead.
+		if (textContext.IsAggregateInitializerName
+			&& (queryContext != AnalysisContext.Initializer || queryCandidates.Count == 0))
+		{
+			var recovered = TryRecoverInitializerQuery(project, doc, position);
+			if (recovered is { } recoveredResult)
+			{
+				analyzedForCandidates = recoveredResult.Project;
+				queryContext = recoveredResult.Context;
+				queryCandidates = recoveredResult.Candidates;
+			}
+
+			// Once the cursor is known to sit in a field-name slot, an unresolved aggregate
+			// must never degrade to the ambient value surface (globals, functions, keywords).
+			// An empty initializer result is the safe fallback.
+			if (queryContext != AnalysisContext.Initializer)
+			{
+				queryContext = AnalysisContext.Initializer;
 				queryCandidates = [];
 			}
 		}
@@ -680,6 +706,26 @@ internal static class CompletionService
 
 			var result = RunQuery(binder, unit, position);
 			if (result.Context == AnalysisContext.Member)
+				return (probed, result.Context, result.Candidates);
+		}
+
+		return null;
+	}
+
+	private static (AnalyzedProject Project, AnalysisContext Context, IReadOnlyList<Analysis.Completion.CompletionCandidate> Candidates)? TryRecoverInitializerQuery(
+		ProjectSnapshot project, DocumentSnapshot doc, int position)
+	{
+		foreach (var probeText in CompletionTextContext.GetInitializerProbeTexts(doc.Text, position))
+		{
+			var probed = project.WithDocument(doc.Id, SourceText.From(probeText)).GetAnalysis();
+			if (probed.BinderContext is not { } binder)
+				continue;
+
+			if (!probed.UnitsByDocument.TryGetValue(doc.Id, out var unit) || unit is null)
+				continue;
+
+			var result = RunQuery(binder, unit, position);
+			if (result.Context == AnalysisContext.Initializer)
 				return (probed, result.Context, result.Candidates);
 		}
 

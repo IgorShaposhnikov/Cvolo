@@ -272,6 +272,18 @@ finally
 				return CompletionQueryContext.Member;
 			}
 
+			// A receiver written with explicit type arguments followed by a dot (Option<int>.) is
+			// recovered by the parser as a call whose callee text ends in '.'. Treat it as a member
+			// access so the written type is resolved instead of a call that binds to nothing.
+			if (current is CallExpressionSyntax trailingCall
+				&& trailingCall.FunctionName.EndsWith(".", StringComparison.Ordinal)
+				&& position >= trailingCall.Span.End - 1
+				&& position <= trailingCall.Span.End)
+			{
+				member = SyntheticMemberAccess(trailingCall);
+				return CompletionQueryContext.Member;
+			}
+
 			if (StrictContains(current.Span, position) && IsLiteralNode(current))
 				return CompletionQueryContext.None;
 
@@ -284,8 +296,31 @@ finally
 					return CompletionQueryContext.Member;
 				}
 
+				// The cursor sits exactly at the end of a type-qualified receiver whose callee text
+				// ends in '.', so the recovered call is not strictly contained - detect it here.
+				if (child is CallExpressionSyntax trailingChild
+					&& trailingChild.FunctionName.EndsWith(".", StringComparison.Ordinal)
+					&& position >= trailingChild.Span.End - 1
+					&& position <= trailingChild.Span.End)
+				{
+					member = SyntheticMemberAccess(trailingChild);
+					return CompletionQueryContext.Member;
+				}
+
 				if (StrictContains(child.Span, position))
 					next = child;
+			}
+
+			if (next is null)
+			{
+				foreach (var child in current.GetChildren())
+				{
+					if (FindTrailingDotCall(child, position) is { } recovered)
+					{
+						member = SyntheticMemberAccess(recovered);
+						return CompletionQueryContext.Member;
+					}
+				}
 			}
 
 			current = next;
@@ -301,6 +336,45 @@ finally
 		}
 
 		return CompletionQueryContext.Declaration;
+	}
+
+	/// <summary>
+	/// Rebuilds a member access from a call the parser recovered from a type-qualified receiver with
+	/// explicit type arguments (<c>Option&lt;int&gt;.</c>). The receiver text is the callee name up to
+	/// the trailing dot; it is resolved as a written type by the member-candidate path.
+	/// </summary>
+	private static MemberAccessExpressionSyntax SyntheticMemberAccess(CallExpressionSyntax call)
+	{
+		var receiverName = call.FunctionName[..^1];
+		var receiverSpan = new TextSpan(call.Span.Start, receiverName.Length);
+		return new MemberAccessExpressionSyntax(
+			call.Span,
+			new IdentifierExpressionSyntax(receiverSpan, receiverName),
+			string.Empty);
+	}
+
+	/// <summary>
+	/// Finds a recovered type-qualified receiver - a call whose callee text ends in '.' - anywhere
+	/// under <paramref name="node"/> whose span ends at the cursor. The cursor often lands exactly on
+	/// the end of such a node, which the strict containment walk cannot select, so this searches the
+	/// subtree instead.
+	/// </summary>
+	private static CallExpressionSyntax? FindTrailingDotCall(SyntaxNode node, int position)
+	{
+		if (position < node.Span.Start || position > node.Span.End)
+			return null;
+
+		if (node is CallExpressionSyntax call
+			&& call.FunctionName.EndsWith(".", StringComparison.Ordinal)
+			&& position >= call.Span.End - 1
+			&& position <= call.Span.End)
+			return call;
+
+		foreach (var child in node.GetChildren())
+			if (FindTrailingDotCall(child, position) is { } found)
+				return found;
+
+		return null;
 	}
 
 	/// <summary>
@@ -778,10 +852,17 @@ finally
 				type = state.Context.ResolveGlobalReference(dottedName, out _)?.Type;
 			}
 
-			if (type is null && state.Context.ResolveType(dottedName) is EnumTypeSymbol enumType)
+			// A receiver written as a *written type name* - including one with explicit generic
+			// arguments such as Option<int>. - resolves through the same written-type path the
+			// binder uses. A value that shadows the name is never re-read as a type.
+			if (type is null
+				&& !IsValueName(dottedName, visible, state)
+				&& ResolveWrittenType(state, dottedName) is { } writtenType
+				&& writtenType is StructTypeSymbol or UnionTypeSymbol or EnumTypeSymbol)
 			{
-				type = enumType;
-				isEnumTypeNameReceiver = true;
+				type = writtenType;
+				isEnumTypeNameReceiver = writtenType is EnumTypeSymbol;
+				isTypeNameReceiver = !isEnumTypeNameReceiver;
 			}
 
 			// A receiver written as a *type* name (Layout. / System.Memory.Layout.) selects the
@@ -1264,6 +1345,24 @@ finally
 		if (string.IsNullOrWhiteSpace(typeName))
 			return null;
 		return state.Context.ResolveType(state.Context.NormalizeGenericName(typeName));
+	}
+
+	/// <summary>
+	/// Resolves a receiver written as a type name, tolerating explicit generic arguments. A receiver
+	/// such as <c>Option&lt;int&gt;.</c> carries type arguments that the plain name lookup may not
+	/// accept, so when the full name does not resolve, retry with the arguments stripped to reach the
+	/// generic template's members.
+	/// </summary>
+	private static TypeSymbol? ResolveWrittenType(QueryState state, string name)
+	{
+		if (state.Context.ResolveType(state.Context.NormalizeGenericName(name)) is { } resolved)
+			return resolved;
+
+		var genericIndex = name.IndexOf('<');
+		if (genericIndex > 0)
+			return state.Context.ResolveType(state.Context.NormalizeGenericName(name[..genericIndex]));
+
+		return null;
 	}
 
 	/// <summary>
