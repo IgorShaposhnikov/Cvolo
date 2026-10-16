@@ -108,4 +108,21 @@ public sealed class ExternFunctionSemanticTokenTests
 			Assert.All(tokens, t => Assert.False(t.Modifiers.HasFlag(SemanticTokenModifiers.ExternFunction)));
 		}
 	}
+
+	[Fact]
+	public void GlobalDelegateVariable_AtInvocationSite_ResolvesToTheVariable()
+	{
+		const string s = "unsafe \"C\" delegate int Callback(int value);\nglobal var Callback Slot;\nint main() { return Slot(1); }\n";
+		var x = Open("Main.cvl", ("Main.cvl", s));
+		using (x.Fixture)
+		{
+			var tokens = WithText(x.Document, x.Document.GetSemanticTokens(), "Slot");
+
+			// Both the declaration and the invocation site are classified, and a delegate-valued
+			// global is never mistaken for an imported extern function.
+			Assert.Equal(2, tokens.Count);
+			Assert.All(tokens, t => Assert.Equal(ToolingSymbolKind.Global, t.Kind));
+			Assert.All(tokens, t => Assert.False(t.Modifiers.HasFlag(SemanticTokenModifiers.ExternFunction)));
+		}
+	}
 }

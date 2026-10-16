@@ -40,7 +40,8 @@ internal static class SymbolResolver
 			result = ResolveMember(context, unit, visible, index, source, memberAccess);
 		else if (node is CallExpressionSyntax call && IsOnCallTarget(source, call, position))
 			result = ResolveCallee(context, unit, visible, index, source, call, position)
-				?? ResolveCall(context, index, source, call);
+				?? ResolveCall(context, index, source, call)
+				?? ResolveCalleeAsValue(context, visible, index, source, call);
 		else if (node is IdentifierExpressionSyntax identifier)
 			result = ResolveIdentifier(context, visible, index, source, identifier)
 				?? ResolveImplicitExtensionField(context, unit, index, identifier)
@@ -583,6 +584,25 @@ internal static class SymbolResolver
 		};
 
 		return new ResolvedSymbol(kind, name, null, subject, declaration, Display(declaration, function.ReturnType.Name));
+	}
+
+	/// <summary>
+	/// A call whose callee is not a resolved function may still name a value of delegate type
+	/// (for example a delegate-typed global invoked as <c>Slot(x)</c>). The callee name is not a
+	/// child node of the call, so resolve it as if it were a plain identifier so the invocation
+	/// site keeps the underlying variable's identity instead of producing no symbol at all.
+	/// </summary>
+	private static ResolvedSymbol? ResolveCalleeAsValue(
+		BindingContext context,
+		Dictionary<string, ScopedVariable> visible,
+		DeclarationIndex index,
+		string source,
+		CallExpressionSyntax call)
+	{
+		var name = Leaf(call.FunctionName);
+		var subject = NameSpan(source, call.Span, name, fromEnd: false);
+
+		return ResolveIdentifier(context, visible, index, source, new IdentifierExpressionSyntax(subject, name));
 	}
 
 	private static ResolvedSymbol? ResolveMember(
