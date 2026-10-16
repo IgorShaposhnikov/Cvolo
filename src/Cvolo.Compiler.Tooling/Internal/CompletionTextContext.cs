@@ -42,6 +42,13 @@ internal sealed record CompletionTextContext(
 	/// </summary>
 	internal bool IsAggregateInitializerName { get; init; }
 
+	/// <summary>
+	/// True when the cursor sits inside an open generic type-argument list
+	/// (<c>Option&lt;i|</c>, <c>Option&lt;Option&lt;str|</c>), where only type names are legal.
+	/// Statement keywords such as <c>if</c> must not be offered there.
+	/// </summary>
+	internal bool IsTypeArgumentContext { get; init; }
+
 	internal static CompletionTextContext Analyze(SourceText text, int position)
 	{
 		var context = AnalyzeCore(text, position);
@@ -58,7 +65,50 @@ internal sealed record CompletionTextContext(
 			context = context with { IsAggregateInitializerName = true };
 		if (DetectDeclarationNameContext(tokens, position))
 			context = context with { IsDeclarationNameContext = true };
+		if (DetectTypeArgumentContext(tokens, position))
+			context = context with { IsTypeArgumentContext = true };
 		return context;
+	}
+
+	/// <summary>
+	/// The cursor is inside an open generic type-argument list when an unmatched <c>&lt;</c> opens
+	/// before the cursor (nested openers are tracked through <c>&gt;</c> depth) and no statement
+	/// boundary intervenes. Used to narrow a type-argument slot to type names only.
+	/// </summary>
+	private static bool DetectTypeArgumentContext(IList<IToken> tokens, int position)
+	{
+		var depth = 0;
+		for (var i = tokens.Count - 1; i >= 0; i--)
+		{
+			var t = tokens[i];
+			if (t.Channel != Lexer.DefaultTokenChannel || t.Type == TokenConstants.EOF || t.Type == CvoloLexer.WS)
+				continue;
+			if (t.StopIndex >= position)
+				continue;
+
+			var text = t.Text;
+			if (text.Length > 0 && text[^1] == '>')
+			{
+				depth++;
+				continue;
+			}
+
+			if (text == "<")
+			{
+				if (depth > 0)
+				{
+					depth--;
+					continue;
+				}
+
+				return true;
+			}
+
+			if (depth == 0 && t.Type is CvoloLexer.SEMI or CvoloLexer.LBRACE or CvoloLexer.RBRACE)
+				return false;
+		}
+
+		return false;
 	}
 
 	/// <summary>

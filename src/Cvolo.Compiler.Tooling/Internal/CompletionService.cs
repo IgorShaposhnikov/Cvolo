@@ -290,12 +290,19 @@ internal static class CompletionService
 			}
 		}
 
-		if (textContext.IsTypeContext)
+		if (textContext.IsTypeContext || textContext.IsTypeArgumentContext)
 		{
+			// A type position keeps only type names, namespaces and type keywords. A generic
+			// argument additionally excludes `void` (and any non-value type) because no value can
+			// have type void, while a declaration type position may still name a return type.
+			Func<string, bool> isKeywordAllowed = textContext.IsTypeArgumentContext
+				? CompletionKeywordProvider.IsValueTypeKeyword
+				: CompletionKeywordProvider.IsTypeKeyword;
+
 			candidates.RemoveAll(candidate =>
 				candidate.Kind != Completion.CompletionKind.Type &&
 				candidate.Kind != Completion.CompletionKind.Namespace &&
-				!(candidate.Kind == Completion.CompletionKind.Keyword && CompletionKeywordProvider.IsTypeKeyword(candidate.Label)));
+				!(candidate.Kind == Completion.CompletionKind.Keyword && isKeywordAllowed(candidate.Label)));
 		}
 
 		return new CompletionResult(span, candidates);

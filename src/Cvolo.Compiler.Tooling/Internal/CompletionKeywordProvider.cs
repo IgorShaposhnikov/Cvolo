@@ -32,6 +32,17 @@ internal static class CompletionKeywordProvider
 		"bool", "string", "char", "void", "ref", "refvar"
 	];
 
+	/// <summary>
+	/// Type names that can begin a value/argument type. <c>void</c> is excluded because it never
+	/// names a value, so it must not be offered as a variable or generic-argument type.
+	/// </summary>
+	private static readonly string[] ValueTypeKeywords =
+	[
+		"int", "uint", "long", "ulong", "short", "ushort",
+		"byte", "sbyte", "nint", "nuint", "float", "double",
+		"bool", "string", "char", "ref", "refvar"
+	];
+
 	private static readonly string[] ExpressionKeywords =
 	[
 		"asm", "nameof", "typeof", "sizeof", "alignof", "offsetof", "heap", "true", "false",
@@ -51,7 +62,8 @@ internal static class CompletionKeywordProvider
 		"return", "val", "var", "ref", "refvar", "if", "while",
 		"for", "foreach", "switch", "defer", "try", "break",
 		"continue", "unsafe",
-		.. ExpressionKeywords
+		.. ExpressionKeywords,
+		.. ValueTypeKeywords
 	];
 
 	/// <summary>
@@ -77,6 +89,21 @@ internal static class CompletionKeywordProvider
 	public static bool IsTypeKeyword(string label)
 	{
 		foreach (var keyword in TypeKeywords)
+		{
+			if (keyword == label)
+				return true;
+		}
+
+		return false;
+	}
+
+	/// <summary>
+	/// True when <paramref name="label"/> names a value/argument type (a type keyword other than
+	/// <c>void</c>). Used to narrow a generic-argument slot, where <c>void</c> is never legal.
+	/// </summary>
+	public static bool IsValueTypeKeyword(string label)
+	{
+		foreach (var keyword in ValueTypeKeywords)
 		{
 			if (keyword == label)
 				return true;
