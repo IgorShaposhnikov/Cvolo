@@ -1,0 +1,20 @@
+using System;
+
+// A default site inside a generic extension method is discharged per instantiation through the
+// deferred extension-validation path. With T = int it is eligible.
+struct Box<T> {
+    T Value;
+}
+
+extension Box<T> {
+    T Get() {
+        return default(T);
+    }
+}
+
+int main() {
+    Box<int> b = default(Box<int>);
+    var n = b.Get();
+    Console.WriteLine(n);
+    return 0;
+}

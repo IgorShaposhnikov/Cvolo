@@ -1,0 +1,20 @@
+using System;
+
+// The same generic extension default site, instantiated with a non-defaultable type, must be
+// rejected at the concrete instantiation.
+struct Box<T> {
+    T Value;
+}
+
+extension Box<T> {
+    T Get() {
+        return default(T);
+    }
+}
+
+int main() {
+    Box<string> b = Box<string> { Value: "hi" };
+    var s = b.Get();
+    Console.WriteLine(s);
+    return 0;
+}

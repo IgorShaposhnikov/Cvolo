@@ -25,6 +25,7 @@ public sealed class ContextualDefaultTests : CompilerTestBase
 	[InlineData("GenericDefaultOption", "none")]
 	[InlineData("GenericBoxIntDefault", "0")]
 	[InlineData("GenericBoxVoidPtrDefault", "ok")]
+	[InlineData("GenericExtensionDefaultOk", "0")]
 	public void Execution_Success(string caseName, string expected)
 	{
 		var fileName = $"ContextualDefault/{caseName}.cvl";
@@ -51,6 +52,7 @@ public sealed class ContextualDefaultTests : CompilerTestBase
 	[InlineData("UnionFieldRawPointerDefaultFail", "CVL4198")]
 	[InlineData("GenericDefaultIneligibleFail", "CVL4196")]
 	[InlineData("DefaultArgumentRawPtrFail", "CVL4198")]
+	[InlineData("GenericExtensionDefaultFail", "CVL4196")]
 	[InlineData("DefaultReturnStringFail", "CVL4196")]
 	[InlineData("DefaultReturnRawPtrFail", "CVL4198")]
 	[InlineData("DefaultArgumentStringFail", "CVL4196")]
