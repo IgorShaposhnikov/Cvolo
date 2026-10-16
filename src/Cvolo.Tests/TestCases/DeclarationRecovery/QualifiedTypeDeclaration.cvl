@@ -1,0 +1,13 @@
+using System;
+
+namespace App;
+
+struct Window { int Width; }
+
+int main()
+{
+	App.Window w;
+	w.Width = 2;
+	Console.WriteLine(w.Width);
+	return 0;
+}

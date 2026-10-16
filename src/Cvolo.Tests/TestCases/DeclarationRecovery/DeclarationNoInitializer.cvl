@@ -1,0 +1,11 @@
+using System;
+
+struct Window { int Width; }
+
+int main()
+{
+	Window window;
+	window.Width = 4;
+	Console.WriteLine(window.Width);
+	return 0;
+}

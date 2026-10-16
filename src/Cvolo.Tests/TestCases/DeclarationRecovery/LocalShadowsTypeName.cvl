@@ -1,0 +1,12 @@
+using System;
+
+struct Window { int Width; }
+
+// A local named `Window` shadows the struct type: the declaration `int Window` is an
+// ordinary local declaration, and reading it is not a type reference.
+int main()
+{
+	int Window = 9;
+	Console.WriteLine(Window);
+	return 0;
+}

@@ -1,0 +1,11 @@
+using System;
+
+// The first declaration is missing its terminator. The parser must report it at its own
+// span and still recover the following statement instead of collapsing the whole body.
+int main()
+{
+	int a = 1
+	int b = 2;
+	Console.WriteLine(b);
+	return 0;
+}
