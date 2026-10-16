@@ -32,8 +32,7 @@ public static class PackageTemplateSource
 			if (hasSourceBackedDeclarations)
 			{
 				var helpers = members
-					.OfType<FunctionDeclarationSyntax>()
-					.Where(function => function.Visibility != Visibility.Public)
+					.Where(IsProducerPrivateHelper)
 					.Cast<SyntaxNode>();
 				sourceBackedMembers = sourceBackedMembers.Concat(helpers).Distinct().ToArray();
 			}
@@ -127,6 +126,24 @@ public static class PackageTemplateSource
 		InterfaceDeclarationSyntax type => type.Visibility == Visibility.Public,
 		ProtocolDeclarationSyntax type => type.Visibility == Visibility.Public,
 		ExtensionDeclarationSyntax extension => extension.Visibility == Visibility.Public,
+		_ => false
+	};
+
+	/// <summary>
+	/// Private (non-public) declarations a source-backed template body may need to bind and emit:
+	/// helper functions, plus the type/delegate/alias/extension declarations that ABI metadata does
+	/// not represent (metadata only carries public enums, non-generic public delegates, and public
+	/// structs/unions). Structs and unions are deliberately excluded — they are already rehydrated
+	/// from the API metadata, so bundling them here would create duplicate definitions.
+	/// </summary>
+	internal static bool IsProducerPrivateHelper(SyntaxNode node) => node switch
+	{
+		FunctionDeclarationSyntax function => function.Visibility != Visibility.Public,
+		ExtensionDeclarationSyntax extension => extension.Visibility != Visibility.Public,
+		EnumDeclarationSyntax enumeration => enumeration.Visibility != Visibility.Public,
+		DelegateDeclarationSyntax @delegate => @delegate.Visibility != Visibility.Public,
+		DelegateBlockDeclarationSyntax block => block.Delegates.Any(@delegate => @delegate.Visibility != Visibility.Public),
+		TypeAliasDeclarationSyntax alias => alias.Visibility != Visibility.Public,
 		_ => false
 	};
 
