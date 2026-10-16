@@ -1,0 +1,13 @@
+// An argument position has a target parameter type, so a default argument is validated there.
+// Passing default(string) is rejected because 'string' is not defaultable.
+struct Node {
+    int X;
+}
+
+void Take(Node n) {
+}
+
+int main() {
+    Take(default(string));
+    return 0;
+}

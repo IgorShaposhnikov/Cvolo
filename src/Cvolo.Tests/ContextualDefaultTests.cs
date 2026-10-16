@@ -48,6 +48,12 @@ public sealed class ContextualDefaultTests : CompilerTestBase
 	[InlineData("ErrorUnionRawPayloadDefaultFail", "CVL4196")]
 	[InlineData("UnionFieldRawPointerDefaultFail", "CVL4198")]
 	[InlineData("GenericDefaultIneligibleFail", "CVL4196")]
+	[InlineData("DefaultReturnStringFail", "CVL4196")]
+	[InlineData("DefaultReturnRawPtrFail", "CVL4198")]
+	[InlineData("DefaultArgumentStringFail", "CVL4196")]
+	[InlineData("DefaultOptionalVoidFail", "CVL4019")]
+	[InlineData("DefaultMissingFieldFail", "CVL4081")]
+	[InlineData("DefaultNoneToRawPtrFail", "CVL4188")]
 	public void Semantic_Rejections(string caseName, string expectedError)
 	{
 		var fileName = $"ContextualDefault/{caseName}.cvl";

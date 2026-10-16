@@ -1,0 +1,10 @@
+// Option.None is not a raw-pointer value; assigning it to a raw-pointer field is rejected.
+struct Window {
+    void* Ptr;
+    int Width;
+}
+
+int main() {
+    Window w = Window { Ptr = Option.None, Width = 1 };
+    return 0;
+}

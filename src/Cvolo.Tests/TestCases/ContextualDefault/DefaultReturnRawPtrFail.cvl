@@ -1,0 +1,16 @@
+// A raw-pointer default is only formable in an embedded field slot or under unsafe.
+// Returning default(void*) from safe code must be rejected even though the value is a null pointer.
+struct Node {
+    int X;
+}
+
+void* Fresh() {
+    return default(void*);
+}
+
+int main() {
+    if (Fresh() == null) {
+        return 0;
+    }
+    return 1;
+}

@@ -1,0 +1,15 @@
+// A 'default' in a return position is validated against the declared return type.
+// 'string' has no proven default recipe, so returning default(string) must be rejected
+// even before the value flows into the caller.
+struct Node {
+    int X;
+}
+
+Node Make() {
+    return default(string);
+}
+
+int main() {
+    Node n = Make();
+    return n.X;
+}

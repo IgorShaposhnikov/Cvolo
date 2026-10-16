@@ -1,0 +1,5 @@
+// 'void' has no value, so it cannot initialize anything, not even through an optional declaration.
+int main() {
+    int? x = default(void);
+    return 0;
+}
