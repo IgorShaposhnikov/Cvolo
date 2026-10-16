@@ -18,6 +18,7 @@ public enum CompletionQueryContext
 	Statement,
 	Expression,
 	Member,
+	Initializer,
 	None
 }
 
@@ -81,6 +82,12 @@ var previousUnit = context.CurrentUnit;
 				var visible = BuildVisibleScopeMap(state);
 				return new CompletionQueryResult(CompletionQueryContext.Member, EnumerateMemberCandidates(memberNode, visible, state));
 			}
+
+			// A cursor inside an aggregate literal (`Window { g|`) is a field-initializer position.
+			// Offer only the resolved aggregate's own instance fields \u2014 never the ambient globals
+			// and functions that an expression position would surface (e.g. `getchar`).
+			if (FindEnclosingInitializer(unit, position) is { } initializer)
+				return new CompletionQueryResult(CompletionQueryContext.Initializer, EnumerateInitializerCandidates(initializer, state));
 
 			var visibleMap = BuildVisibleScopeMap(state);
 			return new CompletionQueryResult(contextKind, EnumerateIdentifierCandidates(state, visibleMap));
@@ -1256,6 +1263,84 @@ finally
 		if (string.IsNullOrWhiteSpace(typeName))
 			return null;
 		return state.Context.ResolveType(state.Context.NormalizeGenericName(typeName));
+	}
+
+	/// <summary>
+	/// Finds the innermost aggregate literal whose braces contain <paramref name="position"/>, so a
+	/// cursor between <c>{</c> and <c>}</c> is treated as a field-initializer position rather than a
+	/// free expression. The type-name prefix guard keeps a cursor on the type name itself (for
+	/// example <c>Wi|ndow {</c>) out of the initializer context.
+	/// </summary>
+	private static StructInitializationExpressionSyntax? FindEnclosingInitializer(SyntaxNode node, int position)
+	{
+		foreach (var child in node.GetChildren())
+		{
+			if (!Touching(child.Span, position))
+				continue;
+
+			var nested = FindEnclosingInitializer(child, position);
+			if (nested is not null)
+				return nested;
+		}
+
+		if (node is StructInitializationExpressionSyntax initializer
+			&& position >= initializer.Span.Start + initializer.StructTypeName.Length)
+		{
+			return initializer;
+		}
+
+		return null;
+	}
+
+	/// <summary>
+	/// Offers only the eligible instance fields of the aggregate being initialized. Supplied fields
+	/// are excluded, accessibility is honored, and no ambient globals or functions leak in. The
+	/// insertion text appends <c> = </c> so the field value can be filled immediately.
+	/// </summary>
+	private static IReadOnlyList<CompletionCandidate> EnumerateInitializerCandidates(
+		StructInitializationExpressionSyntax initializer, QueryState state)
+	{
+		var candidates = new List<CompletionCandidate>();
+		var type = ResolveTypeOrNull(state, initializer.StructTypeName);
+		if (type is null)
+			return candidates;
+
+		var supplied = new HashSet<string>(StringComparer.Ordinal);
+		foreach (var member in initializer.Initializers)
+			supplied.Add(member.MemberName);
+
+		var seen = new HashSet<string>(StringComparer.Ordinal);
+
+		switch (type)
+		{
+			case StructTypeSymbol structType:
+				foreach (var field in structType.Fields)
+				{
+					if (supplied.Contains(field.Name) || !IsFieldVisible(state, structType, field.Visibility))
+						continue;
+					if (!seen.Add(field.Name))
+						continue;
+					candidates.Add(new CompletionCandidate(
+						field.Name, $"{field.Name} = ", CompletionKind.StructField, null,
+						$"{field.Type.Name} {structType.Name}.{field.Name}"));
+				}
+				break;
+
+			case UnionTypeSymbol unionType:
+				foreach (var field in unionType.Fields)
+				{
+					if (field.IsVoidVariant || supplied.Contains(field.Name) || !IsFieldVisible(state, unionType, field.Visibility))
+						continue;
+					if (!seen.Add(field.Name))
+						continue;
+					candidates.Add(new CompletionCandidate(
+						field.Name, $"{field.Name} = ", CompletionKind.UnionVariant, null,
+						$"{field.Type.Name} {unionType.Name}.{field.Name}"));
+				}
+				break;
+		}
+
+		return candidates;
 	}
 
 	private static TypeSymbol? ResolveVariableType(QueryState state, VariableDeclarationSyntax v, List<ScopedVariable> frame)
