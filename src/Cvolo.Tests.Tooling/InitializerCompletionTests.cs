@@ -55,4 +55,16 @@ public sealed class InitializerCompletionTests
 
 		Assert.DoesNotContain(result.Candidates, c => c.Label == "Width" && c.Kind == CompletionKind.StructField);
 	}
+
+	[Fact]
+	public void AggregateInitializer_ValuePosition_DoesNotOfferFieldNames()
+	{
+		var result = Complete(
+			"struct Window { void* Ptr; int Width; }\n" +
+			"int main() { Window w = Window { Ptr = | }; return 0; }\n");
+
+		Assert.True(
+			!result.Candidates.Any(c => c.Kind == CompletionKind.StructField),
+			string.Join(", ", result.Candidates.Select(c => $"{c.Label}:{c.Kind}")));
+	}
 }

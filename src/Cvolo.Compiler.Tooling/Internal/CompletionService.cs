@@ -132,7 +132,7 @@ internal static class CompletionService
 		// context). That must not suppress a recoverable member request; the probe below
 		// runs a parseable snapshot instead.
 		if (unit is not null && analysis.BinderContext is { } binderContext)
-			(queryContext, queryCandidates) = RunQuery(binderContext, unit, queryPosition);
+			(queryContext, queryCandidates) = RunQuery(binderContext, unit, queryPosition, textContext.IsAggregateInitializerValue);
 
 		// A realistic editor buffer often ends at `receiver.|` / `receiver.mem|` with no
 		// following semicolon yet. ANTLR can still return a non-null partial compilation unit,
@@ -644,14 +644,14 @@ internal static class CompletionService
 			.Replace("*", "Ptr");
 
 	private static (AnalysisContext Context, IReadOnlyList<Analysis.Completion.CompletionCandidate> Candidates) RunQuery(
-		BindingContext binderContext, CompilationUnitSyntax unit, int position)
+		BindingContext binderContext, CompilationUnitSyntax unit, int position, bool inAggregateInitializerValue = false)
 	{
 		// CompletionQuery temporarily mutates CurrentUnit/CurrentNamespace on the shared binder
 		// context to resolve names from the requesting file's perspective; the lock keeps that
 		// mutation serialized across concurrent completion requests.
 		lock (binderContext)
 		{
-			var result = CompletionQuery.Compute(binderContext, unit, position);
+			var result = CompletionQuery.Compute(binderContext, unit, position, inAggregateInitializerValue);
 			return (result.Context, result.Candidates);
 		}
 	}

@@ -20,7 +20,47 @@ internal sealed record CompletionTextContext(
 	string DestructorTypeName,
 	bool IsAttributeContext = false)
 {
+	/// <summary>
+	/// True when the cursor sits in the value region of an aggregate literal member (after the
+	/// <c>=</c> or <c>:</c> that follows a field name), as opposed to the field-name region.
+	/// </summary>
+	internal bool IsAggregateInitializerValue { get; init; }
+
 	internal static CompletionTextContext Analyze(SourceText text, int position)
+	{
+		var context = AnalyzeCore(text, position);
+		if (context.IsTypeContext || context.IsCommentOrLiteral
+			|| context.IsMemberAccessContext || context.IsDestructorContext)
+		{
+			return context;
+		}
+
+		return DetectAggregateInitializerValue(Lex(text.ToString()), position)
+			? context with { IsAggregateInitializerValue = true }
+			: context;
+	}
+
+	/// <summary>
+	/// The cursor is in a field-value slot when the last significant token before it is the
+	/// <c>=</c> or <c>:</c> written after a field name inside a braced initializer.
+	/// </summary>
+	private static bool DetectAggregateInitializerValue(IList<IToken> tokens, int position)
+	{
+		for (var i = tokens.Count - 1; i >= 0; i--)
+		{
+			var t = tokens[i];
+			if (t.Channel != Lexer.DefaultTokenChannel || t.Type == TokenConstants.EOF || t.Type == CvoloLexer.WS)
+				continue;
+			if (t.StopIndex >= position)
+				continue;
+
+			return t.Type is CvoloLexer.ASSIGN or CvoloLexer.COLON;
+		}
+
+		return false;
+	}
+
+	private static CompletionTextContext AnalyzeCore(SourceText text, int position)
 	{
 		var source = text.ToString();
 		var tokens = Lex(source);

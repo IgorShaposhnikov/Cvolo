@@ -49,7 +49,7 @@ public sealed record CompletionQueryResult(CompletionQueryContext Context, IRead
 
 public static class CompletionQuery
 {
-	public static CompletionQueryResult Compute(BindingContext context, CompilationUnitSyntax unit, int position)
+	public static CompletionQueryResult Compute(BindingContext context, CompilationUnitSyntax unit, int position, bool inAggregateInitializerValue = false)
 	{
 		ArgumentNullException.ThrowIfNull(context);
 		ArgumentNullException.ThrowIfNull(unit);
@@ -86,7 +86,7 @@ var previousUnit = context.CurrentUnit;
 			// A cursor inside an aggregate literal (`Window { g|`) is a field-initializer position.
 			// Offer only the resolved aggregate's own instance fields \u2014 never the ambient globals
 			// and functions that an expression position would surface (e.g. `getchar`).
-			if (FindEnclosingInitializer(unit, position) is { } initializer)
+			if (!inAggregateInitializerValue && FindEnclosingInitializer(unit, position) is { } initializer)
 				return new CompletionQueryResult(CompletionQueryContext.Initializer, EnumerateInitializerCandidates(initializer, state));
 
 			var visibleMap = BuildVisibleScopeMap(state);
@@ -1277,6 +1277,17 @@ finally
 		{
 			if (!Touching(child.Span, position))
 				continue;
+
+			if (child is MemberInitializerSyntax member)
+			{
+				// Inside a member initializer the cursor is either in the field-name region (the
+				// enclosing aggregate literal owns the completion) or in the value region (an
+				// ordinary expression position, which may itself hold a nested aggregate literal).
+				if (Touching(member.Expression.Span, position))
+					return FindEnclosingInitializer(member.Expression, position);
+
+				return node as StructInitializationExpressionSyntax;
+			}
 
 			var nested = FindEnclosingInitializer(child, position);
 			if (nested is not null)
