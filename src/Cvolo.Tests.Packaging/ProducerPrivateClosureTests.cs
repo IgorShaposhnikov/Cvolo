@@ -97,6 +97,33 @@ public struct Box {
 		Assert.Contains(members, member => member is FunctionDeclarationSyntax { Name: "Identity" });
 	}
 
+	[Fact]
+	public void SourceFallbackKeepsPrivateGlobals_WhileBitcodeTemplatesFilterThemOut()
+	{
+		var archive = BuildArchive("""
+namespace Lib;
+
+public T Identity<T>(T value) {
+    return value;
+}
+
+global int Counter = 0;
+""");
+
+		// Bitcode/API consumers only receive the monomorphizable template surface. A private
+		// global has module-internal storage in the producer's linked bitcode, so it must never be
+		// re-materialized in the consumer: filtering it out keeps that reference unresolved.
+		var templateUnit = Assert.Single(PackageTemplateSource.Read(archive, "Lib", "1.0.0"));
+		Assert.DoesNotContain(templateUnit.NamespaceDeclaration!.Members, member => member is GlobalVariableDeclarationSyntax);
+
+		// Source fallback compiles the producer's full verified source once in this module, so the
+		// private global is present and there is exactly one storage cell for it.
+		var allUnits = PackageTemplateSource.ReadAll(archive, "Lib", "1.0.0");
+		Assert.Contains(
+			allUnits.SelectMany(unit => unit.NamespaceDeclaration!.Members),
+			member => member is GlobalVariableDeclarationSyntax { Name: "Counter" });
+	}
+
 	private CvlArchive BuildArchive(string librarySource)
 	{
 		var libraryDirectory = Path.Combine(_root, "lib-" + Guid.NewGuid().ToString("N"));
