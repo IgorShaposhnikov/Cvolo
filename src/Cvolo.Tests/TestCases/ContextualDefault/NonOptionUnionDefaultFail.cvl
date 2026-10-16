@@ -1,0 +1,10 @@
+// Expect CVL4196: TrivialCopy alone does not authorize a union default.
+union Choice {
+    int Left;
+    int Right;
+}
+
+int main() {
+    var choice = default(Choice);
+    return 0;
+}

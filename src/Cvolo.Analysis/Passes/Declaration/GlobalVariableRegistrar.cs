@@ -1,3 +1,4 @@
+using Cvolo.Analysis.Passes.Validation;
 using Cvolo.Analysis.Semantics;
 using Cvolo.Analysis.Symbols;
 using Cvolo.Analysis.Symbols.Base;
@@ -109,6 +110,64 @@ internal sealed class GlobalVariableRegistrar(BindingContext context)
 			context.Diagnostics.Report(currentFileContext, globalDecl.Span, $"Global variable '{globalDecl.Name}' must be initialized with a compile-time constant.", DiagnosticIds.GlobalInitializerNotConstant);
 			return;
 		}
+		else if (globalDecl.Initializer is DefaultExpressionSyntax globalDefault)
+		{
+			// A typed global default must pass the same formation rules as a local
+			// one — void/ref/raw-pointer/ineligible aggregates are rejected here so that
+			// 'global void* p = default(void*)' cannot slip past the LLVM constant-null lowering.
+			var defaultTy = context.ResolveType(globalDefault.TypeName);
+			if (defaultTy is null)
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				context.Diagnostics.Report(currentFileContext, globalDefault.Span,
+					$"Unknown type '{globalDefault.TypeName}' in default expression for global '{globalDecl.Name}'.", DiagnosticIds.UnknownTypeInDefaultExpression);
+				return;
+			}
+
+			var fileContext = context.FileContexts[context.CurrentUnit!];
+
+			// An imported aggregate's verdict comes from the producer certificate, never
+			// from re-parsing Sector 1 fields. Eligible -> analyze as a local root; Ineligible ->
+			// the producer cause; absent/stale -> Unverified.
+			if (ImportedDefaultCertificateResolver.TryResolve(context, defaultTy, out var eligible, out var certificateReason, out var fingerprintMatches))
+			{
+				if (!fingerprintMatches)
+				{
+					context.Diagnostics.Report(fileContext, globalDefault.Span,
+						$"Type '{defaultTy.Name}' has no verified defaultability proof for this build in global '{globalDecl.Name}'; the producer certificate does not match the imported type layout.",
+						DiagnosticIds.ImportedDefaultProofUnavailable);
+					return;
+				}
+
+				if (!eligible)
+				{
+					context.Diagnostics.Report(fileContext, globalDefault.Span,
+						$"Type '{defaultTy.Name}' cannot be default-initialized in global '{globalDecl.Name}': {certificateReason ?? "the producing package marked it ineligible"}",
+						DiagnosticIds.DefaultNotAllowedForType);
+					return;
+				}
+
+				var localRoot = defaultTy;
+				var certifiedPlan = new DefaultabilityAnalyzer().GetDefaultPlan(defaultTy, GeneralFormationContext.Instance, SafetyTier.Safe,
+					type => !ReferenceEquals(type, localRoot) && ImportedDefaultCertificateResolver.IsImported(context, type));
+				if (!certifiedPlan.IsEligible)
+				{
+					ReportGlobalDefaultFailure(fileContext, globalDecl, globalDefault, defaultTy, certifiedPlan);
+					return;
+				}
+			}
+			else
+			{
+				var plan = new DefaultabilityAnalyzer().GetDefaultPlan(
+					defaultTy, GeneralFormationContext.Instance, SafetyTier.Safe,
+					type => ImportedDefaultCertificateResolver.IsImported(context, type));
+				if (!plan.IsEligible)
+				{
+					ReportGlobalDefaultFailure(fileContext, globalDecl, globalDefault, defaultTy, plan);
+					return;
+				}
+			}
+		}
 
 		if (globalDecl.Initializer is not null && type is not DelegateTypeSymbol && !IsInitializerCompatible(type, globalDecl.Initializer))
 		{
@@ -158,6 +217,10 @@ internal sealed class GlobalVariableRegistrar(BindingContext context)
 		{
 			foreach (var member in structInitializer.Initializers)
 			{
+				// A bare 'default' field slot is target-typed to the field by contextual
+				// default binding (validated later); no independent constant type to compare.
+				if (member.Expression is DefaultExpressionSyntax { TypeName: null })
+					continue;
 				var field = structType.FindField(member.MemberName);
 				if (field is null || !IsInitializerCompatible(field.Type, member.Expression))
 					return false;
@@ -189,6 +252,8 @@ internal sealed class GlobalVariableRegistrar(BindingContext context)
 		UnaryExpressionSyntax { Operator: "+" or "-", Operand: var operand } => GetConstantInitializerType(operand),
 		UnaryExpressionSyntax cast when NumericConversionSemantics.TryParseCastOperator(cast.Operator, out var castTypeName) => context.ResolveType(castTypeName),
 		BinaryExpressionSyntax binary when binary.Operator is "+" or "-" or "*" or "/" or "%" or "==" or "!=" or "<" or "<=" or ">" or ">=" => GetBinaryConstantType(binary),
+		// default(T) contributes its resolved target type so 'int x = default(int);' stays assignable.
+		DefaultExpressionSyntax def => def.TypeName is null ? null : context.ResolveType(def.TypeName),
 		_ => null
 	};
 
@@ -206,6 +271,21 @@ internal sealed class GlobalVariableRegistrar(BindingContext context)
 			return left.Equals(TypeSymbol.Double) || right.Equals(TypeSymbol.Double) ? TypeSymbol.Double : TypeSymbol.Float;
 
 		return TypeSymbol.Int;
+	}
+
+	/// <summary>
+	/// Reports a failed global default formation with the same diagnostic taxonomy as the local
+	/// expression path.
+	/// </summary>
+	private void ReportGlobalDefaultFailure(CompilationContext fileContext, GlobalVariableDeclarationSyntax globalDecl, DefaultExpressionSyntax initializer, TypeSymbol defaultTy, DefaultPlan plan)
+	{
+		var diagnosticId = plan.State == DefaultabilityState.Unverified
+			? DiagnosticIds.ImportedDefaultProofUnavailable
+			: defaultTy is RawPointerTypeSymbol
+				? DiagnosticIds.RawPointerDefaultRequiresUnsafeOrEmbedded
+				: DiagnosticIds.DefaultNotAllowedForType;
+		context.Diagnostics.Report(fileContext, initializer.Span,
+			$"Type '{defaultTy.Name}' cannot be default-initialized in global '{globalDecl.Name}': {plan.Reason}", diagnosticId);
 	}
 
 	/// <summary>
@@ -560,6 +640,10 @@ internal sealed class GlobalVariableRegistrar(BindingContext context)
 					&& IsCompileTimeConstant(bin.Left) && IsCompileTimeConstant(bin.Right),
 			StructInitializationExpressionSyntax structInit => structInit.Initializers.All(static m => IsCompileTimeConstant(m.Expression)),
 			SizeofExpressionSyntax or AlignofExpressionSyntax or OffsetofExpressionSyntax => true,
+			// default(T) is a compile-time constant (zero/None materialization). Bare defaults
+			// survive only inside global struct-literal field slots, where validation binds
+			// them target-typed to the field; misuse elsewhere is rejected (CVL4018).
+			DefaultExpressionSyntax => true,
 			_ => false
 		};
 	}

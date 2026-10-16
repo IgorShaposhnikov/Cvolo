@@ -1,0 +1,17 @@
+using System;
+
+// a canonical Option is Eligible regardless of payload, and that verdict must
+// survive substitution of the generic parameter (T = int?).
+T Make<T>() {
+    return default(T);
+}
+
+int main() {
+    int? value = Make<int?>();
+    if (value is None) {
+        Console.WriteLine("none");
+    } else {
+        Console.WriteLine("some");
+    }
+    return 0;
+}

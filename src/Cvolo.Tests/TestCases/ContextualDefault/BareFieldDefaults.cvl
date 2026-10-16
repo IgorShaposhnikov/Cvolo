@@ -1,0 +1,16 @@
+using System;
+
+// Bare defaults receive their types from the destination fields, including raw pointers.
+struct Window {
+    void* Ptr;
+    int Width;
+}
+
+int main() {
+    Window w = Window {
+        Ptr = default,
+        Width = default
+    };
+    Console.WriteLine(w.Width);
+    return 0;
+}

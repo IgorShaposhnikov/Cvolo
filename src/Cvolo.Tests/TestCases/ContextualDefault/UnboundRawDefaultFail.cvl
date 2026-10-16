@@ -1,0 +1,8 @@
+// Expect CVL4198: unbound is not unsafe and cannot form a standalone raw default.
+unbound void* Fresh() {
+    return default(void*);
+}
+
+int main() {
+    return 0;
+}

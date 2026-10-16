@@ -1,0 +1,22 @@
+using System;
+
+// an array of structs whose member is a tagged Option must be materialized
+// recursively under the real layout - never blindly zero-filled - so every element's Option
+// starts as the active None variant.
+struct Slot {
+    int? Maybe;
+    int Id;
+}
+
+string Status(int? value) {
+    if (value is None) {
+        return "N";
+    }
+    return "S";
+}
+
+int main() {
+    var Slot[3] slots = default(Slot[3]);
+    Console.WriteLine($"{Status(slots[0].Maybe)}{Status(slots[1].Maybe)}{Status(slots[2].Maybe)} {slots[0].Id}");
+    return 0;
+}

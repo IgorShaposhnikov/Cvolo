@@ -1,0 +1,14 @@
+using System;
+
+// Expect CVL4196: union variant slots are not struct fields, so a raw-pointer payload
+// does not gain the embedded default privilege even for an [Error] union.
+[Error]
+union Failure {
+    void* Pointer;
+    int Code;
+}
+
+int main() {
+    var value = default(Failure);
+    return 0;
+}

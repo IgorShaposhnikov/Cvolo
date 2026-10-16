@@ -1,0 +1,5 @@
+// Expect CVL4196: a root raw-pointer array has no embedded field capability.
+int main() {
+    var a = default(void*[4]);
+    return 0;
+}

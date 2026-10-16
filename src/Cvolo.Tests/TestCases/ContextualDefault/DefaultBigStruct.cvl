@@ -1,0 +1,17 @@
+using System;
+
+// LargeCopy classification must not prevent recursive defaulting of integer fields.
+struct Big {
+    int A;
+    int B;
+    int C;
+    int D;
+    int E;
+    int F;
+}
+
+int main() {
+    Big big = default(Big);
+    Console.WriteLine($"{big.A} {big.F}");
+    return 0;
+}

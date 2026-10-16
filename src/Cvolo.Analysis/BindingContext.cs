@@ -1,6 +1,7 @@
 using System.Text.RegularExpressions;
 using Cvolo.Analysis.Contracts;
 using Cvolo.Analysis.Passes;
+using Cvolo.Analysis.Passes.Validation;
 using Cvolo.Analysis.Semantics;
 using Cvolo.Analysis.Symbols;
 using Cvolo.Analysis.Symbols.Base;
@@ -83,6 +84,18 @@ public sealed class BindingContext
 	// Store monomorphized concrete instantiations (e.g., "Swap<int>")
 	public Dictionary<string, FunctionSymbol> MonomorphizedFunctions { get; } = [];
 	public List<FunctionDeclarationSyntax> MonomorphizedFunctionDecls { get; } = [];
+
+	// Transaction lifecycle for each monomorphized specialization, keyed by the
+	// same canonical instantiation name used in MonomorphizedFunctions. See MonomorphizationState.
+	public Dictionary<string, MonomorphizationState> MonomorphizationStates { get; } = new(StringComparer.Ordinal);
+
+	/// <summary>
+	/// Reports whether <paramref name="instName"/> currently names an emittable, validated
+	/// specialization. Only <see cref="MonomorphizationState.Ready"/> is usable; a missing entry
+	/// is treated as <see cref="MonomorphizationState.Absent"/>.
+	/// </summary>
+	public bool IsMonomorphizationReady(string instName)
+		=> MonomorphizationStates.TryGetValue(instName, out var state) && state == MonomorphizationState.Ready;
 
 	// Canonical Type Cache (Phase 3: Ensuring structural equality)
 	private readonly Dictionary<string, TypeSymbol> _typeCache = [];
@@ -496,6 +509,21 @@ public sealed class BindingContext
 	/// </summary>
 	public HashSet<CompilationUnitSyntax> ExternalPackageUnits { get; } = [];
 	public HashSet<CompilationUnitSyntax> PackageTemplateUnits { get; } = [];
+
+	/// <summary>
+	/// Producer-emitted type-level defaultability certificates for imported types, keyed by
+	/// the type's mangled name. Absent entries mean "no proof" and force the consumer to fail closed
+	/// (<c>Unverified</c>) rather than assuming an imported aggregate is defaultable.
+	/// </summary>
+	public Dictionary<string, ImportedDefaultCertificate> ImportedDefaultCertificates { get; } = new(StringComparer.Ordinal);
+
+	/// <summary>
+	/// Bare or explicit <c>default</c> expressions that a struct-field initializer bound to a
+	/// verified field-slot type with an Embedded formation context. Keyed by
+	/// the exact default expression node so nested expressions inside the same initializer
+	/// (call arguments, cast operands, conditional arms) never inherit the privilege.
+	/// </summary>
+	public Dictionary<DefaultExpressionSyntax, TypeSymbol> ContextualDefaultTypes { get; } = [];
 
 	/// <summary>
 	/// The package that owns each packaged unit. A package contributes two kinds of unit - the API
@@ -2328,9 +2356,18 @@ public sealed class BindingContext
 				effectiveVisibility = argVis;
 		}
 
+		var templateSymbol = UnionTypes.TryGetValue(templateMangledName, out var ts) ? ts : null;
 		var instantiatedType = new UnionTypeSymbol(instName, fields)
 		{
-			Visibility = effectiveVisibility
+			Visibility = effectiveVisibility,
+			// Carry the template's semantic identity: [Error] try/catch error unions and the
+			// Base-SDK canonical Option keep their default-recipe eligibility after substitution
+			// (a substituted Failure<int> is still an [Error] union; Option<int> is still the
+			// canonical Option). Name/shape alone never grants these.
+			IsErrorUnion = templateSymbol?.IsErrorUnion ?? false,
+			IsCanonicalOption = templateSymbol?.IsCanonicalOption ?? false,
+			IsMustUse = templateSymbol?.IsMustUse ?? false,
+			MustUseMessage = templateSymbol?.MustUseMessage
 		};
 
 		CurrentUnit = prevUnit;

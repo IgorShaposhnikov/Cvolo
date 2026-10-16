@@ -1,0 +1,13 @@
+using System;
+
+// Expect CVL4196: [Error] must not authorize a null nonnullable reference payload.
+[Error]
+union Failure {
+    ref int Left;
+    int Right;
+}
+
+int main() {
+    var value = default(Failure);
+    return 0;
+}

@@ -1,0 +1,18 @@
+using System;
+
+// the semantic proof for a generic default site is discharged per concrete
+// instantiation. Here T = Point is a plain value struct, so default(T) is Eligible.
+struct Point {
+    int X;
+    int Y;
+}
+
+T Make<T>() {
+    return default(T);
+}
+
+int main() {
+    Point p = Make<Point>();
+    Console.WriteLine($"{p.X} {p.Y}");
+    return 0;
+}

@@ -1,0 +1,7 @@
+using System;
+
+// Expect CVL4194: void has no value and must be rejected before LLVM emission.
+int main() {
+    var x = default(void);
+    return 0;
+}

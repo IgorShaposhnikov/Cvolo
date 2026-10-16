@@ -1,0 +1,10 @@
+// Expect CVL4196: an unsafe union cannot acquire Option semantics from its shape.
+unsafe union Value {
+    void None;
+    int Some;
+}
+
+int main() {
+    var v = default(Value);
+    return 0;
+}

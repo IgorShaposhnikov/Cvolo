@@ -7,6 +7,7 @@ using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
 using Cvolo.Core.AST.Expressions;
 using Cvolo.Core.AST.Statements;
+using Cvolo.Core.Diagnostics;
 
 namespace Cvolo.Analysis.Passes;
 
@@ -288,6 +289,7 @@ public sealed class ValidationPass(BindingContext context)
 
 				var extendedTypeName = context.MonomorphizedExtensionExtendedTypes[emitName];
 
+				var errorsBefore = context.Diagnostics.Diagnostics.Count(d => d.Severity == DiagnosticSeverity.Error);
 				if (decl is FunctionDeclarationSyntax func)
 				{
 					if (func.IsAssociated)
@@ -299,6 +301,13 @@ public sealed class ValidationPass(BindingContext context)
 				{
 					Constructors.ValidateBody(extendedTypeName, ctor);
 				}
+
+				// a specialization that produced new errors is Rejected and must not
+				// be emitted; otherwise it is Ready.
+				context.MonomorphizationStates[emitName] =
+					context.Diagnostics.Diagnostics.Count(d => d.Severity == DiagnosticSeverity.Error) > errorsBefore
+						? MonomorphizationState.Rejected
+						: MonomorphizationState.Ready;
 			}
 		}
 	}

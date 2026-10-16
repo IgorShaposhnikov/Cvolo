@@ -1,0 +1,7 @@
+using System;
+
+// Expect CVL4198: a standalone raw-pointer default requires unsafe context.
+int main() {
+    void* p = default(void*);
+    return 0;
+}

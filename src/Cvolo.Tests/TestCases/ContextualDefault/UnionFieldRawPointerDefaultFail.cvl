@@ -1,0 +1,13 @@
+using System;
+
+// Expect CVL4198: a union variant slot is not a struct field, so an explicit raw-pointer
+// default there requires unsafe or a genuine embedded struct-field slot.
+union Choice {
+    void* Pointer;
+    int Code;
+}
+
+int main() {
+    Choice c = Choice { Pointer = default(void*) };
+    return 0;
+}

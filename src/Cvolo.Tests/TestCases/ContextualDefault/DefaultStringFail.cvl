@@ -1,0 +1,7 @@
+using System;
+
+// Expect CVL4196: strings have no supported semantic default recipe in this increment.
+int main() {
+    var s = default(string);
+    return 0;
+}

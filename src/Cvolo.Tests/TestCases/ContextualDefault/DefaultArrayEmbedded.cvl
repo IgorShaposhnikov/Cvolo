@@ -1,0 +1,12 @@
+using System;
+
+// Raw-pointer array elements may default within an embedded struct-field path.
+struct Slots {
+    void*[4] Ptrs;
+}
+
+int main() {
+    var s = default(Slots);
+    Console.WriteLine("ok");
+    return 0;
+}

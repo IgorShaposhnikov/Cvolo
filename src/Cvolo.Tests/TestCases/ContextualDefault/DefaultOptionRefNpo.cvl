@@ -1,0 +1,16 @@
+using System;
+
+struct Node {
+    int Value;
+}
+
+// A nullable reference defaults to None through NPO, not to a nonnullable reference.
+int main() {
+    var ref Node? next = default;
+    if (next is None) {
+        Console.WriteLine("none");
+    } else {
+        Console.WriteLine("some");
+    }
+    return 0;
+}

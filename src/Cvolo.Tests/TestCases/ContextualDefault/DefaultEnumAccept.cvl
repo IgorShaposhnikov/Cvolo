@@ -1,0 +1,16 @@
+using System;
+
+// Preserve the existing zero-valued enum default used by compiler lowering.
+enum Color {
+    Red,
+    Green,
+    Blue
+}
+
+int main() {
+    var c = default(Color);
+    if (c == Color.Red) {
+        Console.WriteLine("red");
+    }
+    return 0;
+}

@@ -1,0 +1,13 @@
+using System;
+
+// Preserve the legacy integer error-union default after generic substitution.
+[Error]
+union Failure<T> {
+    T Left;
+    int Right;
+}
+
+int main() {
+    var value = default(Failure<int>);
+    return 0;
+}

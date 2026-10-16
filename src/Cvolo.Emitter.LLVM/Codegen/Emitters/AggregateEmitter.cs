@@ -386,33 +386,70 @@ internal sealed class AggregateEmitter(
 	/// </summary>
 	private void EmitZeroInitArray(LLVMValueRef destPtr, ArrayTypeSymbol arrayType)
 	{
-		var elementType = arrayType.ElementType;
+		EmitDefaultAggregate(destPtr, arrayType);
+	}
 
-		if (TypeIsZeroInitSafe(elementType))
+	/// <summary>
+	/// Recursively materializes the language-defined empty value of an aggregate under the
+	/// real target layout. A raw all-zero store is applied only when <see cref="TypeIsZeroInitSafe"/>
+	/// proves it equivalent; otherwise structs and arrays are descended so that nested tagged Options
+	/// receive their active <c>None</c> tag instead of a blind zero aggregate. This eliminates the
+	/// previously known-unsafe pattern of zeroing a nested struct element through the non-union
+	/// fallback without recursively constructing its tagged Option member.
+	/// </summary>
+	private void EmitDefaultAggregate(LLVMValueRef destPtr, TypeSymbol type)
+	{
+		if (TypeIsZeroInitSafe(type))
 		{
-			memory.ZeroMemory(destPtr, memory.GetStoreSize(codegen.Types.Lower(arrayType)));
+			memory.ZeroMemory(destPtr, memory.GetStoreSize(codegen.Types.Lower(type)));
 			return;
 		}
 
-		var arrayLayout = codegen.Types.Lower(arrayType);
-		for (var i = 0; i < arrayType.Size; i++)
+		switch (type)
 		{
-			var elementPtr = Builder.BuildGEP2(arrayLayout, destPtr, new LLVMValueRef[]
+			case ArrayTypeSymbol arrayType:
 			{
-				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
-				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)i)
-			}, "zero_el");
+				var arrayLayout = codegen.Types.Lower(arrayType);
+				for (var i = 0; i < arrayType.Size; i++)
+				{
+					var elementPtr = Builder.BuildGEP2(arrayLayout, destPtr, new LLVMValueRef[]
+					{
+						LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
+						LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)i)
+					}, "zero_el");
+					EmitDefaultAggregate(elementPtr, arrayType.ElementType);
+				}
 
-			if (elementType is UnionTypeSymbol unionEl)
+				return;
+			}
+			case StructTypeSymbol structType:
+			{
+				var structLayout = codegen.Types.Lower(structType);
+				for (var i = 0; i < structType.Fields.Count; i++)
+				{
+					var fieldPtr = Builder.BuildGEP2(structLayout, destPtr, new LLVMValueRef[]
+					{
+						LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
+						LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)i)
+					}, "zero_field");
+					EmitDefaultAggregate(fieldPtr, structType.Fields[i].Type);
+				}
+
+				return;
+			}
+			case UnionTypeSymbol unionEl:
 			{
 				var unionLayout = codegen.Types.Lower(unionEl);
 				if (unionEl.IsUnsafe)
 				{
-					Builder.BuildStore(LLVMValueRef.CreateConstNull(unionLayout), elementPtr);
-					continue;
+					Builder.BuildStore(LLVMValueRef.CreateConstNull(unionLayout), destPtr);
+					return;
 				}
 
-				var tagPtr = Builder.BuildGEP2(unionLayout, elementPtr, new LLVMValueRef[]
+				// Tagged Option-like union: seed the active None tag. Clear the inactive payload bytes
+				// so no stale storage is observed across a later None -> Some transition.
+				memory.ZeroMemory(destPtr, memory.GetStoreSize(unionLayout));
+				var tagPtr = Builder.BuildGEP2(unionLayout, destPtr, new LLVMValueRef[]
 				{
 					LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
 					LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0)
@@ -421,12 +458,25 @@ internal sealed class AggregateEmitter(
 					LLVMTypeRef.Int8,
 					(ulong)codegen.AggregateLayout.GetFieldIndex(unionEl, unionEl.NoneVariant.Name));
 				Builder.BuildStore(noneTag, tagPtr);
-				continue;
+				return;
 			}
-
-			memory.ZeroMemory(elementPtr, memory.GetStoreSize(codegen.Types.Lower(elementType)));
+			default:
+				memory.ZeroMemory(destPtr, memory.GetStoreSize(codegen.Types.Lower(type)));
+				return;
 		}
 	}
+
+	/// <summary>
+	/// Whether the all-zero LLVM image is a proven equivalent of the
+	/// language-defined empty value for <paramref name="type"/>.
+	/// </summary>
+	public bool IsZeroRepresentationEquivalent(TypeSymbol type) => TypeIsZeroInitSafe(type);
+
+	/// <summary>
+	/// Materializes the language-defined empty value of <paramref name="type"/> into
+	/// preallocated storage, recursively seeding nested tagged Options.
+	/// </summary>
+	public void EmitDefaultValueInPlace(LLVMValueRef destPtr, TypeSymbol type) => EmitDefaultAggregate(destPtr, type);
 
 	/// <summary>
 	/// Returns whether a raw all-zero byte representation is a valid empty value for the type under

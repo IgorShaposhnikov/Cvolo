@@ -30,6 +30,23 @@ public sealed class UnionTypeSymbol(string name, IReadOnlyList<UnionFieldSymbol>
 	public bool IsMustUse { get; set; } = false;
 	public string? MustUseMessage { get; set; }
 
+	/// <summary>
+	/// True when the union carries the <c>[Error]</c> attribute. Error unions are the try/catch
+	/// lowering's error type; the compiler synthesizes <c>default(ErrorUnion)</c> for catch slots
+	/// (zero-init = first variant), so they are defaultable even though they are not Option-shaped.
+	/// Payload variants are still recursively defaultability-checked. Non-Option, non-Error unions
+	/// are rejected by the defaultability rules.
+	/// </summary>
+	public bool IsErrorUnion { get; set; }
+
+	/// <summary>
+	/// Set only by the compiler when the Base library's own <c>Option</c> declaration is
+	/// registered, and propagated through generic instantiation (Option&lt;T&gt; specializations).
+	/// This is the stable declaration identity behind the default-recipe authorization;
+	/// a name or shape match never grants it.
+	/// </summary>
+	public bool IsCanonicalOption { get; set; }
+
 	public UnionFieldSymbol? FindField(string name) => Fields.FirstOrDefault(f => f.Name == name);
 
 	/// <summary>

@@ -288,6 +288,12 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 
 		foreach (var instDecl in bindingContext.MonomorphizedFunctionDecls)
 		{
+			// never emit a specialization whose validated body was rejected
+			// (or later invalidated). It remains registered so its failure is reported once.
+			if (bindingContext.MonomorphizationStates.TryGetValue(instDecl.Name, out var literalState)
+				&& literalState is MonomorphizationState.Rejected or MonomorphizationState.Invalidated)
+				continue;
+
 			var canonicalName = bindingContext.NormalizeGenericName(instDecl.Name);
 			var baseMangledName = instDecl.Name.Split('<')[0];
 			var originalUnit = (bindingContext.SymbolUnits.TryGetValue(baseMangledName, out var u) ? u : null) ?? units[0];

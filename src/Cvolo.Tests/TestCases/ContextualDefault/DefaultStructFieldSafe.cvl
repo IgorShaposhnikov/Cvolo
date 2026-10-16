@@ -1,0 +1,17 @@
+using System;
+
+struct Window {
+    void* Ptr;
+    int Width;
+}
+
+// Explicit field defaults and recursive whole-struct defaults are valid in safe code.
+int main() {
+    Window a = Window {
+        Ptr = default(void*),
+        Width = default(int)
+    };
+    Window b = default(Window);
+    Console.WriteLine($"{a.Width} {b.Width}");
+    return 0;
+}

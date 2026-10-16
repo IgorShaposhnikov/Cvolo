@@ -1,0 +1,17 @@
+using System;
+
+struct Window {
+    void* Ptr;
+    int Width;
+}
+
+// Global constant initializers also target-type bare defaults in field slots.
+global Window w = Window {
+    Ptr = default,
+    Width = default
+};
+
+int main() {
+    Console.WriteLine(w.Width);
+    return 0;
+}

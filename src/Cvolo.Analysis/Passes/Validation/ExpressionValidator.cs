@@ -37,6 +37,7 @@ internal sealed class ExpressionValidator(
 	Func<SyntaxNode, bool> endsWithReturn)
 {
 	private readonly ValidationContext _validation = validation;
+	private readonly DefaultabilityAnalyzer _defaultability = new();
 	private FormattingResolver? _formattingInstance;
 	private FormattingResolver Formatting
 	{
@@ -821,8 +822,9 @@ internal sealed class ExpressionValidator(
 				{
 					if (defaultExpr.TypeName is null)
 					{
-						// Bare 'default' (no type argument) is only lowered by OptionalSyntaxRewriter
-						// inside a typed declaration; anywhere else there is no type to infer.
+						// Bare 'default' is only target-typed inside a typed declaration or a bound
+						// struct-field slot (ContextualDefaultTypes). Anywhere else there is no
+						// type to infer.
 						var currentFileContext = context.FileContexts[context.CurrentUnit!];
 						context.Diagnostics.Report(currentFileContext, defaultExpr.Span,
 							"Cannot infer the type of a bare 'default' expression. Use default(T) or declare the variable with an explicit type.", DiagnosticIds.CannotInferTheTypeOfABareDefaultExpressionUseDefaultTOrDecla);
@@ -834,34 +836,59 @@ internal sealed class ExpressionValidator(
 					{
 						var currentFileContext = context.FileContexts[context.CurrentUnit!];
 						context.Diagnostics.Report(currentFileContext, defaultExpr.Span, $"Unknown type '{defaultExpr.TypeName}' in default expression", DiagnosticIds.UnknownTypeInDefaultExpression);
-					}
-					else if (defaultTy is TypeParameterSymbol)
-					{
-						// Generic type parameters (e.g., default(A) where A is a generic parameter) are always allowed.
 						break;
 					}
-					else if (defaultTy is StructTypeSymbol or UnionTypeSymbol)
+
+					if (defaultTy is TypeParameterSymbol)
 					{
-						var defaultKind = Classification.Classify(defaultTy);
-						if (defaultKind != CopyKind.TrivialCopy)
-						{
-							var currentFileContext = context.FileContexts[context.CurrentUnit!];
-							context.Diagnostics.Report(currentFileContext, defaultExpr.Span, $"Type '{defaultExpr.TypeName}' cannot be used with default because it is not a Trivial Copy Type", DiagnosticIds.TypeCannotBeUsedWithDefaultBecauseItIsNotATrivialCopyType);
-						}
+						// Generic type parameters (e.g., default(A) where A is a generic parameter) are
+						// deferred obligations: the specialization gate re-validates the concrete
+						// default at instantiation time.
+						break;
 					}
-					else if (defaultTy is DelegateTypeSymbol { IsNative: true })
+
+					if (defaultTy == TypeSymbol.Void)
+					{
+						// 'void' has no zero representation; reject before any emitter sees it.
+						var currentFileContext = context.FileContexts[context.CurrentUnit!];
+						context.Diagnostics.Report(currentFileContext, defaultExpr.Span,
+							"'void' has no default value; default(void) is not allowed.",
+							DiagnosticIds.DefaultCannotBeFormedForVoid);
+						break;
+					}
+
+					if (defaultTy is PointerTypeSymbol)
+					{
+						// ref/refvar nonnullable references have no default in any safety mode.
+						var currentFileContext = context.FileContexts[context.CurrentUnit!];
+						context.Diagnostics.Report(currentFileContext, defaultExpr.Span,
+							$"default({defaultExpr.TypeName}) is not allowed; nonnullable references have no default value.",
+							DiagnosticIds.DefaultCannotBeFormedForReference);
+						break;
+					}
+
+					if (defaultTy is DelegateTypeSymbol { IsNative: true })
 					{
 						_validation.RequireUnsafe(context, defaultExpr, UnsafeUsageKind.NullUnsafeLiteral,
 							$"default({defaultExpr.TypeName}) creates a null native function pointer and requires unsafe.", DiagnosticIds.NullForNativeDelegate);
+						break;
 					}
-					else if (defaultTy is DelegateTypeSymbol { IsNative: false })
+
+					if (defaultTy is DelegateTypeSymbol { IsNative: false })
 					{
 						// Safe delegates are non-null / non-default-initializable (§16).
 						var currentFileContext = context.FileContexts[context.CurrentUnit!];
 						context.Diagnostics.Report(currentFileContext, defaultExpr.Span,
 							$"Type '{defaultExpr.TypeName}' is a delegate and cannot be default-initialized; delegates are non-null values and require an initializer (function, lambda, or method group).",
 							DiagnosticIds.DelegateNotDefaultInitializable);
+						break;
 					}
+
+					// Everything else goes through the recursive defaultability plan in a General
+					// formation context: struct fields are checked under an Embedded path, raw
+					// pointer defaults are unsafe-only, imported types without producer proof fail
+					// closed as Unverified.
+					ValidateDefaultPlan(defaultExpr, defaultTy, GeneralFormationContext.Instance, _defaultability);
 				}
 
 				break;
@@ -1730,6 +1757,194 @@ internal sealed class ExpressionValidator(
 	}
 
 	/// <summary>
+	/// Resolves the target type of a bare <c>default</c> expression that was bound to a
+	/// struct-field slot. Bare defaults elsewhere have no type.
+	/// </summary>
+	private TypeSymbol? ResolveBareDefaultType(DefaultExpressionSyntax defaultExpr) =>
+		context.ContextualDefaultTypes.GetValueOrDefault(defaultExpr);
+
+	/// <summary>
+	/// Safety tier used for default formation in the current validation context.
+	/// </summary>
+	/// <summary>
+	/// Default formation is gated on real unsafe context only. <c>unbound</c> is a distinct,
+	/// non-unsafe tier (matching <c>FunctionSafetyAnalyzer</c>), so it does NOT unlock
+	/// unsafe-only defaults like raw-pointer values; only an active <c>unsafe</c> region does.
+	/// </summary>
+	private SafetyTier CurrentDefaultTier =>
+		_validation.UnsafeDepth > 0 ? SafetyTier.Unsafe : SafetyTier.Safe;
+
+	/// <summary>
+	/// True when the type is declared in a package-API metadata unit (external package surface)
+	/// whose producer has not (yet) supplied a verified defaultability proof. Source-fallback
+	/// package units are ordinary bound source and are NOT imported for this purpose.
+	/// </summary>
+	private bool IsImportedDefaultType(TypeSymbol type)
+	{
+		var unit = GetDeclaringUnit(type);
+		return unit is not null && context.ExternalPackageUnits.Contains(unit);
+	}
+
+	/// <summary>
+	/// Consults a producer-emitted type-level defaultability certificate for an imported
+	/// type. Returns false when no certificate is registered (the caller must fail closed). When
+	/// true, <paramref name="eligible"/> is the honored verdict and <paramref name="reason"/> carries
+	/// the producer's cause; <paramref name="fingerprintMatches"/> is false when the registered proof
+	/// no longer matches the type's serialized shape, in which case the caller must treat it as
+	/// Unverified rather than honor a stale verdict.
+	/// </summary>
+	private bool TryGetImportedCertificate(TypeSymbol type, out bool eligible, out string? reason, out bool fingerprintMatches)
+		=> ImportedDefaultCertificateResolver.TryResolve(context, type, out eligible, out reason, out fingerprintMatches);
+
+	/// <summary>
+	/// Runs the recursive defaultability plan for an already-resolved default type and reports
+	/// the fail-closed diagnostics when the plan cannot be formed.
+	/// </summary>
+	private void ValidateDefaultPlan(DefaultExpressionSyntax defaultExpr, TypeSymbol defaultTy, IFormationContext formation, DefaultabilityAnalyzer analyzer)
+	{
+		var currentFileContext = context.FileContexts[context.CurrentUnit!];
+
+		// An imported aggregate's verdict comes from the producer's certificate, never
+		// from re-parsing Sector 1 fields or co-packaged source. Eligible -> analyze as a local root;
+		// Ineligible -> the producer's lifecycle/resource cause; absent or stale -> Unverified.
+		if (TryGetImportedCertificate(defaultTy, out var eligible, out var certificateReason, out var fingerprintMatches))
+		{
+			if (!fingerprintMatches)
+			{
+				context.Diagnostics.Report(currentFileContext, defaultExpr.Span,
+					$"Type '{defaultExpr.TypeName ?? defaultTy.Name}' has no verified defaultability proof for this build; the producer certificate does not match the imported type layout.",
+					DiagnosticIds.ImportedDefaultProofUnavailable);
+				return;
+			}
+
+			if (eligible)
+			{
+				var localRoot = defaultTy;
+				var plan = analyzer.GetDefaultPlan(defaultTy, formation, CurrentDefaultTier,
+					type => !ReferenceEquals(type, localRoot) && IsImportedDefaultType(type), Classification.Classify);
+				if (plan.IsEligible)
+					return;
+				ReportDefaultPlanFailure(defaultExpr, defaultTy, plan, currentFileContext);
+				return;
+			}
+
+			context.Diagnostics.Report(currentFileContext, defaultExpr.Span,
+				$"Type '{defaultExpr.TypeName ?? defaultTy.Name}' cannot be default-initialized: {certificateReason ?? "the producing package marked it ineligible"}",
+				DiagnosticIds.DefaultNotAllowedForType);
+			return;
+		}
+
+		var planFallback = analyzer.GetDefaultPlan(defaultTy, formation, CurrentDefaultTier, IsImportedDefaultType, Classification.Classify);
+		if (planFallback.IsEligible)
+			return;
+		ReportDefaultPlanFailure(defaultExpr, defaultTy, planFallback, currentFileContext);
+	}
+
+	private void ReportDefaultPlanFailure(DefaultExpressionSyntax defaultExpr, TypeSymbol defaultTy, DefaultPlan plan, Cvolo.Core.Diagnostics.CompilationContext currentFileContext)
+	{
+		if (plan.State == DefaultabilityState.Unverified)
+		{
+			context.Diagnostics.Report(currentFileContext, defaultExpr.Span,
+				$"Type '{defaultExpr.TypeName ?? defaultTy.Name}' has no verified defaultability proof; default(...) is not allowed until the producing package supplies one.",
+				DiagnosticIds.ImportedDefaultProofUnavailable);
+			return;
+		}
+
+		var displayName = defaultExpr.TypeName ?? defaultTy.Name;
+		if (defaultTy is RawPointerTypeSymbol && plan.Reason is not null && plan.Reason.Contains("unsafe"))
+		{
+			context.Diagnostics.Report(currentFileContext, defaultExpr.Span,
+				$"default({displayName}) creates a null raw pointer; raw pointer defaults require unsafe or an embedded struct-field slot.",
+				DiagnosticIds.RawPointerDefaultRequiresUnsafeOrEmbedded);
+			return;
+		}
+
+		context.Diagnostics.Report(currentFileContext, defaultExpr.Span,
+			$"Type '{displayName}' cannot be default-initialized: {plan.Reason}",
+			DiagnosticIds.DefaultNotAllowedForType);
+	}
+
+	/// <summary>
+	/// Binds a <c>default</c>/<c>default(T)</c> expression that directly occupies a field
+	/// initializer slot. Bare defaults are target-typed to the field type and recorded in
+	/// <see cref="BindingContext.ContextualDefaultTypes"/>; explicit defaults are checked for
+	/// field compatibility. Struct-field slots are validated with an Embedded formation context
+	/// so a raw pointer field slot may form a null pointer without an unsafe block;
+	/// union variant slots are not struct fields and pass General formation instead (callers
+	/// supply it via <paramref name="slotFormation"/>). The privilege is granted to this expression
+	/// node only; nested expressions (call arguments, casts, conditionals) keep General semantics.
+	/// </summary>
+	private void BindFieldSlotDefault(DefaultExpressionSyntax defaultExpr, TypeSymbol fieldType, string ownerTypeName, string memberName, SymbolTable scope, IFormationContext? slotFormation = null)
+	{
+		var currentFileContext = context.FileContexts[context.CurrentUnit!];
+		// Struct-field slots are Embedded; union variant slots are NOT struct fields and
+		// keep General semantics, so a raw-pointer variant payload does not get the embedded privilege.
+		var formation = slotFormation ?? new EmbeddedFormationContext($"{ownerTypeName}.{memberName}");
+		var analyzer = new DefaultabilityAnalyzer();
+
+		if (defaultExpr.TypeName is null)
+		{
+			// Bare 'default' in a typed field slot: target-typed to the field type.
+			context.ContextualDefaultTypes[defaultExpr] = fieldType;
+			ValidateDefaultPlan(defaultExpr, fieldType, formation, analyzer);
+			return;
+		}
+
+		var defaultTy = context.ResolveType(defaultExpr.TypeName);
+		if (defaultTy is null)
+		{
+			context.Diagnostics.Report(currentFileContext, defaultExpr.Span,
+				$"Unknown type '{defaultExpr.TypeName}' in default expression", DiagnosticIds.UnknownTypeInDefaultExpression);
+			return;
+		}
+
+		// An explicit default(T) must still be compatible with the field type it initializes.
+		if (!TypesAssignable(fieldType, defaultTy))
+		{
+			context.Diagnostics.Report(currentFileContext, defaultExpr.Span,
+				$"Cannot initialize field of type '{fieldType.Name}' with default of type '{defaultTy.Name}'",
+				DiagnosticIds.CannotInitializeFieldOfTypeWithValueOfType);
+			return;
+		}
+
+		if (defaultTy is TypeParameterSymbol)
+			return; // deferred to specialization, same as the general default branch
+
+		if (defaultTy == TypeSymbol.Void)
+		{
+			context.Diagnostics.Report(currentFileContext, defaultExpr.Span,
+				"'void' has no default value; default(void) is not allowed.",
+				DiagnosticIds.DefaultCannotBeFormedForVoid);
+			return;
+		}
+
+		if (defaultTy is PointerTypeSymbol)
+		{
+			context.Diagnostics.Report(currentFileContext, defaultExpr.Span,
+				$"default({defaultExpr.TypeName}) is not allowed; nonnullable references have no default value.",
+				DiagnosticIds.DefaultCannotBeFormedForReference);
+			return;
+		}
+
+		if (defaultTy is DelegateTypeSymbol { IsNative: true })
+		{
+			_validation.RequireUnsafe(context, defaultExpr, UnsafeUsageKind.NullUnsafeLiteral,
+				$"default({defaultExpr.TypeName}) creates a null native function pointer and requires unsafe.", DiagnosticIds.NullForNativeDelegate);
+			return;
+		}
+
+		if (defaultTy is DelegateTypeSymbol { IsNative: false })
+		{
+			context.Diagnostics.Report(currentFileContext, defaultExpr.Span,
+				$"Type '{defaultExpr.TypeName}' is a delegate and cannot be default-initialized; delegates are non-null values and require an initializer (function, lambda, or method group).",
+				DiagnosticIds.DelegateNotDefaultInitializable);
+			return;
+		}
+
+		ValidateDefaultPlan(defaultExpr, defaultTy, formation, analyzer);
+	}
+
+	/// <summary>
 	/// Resolves an enum type name used as a scoped-variant-access receiver
 	/// (e.g. the 'Status' in 'Status.Active', possibly namespaced). Returns null
 	/// when the receiver is a value expression rather than an enum type name.
@@ -1987,7 +2202,14 @@ internal sealed class ExpressionValidator(
 					$"Cannot initialize private field '{init.MemberName}' using an external struct literal. Use an authorized constructor within the type's defining package module boundary.", DiagnosticIds.PrivateFieldLiteralInit);
 			}
 
-			if (init.Expression is ParenthesizedStructInitializerExpressionSyntax nested)
+			if (init.Expression is DefaultExpressionSyntax slotDefault)
+			{
+				// A default expression directly occupying a field slot is
+				// target-typed to the field type. A union variant slot is not a struct field,
+				// so it keeps General formation semantics (no embedded raw-pointer privilege).
+				BindFieldSlotDefault(slotDefault, field.Type, unionType.Name, init.MemberName, scope, GeneralFormationContext.Instance);
+			}
+			else if (init.Expression is ParenthesizedStructInitializerExpressionSyntax nested)
 			{
 				nested.ResolvedStructTypeName = field.Type.Name;
 				CheckParenthesizedStructInitialization(nested, scope);
@@ -2001,7 +2223,10 @@ internal sealed class ExpressionValidator(
 				Check(init.Expression, scope);
 			}
 
-			var initType = field.Type is DelegateTypeSymbol ? null : GetType(init.Expression, scope);
+			// Delegate fields are target-typed against the declared member type; the
+			// group/lambda check above already verified assignability. Defaults were
+			// checked against the field type inside BindFieldSlotDefault.
+			var initType = field.Type is DelegateTypeSymbol || init.Expression is DefaultExpressionSyntax ? null : GetType(init.Expression, scope);
 			if (initType is not null && !TypesAssignable(field.Type, initType))
 			{
 				var isValidNull = initType.Equals(TypeSymbol.Null) &&
@@ -2059,7 +2284,13 @@ internal sealed class ExpressionValidator(
 					$"Cannot initialize private field '{init.MemberName}' using an external struct literal. Use an authorized constructor within the type's defining package module boundary.", DiagnosticIds.PrivateFieldLiteralInit);
 			}
 
-			if (init.Expression is ParenthesizedStructInitializerExpressionSyntax nested)
+			if (init.Expression is DefaultExpressionSyntax slotDefault)
+			{
+				// A default expression directly occupying a field slot is
+				// target-typed to the field type and formed under an Embedded context.
+				BindFieldSlotDefault(slotDefault, field.Type, structType.Name, init.MemberName, scope);
+			}
+			else if (init.Expression is ParenthesizedStructInitializerExpressionSyntax nested)
 			{
 				nested.ResolvedStructTypeName = field.Type.Name;
 				CheckParenthesizedStructInitialization(nested, scope);
@@ -2074,8 +2305,9 @@ internal sealed class ExpressionValidator(
 			}
 
 			// Delegate fields are target-typed against the declared member type; the
-			// group/lambda check above already verified assignability.
-			var initType = field.Type is DelegateTypeSymbol ? null : GetType(init.Expression, scope);
+			// group/lambda check above already verified assignability. Defaults were
+			// checked against the field type inside BindFieldSlotDefault.
+			var initType = field.Type is DelegateTypeSymbol || init.Expression is DefaultExpressionSyntax ? null : GetType(init.Expression, scope);
 			if (initType is not null && !TypesAssignable(field.Type, initType))
 			{
 				var currentFileContext = context.FileContexts[context.CurrentUnit!];
@@ -2714,7 +2946,7 @@ internal sealed class ExpressionValidator(
 			CoalesceExpressionSyntax co => GetOrBindCoalesceExpression(co, scope, expectedType).ResultType,
 			OptionalChainExpressionSyntax chain => GetOrBindOptionalChain(chain, scope).ResultType,
 			VoidLiteralExpressionSyntax => TypeSymbol.Void,
-			DefaultExpressionSyntax d => context.ResolveType(d.TypeName),
+			DefaultExpressionSyntax d => d.TypeName is not null ? context.ResolveType(d.TypeName) : ResolveBareDefaultType(d),
 			UnaryExpressionSyntax unary => GetUnaryExpressionType(unary, scope),
 			AsmExpressionSyntax asm => InlineAsm.GetResultType(asm, scope),
 			NameofExpressionSyntax => TypeSymbol.String,
@@ -3277,7 +3509,12 @@ internal sealed class ExpressionValidator(
 					$"Cannot initialize private field '{init.MemberName}' using an external struct literal. Use an authorized constructor within the type's defining package module boundary.", DiagnosticIds.PrivateFieldLiteralInit);
 			}
 
-			if (init.Expression is ParenthesizedStructInitializerExpressionSyntax nestedSub)
+			if (init.Expression is DefaultExpressionSyntax slotDefault)
+			{
+				// Nested parenthesized typed initializer field slot.
+				BindFieldSlotDefault(slotDefault, field.Type, structType.Name, init.MemberName, scope);
+			}
+			else if (init.Expression is ParenthesizedStructInitializerExpressionSyntax nestedSub)
 			{
 				nestedSub.ResolvedStructTypeName = field.Type.Name;
 				CheckParenthesizedStructInitialization(nestedSub, scope);

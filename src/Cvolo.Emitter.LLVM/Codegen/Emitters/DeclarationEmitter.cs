@@ -241,6 +241,11 @@ internal sealed class DeclarationEmitter(
 	{
 		foreach (var instDecl in BindingContext.MonomorphizedFunctionDecls)
 		{
+			// a rejected/invalidated specialization is not declared.
+			if (BindingContext.MonomorphizationStates.TryGetValue(instDecl.Name, out var literalState)
+				&& literalState is MonomorphizationState.Rejected or MonomorphizationState.Invalidated)
+				continue;
+
 			var baseMangledName = instDecl.Name.Split('<')[0];
 			var originalUnit = (BindingContext.SymbolUnits.TryGetValue(baseMangledName, out var unit) ? unit : null) ?? units[0];
 			BindingContext.CurrentUnit = originalUnit;

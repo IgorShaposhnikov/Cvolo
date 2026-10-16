@@ -123,9 +123,25 @@ internal sealed class ExpressionEmitter(
 				return LLVMValueRef.CreateConstPointerNull(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0));
 			case DefaultExpressionSyntax d:
 				{
-					// Bare 'default' is lowered by OptionalSyntaxRewriter inside declarations; if it ever
-					// reaches codegen unresolved, validation already reported an error (codegen is skipped).
-					var targetType = d.TypeName is null ? TypeSymbol.Int : BindingContext.ResolveType(d.TypeName)!;
+					// 'default(T)' materializes the zero constant (tagged Option = None since
+					// the None variant is variant 0; NPO Option<ref T> flat pointer const-null = None).
+					// A bare 'default' that reached codegen is a bound field-slot default whose target
+					// type was recorded during validation.
+					var targetType = d.TypeName is not null
+						? BindingContext.ResolveType(d.TypeName)!
+						: BindingContext.ContextualDefaultTypes.GetValueOrDefault(d) ?? TypeSymbol.Int;
+					// never infer correctness from the fact that CreateConstNull can
+					// null-fill any LLVM type. When the target is an aggregate whose all-zero image is
+					// not a proven equivalent of the language-defined empty value (e.g. a struct or
+					// array nesting a tagged Option), materialize it recursively under the real layout.
+					if (targetType is StructTypeSymbol or ArrayTypeSymbol && !aggregates.IsZeroRepresentationEquivalent(targetType))
+					{
+						var aggregateType = LowerType(targetType);
+						var storage = memory.BuildEntryAlloca(aggregateType, "default_agg");
+						aggregates.EmitDefaultValueInPlace(storage, targetType);
+						return Builder.BuildLoad2(aggregateType, storage, "default_val");
+					}
+
 					return LLVMValueRef.CreateConstNull(LowerType(targetType));
 				}
 			case IsPatternExpressionSyntax isPat:

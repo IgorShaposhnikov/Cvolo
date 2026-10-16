@@ -118,6 +118,8 @@ internal sealed class GenericFunctionInstantiator(
 		if (templateMangledNameForUnit is not null && context.SymbolUnits.TryGetValue(templateMangledNameForUnit, out var declaringUnit))
 			instSymbol.DeclaringUnit = declaringUnit;
 		context.MonomorphizedFunctions[instName] = instSymbol;
+		// Provisional registration. Promoted to Ready/Rejected after body validation.
+		context.MonomorphizationStates[instName] = MonomorphizationState.Pending;
 
 		var instBody = SubstituteBlockGenerics(templateDecl.Body, substitutionMap);
 		var instDecl = new FunctionDeclarationSyntax(templateDecl.Span, returnType.Name, instName, [], instParameters, instBody, modifier: templateDecl.Modifier, visibility: templateDecl.Visibility, bindingKind: templateDecl.BindingKind);
@@ -154,7 +156,15 @@ internal sealed class GenericFunctionInstantiator(
 				localScope.Declare(new VariableSymbol(p.Name, p.Type, p.Type is PointerTypeSymbol { IsMutable: true }) { IsInitialized = true, Origin = OriginKind.Parameter });
 			}
 
+			var errorsBefore = context.Diagnostics.Diagnostics.Count(d => d.Severity == DiagnosticSeverity.Error);
 			validateBlock(instBody, localScope, instDecl);
+			// Complete the transaction. A body whose substituted default sites (or
+			// any other rule) produced new errors is rejected; otherwise the specialization is Ready
+			// and may be emitted.
+			context.MonomorphizationStates[instName] =
+				context.Diagnostics.Diagnostics.Count(d => d.Severity == DiagnosticSeverity.Error) > errorsBefore
+					? MonomorphizationState.Rejected
+					: MonomorphizationState.Ready;
 		}
 		finally
 		{
@@ -265,6 +275,9 @@ internal sealed class GenericFunctionInstantiator(
 			instSymbol.IsMustUse = true;
 
 		context.MonomorphizedFunctions[instName] = instSymbol;
+		// Extension bodies are validated later (ValidationPass drains
+		// MonomorphizedExtensionDecls); mark the specialization Pending until that completes.
+		context.MonomorphizationStates[instName] = MonomorphizationState.Pending;
 		context.Globals.Declare(instSymbol);
 		context.SymbolUnits[instName] = context.CurrentUnit!;
 
@@ -515,6 +528,8 @@ internal sealed class GenericFunctionInstantiator(
 		if (context.SymbolUnits.TryGetValue(templateMangledName, out var declaringUnit))
 			instSymbol.DeclaringUnit = declaringUnit;
 		context.MonomorphizedFunctions[instName] = instSymbol;
+		// Provisional registration. Promoted to Ready/Rejected after body validation.
+		context.MonomorphizationStates[instName] = MonomorphizationState.Pending;
 
 		var instBody = SubstituteBlockGenerics(templateDecl.Body, substitutionMap);
 		var instDecl = new FunctionDeclarationSyntax(templateDecl.Span, returnType.Name, instName, [], instParameters, instBody, modifier: templateDecl.Modifier, visibility: templateDecl.Visibility, bindingKind: templateDecl.BindingKind);
@@ -542,7 +557,13 @@ internal sealed class GenericFunctionInstantiator(
 				localScope.Declare(new VariableSymbol(p.Name, p.Type, p.Type is PointerTypeSymbol { IsMutable: true }) { IsInitialized = true, Origin = OriginKind.Parameter });
 			}
 
+			var errorsBefore = context.Diagnostics.Diagnostics.Count(d => d.Severity == DiagnosticSeverity.Error);
 			validateBlock(instBody, localScope, instDecl);
+			// Complete the transaction for the dispatch specialization.
+			context.MonomorphizationStates[instName] =
+				context.Diagnostics.Diagnostics.Count(d => d.Severity == DiagnosticSeverity.Error) > errorsBefore
+					? MonomorphizationState.Rejected
+					: MonomorphizationState.Ready;
 		}
 		finally
 		{

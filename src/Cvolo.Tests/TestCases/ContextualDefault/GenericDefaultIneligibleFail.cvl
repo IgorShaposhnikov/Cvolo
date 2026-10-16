@@ -1,0 +1,21 @@
+using System;
+
+// instantiating the same template with a resource-bearing type must reject the
+// substituted default site. The verdict is per-instantiation, so Make<Point> (elsewhere) stays valid.
+struct Handle {
+    int Value;
+}
+
+extension Handle {
+    ~Handle() { }
+}
+
+T Make<T>() {
+    return default(T);
+}
+
+int main() {
+    Handle h = Make<Handle>();
+    Console.WriteLine($"{h.Value}");
+    return 0;
+}

@@ -499,11 +499,53 @@ internal sealed class TypeDeclarationRegistrar(BindingContext context)
 			Visibility = unionDecl.Visibility,
 			IsMustUse = isMustUse,
 			MustUseMessage = mustUseMsg,
-			IsUnsafe = unionDecl.IsUnsafe
+			IsUnsafe = unionDecl.IsUnsafe,
+			IsErrorUnion = HasErrorAttribute(unionDecl.Attributes),
+			IsCanonicalOption = IsCanonicalOptionDeclaration(unit, unionDecl)
 		};
 
 		context.UnionTypes[mangledName] = symbol;
 		_pendingUnions.Add(new PendingUnion(unit, unionDecl, symbol, isGenericTemplate));
+	}
+
+	/// <summary>
+	/// True when the declaration carries <c>[Error]</c>/<c>[ErrorAttribute]</c. Error unions are
+	/// try/catch error types; the lowering synthesizes <c>default(ErrorUnion)</c> for catch slots,
+	/// which the defaultability rules must allow.
+	/// </summary>
+	private bool HasErrorAttribute(IReadOnlyList<AttributeSyntax> attributes)
+	{
+		foreach (var attr in attributes)
+		{
+			if (_attributes.NormalizeName(attr.Name) == "Error")
+				return true;
+		}
+
+		return false;
+	}
+
+	/// <summary>
+	/// Establishes the canonical Option declaration identity: only the Base-SDK
+	/// source's own <c>Option</c> union is marked, using the same origin detection as
+	/// <c>BuiltinValidator.ResolveOrigin</c>. Consumers (the default recipe) then rely on the
+	/// symbol flag, never on a display-name or shape test, so a user declaration with the same
+	/// spelling cannot acquire the flag.
+	/// </summary>
+	private bool IsCanonicalOptionDeclaration(CompilationUnitSyntax unit, UnionDeclarationSyntax unionDecl)
+	{
+		if (unionDecl.Name != "Option" || unionDecl.GenericParameters.Count != 1)
+			return false;
+
+		if (!context.FileContexts.TryGetValue(unit, out var fileContext))
+			return false;
+
+		if (fileContext.Origin == SourceOrigin.BaseSdk)
+			return true;
+
+		if (context.BaseSourcePaths.Count == 0)
+			return false;
+
+		return context.BaseSourcePaths.Contains(Path.GetFullPath(fileContext.FilePath));
 	}
 
 	/// <summary>

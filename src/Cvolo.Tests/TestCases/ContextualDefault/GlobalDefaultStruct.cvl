@@ -1,0 +1,14 @@
+using System;
+
+struct Pair {
+    int X;
+    int Y;
+}
+
+// A valid whole-struct default is a compile-time global initializer.
+global Pair origin = default(Pair);
+
+int main() {
+    Console.WriteLine($"{origin.X} {origin.Y}");
+    return 0;
+}

@@ -1,0 +1,16 @@
+using System;
+
+struct Slot {
+    void* Ptr;
+    int Tag;
+}
+
+// An explicit raw-pointer default is allowed directly in a typed field slot.
+int main() {
+    Slot s = Slot {
+        Ptr = default(void*),
+        Tag = 5
+    };
+    Console.WriteLine(s.Tag);
+    return 0;
+}

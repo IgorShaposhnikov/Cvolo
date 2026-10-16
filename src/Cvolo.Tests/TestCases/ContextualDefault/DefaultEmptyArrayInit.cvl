@@ -1,0 +1,22 @@
+using System;
+
+// an explicitly sized array initialized with an empty literal '{}' must seed nested
+// tagged Options through the recursive materializer, not raw-zero the struct element via the
+// non-union fallback.
+struct Slot {
+    int? Maybe;
+    int Id;
+}
+
+string Status(int? value) {
+    if (value is None) {
+        return "N";
+    }
+    return "S";
+}
+
+int main() {
+    var Slot[2] slots = {};
+    Console.WriteLine($"{Status(slots[0].Maybe)}{Status(slots[1].Maybe)}");
+    return 0;
+}

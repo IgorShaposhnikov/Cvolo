@@ -1,0 +1,10 @@
+// Expect CVL4196: matching None/Some shape does not grant canonical Option identity.
+union Pretender {
+    void None;
+    int Some;
+}
+
+int main() {
+    var u = default(Pretender);
+    return 0;
+}

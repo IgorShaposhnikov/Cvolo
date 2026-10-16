@@ -1,0 +1,24 @@
+using System;
+
+// a nested struct carrying a tagged Option must recurse into that member
+// rather than assuming the whole aggregate zero image is the language-defined empty value.
+struct Inner {
+    int? Maybe;
+}
+
+struct Outer {
+    Inner Value;
+    int Tag;
+}
+
+int main() {
+    var o = default(Outer);
+
+    if (o.Value.Maybe is None) {
+        Console.WriteLine($"none {o.Tag}");
+    } else {
+        Console.WriteLine($"some {o.Tag}");
+    }
+
+    return 0;
+}

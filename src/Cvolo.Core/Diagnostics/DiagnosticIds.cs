@@ -1333,6 +1333,33 @@ public static class DiagnosticIds
 	public const string TypeIsNotFormattable = "CVL4193";
 
 	/// <summary>
+	/// A default value cannot be formed for 'void'.
+	/// </summary>
+	public const string DefaultCannotBeFormedForVoid = "CVL4194";
+
+	/// <summary>
+	/// default(ref T)/default(refvar T) is not allowed; nonnullable references have no default
+	/// in any safety mode.
+	/// </summary>
+	public const string DefaultCannotBeFormedForReference = "CVL4195";
+
+	/// <summary>
+	/// Type '&lt;x&gt;' cannot be default-initialized: &lt;reason&gt;
+	/// </summary>
+	public const string DefaultNotAllowedForType = "CVL4196";
+
+	/// <summary>
+	/// Imported type '&lt;x&gt;' has no verified defaultability proof; default(&lt;x&gt;) is not
+	/// allowed (fail-closed for unproven types).
+	/// </summary>
+	public const string ImportedDefaultProofUnavailable = "CVL4197";
+
+	/// <summary>
+	/// A raw pointer default requires unsafe or an embedded struct-field slot.
+	/// </summary>
+	public const string RawPointerDefaultRequiresUnsafeOrEmbedded = "CVL4198";
+
+	/// <summary>
 	/// A division or remainder by a statically known zero divisor is rejected before code generation.
 	/// </summary>
 	public const string DivisionByZeroConstant = "CVL4210";
