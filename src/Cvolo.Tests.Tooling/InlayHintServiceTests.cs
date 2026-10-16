@@ -383,4 +383,47 @@ public sealed class InlayHintServiceTests
 			Assert.Equal([.. positions.OrderBy(position => position)], positions);
 		}
 	}
+
+	[Fact]
+	public void InferredTypeHint_IsNotFabricatedForARecoveredExplicitDeclaration()
+	{
+		const string source =
+			"struct Window { void* Ptr; int Width; }\n" +
+			"int main()\n" +
+			"{\n" +
+			"    Window windo = Window\n" +
+			"    {\n" +
+			"        Ptr = default\n" +
+			"    };\n" +
+			"    Window windo\n" +
+			"    return 0;\n" +
+			"}\n";
+
+		var x = Open(("Main.cvl", source));
+		using (x.Fixture)
+		{
+			// The incomplete trailing declaration is recovered as a type-less node whose name is
+			// the type-looking token; it must never be presented as an inferred type.
+			Assert.Empty(OfKind(x.Document.GetInlayHints(0, source.Length), ToolingInlayHintKind.Type));
+		}
+	}
+
+	[Fact]
+	public void InferredTypeHint_IsStillEmittedForAGenuineVarDeclaration()
+	{
+		const string source =
+			"struct Window { int Width; }\n" +
+			"int main()\n" +
+			"{\n" +
+			"    var windo = Window { Width = 1 };\n" +
+			"    return 0;\n" +
+			"}\n";
+
+		var x = Open(("Main.cvl", source));
+		using (x.Fixture)
+		{
+			var hint = SingleOfKind(x.Document.GetInlayHints(0, source.Length), ToolingInlayHintKind.Type);
+			Assert.Equal(": Window", hint.Label);
+		}
+	}
 }

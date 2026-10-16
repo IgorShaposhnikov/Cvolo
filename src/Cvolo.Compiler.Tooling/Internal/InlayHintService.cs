@@ -99,11 +99,35 @@ internal static class InlayHintService
 		if (!TryIndexOf(source, variable.Span, variable.Name, out var nameStart))
 			return;
 
+		// Parser recovery can synthesize a type-less declaration from text that actually names a
+		// type (`Window windo` with no initializer): the recovered node's Name is the type-looking
+		// token and its Type is null, so it would otherwise be mistaken for an inferred declaration.
+		// Only a declaration whose source spells the inference marker is genuinely inferred.
+		if (!EndsWithInferenceMarker(source, nameStart))
+			return;
+
 		hints.Add(new ToolingInlayHint(
 			nameStart + variable.Name.Length,
 			ToolingInlayHintKind.Type,
 			$": {typeName}",
 			PaddingLeft: false));
+	}
+
+	private static bool EndsWithInferenceMarker(string source, int nameStart)
+	{
+		var index = nameStart - 1;
+		while (index >= 0 && char.IsWhiteSpace(source[index]))
+			index--;
+
+		var end = index;
+		while (index >= 0 && (char.IsLetterOrDigit(source[index]) || source[index] == '_'))
+			index--;
+
+		if (end < 0 || index == end)
+			return false;
+
+		return source.AsSpan(index + 1, end - index).SequenceEqual("var")
+			|| source.AsSpan(index + 1, end - index).SequenceEqual("val");
 	}
 
 	/// <summary>
