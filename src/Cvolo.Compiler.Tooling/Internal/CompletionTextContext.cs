@@ -67,7 +67,105 @@ internal sealed record CompletionTextContext(
 			context = context with { IsDeclarationNameContext = true };
 		if (DetectTypeArgumentContext(tokens, position))
 			context = context with { IsTypeArgumentContext = true };
+		if (!context.IsTypeArgumentContext && DetectDeclarationTypeContext(tokens, position))
+			context = context with { IsTypeContext = true };
 		return context;
+	}
+
+	/// <summary>
+	/// The cursor is in a declaration-only type position — a parameter type list or an aggregate
+	/// body's field type list — where statement keywords such as <c>if</c> are not legal. This is
+	/// narrower than a value position, where both types and keywords may appear.
+	/// </summary>
+	private static bool DetectDeclarationTypeContext(IList<IToken> tokens, int position)
+	{
+		var last = LastSignificantIndexBefore(tokens, position);
+		if (last < 0)
+			return false;
+		if (IsWordToken(tokens[last].Type) || tokens[last].Text == ">")
+			last = PreviousSignificantIndex(tokens, last);
+		if (last < 0)
+			return false;
+
+		var token = tokens[last];
+		if (token.Type == CvoloLexer.LPAREN || token.Type == CvoloLexer.COMMA)
+			return OpensDeclarationParameterList(tokens, last);
+		if (token.Type == CvoloLexer.LBRACE)
+			return BraceOpensAggregateDeclaration(tokens, last);
+		return false;
+	}
+
+	/// <summary>
+	/// A parameter type slot is declaration-only when the enclosing <c>(</c> is written directly
+	/// after a declared function name, which itself follows a type (so <c>int f(d|)</c> is a
+	/// declaration, while <c>x = f(d|)</c> and <c>foo(bar, d|)</c> are calls).
+	/// </summary>
+	private static bool OpensDeclarationParameterList(IList<IToken> tokens, int separatorIndex)
+	{
+		var open = separatorIndex;
+		if (tokens[separatorIndex].Type == CvoloLexer.COMMA)
+		{
+			open = -1;
+			var depth = 0;
+			for (var i = separatorIndex; i >= 0; i--)
+			{
+				var t = tokens[i];
+				if (t.Channel != Lexer.DefaultTokenChannel || t.Type == TokenConstants.EOF || t.Type == CvoloLexer.WS)
+					continue;
+				if (t.Type == CvoloLexer.RPAREN)
+				{
+					depth++;
+				}
+				else if (t.Type == CvoloLexer.LPAREN)
+				{
+					if (depth == 0)
+					{
+						open = i;
+						break;
+					}
+
+					depth--;
+				}
+			}
+
+			if (open < 0)
+				return false;
+		}
+
+		var nameIndex = PreviousSignificantIndex(tokens, open);
+		if (nameIndex < 0 || tokens[nameIndex].Type != CvoloLexer.Identifier)
+			return false;
+		var beforeName = PreviousSignificantIndex(tokens, nameIndex);
+		return beforeName >= 0 && IsTypeLikeToken(tokens[beforeName]);
+	}
+
+	/// <summary>
+	/// A field type slot is declaration-only when the innermost unclosed <c>{</c> directly
+	/// follows a <c>struct</c>/<c>union</c> name (so <c>struct S { d| }</c> is a declaration,
+	/// while <c>Window { d| }</c> and <c>if (ok) { d| }</c> are not).
+	/// </summary>
+	private static bool BraceOpensAggregateDeclaration(IList<IToken> tokens, int braceIndex)
+	{
+		var nameIndex = PreviousSignificantIndex(tokens, braceIndex);
+		if (nameIndex < 0 || tokens[nameIndex].Type != CvoloLexer.Identifier)
+			return false;
+		var keywordIndex = PreviousSignificantIndex(tokens, nameIndex);
+		return keywordIndex >= 0 && tokens[keywordIndex].Type is CvoloLexer.STRUCT or CvoloLexer.UNION;
+	}
+
+	private static int LastSignificantIndexBefore(IList<IToken> tokens, int position)
+	{
+		for (var i = tokens.Count - 1; i >= 0; i--)
+		{
+			var t = tokens[i];
+			if (t.Channel != Lexer.DefaultTokenChannel || t.Type == TokenConstants.EOF || t.Type == CvoloLexer.WS)
+				continue;
+			if (t.StopIndex >= position)
+				continue;
+			return i;
+		}
+
+		return -1;
 	}
 
 	/// <summary>

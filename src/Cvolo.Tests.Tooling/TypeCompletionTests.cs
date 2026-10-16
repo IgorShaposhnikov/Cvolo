@@ -151,4 +151,45 @@ public sealed class TypeCompletionTests
 			Assert.Contains(result.Candidates, c => c.Label == "int" && c.Kind == CompletionKind.Keyword);
 		}
 	}
+
+	[Fact]
+	public void ParameterTypePosition_OffersOnlyTypes()
+	{
+		// A function parameter type is a type-only position: no statement keywords may leak.
+		var result = Complete("int f(d|) { return 0; }\nint main() { return 0; }\n");
+
+		Assert.Contains(result.Candidates, c => c.Label == "double" && c.Kind == CompletionKind.Keyword);
+		Assert.DoesNotContain(result.Candidates, c => c.Label == "default");
+		Assert.DoesNotContain(result.Candidates, c => c.Label == "defer");
+	}
+
+	[Fact]
+	public void ParameterTypePositionAfterComma_OffersOnlyTypes()
+	{
+		var result = Complete("int f(int a, d|) { return 0; }\nint main() { return 0; }\n");
+
+		Assert.Contains(result.Candidates, c => c.Label == "double" && c.Kind == CompletionKind.Keyword);
+		Assert.DoesNotContain(result.Candidates, c => c.Label == "default");
+	}
+
+	[Fact]
+	public void StatementPosition_StillOffersKeywordsAndTypes()
+	{
+		var result = Complete("int main()\n{\n    d|\n}\n");
+
+		Assert.Contains(result.Candidates, c => c.Label == "double" && c.Kind == CompletionKind.Keyword);
+		Assert.Contains(result.Candidates, c => c.Label == "default" && c.Kind == CompletionKind.Keyword);
+	}
+
+	[Fact]
+	public void ProgressiveGenericArgumentTyping_KeepsOfferingTheMatchingType()
+	{
+		foreach (var prefix in new[] { "d", "do", "dou", "double" })
+		{
+			var result = Complete($"int main()\n{{\n    int? x = Option<{prefix}|\n    return 0;\n}}\n");
+
+			Assert.Contains(result.Candidates, c => c.Label == "double" && c.Kind == CompletionKind.Keyword);
+			Assert.DoesNotContain(result.Candidates, c => c.Label == "default");
+		}
+	}
 }
