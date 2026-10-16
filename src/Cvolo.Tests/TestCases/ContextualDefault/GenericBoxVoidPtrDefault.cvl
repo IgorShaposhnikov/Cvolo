@@ -1,0 +1,13 @@
+using System;
+
+// A generic struct instantiated with a raw pointer is defaultable because the pointer sits in
+// an embedded struct-field slot, which carries the formation privilege.
+struct Box<T> {
+    T Value;
+}
+
+int main() {
+    Box<void*> b = default(Box<void*>);
+    Console.WriteLine("ok");
+    return 0;
+}

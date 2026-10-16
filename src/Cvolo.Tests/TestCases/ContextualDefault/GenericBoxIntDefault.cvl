@@ -1,0 +1,13 @@
+using System;
+
+// A generic struct instantiated with a plain value type is defaultable; the substituted
+// field is an ordinary value.
+struct Box<T> {
+    T Value;
+}
+
+int main() {
+    Box<int> b = default(Box<int>);
+    Console.WriteLine(b.Value);
+    return 0;
+}

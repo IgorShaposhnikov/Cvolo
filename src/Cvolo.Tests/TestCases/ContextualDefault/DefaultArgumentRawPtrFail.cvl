@@ -1,0 +1,10 @@
+// A raw-pointer default passed as a call argument stays in the general formation context:
+// the embedded privilege must not leak through a call.
+void* Identity(void* p) {
+    return p;
+}
+
+int main() {
+    var p = Identity(default(void*));
+    return 0;
+}
