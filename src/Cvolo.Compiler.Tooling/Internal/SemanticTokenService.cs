@@ -44,6 +44,14 @@ internal static class SemanticTokenService
 				if (node is CallExpressionSyntax calleeTypeCall)
 					TryAddCalleeTypeToken(analysis.BinderContext, unit, calleeTypeCall, source, tokens, seen);
 
+				// A namespace or namespace-alias receiver in a qualified reference resolves to no
+				// value/type symbol, so it would otherwise lose its scope colour. Classify the
+				// receiver name directly when it names a declared namespace or alias.
+				if (node is MemberAccessExpressionSyntax memberAccess)
+					TryAddNamespaceReceiverToken(analysis.BinderContext, unit, memberAccess.Expression, source, tokens, seen);
+				else if (node is CallExpressionSyntax receiverCall)
+					TryAddNamespaceReceiverToken(analysis.BinderContext, unit, receiverCall, source, tokens, seen);
+
 				foreach (var position in CandidatePositions(node, source))
 				{
 					if (position < 0)
@@ -182,6 +190,59 @@ internal static class SemanticTokenService
 		}
 
 		return false;
+	}
+
+	/// <summary>
+	/// Classifies the receiver of a qualified reference when the receiver names a declared
+	/// namespace or a namespace alias. Such a receiver has no value/type symbol, so the
+	/// resolver cannot classify it; a real symbol of the same spelling always wins.
+	/// </summary>
+	private static void TryAddNamespaceReceiverToken(
+		BindingContext context,
+		CompilationUnitSyntax unit,
+		SyntaxNode node,
+		string source,
+		List<SemanticTokenInfo> tokens,
+		HashSet<(int Start, int Length)> seen)
+	{
+		string? name;
+		int spanStart;
+
+		switch (node)
+		{
+			case IdentifierExpressionSyntax identifier:
+				name = identifier.Name;
+				spanStart = identifier.Span.Start;
+				break;
+			case CallExpressionSyntax call when call.FunctionName.Contains('.'):
+				name = ReceiverName(call.FunctionName);
+				if (name is null || !TryIndexOf(source, call.Span, name, out var receiverStart))
+					return;
+				spanStart = receiverStart;
+				break;
+			default:
+				return;
+		}
+
+		if (string.IsNullOrEmpty(name) || spanStart < 0)
+			return;
+
+		// A local, parameter or field that shadows the spelling is a real symbol; keep its token.
+		if (CompletionQuery.ResolveSymbol(context, unit, spanStart, includeDocumentationAndType: false) is not null)
+			return;
+
+		var span = new Cvolo.Core.Diagnostics.TextSpan(spanStart, name.Length);
+
+		if (context.GetNamespaceAliases(unit).ContainsKey(name))
+		{
+			AddDirectToken(tokens, seen, span, ToolingSymbolKind.NamespaceAlias);
+			return;
+		}
+
+		if (context.DeclaredNamespaces.Contains(name))
+		{
+			AddDirectToken(tokens, seen, span, ToolingSymbolKind.Namespace);
+		}
 	}
 
 	private static void TryAddReceiverToken(FunctionDeclarationSyntax function, string source, List<SemanticTokenInfo> tokens, HashSet<(int Start, int Length)> seen)
