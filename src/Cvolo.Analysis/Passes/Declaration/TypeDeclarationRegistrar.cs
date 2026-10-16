@@ -577,7 +577,13 @@ internal sealed class TypeDeclarationRegistrar(BindingContext context)
 					}
 
 					if (field.Type == "void")
+					{
+						templateFields.Add(new UnionFieldSymbol(field.Name, TypeSymbol.Void, isVoidVariant: true)
+						{
+							Visibility = field.Visibility
+						});
 						continue;
+					}
 
 					if (context.ResolveType(field.Type) is not { } templateFieldType)
 					{

@@ -831,14 +831,11 @@ finally
 				break;
 
 			case UnionTypeSymbol unionType:
-				if (!isTypeNameReceiver)
+				foreach (var field in unionType.Fields)
 				{
-					foreach (var field in unionType.Fields)
-					{
-						if (!IsFieldVisible(state, unionType, field.Visibility))
-							continue;
-						AddCandidate(candidates, field.Name, field.Name, CompletionKind.UnionVariant);
-					}
+					if (!IsFieldVisible(state, unionType, field.Visibility))
+						continue;
+					AddCandidate(candidates, field.Name, field.Name, CompletionKind.UnionVariant);
 				}
 
 				if (isTypeNameReceiver)
