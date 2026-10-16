@@ -1,0 +1,15 @@
+using System;
+
+// An optional field accepts `null` in unsafe code; the raw-pointer null rule must not be
+// conflated with arbitrary numeric conversion, but the option conversion stays legal.
+struct Holder {
+	int? Value;
+}
+
+int main() {
+	unsafe {
+		Holder h = Holder { Value = null };
+		Console.WriteLine(2);
+	}
+	return 0;
+}

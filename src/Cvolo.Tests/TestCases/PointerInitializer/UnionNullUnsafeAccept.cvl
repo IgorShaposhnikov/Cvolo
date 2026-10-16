@@ -1,0 +1,16 @@
+using System;
+
+// A raw pointer union variant may be initialized with `null` inside unsafe code, matching the
+// established union-initializer behaviour.
+union Slot {
+	void* Ptr;
+	int Value;
+}
+
+int main() {
+	unsafe {
+		Slot s = Slot { Ptr = null };
+		Console.WriteLine(3);
+	}
+	return 0;
+}

@@ -1,0 +1,17 @@
+using System;
+
+// Assigning `null` to a raw-pointer struct field after construction follows the same unsafe
+// rule as the initializer.
+struct Window {
+	void* Ptr;
+	int Width;
+}
+
+int main() {
+	unsafe {
+		Window w = Window { Ptr = null, Width = 1 };
+		w.Ptr = null;
+		Console.WriteLine(w.Width);
+	}
+	return 0;
+}

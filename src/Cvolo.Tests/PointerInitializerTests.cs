@@ -15,6 +15,12 @@ public sealed class PointerInitializerTests : CompilerTestBase
 	[Theory]
 	[InlineData("StructNullUnsafeAccept", "42")]
 	[InlineData("StructIntPtrNullUnsafeAccept", "7")]
+	[InlineData("UnionNullUnsafeAccept", "3")]
+	[InlineData("UnsafeFunctionNullAccept", "5")]
+	[InlineData("NestedStructNullUnsafeAccept", "9")]
+	[InlineData("OptionNullUnsafeAccept", "2")]
+	[InlineData("DirectRawPointerUnsafeAccept", "4")]
+	[InlineData("FieldReassignNullUnsafeAccept", "1")]
 	public void RawPointerFieldNull_UnsafeAccepted(string caseName, string expected)
 	{
 		var fileName = $"{Category}/{caseName}.cvl";
@@ -29,6 +35,9 @@ public sealed class PointerInitializerTests : CompilerTestBase
 	[Theory]
 	[InlineData("StructNullToIntFail", "CVL4100")]
 	[InlineData("StructIntToRawPtrFail", "CVL4019")]
+	[InlineData("DirectRawPointerSafeFail", "CVL4020")]
+	[InlineData("RefLocalNullFail", "CVL1910")]
+	[InlineData("RefFieldNullFail", "CVL4100")]
 	public void RawPointerFieldMismatch_Rejected(string caseName, string expectedId)
 	{
 		var fileName = $"{Category}/{caseName}.cvl";
@@ -38,14 +47,29 @@ public sealed class PointerInitializerTests : CompilerTestBase
 		Assert.Contains(expectedId, stderr);
 	}
 
-	[Fact]
-	public void SafeNullToRawPointerField_ReportsSafetyDiagnosticWithoutTypeMismatch()
+	[Theory]
+	[InlineData("StructNullSafeFail")]
+	[InlineData("FieldReassignNullSafeFail")]
+	[InlineData("DelegateFieldNullSafeFail")]
+	[InlineData("NestedStructNullSafeFail")]
+	public void SafeNullToRawPointer_ReportsSafetyDiagnosticWithoutTypeMismatch(string caseName)
 	{
-		const string fileName = $"{Category}/StructNullSafeFail.cvl";
+		var fileName = $"{Category}/{caseName}.cvl";
 		var (exitCode, stdout, stderr) = RunCompiler(fileName);
 
 		Assert.Equal(1, exitCode);
 		Assert.Contains("CVL1104", stderr);
 		Assert.DoesNotContain("CVL4019", stderr);
+	}
+
+	[Fact]
+	public void UnsafeNullInitializer_ProducesNoSpuriousOrDuplicateDiagnostic()
+	{
+		var fileName = $"{Category}/StructNullUnsafeAccept.cvl";
+		var (exitCode, stdout, stderr) = RunCompiler(fileName);
+
+		AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
+		Assert.DoesNotContain("CVL4019", stderr);
+		Assert.DoesNotContain("CVL1104", stderr);
 	}
 }

@@ -1,0 +1,20 @@
+using System;
+
+// A function declared `unsafe` is an effective unsafe body, so a null raw-pointer field
+// initializer inside it is allowed exactly as inside an unsafe block.
+struct Window {
+	void* Ptr;
+	int Width;
+}
+
+unsafe int Build() {
+	Window w = Window { Ptr = null, Width = 5 };
+	return w.Width;
+}
+
+int main() {
+	unsafe {
+		Console.WriteLine(Build());
+	}
+	return 0;
+}

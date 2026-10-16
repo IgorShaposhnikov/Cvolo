@@ -1,0 +1,21 @@
+using System;
+
+// Assigning `null` to a raw-pointer struct field outside unsafe code is rejected by the safety
+// rule alone (CVL1104); it must not also produce a field-initializer type mismatch (CVL4019).
+struct Window {
+	void* Ptr;
+	int Width;
+}
+
+void SetNull(Window w) {
+	w.Ptr = null;
+}
+
+int main() {
+	unsafe {
+		Window win = Window { Ptr = null, Width = 1 };
+		SetNull(win);
+		Console.WriteLine(win.Width);
+	}
+	return 0;
+}

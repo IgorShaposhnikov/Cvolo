@@ -1,0 +1,9 @@
+using System;
+
+// Outside unsafe code a direct raw-pointer variable initialized with `null` is rejected on the
+// conversion itself; the raw-pointer null privilege does not leak into safe code.
+int main() {
+	void* p = null;
+	Console.WriteLine(4);
+	return 0;
+}

@@ -1,0 +1,20 @@
+using System;
+
+// A borrowed reference field is not a raw pointer: `null` is rejected as a pointer-type
+// requirement failure, even inside unsafe code.
+struct Node {
+	int Value;
+}
+
+struct Link {
+	ref Node Next;
+	int Tag;
+}
+
+int main() {
+	unsafe {
+		Link l = Link { Next = null, Tag = 1 };
+		Console.WriteLine(1);
+	}
+	return 0;
+}

@@ -1,0 +1,18 @@
+using System;
+
+// The nested raw-pointer null privilege is scoped to the effective unsafe context: outside it the
+// inner null is rejected by the safety rule alone.
+struct Inner {
+	void* Ptr;
+}
+
+struct Outer {
+	Inner Value;
+	int Tag;
+}
+
+int main() {
+	Outer o = Outer { Value = Inner { Ptr = null }, Tag = 9 };
+	Console.WriteLine(o.Tag);
+	return 0;
+}

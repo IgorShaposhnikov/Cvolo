@@ -1,0 +1,13 @@
+using System;
+
+// A direct raw-pointer variable initialization with `null` is allowed in unsafe code, the same
+// rule that applies to a struct field.
+int main() {
+	unsafe {
+		void* p = null;
+		if (p == null) {
+			Console.WriteLine(4);
+		}
+	}
+	return 0;
+}

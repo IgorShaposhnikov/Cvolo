@@ -1,0 +1,20 @@
+using System;
+
+// A nested struct literal inherits the effective unsafe context, so an inner raw-pointer field
+// may be initialized with `null` when the whole expression is inside unsafe.
+struct Inner {
+	void* Ptr;
+}
+
+struct Outer {
+	Inner Value;
+	int Tag;
+}
+
+int main() {
+	unsafe {
+		Outer o = Outer { Value = Inner { Ptr = null }, Tag = 9 };
+		Console.WriteLine(o.Tag);
+	}
+	return 0;
+}

@@ -1,0 +1,15 @@
+using System;
+
+// A safe reference (`ref` / `refvar`) never inherits the raw-pointer null conversion, even inside
+// unsafe code.
+struct Node {
+	int Value;
+}
+
+int main() {
+	unsafe {
+		ref Node n = null;
+		Console.WriteLine(1);
+	}
+	return 0;
+}
