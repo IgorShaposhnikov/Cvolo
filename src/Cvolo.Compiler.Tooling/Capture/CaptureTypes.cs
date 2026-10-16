@@ -55,7 +55,15 @@ public sealed record CapturedExternalUnit(
 	string SourceText,
 	CapturedExternalUnitKind Kind,
 	string? PackageId,
-	string? PackageVersion);
+	string? PackageVersion,
+	IReadOnlyDictionary<string, CapturedDefaultabilityCertificate>? DefaultabilityCertificates = null);
+
+/// <summary>
+/// Tooling-owned projection of an imported type's defaultability certificate. Mirrors the producer
+/// verdict carried in package metadata (state/reason/fingerprint) without leaking packaging types
+/// across the compiler/tooling boundary.
+/// </summary>
+public sealed record CapturedDefaultabilityCertificate(string State, string? Reason, string? Fingerprint);
 
 /// <summary>
 /// One fully materialized package source document inside a frozen capture.

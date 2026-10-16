@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using Cvolo.Core.Diagnostics;
+using Cvolo.Packaging;
 using Cvolo.Projects;
 using Cvolo.Syntax.Antlr;
 
@@ -55,7 +56,13 @@ internal static class ToolingCaptureService
 						? CapturedExternalUnitKind.ExternalPackageApi
 						: CapturedExternalUnitKind.PackageTemplate,
 					u.PackageId,
-					u.PackageVersion))
+					u.PackageVersion,
+					u.DefaultabilityCertificates is { Count: > 0 } certificates
+						? certificates.ToDictionary(
+							pair => pair.Key,
+							pair => new CapturedDefaultabilityCertificate(pair.Value.State, pair.Value.Reason, pair.Value.Fingerprint),
+							StringComparer.Ordinal)
+						: null))
 				.ToArray();
 
 			var capturedPackageSources = packageSources
@@ -129,7 +136,22 @@ internal static class ToolingCaptureService
 			var kind = external.Kind == CapturedExternalUnitKind.ExternalPackageApi
 				? ExternalSemanticUnitKind.ExternalPackageApi
 				: ExternalSemanticUnitKind.PackageTemplate;
-			externalUnits.Add(new ExternalSemanticUnit(unit, kind, external.PackageId, external.PackageVersion));
+			externalUnits.Add(new ExternalSemanticUnit(
+				unit,
+				kind,
+				external.PackageId,
+				external.PackageVersion,
+				external.DefaultabilityCertificates is { Count: > 0 } certificates
+					? certificates.ToDictionary(
+						pair => pair.Key,
+						pair => new PackageApiDefaultability
+						{
+							State = pair.Value.State,
+							Reason = pair.Value.Reason,
+							Fingerprint = pair.Value.Fingerprint,
+						},
+						StringComparer.Ordinal)
+					: null));
 		}
 
 		var packageSources = capture.PackageSources
@@ -219,7 +241,18 @@ internal static class ToolingCaptureService
 			builder.Append("proj:").Append(file.Path).Append('|').Append(file.Text).Append('\n');
 
 		foreach (var external in externalUnits.OrderBy(e => e.FilePath, StringComparer.Ordinal))
+		{
 			builder.Append("ext:").Append(external.FilePath).Append('|').Append(external.Kind).Append('|').Append(external.PackageId).Append('|').Append(external.PackageVersion).Append('|').Append(external.SourceText).Append('\n');
+
+			// imported defaultability certificates are part of the frozen universe — a
+			// capture that drops them would silently downgrade certified defaults to Unverified. Fold
+			// them into the digest so a certificate change invalidates a cached capture.
+			if (external.DefaultabilityCertificates is { Count: > 0 } certificates)
+			{
+				foreach (var (typeName, certificate) in certificates.OrderBy(c => c.Key, StringComparer.Ordinal))
+					builder.Append("extcert:").Append(external.FilePath).Append('|').Append(typeName).Append('|').Append(certificate.State).Append('|').Append(certificate.Reason).Append('|').Append(certificate.Fingerprint).Append('\n');
+			}
+		}
 
 		foreach (var source in packageSources.OrderBy(p => p.PackageId, StringComparer.Ordinal).ThenBy(p => p.RelativePath, StringComparer.Ordinal))
 			builder.Append("pkg:").Append(source.PackageId).Append('|').Append(source.Version).Append('|').Append(source.RelativePath).Append('|').Append(source.Source).Append('\n');
