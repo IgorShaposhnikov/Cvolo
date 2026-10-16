@@ -131,4 +131,24 @@ public sealed class TypeCompletionTests
 			Assert.Contains(result.Candidates, c => c.Label == primitive && c.Kind == CompletionKind.Keyword);
 		}
 	}
+
+	[Fact]
+	public void ProgressiveTypingOnOneSnapshot_KeepsOfferingTheMatchingType()
+	{
+		const string skeleton = "int main()\n{{\n    {0}\n}}\n";
+		using var fixture = TempProject.Create(("Main.cvl", string.Format(skeleton, "i")));
+		var project = CvoloWorkspace.Create().OpenProject(fixture.ProjectFilePath);
+		var snapshot = project.InitialSnapshot;
+		var documentId = project.GetDocumentId("Main.cvl");
+
+		foreach (var prefix in new[] { "i", "in", "int" })
+		{
+			var text = string.Format(skeleton, prefix);
+			var probe = snapshot.WithDocument(documentId, SourceText.From(text));
+			var probeDocument = probe.GetDocument(documentId);
+			var result = probeDocument.GetCompletions("int main()\n{\n    ".Length + prefix.Length);
+
+			Assert.Contains(result.Candidates, c => c.Label == "int" && c.Kind == CompletionKind.Keyword);
+		}
+	}
 }
