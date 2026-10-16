@@ -74,4 +74,43 @@ public sealed class LocalTypeDisplayTests
 			Assert.Equal("struct Window", symbol.DisplayText);
 		}
 	}
+
+	[Fact]
+	public void VarLocal_DisplayPreservesGenericTypeArgument()
+	{
+		const string s = "int main() { var o = default(int?); return 0; }\n";
+		var x = Open(s);
+		using (x.Fixture)
+		{
+			var symbol = x.Document.GetSymbolAtPosition(At(s, "o ="));
+			Assert.NotNull(symbol);
+			Assert.Equal("Option<int> o", symbol!.DisplayText);
+		}
+	}
+
+	[Fact]
+	public void VarLocal_DisplayPreservesFixedArrayType()
+	{
+		const string s = "int main() { var a = default(int[4]); return 0; }\n";
+		var x = Open(s);
+		using (x.Fixture)
+		{
+			var symbol = x.Document.GetSymbolAtPosition(At(s, "a ="));
+			Assert.NotNull(symbol);
+			Assert.Equal("int[4] a", symbol!.DisplayText);
+		}
+	}
+
+	[Fact]
+	public void VarLocal_DisplayPreservesRawPointerType()
+	{
+		const string s = "int main()\n{\n    unsafe\n    {\n        var p = default(void*);\n    }\n    return 0;\n}\n";
+		var x = Open(s);
+		using (x.Fixture)
+		{
+			var symbol = x.Document.GetSymbolAtPosition(At(s, "p ="));
+			Assert.NotNull(symbol);
+			Assert.Equal("void* p", symbol!.DisplayText);
+		}
+	}
 }
