@@ -162,6 +162,42 @@ public sealed class ImportedDefaultabilityToolingTests
 		}
 	}
 
+	[Fact]
+	public void ImportedIneligibleStructDefault_PointsAtTheDefaultExpression()
+	{
+		var root = CreateRoot();
+		var libraries = Path.Combine(root, "libs");
+		Directory.CreateDirectory(libraries);
+		try
+		{
+			WriteLibrary(
+				Path.Combine(libraries, "Lib.cvlib"),
+				new PackageApiStruct
+				{
+					Name = "Handle",
+					Fields = [new PackageApiStructField("int", "Value", Visibility.Public)],
+					Defaultability = new PackageApiDefaultability
+					{
+						State = PackageApiDefaultability.Ineligible,
+						Reason = "type declares a destructor",
+					},
+				});
+
+			const string source = "using Lib;\nint main() { Handle h = default(Handle); return h.Value; }\n";
+			File.WriteAllText(Path.Combine(root, "Main.cvl"), source);
+
+			var diagnostics = Analyze(root, "Main.cvl");
+
+			var diagnostic = Assert.Single(diagnostics, d => d.Id == "CVL4196");
+			var span = diagnostic.Location.Span;
+			Assert.Equal("default(Handle)", source.Substring(span.Start, span.Length));
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
 	private static IReadOnlyList<Diagnostic> Analyze(string root, string documentName)
 	{
 		var project = CvoloWorkspace.Create().OpenProject(root, ["libs"]);
