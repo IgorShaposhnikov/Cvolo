@@ -19,6 +19,7 @@ public enum CompletionQueryContext
 	Expression,
 	Member,
 	Initializer,
+	DeclarationName,
 	None
 }
 
@@ -302,6 +303,9 @@ finally
 		return CompletionQueryContext.Declaration;
 	}
 
+	/// <summary>
+	/// True for literal expression nodes, which produce no completion candidates.
+	/// </summary>
 	private static bool IsLiteralNode(SyntaxNode node) => node is
 		StringLiteralExpressionSyntax or
 		InterpolatedStringExpressionSyntax or

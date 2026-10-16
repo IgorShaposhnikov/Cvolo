@@ -134,6 +134,16 @@ internal static class CompletionService
 		if (unit is not null && analysis.BinderContext is { } binderContext)
 			(queryContext, queryCandidates) = RunQuery(binderContext, unit, queryPosition, textContext.IsAggregateInitializerValue);
 
+		// A declaration name slot (`Window |`, `Window g|`) is not an expression or statement
+		// position. An incomplete declaration produces no declaration node, so the query would
+		// otherwise fall through to the ambient value surface and leak unrelated functions and
+		// globals into a slot that only names a variable. Suppress those candidates.
+		if (textContext.IsDeclarationNameContext)
+		{
+			queryContext = AnalysisContext.DeclarationName;
+			queryCandidates = [];
+		}
+
 		// A realistic editor buffer often ends at `receiver.|` / `receiver.mem|` with no
 		// following semicolon yet. ANTLR can still return a non-null partial compilation unit,
 		// but that unit may omit the MemberAccessExpression node. In that case a normal query

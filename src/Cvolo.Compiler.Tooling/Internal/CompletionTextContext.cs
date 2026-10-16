@@ -26,6 +26,14 @@ internal sealed record CompletionTextContext(
 	/// </summary>
 	internal bool IsAggregateInitializerValue { get; init; }
 
+	/// <summary>
+	/// True when the cursor sits in the name slot of a declaration: after a resolved type name
+	/// (for example <c>Window |</c>) or while naming it (<c>Window g|</c>), as opposed to an
+	/// expression or statement position. The name slot must not fall back to the ambient value
+	/// surface, which would leak unrelated functions and globals.
+	/// </summary>
+	internal bool IsDeclarationNameContext { get; init; }
+
 	internal static CompletionTextContext Analyze(SourceText text, int position)
 	{
 		var context = AnalyzeCore(text, position);
@@ -35,9 +43,12 @@ internal sealed record CompletionTextContext(
 			return context;
 		}
 
-		return DetectAggregateInitializerValue(Lex(text.ToString()), position)
-			? context with { IsAggregateInitializerValue = true }
-			: context;
+		var tokens = Lex(text.ToString());
+		if (DetectAggregateInitializerValue(tokens, position))
+			context = context with { IsAggregateInitializerValue = true };
+		if (DetectDeclarationNameContext(tokens, position))
+			context = context with { IsDeclarationNameContext = true };
+		return context;
 	}
 
 	/// <summary>
@@ -59,6 +70,86 @@ internal sealed record CompletionTextContext(
 
 		return false;
 	}
+
+	/// <summary>
+	/// The cursor is in a declaration name slot when the trailing word is a type name written
+	/// before an empty name slot (<c>Window |</c>) or a partial name following a type or a
+	/// declaration prefix (<c>Window g|</c>, <c>val g|</c>, <c>val int count|</c>). A trailing
+	/// word alone (<c>Win|</c>), or a word following a non-type keyword such as <c>return</c>,
+	/// stays out of the declaration-name context.
+	/// </summary>
+	private static bool DetectDeclarationNameContext(IList<IToken> tokens, int position)
+	{
+		var significant = new List<IToken>();
+		for (var i = 0; i < tokens.Count; i++)
+		{
+			var t = tokens[i];
+			if (t.Channel != Lexer.DefaultTokenChannel || t.Type == TokenConstants.EOF || t.Type == CvoloLexer.WS)
+				continue;
+			if (t.StopIndex >= position)
+				continue;
+
+			significant.Add(t);
+		}
+
+		if (significant.Count == 0)
+			return false;
+
+		var last = significant[^1];
+		if (last.Type != CvoloLexer.Identifier)
+			return false;
+
+		// `Window |`: the type name is complete (there is whitespace up to the cursor) and the
+		// name slot is empty. `Window g|`: the trailing identifier is a partial name adjoining a
+		// preceding type or declaration prefix.
+		var hasGap = position - (last.StopIndex + 1) > 0;
+		var prev = significant.Count >= 2 ? significant[^2] : null;
+
+		if (hasGap)
+		{
+			return prev is null
+				|| IsStatementBoundary(prev.Type)
+				|| IsDeclarationPrefixType(prev.Type)
+				|| IsVisibilityType(prev.Type);
+		}
+
+		if (prev is null || (!IsTypeLikeToken(prev) && !IsDeclarationPrefixType(prev.Type)))
+			return false;
+
+		var beforePrev = significant.Count >= 3 ? significant[^3] : null;
+		return beforePrev is null
+			|| IsStatementBoundary(beforePrev.Type)
+			|| IsDeclarationPrefixType(beforePrev.Type)
+			|| IsVisibilityType(beforePrev.Type);
+	}
+
+	private static bool IsTypeLikeToken(IToken token)
+		=> token.Type == CvoloLexer.Identifier || PrimitiveTypeKeywords.Contains(token.Text);
+
+	private static bool IsDeclarationPrefixType(int tokenType) => tokenType switch
+	{
+		CvoloLexer.VAL or CvoloLexer.VAR or CvoloLexer.GLOBAL or CvoloLexer.ALIAS
+			or CvoloLexer.REF or CvoloLexer.REFVAR => true,
+		_ => false
+	};
+
+	private static bool IsVisibilityType(int tokenType) => tokenType switch
+	{
+		CvoloLexer.PRIVATE or CvoloLexer.INTERNAL or CvoloLexer.PUBLIC => true,
+		_ => false
+	};
+
+	private static bool IsStatementBoundary(int tokenType) => tokenType switch
+	{
+		CvoloLexer.SEMI or CvoloLexer.LBRACE or CvoloLexer.RBRACE => true,
+		_ => false
+	};
+
+	private static readonly HashSet<string> PrimitiveTypeKeywords = new(StringComparer.Ordinal)
+	{
+		"void", "int", "uint", "long", "ulong", "short", "ushort", "byte", "sbyte",
+		"double", "float", "nint", "nuint", "bool", "string", "char"
+	};
 
 	private static CompletionTextContext AnalyzeCore(SourceText text, int position)
 	{
