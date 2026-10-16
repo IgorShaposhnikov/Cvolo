@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Xml;
 using System.Xml.Linq;
 using Cvolo.Analysis;
+using Cvolo.Analysis.Passes.Validation;
 using Cvolo.Analysis.Symbols.Base;
 using Cvolo.Analysis.Symbols.FFI;
 using Cvolo.Core.AST;
@@ -171,7 +172,14 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 			asts.Add(external.Unit);
 			binder.Context.FileContexts[external.Unit] = external.Unit.Context;
 			if (external.Kind == ExternalSemanticUnitKind.ExternalPackageApi)
+			{
 				binder.Context.ExternalPackageUnits.Add(external.Unit);
+				if (external.DefaultabilityCertificates is { Count: > 0 } certificates)
+				{
+					foreach (var (typeName, cert) in certificates)
+						binder.Context.ImportedDefaultCertificates[typeName] = new ImportedDefaultCertificate(cert.State, cert.Reason, cert.Fingerprint);
+				}
+			}
 			else
 				binder.Context.PackageTemplateUnits.Add(external.Unit);
 
@@ -182,7 +190,6 @@ internal sealed class CompilerDriver(PackageCache packageCache) : ICompilerDrive
 		// Cross-file declaration index feeding the try/catch lowering (function
 		// Result error types, [Error] marks, declared type kinds).
 		var declarationIndex = DeclarationIndex.Build(asts);
-
 		var rewriters = new List<AstRewriterBase> {
 			new StringInterpolationRewriter(parser)
 		};

@@ -22,7 +22,8 @@ public sealed record ExternalSemanticUnit(
 	CompilationUnitSyntax Unit,
 	ExternalSemanticUnitKind Kind,
 	string? PackageId = null,
-	string? PackageVersion = null);
+	string? PackageVersion = null,
+	IReadOnlyDictionary<string, PackageApiDefaultability>? DefaultabilityCertificates = null);
 
 /// <summary>
 /// Inputs for building a project's semantic universe.
@@ -177,8 +178,9 @@ public static class ProjectUniverseLoader
 				continue;
 			}
 
+			var certificates = artifact.ApiMetadata.GetDefaultabilityCertificates();
 			foreach (var packageUnit in artifact.ApiMetadata.CreateCompilationUnits(artifact.PackageId, artifact.Version, skipGenericTemplates: artifact.TemplateUnits.Count > 0))
-				externalUnits.Add(new ExternalSemanticUnit(packageUnit, ExternalSemanticUnitKind.ExternalPackageApi, artifact.PackageId, artifact.Version));
+				externalUnits.Add(new ExternalSemanticUnit(packageUnit, ExternalSemanticUnitKind.ExternalPackageApi, artifact.PackageId, artifact.Version, certificates));
 
 			foreach (var templateUnit in artifact.TemplateUnits)
 				externalUnits.Add(new ExternalSemanticUnit(templateUnit, ExternalSemanticUnitKind.PackageTemplate, artifact.PackageId, artifact.Version));

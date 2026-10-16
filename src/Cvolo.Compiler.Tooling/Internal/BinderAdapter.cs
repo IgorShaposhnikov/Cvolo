@@ -1,4 +1,5 @@
 using Cvolo.Analysis;
+using Cvolo.Analysis.Passes.Validation;
 using Cvolo.Core.AST.Base;
 using Cvolo.Projects;
 
@@ -85,7 +86,14 @@ internal static class BinderAdapter
 				allUnits.Add(external.Unit);
 				binder.Context.FileContexts[external.Unit] = external.Unit.Context;
 				if (external.Kind == ExternalSemanticUnitKind.ExternalPackageApi)
+				{
 					binder.Context.ExternalPackageUnits.Add(external.Unit);
+					if (external.DefaultabilityCertificates is { Count: > 0 } certificates)
+					{
+						foreach (var (typeName, cert) in certificates)
+							binder.Context.ImportedDefaultCertificates[typeName] = new ImportedDefaultCertificate(cert.State, cert.Reason, cert.Fingerprint);
+					}
+				}
 				else
 					binder.Context.PackageTemplateUnits.Add(external.Unit);
 

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Cvolo.Analysis.Passes.Validation;
 using Cvolo.Analysis.Symbols.FFI;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
@@ -22,7 +23,9 @@ public sealed class PackageApiMetadata
 	public IReadOnlyList<PackageApiUnit> Units { get; init; } = [];
 	public IReadOnlyList<NativeLibraryInfo> NativeLibraries { get; init; } = [];
 
-	public static PackageApiMetadata FromCompilationUnits(IEnumerable<CompilationUnitSyntax> units)
+	public static PackageApiMetadata FromCompilationUnits(
+		IEnumerable<CompilationUnitSyntax> units,
+		IReadOnlyDictionary<string, PackageApiDefaultability>? defaultability = null)
 	{
 		var compilationUnits = units.ToArray();
 		var sourceBackedContractNames = PackageTemplateSource.CollectPublicContractNames(compilationUnits);
@@ -31,6 +34,9 @@ public sealed class PackageApiMetadata
 		{
 			var ns = unit.NamespaceDeclaration;
 			var members = ns is null ? unit.Members : ns.Members;
+			string Qualified(string name) => string.IsNullOrEmpty(ns?.Name) ? name : $"{ns!.Name}.{name}";
+			PackageApiDefaultability? Cert(string name) =>
+				defaultability is not null && defaultability.TryGetValue(Qualified(name), out var c) ? c : null;
 			var functions = members
 				.OfType<FunctionDeclarationSyntax>()
 				.Where(function => function.Visibility == Visibility.Public
@@ -60,7 +66,12 @@ public sealed class PackageApiMetadata
 					Fields = type.Fields.Select(field => new PackageApiStructField(field.Type, field.Name, field.Visibility)).ToArray(),
 					Attributes = SerializableAttributeNames(type.Attributes),
 					GenericParameterConstraints = type.GenericParameterConstraints,
-					GenericParameterDefaults = type.GenericParameterDefaults
+					GenericParameterDefaults = type.GenericParameterDefaults,
+					// Generic templates have no single concrete proof; only non-generic
+					// declarations carry a producer-emitted type-level certificate.
+					Defaultability = type.GenericParameters.Count == 0
+						? WithStructFingerprint(Cert(type.Name), type)
+						: null
 				})
 				.ToArray();
 
@@ -74,7 +85,10 @@ public sealed class PackageApiMetadata
 					Fields = type.Fields.Select(field => new PackageApiUnionField(field.Type, field.Name, field.Visibility)).ToArray(),
 					Attributes = SerializableAttributeNames(type.Attributes),
 					GenericParameterConstraints = type.GenericParameterConstraints,
-					GenericParameterDefaults = type.GenericParameterDefaults
+					GenericParameterDefaults = type.GenericParameterDefaults,
+					Defaultability = type.GenericParameters.Count == 0
+						? WithUnionFingerprint(Cert(type.Name), type)
+						: null
 				})
 				.ToArray();
 
@@ -134,6 +148,71 @@ public sealed class PackageApiMetadata
 			Units = NormalizeUnits(apiUnits),
 			NativeLibraries = CollectNativeLibraries(compilationUnits)
 		};
+	}
+
+	/// <summary>
+	/// Produces the canonical shape digest that binds a producer certificate to the exact
+	/// serialized type shape. Producer (syntax) and consumer (rehydrated DTO) compute the same
+	/// value so a consumer can detect a certificate that no longer matches its metadata.
+	/// </summary>
+	public static string ComputeStructFingerprint(string name, string? embeddedType, IEnumerable<PackageApiStructField> fields, IEnumerable<string> attributes)
+		=> DefaultabilityFingerprint.Struct(name, embeddedType, fields.Select(f => (f.Type, f.Name, f.Visibility.ToString())), attributes);
+
+	public static string ComputeUnionFingerprint(string name, bool isUnsafe, IEnumerable<PackageApiUnionField> fields, IEnumerable<string> attributes)
+		=> DefaultabilityFingerprint.Union(name, isUnsafe, fields.Select(f => (f.Type, f.Name, f.Visibility.ToString())), attributes);
+
+	/// <summary>Zero-argument attribute names, matching <see cref="SerializableAttributeNames"/>.</summary>
+	public static IEnumerable<string> ZeroArgumentAttributeNames(IEnumerable<AttributeSyntax> attributes)
+		=> attributes.Where(attribute => attribute.Arguments.Count == 0).Select(attribute => attribute.Name);
+
+	private static PackageApiDefaultability? WithStructFingerprint(PackageApiDefaultability? cert, StructDeclarationSyntax type)
+	{
+		if (cert is null)
+			return null;
+		var fields = type.Fields.Select(f => new PackageApiStructField(f.Type, f.Name, f.Visibility));
+		return AttachFingerprint(cert, ComputeStructFingerprint(type.Name, type.EmbeddedType, fields, SerializableAttributeNames(type.Attributes)));
+	}
+
+	private static PackageApiDefaultability? WithUnionFingerprint(PackageApiDefaultability? cert, UnionDeclarationSyntax type)
+	{
+		if (cert is null)
+			return null;
+		var fields = type.Fields.Select(f => new PackageApiUnionField(f.Type, f.Name, f.Visibility));
+		return AttachFingerprint(cert, ComputeUnionFingerprint(type.Name, type.IsUnsafe, fields, SerializableAttributeNames(type.Attributes)));
+	}
+
+	private static PackageApiDefaultability AttachFingerprint(PackageApiDefaultability cert, string fingerprint) => new()
+	{
+		State = cert.State,
+		Reason = cert.Reason,
+		Target = cert.Target,
+		Fingerprint = fingerprint
+	};
+
+	/// <summary>
+	/// Collects the producer-emitted type-level defaultability certificates, keyed by the
+	/// namespace-qualified type name (matching <c>BindingContext.GetMangledName</c>).
+	/// </summary>
+	public IReadOnlyDictionary<string, PackageApiDefaultability> GetDefaultabilityCertificates()
+	{
+		var result = new Dictionary<string, PackageApiDefaultability>(StringComparer.Ordinal);
+		foreach (var unit in Units)
+		{
+			string Qualified(string name) => string.IsNullOrEmpty(unit.Namespace) ? name : $"{unit.Namespace}.{name}";
+			foreach (var type in unit.Structs)
+			{
+				if (type.Defaultability is { } cert)
+					result[Qualified(type.Name)] = cert;
+			}
+
+			foreach (var type in unit.Unions)
+			{
+				if (type.Defaultability is { } cert)
+					result[Qualified(type.Name)] = cert;
+			}
+		}
+
+		return result;
 	}
 
 	private static IReadOnlyList<NativeLibraryInfo> CollectNativeLibraries(IEnumerable<CompilationUnitSyntax> units)
@@ -571,6 +650,13 @@ public sealed class PackageApiStruct
 	public IReadOnlyList<PackageApiStructField> Fields { get; init; } = [];
 	public IReadOnlyDictionary<string, List<string>> GenericParameterConstraints { get; init; } = new Dictionary<string, List<string>>();
 	public IReadOnlyDictionary<string, string> GenericParameterDefaults { get; init; } = new Dictionary<string, string>();
+
+	/// <summary>
+	/// The producer's type-level defaultability proof for this (non-generic) struct.
+	/// Null means the producer emitted no proof; consumers must treat the type as
+	/// <see cref="PackageApiDefaultability.Unverified"/> rather than assuming eligibility.
+	/// </summary>
+	public PackageApiDefaultability? Defaultability { get; init; }
 }
 
 public sealed class PackageApiUnion
@@ -582,6 +668,34 @@ public sealed class PackageApiUnion
 	public IReadOnlyList<PackageApiUnionField> Fields { get; init; } = [];
 	public IReadOnlyDictionary<string, List<string>> GenericParameterConstraints { get; init; } = new Dictionary<string, List<string>>();
 	public IReadOnlyDictionary<string, string> GenericParameterDefaults { get; init; } = new Dictionary<string, string>();
+
+	/// <summary>
+	/// The producer's type-level defaultability proof for this (non-generic) union.
+	/// Null means no proof was emitted; consumers must fail closed.
+	/// </summary>
+	public PackageApiDefaultability? Defaultability { get; init; }
+}
+
+/// <summary>
+/// A build-scoped, producer-emitted type-level defaultability certificate.
+/// <see cref="State"/> is one of <c>Eligible</c>, <c>Ineligible</c>, <c>Unverified</c>.
+/// <see cref="Target"/> and <see cref="Fingerprint"/> bind the proof to the selected build/ABI so a
+/// consumer never reuses a positive proof across a content/target/lifecycle change.
+/// </summary>
+public sealed class PackageApiDefaultability
+{
+	public const string Eligible = "Eligible";
+	public const string Ineligible = "Ineligible";
+	public const string Unverified = "Unverified";
+
+	public string State { get; init; } = Unverified;
+	public string? Reason { get; init; }
+
+	/// <summary>Producer target triple the proof was computed for.</summary>
+	public string? Target { get; init; }
+
+	/// <summary>Digest of the producer-side type shape (fields, modifiers, embedded type).</summary>
+	public string? Fingerprint { get; init; }
 }
 
 public sealed class PackageApiEnum

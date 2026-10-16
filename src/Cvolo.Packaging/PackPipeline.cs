@@ -107,7 +107,7 @@ public sealed class PackPipeline
 		// Sector 1 = [uint32_le JSON length][JSON][language/layout metadata].
 		// The public Cvolo API is declaration metadata only; implementations remain in Sector 3.
 		var manifestBytes = Encoding.UTF8.GetBytes(manifestJson);
-		var layoutMetadata = PackageApiMetadata.FromCompilationUnits(compile.ProjectUnits).Serialize();
+		var layoutMetadata = PackageApiMetadata.FromCompilationUnits(compile.ProjectUnits, compile.DefaultabilityCertificates).Serialize();
 		var sector1 = new byte[4 + manifestBytes.Length + layoutMetadata.Length];
 		BinaryPrimitives.WriteUInt32LittleEndian(sector1, (uint)manifestBytes.Length);
 		manifestBytes.CopyTo(sector1, 4);

@@ -1,7 +1,11 @@
 using System.Text;
 using Cvolo.Analysis;
+using Cvolo.Analysis.Passes.Validation;
+using Cvolo.Analysis.Symbols;
 using Cvolo.Analysis.Symbols.Base;
 using Cvolo.Core.AST.Base;
+using Cvolo.Core.AST.Declarations;
+using Cvolo.Core.AST.Expressions;
 using Cvolo.Core.Diagnostics;
 using Cvolo.Emitter.LLVM;
 using Cvolo.Syntax;
@@ -18,13 +22,15 @@ public sealed class PackCompileResult : IDisposable
 {
 	private readonly Dictionary<string, byte[]> _bitcodeByTarget = new(StringComparer.Ordinal);
 
-	internal PackCompileResult(string llIr, string llFilePath, IReadOnlyList<string> sourceFiles, IReadOnlyList<CompilationUnitSyntax> projectUnits, string workingDirectory)
+	internal PackCompileResult(string llIr, string llFilePath, IReadOnlyList<string> sourceFiles, IReadOnlyList<CompilationUnitSyntax> projectUnits, string workingDirectory,
+		IReadOnlyDictionary<string, PackageApiDefaultability>? defaultabilityCertificates = null)
 	{
 		LlIr = llIr;
 		LlFilePath = llFilePath;
 		SourceFiles = sourceFiles;
 		ProjectUnits = projectUnits;
 		WorkingDirectory = workingDirectory;
+		DefaultabilityCertificates = defaultabilityCertificates ?? new Dictionary<string, PackageApiDefaultability>(StringComparer.Ordinal);
 	}
 
 	/// <summary>The emitted LLVM IR as text.</summary>
@@ -38,6 +44,12 @@ public sealed class PackCompileResult : IDisposable
 
 	/// <summary>Lowered project compilation units used to derive language-level package API metadata.</summary>
 	public IReadOnlyList<CompilationUnitSyntax> ProjectUnits { get; }
+
+	/// <summary>
+	/// Producer-side type-level defaultability proofs for the package's public
+	/// non-generic structs/unions, keyed by namespace-qualified name.
+	/// </summary>
+	public IReadOnlyDictionary<string, PackageApiDefaultability> DefaultabilityCertificates { get; }
 
 	/// <summary>The scratch workspace directory (cleaned up on Dispose).</summary>
 	public string WorkingDirectory { get; }
@@ -190,6 +202,9 @@ internal static class PackCompilation
 			var projectReferenceArtifacts = ProjectReferenceArtifactLoader.Load(manifest.ProjectPath, configuration);
 			foreach (var artifact in projectReferenceArtifacts)
 			{
+				foreach (var (typeName, cert) in artifact.ApiMetadata.GetDefaultabilityCertificates())
+					binder.Context.ImportedDefaultCertificates[typeName] = new ImportedDefaultCertificate(cert.State, cert.Reason, cert.Fingerprint);
+
 				foreach (var packageUnit in artifact.ApiMetadata.CreateCompilationUnits(artifact.PackageId, artifact.Version, skipGenericTemplates: artifact.TemplateUnits.Count > 0))
 				{
 					asts.Add(packageUnit);
@@ -357,7 +372,61 @@ internal static class PackCompilation
 		var llPath = Path.Combine(workspace, "module.ll");
 		File.WriteAllText(llPath, ir, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 
-		return new PackCompileResult(ir, llPath, projectFiles, packagedProjectUnits, workspace);
+		var certificates = ComputeDefaultabilityCertificates(binder.Context, packagedProjectUnits);
+
+		return new PackCompileResult(ir, llPath, projectFiles, packagedProjectUnits, workspace, certificates);
+	}
+
+	/// <summary>
+	/// Computes a build-scoped type-level defaultability certificate for every public,
+	/// non-generic struct/union in the package. These are serialized into Sector 1 API metadata so
+	/// consumers can default eligible imported types and fail closed (Unverified) otherwise.
+	/// </summary>
+	private static Dictionary<string, PackageApiDefaultability> ComputeDefaultabilityCertificates(
+		BindingContext context, IEnumerable<CompilationUnitSyntax> projectUnits)
+	{
+		var result = new Dictionary<string, PackageApiDefaultability>(StringComparer.Ordinal);
+		var analyzer = new DefaultabilityAnalyzer();
+		foreach (var unit in projectUnits)
+		{
+			var ns = unit.NamespaceDeclaration;
+			var members = ns is null ? unit.Members : ns.Members;
+			foreach (var decl in members.OfType<StructDeclarationSyntax>())
+			{
+				if (decl.Visibility != Visibility.Public || decl.GenericParameters.Count > 0)
+					continue;
+				var mangled = context.GetMangledName(decl.Name, ns?.Name);
+				if (context.StructTypes.TryGetValue(mangled, out var symbol))
+					result[mangled] = BuildCertificate(analyzer, symbol);
+			}
+
+			foreach (var decl in members.OfType<UnionDeclarationSyntax>())
+			{
+				if (decl.Visibility != Visibility.Public || decl.GenericParameters.Count > 0)
+					continue;
+				var mangled = context.GetMangledName(decl.Name, ns?.Name);
+				if (context.UnionTypes.TryGetValue(mangled, out var symbol))
+					result[mangled] = BuildCertificate(analyzer, symbol);
+			}
+		}
+
+		return result;
+	}
+
+	private static PackageApiDefaultability BuildCertificate(DefaultabilityAnalyzer analyzer, TypeSymbol symbol)
+	{
+		var plan = analyzer.GetDefaultPlan(symbol, GeneralFormationContext.Instance, SafetyTier.Safe, isImportedType: null);
+		var state = plan.State switch
+		{
+			DefaultabilityState.Eligible => PackageApiDefaultability.Eligible,
+			DefaultabilityState.Ineligible => PackageApiDefaultability.Ineligible,
+			_ => PackageApiDefaultability.Unverified
+		};
+		return new PackageApiDefaultability
+		{
+			State = state,
+			Reason = plan.Reason
+		};
 	}
 
 	private static string? FindStdlibRoot(string projectDirectory)
