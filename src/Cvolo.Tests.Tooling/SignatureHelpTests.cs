@@ -53,6 +53,28 @@ public sealed class SignatureHelpTests
 		Assert.Contains(help!.Signatures, signature => signature.Label.Contains("Vertex2f(float x, float y)", StringComparison.Ordinal));
 	}
 
+	[Theory]
+	[InlineData("Add(|)")]
+	[InlineData("Add(|")]
+	public void SignatureHelp_AfterOpeningParenthesis_RemainsAvailableDuringTyping(string markedCall)
+	{
+		var marker = markedCall.IndexOf('|');
+		var invocation = markedCall.Remove(marker, 1);
+		var source = "int Add(int left, int right) { return left + right; }\n"
+			+ "int Main() { " + invocation + "; return 0; }\n";
+		var callOffset = source.IndexOf(invocation, StringComparison.Ordinal);
+		var position = callOffset + marker;
+		using var fixture = TempProject.Create(("Main.cvl", source));
+		var project = CvoloWorkspace.Create().OpenProject(fixture.ProjectFilePath);
+		var document = project.InitialSnapshot.GetDocument(project.GetDocumentId("Main.cvl"));
+
+		var help = document.GetSignatureHelp(position);
+		Assert.NotNull(help);
+		Assert.Contains(help!.Signatures, signature =>
+			signature.Label == "int Add(int left, int right)"
+			&& signature.ActiveParameter == 0);
+	}
+
 	[Fact]
 	public void OverloadedFunctionCall_ListsAllOverloadsInDeclarationOrder()
 	{
