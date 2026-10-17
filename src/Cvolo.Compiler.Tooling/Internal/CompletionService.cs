@@ -294,7 +294,17 @@ internal static class CompletionService
 			}
 		}
 
-		foreach (var keyword in CompletionKeywordProvider.For(queryContext))
+		// Semantic recovery may classify a half-written identifier as an
+		// expression, even though its lexical position begins a statement
+		// (e.g. "if (true) { d| }"). The semantic context still supplies
+		// symbols, but the compiler's statement keyword set is authoritative
+		// at that boundary. Do not turn member or initializer contexts into
+		// statements: those have dedicated completion contracts.
+		var keywordContext = textContext.IsStatementStartContext
+			&& queryContext is not (AnalysisContext.Member or AnalysisContext.Initializer or AnalysisContext.DeclarationName)
+			? AnalysisContext.Statement
+			: queryContext;
+		foreach (var keyword in CompletionKeywordProvider.For(keywordContext))
 		{
 			if (!keyword.StartsWith(textContext.Prefix, StringComparison.OrdinalIgnoreCase))
 				continue;
