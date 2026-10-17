@@ -195,11 +195,11 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 					&& i + 3 < visible.Length
 					&& visible[i + 2].Type == CvoloLexer.Identifier
 					&& visible[i + 3].Type == CvoloLexer.LPAREN;
-				// A standalone primitive or identifier before a fresh var/val
-				// declaration cannot legally form part of that declaration: VAR/VAL
-				// are reserved tokens, not user-defined variable names. Recover on
-				// the preceding word rather than swallowing the next declaration
-				// into ANTLR's 'doublevar' or 'd0ovar' failure.
+				// A standalone primitive or identifier must not swallow a following
+				// declaration or statement. ANTLR skips newlines and otherwise reports
+				// fused input such as 'iif', 'iwhile', 'ireturn' or 'iConsole.'.
+				// This is only recovery at an already completed statement boundary;
+				// ordinary multi-line typed declarations remain untouched.
 				var nextIsDeclaration = next.Type is CvoloLexer.VAR or CvoloLexer.VAL
 					&& i + 2 < visible.Length
 					&& (visible[i + 2].Type == CvoloLexer.Identifier
@@ -207,9 +207,20 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				var bareType = braceDepth > 0
 					&& IsPrimitiveDeclarationType(current.Type)
 					&& nextIsDeclaration;
+				var nextIsControlStatement = next.Type is
+					CvoloLexer.IF or CvoloLexer.WHILE or CvoloLexer.FOR
+					or CvoloLexer.FOREACH or CvoloLexer.RETURN
+					or CvoloLexer.SWITCH or CvoloLexer.TRY
+					or CvoloLexer.BREAK or CvoloLexer.CONTINUE
+					or CvoloLexer.DEFER;
+				var nextIsQualifiedCall = next.Type == CvoloLexer.Identifier
+					&& i + 4 < visible.Length
+					&& visible[i + 2].Type == CvoloLexer.DOT
+					&& visible[i + 3].Type == CvoloLexer.Identifier
+					&& visible[i + 4].Type == CvoloLexer.LPAREN;
 				var bareIdentifier = braceDepth > 0
 					&& current.Type == CvoloLexer.Identifier
-					&& nextIsDeclaration;
+					&& (nextIsDeclaration || nextIsControlStatement || nextIsQualifiedCall);
 
 				if (strayTopLevel || bareType || bareIdentifier)
 				{
