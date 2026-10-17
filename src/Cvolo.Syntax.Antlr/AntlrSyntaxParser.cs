@@ -168,6 +168,11 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 
 	private sealed record StandaloneRecoveryToken(TextSpan Span, string Message);
 
+	// The namespace and extension bodies contain declarations rather than statements.
+	// Track those braces separately from function bodies to recover only genuine
+	// declaration boundaries without reinterpreting valid multiline expressions.
+	private enum RecoveryBraceKind { Other, Namespace, Extension }
+
 	/// <summary>
 	/// Find a few unambiguous parser-cascade shapes that ANTLR otherwise
 	/// reports on the following valid declaration or statement. All require a
@@ -178,6 +183,8 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 	{
 		var visible = tokens.Where(t => t.Channel == Lexer.DefaultTokenChannel && t.Type != TokenConstants.EOF).ToArray();
 		var recovery = new List<StandaloneRecoveryToken>();
+		var braceKinds = new List<RecoveryBraceKind>();
+		var pendingOwner = RecoveryBraceKind.Other;
 		var braceDepth = 0;
 		for (var i = 0; i < visible.Length; i++)
 		{
@@ -185,11 +192,16 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			var previous = i > 0 ? visible[i - 1] : null;
 			var next = i + 1 < visible.Length ? visible[i + 1] : null;
 			var atBoundary = previous is null || previous.Type is CvoloLexer.SEMI or CvoloLexer.LBRACE or CvoloLexer.RBRACE;
+			var insideNamespace = braceKinds.Count == 1 && braceKinds[0] == RecoveryBraceKind.Namespace;
+			var atFileMember = braceKinds.Count == 0 || insideNamespace;
+			var insideExtension = (braceKinds.Count == 1 && braceKinds[0] == RecoveryBraceKind.Extension)
+				|| (braceKinds.Count == 2 && braceKinds[0] == RecoveryBraceKind.Namespace
+					&& braceKinds[1] == RecoveryBraceKind.Extension);
 			if (atBoundary && next is not null && next.Line > current.Line && current.StartIndex >= 0)
 			{
 				// A stray word before a built-in return type should not turn the
 				// return-type keyword into an unexpected *function name*.
-				var strayTopLevel = braceDepth == 0
+				var strayTopLevel = atFileMember
 					&& current.Type == CvoloLexer.Identifier
 					&& IsPrimitiveDeclarationType(next.Type)
 					&& i + 3 < visible.Length
@@ -204,7 +216,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 					&& i + 2 < visible.Length
 					&& (visible[i + 2].Type == CvoloLexer.Identifier
 						|| IsPrimitiveDeclarationType(visible[i + 2].Type));
-				var bareType = braceDepth > 0
+				var bareType = braceDepth > 0 && !atFileMember && !insideExtension
 					&& IsPrimitiveDeclarationType(current.Type)
 					&& nextIsDeclaration;
 				var nextIsControlStatement = next.Type is
@@ -218,11 +230,39 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 					&& visible[i + 2].Type == CvoloLexer.DOT
 					&& visible[i + 3].Type == CvoloLexer.Identifier
 					&& visible[i + 4].Type == CvoloLexer.LPAREN;
-				var bareIdentifier = braceDepth > 0
+				var bareIdentifier = braceDepth > 0 && !atFileMember && !insideExtension
 					&& current.Type == CvoloLexer.Identifier
 					&& (nextIsDeclaration || nextIsControlStatement || nextIsQualifiedCall);
 
-				if (strayTopLevel || bareType || bareIdentifier)
+				// 'a' before a new namespace or top-level declaration is not a type
+				// name: the next token is a keyword that cannot name a function.
+				var topLevelStarter = next.Type is
+					CvoloLexer.NAMESPACE or CvoloLexer.USING or CvoloLexer.EXPOSE
+					or CvoloLexer.PUBLIC or CvoloLexer.PRIVATE or CvoloLexer.INTERNAL
+					or CvoloLexer.STRUCT or CvoloLexer.UNION or CvoloLexer.ENUM
+					or CvoloLexer.EXTENSION or CvoloLexer.INTERFACE or CvoloLexer.PROTOCOL
+					or CvoloLexer.DELEGATE or CvoloLexer.ALIAS or CvoloLexer.GLOBAL
+					or CvoloLexer.EXTERN or CvoloLexer.BUILTIN;
+				var extensionMemberStarter = next.Type is
+					CvoloLexer.PUBLIC or CvoloLexer.PRIVATE or CvoloLexer.INTERNAL
+					or CvoloLexer.BUILTIN or CvoloLexer.UNSAFE or CvoloLexer.TILDE
+					or CvoloLexer.OPERATOR;
+
+				// [UnsafeBody] public ... begins a new annotated method, not an
+				// indexer on the preceding word. Require the closing bracket and
+				// a declaration starter; 'T\n[N] value;' must stay a valid type.
+				var attributeStarter = next.Type == CvoloLexer.LBRACK
+					&& i + 4 < visible.Length
+					&& visible[i + 2].Type == CvoloLexer.Identifier
+					&& visible[i + 3].Type == CvoloLexer.RBRACK
+					&& (visible[i + 4].Type is CvoloLexer.PUBLIC or CvoloLexer.PRIVATE
+						or CvoloLexer.INTERNAL or CvoloLexer.BUILTIN or CvoloLexer.TILDE
+						|| IsPrimitiveDeclarationType(visible[i + 4].Type));
+				var strayMember = current.Type == CvoloLexer.Identifier
+					&& ((atFileMember && (topLevelStarter || attributeStarter))
+						|| (insideExtension && (extensionMemberStarter || attributeStarter)));
+
+				if (strayTopLevel || bareType || bareIdentifier || strayMember)
 				{
 					var span = new TextSpan(current.StartIndex, current.StopIndex - current.StartIndex + 1);
 					var message = strayTopLevel
@@ -234,10 +274,28 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				}
 			}
 
+			// The brace classifier is intentionally derived from lexical headers,
+			// not from ANTLR's potentially damaged parse tree.
+			if (atFileMember && current.Type == CvoloLexer.NAMESPACE)
+				pendingOwner = RecoveryBraceKind.Namespace;
+			else if (atFileMember && current.Type == CvoloLexer.EXTENSION)
+				pendingOwner = RecoveryBraceKind.Extension;
+
 			if (current.Type == CvoloLexer.LBRACE)
+			{
+				braceKinds.Add(pendingOwner);
+				pendingOwner = RecoveryBraceKind.Other;
 				braceDepth++;
+			}
 			else if (current.Type == CvoloLexer.RBRACE && braceDepth > 0)
+			{
+				braceKinds.RemoveAt(braceKinds.Count - 1);
 				braceDepth--;
+			}
+			else if (current.Type == CvoloLexer.SEMI)
+			{
+				pendingOwner = RecoveryBraceKind.Other;
+			}
 		}
 		return recovery;
 	}

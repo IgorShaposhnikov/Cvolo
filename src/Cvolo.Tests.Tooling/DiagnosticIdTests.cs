@@ -171,6 +171,76 @@ public sealed class DiagnosticIdTests
 	}
 
 	[Fact]
+	public void StrayIdentifiersBetweenNamespaceTypesAndExtensionMembers_PreserveDeclarations()
+	{
+		const string source =
+			"using System;\n" +
+			"a\n" +
+			"namespace App;\n" +
+			"d\n" +
+			"public interface ITest {}\n" +
+			"d\n" +
+			"struct WindowParameters { int width; int height; string title; }\n" +
+			"a\n" +
+			"struct Window { int glfwWindow; }\n" +
+			"public extension Window {\n" +
+			"    [UnsafeBody]\n" +
+			"    public void Start(ref this) { return; }\n" +
+			"c\n" +
+			"    [UnsafeBody]\n" +
+			"    public ~Window() {}\n" +
+			"d\n" +
+			"    public void Swap(ref this) { return; }\n" +
+			"a\n" +
+			"    [UnsafeBody]\n" +
+			"    public bool IsInit(ref this) { return true; }\n" +
+			"}\n" +
+			"int Main() { return 0; }\n";
+
+		var document = Open(source);
+		var diagnostics = document.GetDiagnostics();
+		var strayPositions = new[]
+		{
+			source.IndexOf("a\nnamespace", StringComparison.Ordinal),
+			source.IndexOf("d\npublic interface", StringComparison.Ordinal),
+			source.IndexOf("d\nstruct WindowParameters", StringComparison.Ordinal),
+			source.IndexOf("a\nstruct Window", StringComparison.Ordinal),
+			source.IndexOf("c\n    [UnsafeBody]", StringComparison.Ordinal),
+			source.IndexOf("d\n    public void Swap", StringComparison.Ordinal),
+			source.IndexOf("a\n    [UnsafeBody]", StringComparison.Ordinal)
+		};
+		Assert.All(strayPositions, position => Assert.True(position >= 0));
+		foreach (var position in strayPositions)
+			Assert.Contains(diagnostics, d => d.Id == "CVL4173"
+				&& d.Location.Span.Start == position && d.Location.Span.Length == 1);
+		Assert.Equal(strayPositions.Length, diagnostics.Count(d => d.Id == "CVL4173"));
+		Assert.DoesNotContain(diagnostics, d => d.Id is "CVL4004" or "CVL1045" or "CVL4174");
+
+		var outline = document.GetDocumentSymbols();
+		foreach (var name in new[] { "ITest", "WindowParameters", "Window", "Main" })
+			Assert.Contains(outline, symbol => symbol.Name == name);
+		Assert.Contains(outline.SelectMany(symbol => symbol.Children), symbol => symbol.Name == "Swap");
+		Assert.Contains(outline.SelectMany(symbol => symbol.Children), symbol => symbol.Name == "IsInit");
+	}
+
+	[Fact]
+	public void NamespaceBracesAndMultilineCustomReturnType_AreNotRecoveredAsStrayTokens()
+	{
+		const string source =
+			"namespace App {\n" +
+			"    struct Item { int value; }\n" +
+			"    Item\n" +
+			"    Create() { return default; }\n" +
+			"    public extension Item {\n" +
+			"        public int Get(ref this) { return value; }\n" +
+			"    }\n" +
+			"}\n";
+		var document = Open(source);
+		Assert.DoesNotContain(document.GetDiagnostics(), d => d.Id is "CVL4173" or "CVL4004");
+		Assert.Contains(document.GetDocumentSymbols(), symbol => symbol.Name == "Create");
+	}
+
+	[Fact]
 	public void MultilineCustomTypeDeclaration_IsNotTreatedAsStandaloneIdentifier()
 	{
 		const string source =
