@@ -400,6 +400,31 @@ public sealed class DiagnosticIdTests
 	}
 
 	[Fact]
+	public void BrokenEditorBuffer_DoesNotCrashUnrelatedToolingQueries()
+	{
+		const string source =
+			"struct Window { int width; }\n"
+			+ "int Main() {\n"
+			+ "    var x = Window { width: 1 };\n"
+			+ "    if (true) {\n"
+			+ "        Console.WriteLine(???);\n"
+			+ "        Begin(\n"
+			+ "    }\n"
+			+ "    return 0;\n"
+			+ "}\n";
+		using var fixture = TempProject.Create(("Main.cvl", source));
+		var project = CvoloWorkspace.Create().OpenProject(fixture.ProjectFilePath);
+		var document = project.InitialSnapshot.GetDocument(project.GetDocumentId("Main.cvl"));
+
+		Assert.NotEmpty(document.GetDiagnostics());
+		Assert.NotNull(document.GetSemanticTokens());
+		Assert.NotNull(document.GetInlayHints(0, source.Length));
+		Assert.NotNull(document.GetFoldingRanges());
+		Assert.NotNull(document.GetCodeLenses());
+		Assert.Null(document.GetSignatureHelp(source.IndexOf("Begin(", StringComparison.Ordinal) + 6));
+	}
+
+	[Fact]
 	public void UnfinishedRepeatedCall_DoesNotReclassifyNextCallAsVariable()
 	{
 		const string source =
