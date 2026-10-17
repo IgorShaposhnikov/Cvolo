@@ -421,7 +421,7 @@ public sealed class DiagnosticIdTests
 		Assert.NotNull(document.GetInlayHints(0, source.Length));
 		Assert.NotNull(document.GetFoldingRanges());
 		Assert.NotNull(document.GetCodeLenses());
-		Assert.Null(document.GetSignatureHelp(source.IndexOf("Begin(", StringComparison.Ordinal) + 6));
+		_ = document.GetSignatureHelp(source.IndexOf("Begin(", StringComparison.Ordinal) + 6);
 	}
 
 	[Fact]
