@@ -67,6 +67,13 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			_diagnostics.Report(context, badGeneric.Span, badGeneric.Message, badGeneric.Id);
 		}
 
+		// Destructor parameter lists are illegal in Cvolo. Diagnose the contents
+		// once and mask only the nonempty list for the recovery parse, preserving
+		// the original source coordinates and the destructor body.
+		var invalidDestructors = FindInvalidDestructorParameters(tokenStream.GetTokens());
+		foreach (var malformedDestructor in invalidDestructors)
+			_diagnostics.Report(context, malformedDestructor.Span, malformedDestructor.Message, DiagnosticIds.UnexpectedToken);
+
 		// Recover only clearly separated malformed tokens, not general newlines:
 		// declarations and expressions can legally continue across physical lines.
 		// Diagnostics stay attached to the original offending word; ANTLR receives
@@ -80,6 +87,8 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			: context.Source;
 		foreach (var stray in standalone)
 			recoverySource = MaskSourceRange(recoverySource, stray.Span.Start, stray.Span.End);
+		foreach (var malformedDestructor in invalidDestructors)
+			recoverySource = MaskSourceRange(recoverySource, malformedDestructor.Span.Start, malformedDestructor.Span.End);
 
 		if (recoverySource != context.Source)
 		{
@@ -167,6 +176,52 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 	}
 
 	private sealed record StandaloneRecoveryToken(TextSpan Span, string Message);
+	/// <summary>
+	/// Destructor syntax is ~Type() with no parameters. ANTLR's generic recovery
+	/// cascades through the entire body for ~Type(int[] a); erase only the list
+	/// in the parse view so body statements and later members remain intact.
+	/// </summary>
+	private static IReadOnlyList<StandaloneRecoveryToken> FindInvalidDestructorParameters(IList<IToken> tokens)
+	{
+		var visible = tokens.Where(t => t.Channel == Lexer.DefaultTokenChannel && t.Type != TokenConstants.EOF).ToArray();
+		var invalid = new List<StandaloneRecoveryToken>();
+		for (var i = 0; i + 4 < visible.Length; i++)
+		{
+			if (visible[i].Type != CvoloLexer.TILDE ||
+				visible[i + 1].Type != CvoloLexer.Identifier ||
+				visible[i + 2].Type != CvoloLexer.LPAREN ||
+				visible[i + 3].Type == CvoloLexer.RPAREN)
+				continue;
+
+			var depth = 1;
+			var closeIndex = -1;
+			for (var j = i + 3; j < visible.Length; j++)
+			{
+				if (visible[j].Type == CvoloLexer.LPAREN)
+					depth++;
+				else if (visible[j].Type == CvoloLexer.RPAREN && --depth == 0)
+				{
+					closeIndex = j;
+					break;
+				}
+				if (visible[j].Type == CvoloLexer.LBRACE)
+					break;
+			}
+			if (closeIndex < 0 || closeIndex + 1 >= visible.Length ||
+				visible[closeIndex + 1].Type is not (CvoloLexer.LBRACE or CvoloLexer.SEMI))
+				continue;
+
+			var start = visible[i + 3].StartIndex;
+			var end = visible[closeIndex].StartIndex;
+			if (start < 0 || end < start)
+				continue;
+			invalid.Add(new StandaloneRecoveryToken(new TextSpan(start, end - start),
+				"Destructors cannot declare parameters; use '~Type()'."));
+			i = closeIndex;
+		}
+		return invalid;
+	}
+
 
 	// The namespace and extension bodies contain declarations rather than statements.
 	// Track those braces separately from function bodies to recover only genuine
