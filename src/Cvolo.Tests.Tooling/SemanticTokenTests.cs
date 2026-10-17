@@ -20,6 +20,55 @@ public sealed class SemanticTokenTests
 		=> [.. tokens.Where(t => document.Text.GetText(t.Span) == text)];
 
 	[Fact]
+	public void QualifiedSdkCall_ClassifiesEveryNamespaceSegment()
+	{
+		const string source =
+			"using System.Math.Float;\n" +
+			"float CosF(float value) { return System.Math.Float.Cos(value); }\n";
+		var x = Open(source);
+		using (x.Fixture)
+		{
+			var tokens = x.Document.GetSemanticTokens();
+			var callStart = source.LastIndexOf("System.Math.Float.Cos", StringComparison.Ordinal);
+			foreach (var (name, relative) in new[] { ("System", 0), ("Math", 7), ("Float", 12) })
+			{
+				Assert.Contains(tokens, token =>
+					token.Kind == ToolingSymbolKind.Namespace
+					&& token.Span.Start == callStart + relative
+					&& x.Document.Text.GetText(token.Span) == name);
+			}
+		}
+	}
+
+	[Fact]
+	public void QualifiedNamespaceAlias_ClassifiesAliasAndLeavesDotsUntouched()
+	{
+		const string source =
+			"using M = Sample.Tools.Math;\n" +
+			"float CosF(float value) { return Sample.Tools.Math.Cos(value) + M.Cos(value); }\n";
+		using var fixture = TempProject.Create(
+			("Main.cvl", source),
+			("Math.cvl", "namespace Sample.Tools.Math;\nfloat Cos(float x) { return x; }\n"));
+		var project = CvoloWorkspace.Create().OpenProject(fixture.ProjectFilePath);
+		var document = project.InitialSnapshot.GetDocument(project.GetDocumentId("Main.cvl"));
+		var tokens = document.GetSemanticTokens();
+		var callStart = source.IndexOf("Sample.Tools.Math.Cos", StringComparison.Ordinal);
+		foreach (var (name, relative) in new[] { ("Sample", 0), ("Tools", 7), ("Math", 13) })
+		{
+			Assert.Contains(tokens, token =>
+				token.Kind == ToolingSymbolKind.Namespace
+				&& token.Span.Start == callStart + relative
+				&& document.Text.GetText(token.Span) == name);
+		}
+		var aliasCallStart = source.LastIndexOf("M.Cos", StringComparison.Ordinal);
+		Assert.Contains(tokens, token =>
+			token.Kind == ToolingSymbolKind.NamespaceAlias
+			&& token.Span.Start == aliasCallStart
+			&& document.Text.GetText(token.Span) == "M");
+		Assert.DoesNotContain(tokens, token => document.Text.GetText(token.Span).Contains('.'));
+	}
+
+	[Fact]
 	public void LocalDeclarationAndUse_AreClassified()
 	{
 		const string s = "int main() {\n    val int count = 1;\n    return count;\n}\n";

@@ -248,7 +248,7 @@ internal static class SemanticTokenService
 
 			var isAlias = i == 0 && aliases.TryGetValue(part, out _);
 			if (i == 0 && aliases.TryGetValue(part, out var target))
-				expandedPrefix = target;
+				expandedPrefix = target.NamespaceName;
 			else
 				expandedPrefix = i == 0 ? part : expandedPrefix + "." + part;
 
