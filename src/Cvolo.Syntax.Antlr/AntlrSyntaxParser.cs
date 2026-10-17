@@ -343,10 +343,11 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 						}
 					}
 				}
+				var incompletePriorCall = nextIsSimpleCall && previouslyCalled;
 				var bareIdentifier = braceDepth > 0 && !atFileMember && !insideExtension
 					&& current.Type == CvoloLexer.Identifier
 					&& (nextIsDeclaration || nextIsControlStatement || nextIsQualifiedCall
-						|| (nextIsSimpleCall && previouslyCalled));
+						|| incompletePriorCall);
 
 				// Control keywords require an immediate '(' token in the token
 				// stream, although the '(' may be on a later physical line.
@@ -417,7 +418,9 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 							? $"Incomplete variable declaration: expected a name after '{current.Text}'."
 							: incompleteControl
 								? $"Incomplete '{current.Text}' statement: expected '(' and a condition."
-								: $"Unexpected identifier '{current.Text}' before a new declaration. Complete the statement or remove the identifier.";
+								: incompletePriorCall
+									? $"Incomplete call '{current.Text}': expected arguments and ';' before the next statement."
+									: $"Unexpected identifier '{current.Text}' before a new declaration. Complete the statement or remove the identifier.";
 					recovery.Add(new StandaloneRecoveryToken(span, message));
 					recoveredTokenIndices.Add(i);
 				}

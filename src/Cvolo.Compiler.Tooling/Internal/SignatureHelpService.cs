@@ -39,6 +39,7 @@ internal static class SignatureHelpService
 
 		var source = document.Text.ToString();
 
+		SignatureHelpInfo? recovered;
 		lock (context)
 		{
 			if (context.ResolvedCalls.TryGetValue(call, out var function))
@@ -47,8 +48,14 @@ internal static class SignatureHelpService
 			if (context.ResolvedDelegateCalls.TryGetValue(call, out var delegateType))
 				return Build(delegateType, call, source, position);
 
-			return RecoverBySyntax(context, unit, call, source, position);
+			recovered = RecoverBySyntax(context, unit, call, source, position);
 		}
+
+		// A parser-recovered call node can exist without a bound overload.
+		// In that case the targeted syntax probe must still get a chance.
+		return recovered ?? (allowIncompleteProbe
+			? ProbeMissingClosingParenthesis(snapshot, document, position)
+			: null);
 	}
 
 	/// <summary>
@@ -79,12 +86,28 @@ internal static class SignatureHelpService
 		if (name is "if" or "while" or "for" or "foreach" or "switch" or "catch")
 			return null;
 
-		// An existing ')' directly after the cursor is handled by the normal
-		// path; don't make a second synthetic closer for that case.
+		string probeText;
 		if (position < text.Length && text[position] == ')')
-			return null;
+		{
+			// The editor has already inserted the matching closer. When the
+			// semicolon is still missing and the next line starts a new statement,
+			// the parser can lose this call. Add only the terminator in the
+			// temporary snapshot; inserting another ')' would make things worse.
+			var next = position + 1;
+			while (next < text.Length && text[next] is ' ' or '\t')
+				next++;
+			if (next < text.Length && text[next] == ';')
+				return null;
+			if (next < text.Length && text[next] is not ('\r' or '\n' or '}'))
+				return null;
+			probeText = text.Insert(position + 1, ";");
+		}
+		else
+		{
+			probeText = text.Insert(position, ")");
+		}
 
-		var probed = snapshot.WithDocument(document.Id, SourceText.From(text.Insert(position, ")")));
+		var probed = snapshot.WithDocument(document.Id, SourceText.From(probeText));
 		var probeDocument = probed.GetDocument(document.Id);
 		return Compute(probed, probeDocument, position, allowIncompleteProbe: false);
 	}

@@ -75,6 +75,38 @@ public sealed class SignatureHelpTests
 			&& signature.ActiveParameter == 0);
 	}
 
+	[Theory]
+	[InlineData("Begin(|)\n    Begin(2);")]
+	[InlineData("Begin(|)\n    while (false) {}")]
+	public void AutoClosedCallMissingSemicolon_StillShowsParameters(string markedStatements)
+	{
+		var marker = markedStatements.IndexOf('|');
+		var statements = markedStatements.Remove(marker, 1);
+		var source = "void Begin(int mode) {}\nint Main() {\n    " + statements + "\n    return 0;\n}\n";
+		var callStart = source.IndexOf("    Begin(", StringComparison.Ordinal);
+		var position = callStart + 4 + marker;
+		using var fixture = TempProject.Create(("Main.cvl", source));
+		var project = CvoloWorkspace.Create().OpenProject(fixture.ProjectFilePath);
+		var document = project.InitialSnapshot.GetDocument(project.GetDocumentId("Main.cvl"));
+
+		var help = document.GetSignatureHelp(position);
+		Assert.NotNull(help);
+		Assert.Contains(help!.Signatures, signature =>
+			signature.Label == "void Begin(int mode)"
+			&& signature.ActiveParameter == 0);
+	}
+
+	[Fact]
+	public void NonCallableKeywordOpener_StillHasNoSignatureHelp()
+	{
+		const string source = "int Main() { if () {} return 0; }\n";
+		using var fixture = TempProject.Create(("Main.cvl", source));
+		var project = CvoloWorkspace.Create().OpenProject(fixture.ProjectFilePath);
+		var document = project.InitialSnapshot.GetDocument(project.GetDocumentId("Main.cvl"));
+		var position = source.IndexOf("if (", StringComparison.Ordinal) + 4;
+		Assert.Null(document.GetSignatureHelp(position));
+	}
+
 	[Fact]
 	public void OverloadedFunctionCall_ListsAllOverloadsInDeclarationOrder()
 	{

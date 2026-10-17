@@ -422,6 +422,25 @@ public sealed class DiagnosticIdTests
 	}
 
 	[Fact]
+	public void UnfinishedCall_DiagnosticDescribesTheCallNotAVariableType()
+	{
+		const string source = "void Clear(int mask) {}\n"
+			+ "void Begin(int mode) {}\n"
+			+ "int Main() { Clear(1);\n"
+			+ "    Clear\n"
+			+ "    Begin(2);\n"
+			+ "    return 0;\n}\n";
+		var document = Open(source);
+		var start = source.IndexOf("    Clear\n", StringComparison.Ordinal) + 4;
+		Assert.Contains(document.GetDiagnostics(), diagnostic =>
+			diagnostic.Id == "CVL4173"
+			&& diagnostic.Location.Span.Start == start
+			&& diagnostic.Message.Contains("Incomplete call 'Clear'", StringComparison.Ordinal));
+		Assert.DoesNotContain(document.GetDiagnostics(), diagnostic =>
+			diagnostic.Id is "CVL4004" or "CVL1045");
+	}
+
+	[Fact]
 	public void LegitimateMultilineTypedDeclaration_IsNotMistakenForUnfinishedCall()
 	{
 		const string source =
