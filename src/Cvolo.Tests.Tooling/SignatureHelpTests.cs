@@ -62,7 +62,7 @@ public sealed class SignatureHelpTests
 		var invocation = markedCall.Remove(marker, 1);
 		var source = "int Add(int left, int right) { return left + right; }\n"
 			+ "int Main() { " + invocation + "; return 0; }\n";
-		var callOffset = source.IndexOf(invocation, StringComparison.Ordinal);
+		var callOffset = source.LastIndexOf(invocation, StringComparison.Ordinal);
 		var position = callOffset + marker;
 		using var fixture = TempProject.Create(("Main.cvl", source));
 		var project = CvoloWorkspace.Create().OpenProject(fixture.ProjectFilePath);
