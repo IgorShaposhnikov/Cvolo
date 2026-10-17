@@ -21,18 +21,21 @@ namespace Cvolo.Compiler.Tooling.Internal;
 internal static class SignatureHelpService
 {
 	internal static SignatureHelpInfo? Compute(ProjectSnapshot snapshot, DocumentSnapshot document, int position)
+		=> Compute(snapshot, document, position, allowIncompleteProbe: true);
+
+	private static SignatureHelpInfo? Compute(ProjectSnapshot snapshot, DocumentSnapshot document, int position, bool allowIncompleteProbe)
 	{
 		var analysis = snapshot.GetAnalysis();
 		if (analysis.BinderContext is not { } context
 			|| !analysis.UnitsByDocument.TryGetValue(document.Id, out var unit)
 			|| unit is null)
 		{
-			return null;
+			return allowIncompleteProbe ? ProbeMissingClosingParenthesis(snapshot, document, position) : null;
 		}
 
 		var call = FindInnermostCall(unit, position);
 		if (call is null)
-			return null;
+			return allowIncompleteProbe ? ProbeMissingClosingParenthesis(snapshot, document, position) : null;
 
 		var source = document.Text.ToString();
 
@@ -46,6 +49,44 @@ internal static class SignatureHelpService
 
 			return RecoverBySyntax(context, unit, call, source, position);
 		}
+	}
+
+	/// <summary>
+	/// A just-typed call opener (f(|) has no closing parenthesis yet. ANTLR
+	/// may lose the call node or the entire unit, so a semantic query on the
+	/// original text cannot find it. Probe a temporary immutable snapshot
+	/// with the closing parenthesis inserted at the cursor. Never rewrite the
+	/// user's document and never recurse through further probes.
+	/// </summary>
+	private static SignatureHelpInfo? ProbeMissingClosingParenthesis(
+		ProjectSnapshot snapshot, DocumentSnapshot document, int position)
+	{
+		var text = document.Text.ToString();
+		if (position < 1 || position > text.Length || text[position - 1] != '(')
+			return null;
+
+		// Only treat a function-like identifier followed by '(' as a call;
+		// controls such as if( and while( must never acquire call signatures.
+		var end = position - 2;
+		while (end >= 0 && char.IsWhiteSpace(text[end]))
+			end--;
+		if (end < 0 || !(char.IsLetterOrDigit(text[end]) || text[end] == '_'))
+			return null;
+		var begin = end;
+		while (begin >= 0 && (char.IsLetterOrDigit(text[begin]) || text[begin] == '_'))
+			begin--;
+		var name = text[(begin + 1)..(end + 1)];
+		if (name is "if" or "while" or "for" or "foreach" or "switch" or "catch")
+			return null;
+
+		// An existing ')' directly after the cursor is handled by the normal
+		// path; don't make a second synthetic closer for that case.
+		if (position < text.Length && text[position] == ')')
+			return null;
+
+		var probed = snapshot.WithDocument(document.Id, SourceText.From(text.Insert(position, ")")));
+		var probeDocument = probed.GetDocument(document.Id);
+		return Compute(probed, probeDocument, position, allowIncompleteProbe: false);
 	}
 
 	/// <summary>
