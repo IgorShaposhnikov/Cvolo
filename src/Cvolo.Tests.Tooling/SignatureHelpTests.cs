@@ -39,6 +39,21 @@ public sealed class SignatureHelpTests
 	}
 
 	[Fact]
+	public void WrongArityCall_StillShowsAvailableSignature()
+	{
+		const string source = "void Vertex2f(float x, float y) {}\n"
+			+ "int Main() { Vertex2f(); return 0; }\n";
+		using var fixture = TempProject.Create(("Main.cvl", source));
+		var project = CvoloWorkspace.Create().OpenProject(fixture.ProjectFilePath);
+		var document = project.InitialSnapshot.GetDocument(project.GetDocumentId("Main.cvl"));
+		Assert.Contains(document.GetDiagnostics(), d => d.Id == "CVL1078");
+		var position = source.LastIndexOf("Vertex2f(", StringComparison.Ordinal) + "Vertex2f(".Length;
+		var help = document.GetSignatureHelp(position);
+		Assert.NotNull(help);
+		Assert.Contains(help!.Signatures, signature => signature.Label.Contains("Vertex2f(float x, float y)", StringComparison.Ordinal));
+	}
+
+	[Fact]
 	public void OverloadedFunctionCall_ListsAllOverloadsInDeclarationOrder()
 	{
 		const string source =
