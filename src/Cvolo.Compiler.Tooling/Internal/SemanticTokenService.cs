@@ -227,21 +227,41 @@ internal static class SemanticTokenService
 		if (string.IsNullOrEmpty(name) || spanStart < 0)
 			return;
 
-		// A local, parameter or field that shadows the spelling is a real symbol; keep its token.
+		// A local, parameter or field that shadows the receiver takes precedence.
 		if (CompletionQuery.ResolveSymbol(context, unit, spanStart, includeDocumentationAndType: false) is not null)
 			return;
 
-		var span = new Cvolo.Core.Diagnostics.TextSpan(spanStart, name.Length);
-
-		if (context.GetNamespaceAliases(unit).ContainsKey(name))
+		// Qualified calls store the receiver as one dotted name, but VS Code semantic
+		// token spans must be individual identifiers. Recognize namespace prefixes
+		// (including those known only through their children), preserving dots as
+		// punctuation and distinguishing an alias from a regular namespace.
+		var parts = name.Split('.');
+		var aliases = context.GetNamespaceAliases(unit);
+		var expandedPrefix = "";
+		var offset = spanStart;
+		for (var i = 0; i < parts.Length; i++)
 		{
-			AddDirectToken(tokens, seen, span, ToolingSymbolKind.NamespaceAlias);
-			return;
-		}
+			var part = parts[i];
+			if (part.Length == 0 || offset + part.Length > source.Length ||
+				!source.AsSpan(offset, part.Length).SequenceEqual(part.AsSpan()))
+				break;
 
-		if (context.DeclaredNamespaces.Contains(name))
-		{
-			AddDirectToken(tokens, seen, span, ToolingSymbolKind.Namespace);
+			var isAlias = i == 0 && aliases.TryGetValue(part, out _);
+			if (i == 0 && aliases.TryGetValue(part, out var target))
+				expandedPrefix = target;
+			else
+				expandedPrefix = i == 0 ? part : expandedPrefix + "." + part;
+
+			var isNamespace = context.DeclaredNamespaces.Contains(expandedPrefix) ||
+				context.DeclaredNamespaces.Any(ns =>
+					ns.StartsWith(expandedPrefix + ".", StringComparison.Ordinal));
+			if (!isAlias && !isNamespace)
+				break;
+
+			AddDirectToken(tokens, seen,
+				new Cvolo.Core.Diagnostics.TextSpan(offset, part.Length),
+				isAlias ? ToolingSymbolKind.NamespaceAlias : ToolingSymbolKind.Namespace);
+			offset += part.Length + 1;
 		}
 	}
 
