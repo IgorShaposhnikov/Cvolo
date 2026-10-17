@@ -409,6 +409,7 @@ internal sealed class NavigationIndex
 			return;
 
 		var sourceFunctions = new List<PackageSourceFunction>();
+		var sourceGlobals = new List<PackageSourceGlobal>();
 		foreach (var document in _snapshot.PackageSources)
 		{
 			var context = new CompilationContext(document.Source, document.FilePath);
@@ -422,12 +423,42 @@ internal sealed class NavigationIndex
 			{
 				if (member is FunctionDeclarationSyntax { Visibility: Visibility.Public } function)
 					sourceFunctions.Add(new PackageSourceFunction(document, function, namespaceName));
+				else if (member is GlobalVariableDeclarationSyntax { Visibility: Visibility.Public } global)
+					sourceGlobals.Add(new PackageSourceGlobal(document, global, namespaceName));
 			}
 		}
 
 		foreach (var entry in _byId.Values)
 		{
-			if (entry.ExternalFunction is null || entry.PackageId is null || entry.PackageVersion is null)
+			if (entry.PackageId is null || entry.PackageVersion is null)
+				continue;
+
+			if (entry.ExternalGlobal is not null)
+			{
+				var global = sourceGlobals
+					.Where(candidate =>
+						string.Equals(candidate.Document.PackageId, entry.PackageId, StringComparison.OrdinalIgnoreCase)
+						&& string.Equals(candidate.Document.Version, entry.PackageVersion, StringComparison.Ordinal)
+						&& string.Equals(candidate.NamespaceName, entry.NamespaceName, StringComparison.Ordinal)
+						&& string.Equals(candidate.Global.Name, entry.ExternalGlobal.Name, StringComparison.Ordinal)
+						&& string.Equals(NormalizeType(candidate.Global.Type), NormalizeType(entry.ExternalGlobal.Type), StringComparison.Ordinal))
+					.OrderBy(candidate => IsApiSource(candidate.Document.RelativePath) ? 0 : 1)
+					.ThenBy(candidate => candidate.Document.RelativePath, StringComparer.Ordinal)
+					.FirstOrDefault();
+				if (global is not null)
+				{
+					if (!_packageSourceDefinitions.TryGetValue(entry.Id.Value, out var globalDefinitions))
+						_packageSourceDefinitions[entry.Id.Value] = globalDefinitions = [];
+					var span = global.Global.Span;
+					var nameSpan = ComputeNameSpan(global.Document.Source, span, global.Global.Name);
+					globalDefinitions.Add(new PackageSourceDefinition(
+						global.Document.FilePath, global.Document.Source,
+						new TextSpan(Math.Max(span.Start, 0), Math.Max(span.Length, 0)), nameSpan));
+				}
+				continue;
+			}
+
+			if (entry.ExternalFunction is null)
 				continue;
 
 			var match = sourceFunctions
@@ -758,7 +789,8 @@ internal sealed class NavigationIndex
 			external?.PackageId,
 			external?.PackageVersion,
 			external?.Unit.NamespaceDeclaration?.Name,
-			declaration as FunctionDeclarationSyntax);
+			declaration as FunctionDeclarationSyntax,
+			declaration as GlobalVariableDeclarationSyntax);
 		_byDeclaration[declaration] = entry;
 		_byId[entry.Id.Value] = entry;
 		return entry;
@@ -989,6 +1021,11 @@ internal sealed class NavigationIndex
 		FunctionDeclarationSyntax Function,
 		string? NamespaceName);
 
+	private sealed record PackageSourceGlobal(
+		PackageSourceDocument Document,
+		GlobalVariableDeclarationSyntax Global,
+		string? NamespaceName);
+
 	private sealed class Entry(
 		SymbolId id,
 		string name,
@@ -998,6 +1035,7 @@ internal sealed class NavigationIndex
 		string? packageVersion = null,
 		string? namespaceName = null,
 		FunctionDeclarationSyntax? externalFunction = null,
+		GlobalVariableDeclarationSyntax? externalGlobal = null,
 		bool isBuiltin = false)
 	{
 		public SymbolId Id { get; } = id;
@@ -1008,6 +1046,7 @@ internal sealed class NavigationIndex
 		public string? PackageVersion { get; } = packageVersion;
 		public string? NamespaceName { get; } = namespaceName;
 		public FunctionDeclarationSyntax? ExternalFunction { get; } = externalFunction;
+		public GlobalVariableDeclarationSyntax? ExternalGlobal { get; } = externalGlobal;
 		public bool IsBuiltin { get; } = isBuiltin;
 		public List<SymbolDefinition> Definitions { get; } = [];
 	}
