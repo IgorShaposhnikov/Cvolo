@@ -371,6 +371,35 @@ public sealed class DiagnosticIdTests
 	}
 
 	[Fact]
+	public void DestructorWithParameters_ReportsOneRootErrorAndPreservesBody()
+	{
+		const string source = "struct Window { int value; }\n"
+			+ "extension Window {\n"
+			+ "    [UnsafeBody]\n"
+			+ "    public ~Window(int[] a) {\n"
+			+ "        value = 1;\n"
+			+ "    }\n"
+			+ "    public int Get(ref this) { return value; }\n"
+			+ "}\n";
+		var document = Open(source);
+		var diagnostics = document.GetDiagnostics();
+		var start = source.IndexOf("int[] a", StringComparison.Ordinal);
+		Assert.Contains(diagnostics, d => d.Id == "CVL4173"
+			&& d.Location.Span.Start == start && d.Location.Span.Length == "int[] a".Length);
+		Assert.DoesNotContain(diagnostics, d => d.Id is "CVL4004" or "CVL4174"
+			|| d.Location.Span.Start == source.IndexOf("value = 1", StringComparison.Ordinal));
+		Assert.Contains(document.GetDocumentSymbols(), symbol => symbol.Name == "Window");
+	}
+
+	[Fact]
+	public void ParameterlessDestructor_RemainsValid()
+	{
+		const string source = "struct Window { int value; }\n"
+			+ "extension Window { public ~Window() {} }\n";
+		Assert.DoesNotContain(Open(source).GetDiagnostics(), d => d.Id == "CVL4173");
+	}
+
+	[Fact]
 	public void MultilineTypedVariable_RemainsLegal()
 	{
 		const string source = "int Main() {\n    double\n    value = 1.0;\n    return 0;\n}\n";
