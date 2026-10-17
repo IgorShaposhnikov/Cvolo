@@ -165,6 +165,23 @@ public sealed class CompletionTests
 	}
 
 	[Fact]
+	public void IncompleteFunctionStatementAfterSemicolon_DoesNotBecomeStructFieldType()
+	{
+		var result = Complete("int Main() { int width = 1; d| }");
+		Assert.DoesNotContain(result.Candidates, candidate => candidate.Label == "double"
+			&& candidate.Kind != CompletionKind.Keyword);
+		Assert.True(Contains(result, "double", CompletionKind.Keyword));
+	}
+
+	[Fact]
+	public void IncompleteNestedBlock_DoesNotInheritStructFieldContext()
+	{
+		var result = Complete("struct Window { int width; } int Main() { if (true) { d| } return 0; }");
+		Assert.True(Contains(result, "double", CompletionKind.Keyword));
+		Assert.True(Contains(result, "if", CompletionKind.Keyword));
+	}
+
+	[Fact]
 	public void StructFields_AreOfferedWithoutKeywordCandidates()
 	{
 		var result = Complete("struct Point { int color; int count; }\nint main() {\n    val Point p;\n    return p.c|;\n}\n");
