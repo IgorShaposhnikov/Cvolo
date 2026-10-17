@@ -322,9 +322,31 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 					&& visible[i + 2].Type == CvoloLexer.DOT
 					&& visible[i + 3].Type == CvoloLexer.Identifier
 					&& visible[i + 4].Type == CvoloLexer.LPAREN;
+				// A previously called name on its own line is most likely an
+				// unfinished invocation, not the type of a declaration using the
+				// next call as its variable name. Require evidence from an earlier
+				// completed invocation, not simply a line break: custom types are
+				// allowed to span lines in Cvolo.
+				var nextIsSimpleCall = next.Type == CvoloLexer.Identifier
+					&& i + 2 < visible.Length && visible[i + 2].Type == CvoloLexer.LPAREN;
+				var previouslyCalled = false;
+				if (nextIsSimpleCall && current.Type == CvoloLexer.Identifier)
+				{
+					for (var earlier = 0; earlier + 1 < i; earlier++)
+					{
+						if (visible[earlier].Type == CvoloLexer.Identifier
+							&& string.Equals(visible[earlier].Text, current.Text, StringComparison.Ordinal)
+							&& visible[earlier + 1].Type == CvoloLexer.LPAREN)
+						{
+							previouslyCalled = true;
+							break;
+						}
+					}
+				}
 				var bareIdentifier = braceDepth > 0 && !atFileMember && !insideExtension
 					&& current.Type == CvoloLexer.Identifier
-					&& (nextIsDeclaration || nextIsControlStatement || nextIsQualifiedCall);
+					&& (nextIsDeclaration || nextIsControlStatement || nextIsQualifiedCall
+						|| (nextIsSimpleCall && previouslyCalled));
 
 				// Control keywords require an immediate '(' token in the token
 				// stream, although the '(' may be on a later physical line.
