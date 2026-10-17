@@ -153,6 +153,17 @@ public sealed class CompletionTests
 		Assert.True(Contains(result, "item", CompletionKind.Local));
 	}
 
+	[Theory]
+	[InlineData("struct Window { d| }")]
+	[InlineData("struct Window { int width; d| }")]
+	[InlineData("union Window { d| }")]
+	public void IncompleteAggregateField_OffersDoubleTypeKeyword(string source)
+	{
+		var result = Complete(source);
+		Assert.True(Contains(result, "double", CompletionKind.Keyword),
+			"Even an incomplete aggregate field must offer primitive type keywords.");
+	}
+
 	[Fact]
 	public void StructFields_AreOfferedWithoutKeywordCandidates()
 	{
