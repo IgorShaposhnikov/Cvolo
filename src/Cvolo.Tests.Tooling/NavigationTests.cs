@@ -548,6 +548,44 @@ public sealed class NavigationTests
 	}
 
 	[Fact]
+	public void ExternFunctionHover_OnDeclarationAndCall_ShowsFullSignature()
+	{
+		const string source =
+			"extern void printf(string format, ...);\n"
+			+ "int Main() { printf(\"ok\"); return 0; }\n";
+		var x = Open(("Main.cvl", source));
+		using (x.Fixture)
+		{
+			var declaration = x.Document.GetSymbolAtPosition(source.IndexOf("printf", StringComparison.Ordinal) + 2);
+			var call = x.Document.GetSymbolAtPosition(source.LastIndexOf("printf", StringComparison.Ordinal) + 2);
+			Assert.NotNull(declaration);
+			Assert.NotNull(call);
+			Assert.Equal(ToolingSymbolKind.Function, declaration!.Kind);
+			Assert.Equal(ToolingSymbolKind.Function, call!.Kind);
+			Assert.Contains("printf(", declaration.DisplayText, StringComparison.Ordinal);
+			Assert.Contains("string format", declaration.DisplayText, StringComparison.Ordinal);
+			Assert.Contains("printf(", call.DisplayText, StringComparison.Ordinal);
+			Assert.NotEqual("void", call.DisplayText);
+		}
+	}
+
+	[Fact]
+	public void WrapperCallHover_UsesFunctionSignature_NotReturnTypeAlone()
+	{
+		const string source =
+			"extern void Terminate();\n"
+			+ "void Stop() { Terminate(); }\n";
+		var x = Open(("Main.cvl", source));
+		using (x.Fixture)
+		{
+			var symbol = x.Document.GetSymbolAtPosition(source.LastIndexOf("Terminate", StringComparison.Ordinal) + 2);
+			Assert.NotNull(symbol);
+			Assert.Contains("Terminate()", symbol!.DisplayText, StringComparison.Ordinal);
+			Assert.NotEqual("void", symbol.DisplayText);
+		}
+	}
+
+	[Fact]
 	public void MalformedDeclaration_DoesNotThrowFromDocumentSymbolsOrTokens()
 	{
 		const string s = "int () { return 0; }\n";
