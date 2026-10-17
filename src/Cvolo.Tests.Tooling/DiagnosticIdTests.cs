@@ -143,6 +143,33 @@ public sealed class DiagnosticIdTests
 			&& token.Span.Start == useStart);
 	}
 
+	[Theory]
+	[InlineData("if (true) { return window; }", "if")]
+	[InlineData("while (false) { return window; }", "while")]
+	[InlineData("return window;", "return")]
+	[InlineData("Console.WriteLine(window);", "Console")]
+	public void StandaloneIdentifierBeforeStatement_DoesNotConsumeNextStatement(string statement, string nextWord)
+	{
+		var source = "int Main() {\n"
+			+ "    var window = 1;\n"
+			+ "    i\n"
+			+ "    " + statement + "\n"
+			+ "    return window;\n"
+			+ "}\n";
+		var document = Open(source);
+		var diagnostics = document.GetDiagnostics();
+		var badStart = source.IndexOf("    i\n", StringComparison.Ordinal) + 4;
+		Assert.Contains(diagnostics, d => d.Id == "CVL4173"
+			&& d.Location.Span.Start == badStart && d.Location.Span.Length == 1);
+		Assert.DoesNotContain(diagnostics, d => d.Message.Contains("i" + nextWord, StringComparison.Ordinal)
+			|| d.Id == "CVL4004" || d.Id == "CVL1045");
+		Assert.Contains(document.GetDocumentSymbols(), symbol => symbol.Name == "Main");
+		var returnStart = source.LastIndexOf("window", StringComparison.Ordinal);
+		Assert.Contains(document.GetSemanticTokens(), token => token.Kind == ToolingSymbolKind.Local
+			&& token.Span.Start == returnStart
+			&& document.Text.GetText(token.Span) == "window");
+	}
+
 	[Fact]
 	public void MultilineCustomTypeDeclaration_IsNotTreatedAsStandaloneIdentifier()
 	{
