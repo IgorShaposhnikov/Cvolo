@@ -55,6 +55,24 @@ public sealed class CompletionTests
 	}
 
 	[Fact]
+	public void StandaloneI_DoesNotBecomeACompletionCandidate()
+	{
+		const string source =
+			"int Main() {\n" +
+			"    var window = 1;\n" +
+			"    i|\n" +
+			"    if (true) { return window; }\n" +
+			"    return window;\n" +
+			"}\n";
+		var result = Complete(source);
+		Assert.DoesNotContain(result.Candidates, candidate => candidate.Label == "i");
+		Assert.Contains(result.Candidates, candidate => candidate.Label == "if"
+			&& candidate.Kind == CompletionKind.Keyword);
+		Assert.Contains(result.Candidates, candidate => candidate.Label == "int"
+			&& candidate.Kind == CompletionKind.Keyword);
+	}
+
+	[Fact]
 	public void PrefixMatch_IsCaseInsensitive_OverKeywordsAndSymbols()
 	{
 		const string source =
