@@ -202,6 +202,38 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			var insideFields = (braceKinds.Count == 1 && braceKinds[0] is RecoveryBraceKind.Struct or RecoveryBraceKind.Union)
 				|| (braceKinds.Count == 2 && braceKinds[0] == RecoveryBraceKind.Namespace
 					&& braceKinds[1] is RecoveryBraceKind.Struct or RecoveryBraceKind.Union);
+
+			// A half-typed dotted expression (Console.Wr) immediately followed
+			// by a new statement is not a declaration with return type Console.
+			// Mask the entire incomplete expression, not only its receiver, so
+			// ANTLR never absorbs the following 'Console.', 'if' or 'while'.
+			// A valid continuation (Console.Wr\n(...)) remains untouched.
+			if (atBoundary && !atFileMember && !insideExtension && !insideFields
+				&& current.Type == CvoloLexer.Identifier
+				&& i + 3 < visible.Length
+				&& visible[i + 1].Type == CvoloLexer.DOT
+				&& visible[i + 2].Type == CvoloLexer.Identifier
+				&& visible[i + 3].Line > visible[i + 2].Line)
+			{
+				var following = visible[i + 3].Type;
+				var beginsNewStatement = following is
+					CvoloLexer.IF or CvoloLexer.WHILE or CvoloLexer.FOR
+					or CvoloLexer.FOREACH or CvoloLexer.RETURN
+					or CvoloLexer.VAR or CvoloLexer.VAL
+					or CvoloLexer.BREAK or CvoloLexer.CONTINUE
+					|| (following == CvoloLexer.Identifier
+						&& i + 5 < visible.Length
+						&& visible[i + 4].Type == CvoloLexer.DOT
+						&& visible[i + 5].Type == CvoloLexer.Identifier);
+				if (beginsNewStatement && current.StartIndex >= 0)
+				{
+					var end = visible[i + 2].StopIndex + 1;
+					var span = new TextSpan(current.StartIndex, end - current.StartIndex);
+					recovery.Add(new StandaloneRecoveryToken(span,
+						$"Incomplete member access '{current.Text}.{visible[i + 2].Text}' before the next statement."));
+					recoveredTokenIndices.Add(i + 2);
+				}
+			}
 			if (atBoundary && next is not null && next.Line > current.Line && current.StartIndex >= 0)
 			{
 				// A stray word before a built-in return type should not turn the
