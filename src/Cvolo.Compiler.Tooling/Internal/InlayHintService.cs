@@ -330,6 +330,10 @@ internal static class InlayHintService
 
 		foreach (var child in root.GetChildren())
 		{
+			// Error-recovered syntax may expose a missing child. Keep the
+			// remaining valid syntax available instead of failing the request.
+			if (child is null)
+				continue;
 			// The recursion already knows each node's own parent; only a direct child, which the
 			// recursion reported without one, is attributed to this frame.
 			foreach (var entry in InRange(child, range))

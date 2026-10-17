@@ -669,6 +669,10 @@ internal static class SemanticTokenService
 		yield return root;
 		foreach (var child in root.GetChildren())
 		{
+			// Error-recovered syntax may expose a missing child. Keep the
+			// remaining valid syntax available instead of failing the request.
+			if (child is null)
+				continue;
 			foreach (var node in Descendants(child))
 				yield return node;
 		}

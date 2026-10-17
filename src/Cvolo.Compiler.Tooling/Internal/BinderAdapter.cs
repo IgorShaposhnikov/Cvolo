@@ -103,11 +103,24 @@ internal static class BinderAdapter
 
 			binder.Context.BaseSourcePaths.UnionWith(snapshot.BaseSourceFiles.Select(Path.GetFullPath));
 
-			lock (BindLock)
+			try
 			{
-				binder.Bind(allUnits);
+				lock (BindLock)
+				{
+					binder.Bind(allUnits);
+				}
+				binderContext = binder.Context;
 			}
-			binderContext = binder.Context;
+			catch (NullReferenceException) when (parseDiagnostics.Any(d => d.Severity == DiagnosticSeverity.Error))
+			{
+				// A malformed editor buffer can yield an incomplete syntax graph.
+				// Never cache the exception in ProjectSnapshot's Lazy analysis:
+				// that would break unrelated semantic-token, inlay-hint, signature,
+				// and CodeLens requests for the entire snapshot until the next edit.
+				// Do not expose a half-bound context; keep the original parser
+				// diagnostics and the independently available syntax-only services.
+				binderContext = null;
+			}
 
 			// Bind diagnostics are surfaced only when every document parsed cleanly, matching the
 			// pre-existing contract (bind diagnostics are still produced so completion can reuse them).

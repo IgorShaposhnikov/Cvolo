@@ -195,6 +195,8 @@ internal sealed class NavigationIndex
 	{
 		foreach (var child in node.GetChildren())
 		{
+			if (child is null)
+				continue;
 			yield return child;
 
 			foreach (var descendant in Descendants(child))
@@ -736,7 +738,10 @@ internal sealed class NavigationIndex
 		}
 
 		foreach (var child in node.GetChildren())
-			IndexLocals(documentId, source, child);
+		{
+			if (child is not null)
+				IndexLocals(documentId, source, child);
+		}
 	}
 
 	private Entry Register(DocumentId documentId, string source, SyntaxNode declaration, string name, ToolingSymbolKind kind, CoreTextSpan? selection, string? owner = null)

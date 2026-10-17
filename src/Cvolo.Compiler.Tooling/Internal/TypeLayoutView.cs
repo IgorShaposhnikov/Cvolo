@@ -565,6 +565,8 @@ internal static class TypeLayoutView
 	{
 		foreach (SyntaxNode child in node.GetChildren())
 		{
+			if (child is null)
+				continue;
 			yield return child;
 
 			foreach (SyntaxNode nested in Descendants(child))

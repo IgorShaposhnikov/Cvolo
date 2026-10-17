@@ -45,7 +45,10 @@ internal static class FoldingRangeService
 		AddRegion(node, source, text, ranges, seen);
 
 		foreach (var child in node.GetChildren())
-			AddSyntaxRegions(child, source, text, ranges, seen);
+		{
+			if (child is not null)
+				AddSyntaxRegions(child, source, text, ranges, seen);
+		}
 	}
 
 	private static void AddRegion(SyntaxNode node, string source, SourceText text, List<ToolingFoldingRange> ranges, HashSet<TextSpan> seen)
