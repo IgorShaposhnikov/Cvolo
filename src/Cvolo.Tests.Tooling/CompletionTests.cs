@@ -179,7 +179,7 @@ public sealed class CompletionTests
 		var result = Complete("struct Window { int width; } int Main() { if (true) { d| } return 0; }");
 		Assert.True(Contains(result, "double", CompletionKind.Keyword),
 			"Inside a control block, a primitive type can begin a local declaration.");
-		Assert.DoesNotContain(result.Candidates, c => c.Label == "if",
+		Assert.False(result.Candidates.Any(c => c.Label == "if"),
 			"The typed prefix 'd' must filter out unrelated keywords.");
 
 		var emptyPrefix = Complete("struct Window { int width; } int Main() { if (true) { | } return 0; }");
