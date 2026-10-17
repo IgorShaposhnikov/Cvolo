@@ -122,7 +122,7 @@ public sealed class DiagnosticIdTests
 	[InlineData("asdasd", "val")]
 	public void StandaloneUnknownIdentifier_PreservesSubsequentInferredVariable(string badName, string declarationKeyword)
 	{
-		var source = $"int Main() {{\\n    {badName}\\n\\n    {declarationKeyword} window = 1;\\n    return window;\\n}}\\n";
+		var source = $"int Main() {{\n    {badName}\n\n    {declarationKeyword} window = 1;\n    return window;\n}}\n";
 		var document = Open(source);
 		var diagnostics = document.GetDiagnostics();
 		var badStart = source.IndexOf(badName, StringComparison.Ordinal);
@@ -147,8 +147,8 @@ public sealed class DiagnosticIdTests
 	public void MultilineCustomTypeDeclaration_IsNotTreatedAsStandaloneIdentifier()
 	{
 		const string source =
-			"struct Window { int Width; }\\n" +
-			"int Main() {\\n    Window\\n    window = Window { Width: 1 };\\n    return window.Width;\\n}\\n";
+			"struct Window { int Width; }\n" +
+			"int Main() {\n    Window\n    window = Window { Width: 1 };\n    return window.Width;\n}\n";
 		var document = Open(source);
 		Assert.DoesNotContain(document.GetDiagnostics(), d => d.Id == "CVL4173");
 		Assert.Contains(document.GetSemanticTokens(), token =>
