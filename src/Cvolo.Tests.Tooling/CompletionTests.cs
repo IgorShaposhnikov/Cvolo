@@ -177,8 +177,14 @@ public sealed class CompletionTests
 	public void IncompleteNestedBlock_DoesNotInheritStructFieldContext()
 	{
 		var result = Complete("struct Window { int width; } int Main() { if (true) { d| } return 0; }");
-		Assert.True(Contains(result, "double", CompletionKind.Keyword));
-		Assert.True(Contains(result, "if", CompletionKind.Keyword));
+		Assert.True(Contains(result, "double", CompletionKind.Keyword),
+			"Inside a control block, a primitive type can begin a local declaration.");
+		Assert.DoesNotContain(result.Candidates, c => c.Label == "if",
+			"The typed prefix 'd' must filter out unrelated keywords.");
+
+		var emptyPrefix = Complete("struct Window { int width; } int Main() { if (true) { | } return 0; }");
+		Assert.True(Contains(emptyPrefix, "if", CompletionKind.Keyword),
+			"With an empty prefix, the same nested block must offer control-flow keywords.");
 	}
 
 	[Fact]

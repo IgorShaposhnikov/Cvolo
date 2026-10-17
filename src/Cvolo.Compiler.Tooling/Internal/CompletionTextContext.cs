@@ -50,6 +50,14 @@ internal sealed record CompletionTextContext(
 	internal bool IsTypeArgumentContext { get; init; }
 
 	/// <summary>
+	/// Cursor is at the start of a statement in a function/control block.
+	/// Used only when a malformed document cannot produce a semantic query,
+	/// so keyword completion survives without leaking into struct fields or
+	/// aggregate initializer member names.
+	/// </summary>
+	internal bool IsStatementStartContext { get; init; }
+
+	/// <summary>
 	/// The field name being assigned when the cursor sits in an aggregate initializer value slot
 	/// (<c>Window { Ptr = | }</c>), when it can be read from the surrounding tokens.
 	/// </summary>
@@ -88,6 +96,10 @@ internal sealed record CompletionTextContext(
 			context = context with { IsTypeArgumentContext = true };
 		if (!context.IsTypeArgumentContext && DetectDeclarationTypeContext(tokens, position))
 			context = context with { IsTypeContext = true };
+		if (!context.IsTypeContext && !context.IsAggregateInitializerName
+			&& !context.IsAggregateInitializerValue
+			&& DetectStatementStartContext(tokens, position))
+			context = context with { IsStatementStartContext = true };
 		return context;
 	}
 
@@ -134,6 +146,49 @@ internal sealed record CompletionTextContext(
 					return BraceOpensAggregateDeclaration(tokens, i);
 				depth--;
 			}
+		}
+		return false;
+	}
+
+	/// <summary>
+	/// Recognize a statement boundary even when parser recovery lost the
+	/// containing function. Use the innermost unmatched brace to distinguish
+	/// a function/control block from a struct, namespace, or initializer.
+	/// </summary>
+	private static bool DetectStatementStartContext(IList<IToken> tokens, int position)
+	{
+		var previous = LastSignificantIndexBefore(tokens, position);
+		if (previous < 0)
+			return false;
+		if (IsWordToken(tokens[previous].Type))
+			previous = PreviousSignificantIndex(tokens, previous);
+		if (previous < 0 || tokens[previous].Type is not
+			(CvoloLexer.LBRACE or CvoloLexer.SEMI or CvoloLexer.RBRACE))
+			return false;
+
+		var depth = 0;
+		for (var i = previous; i >= 0; i--)
+		{
+			var token = tokens[i];
+			if (token.Channel != Lexer.DefaultTokenChannel || token.Type == TokenConstants.EOF)
+				continue;
+			if (token.Type == CvoloLexer.RBRACE)
+			{
+				depth++;
+				continue;
+			}
+			if (token.Type != CvoloLexer.LBRACE)
+				continue;
+			if (depth > 0)
+			{
+				depth--;
+				continue;
+			}
+			if (BraceOpensAggregateDeclaration(tokens, i))
+				return false;
+			var beforeBrace = PreviousSignificantIndex(tokens, i);
+			return beforeBrace >= 0 && tokens[beforeBrace].Type is
+				(CvoloLexer.RPAREN or CvoloLexer.ELSE or CvoloLexer.TRY or CvoloLexer.FINALLY);
 		}
 		return false;
 	}

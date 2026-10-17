@@ -122,6 +122,16 @@ internal static class CompletionService
 				}
 				// The primary parse produced no unit. A member-shaped or aggregate-initializer
 				// request can still be recovered by the probes below; anything else degrades to empty.
+				if (textContext.IsStatementStartContext)
+				{
+					var statementKeywords = CompletionKeywordProvider.For(AnalysisContext.Statement)
+						.Where(keyword => keyword.StartsWith(textContext.Prefix, StringComparison.OrdinalIgnoreCase))
+						.Select(keyword => new Completion.CompletionCandidate(
+							null, keyword, keyword, Completion.CompletionKind.Keyword,
+							null, null, CompletionResolvableFields.None))
+						.ToArray();
+					return new CompletionResult(span, statementKeywords);
+				}
 				if (!textContext.IsMemberAccessContext && !textContext.IsAggregateInitializerName)
 					return new CompletionResult(span, []);
 			}
@@ -146,6 +156,11 @@ internal static class CompletionService
 		// runs a parseable snapshot instead.
 		if (unit is not null && analysis.BinderContext is { } binderContext)
 			(queryContext, queryCandidates) = RunQuery(binderContext, unit, queryPosition, textContext.IsAggregateInitializerValue);
+
+		// A malformed statement block can have a partial unit but no semantic
+		// binder. Preserve only compiler-defined statement keywords in that case.
+		if (queryContext == AnalysisContext.None && textContext.IsStatementStartContext)
+			queryContext = AnalysisContext.Statement;
 
 		// A declaration name slot (`Window |`, `Window g|`) is not an expression or statement
 		// position. An incomplete declaration produces no declaration node, so the query would
@@ -425,7 +440,13 @@ internal static class CompletionService
 			return true;
 		}
 
-		return context.AssociatedFunctions.TryGetValue(key, out functions);
+		if (context.AssociatedFunctions.TryGetValue(key, out var associated))
+		{
+			functions = associated;
+			return true;
+		}
+		functions = [];
+		return false;
 	}
 
 	private static List<FunctionSymbol> EnumerateAll(BindingContext context)

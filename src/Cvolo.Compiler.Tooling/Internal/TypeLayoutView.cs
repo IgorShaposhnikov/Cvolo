@@ -398,6 +398,8 @@ internal static class TypeLayoutView
 		DocumentSymbolInfo symbol)
 	{
 		var declaration = navigation.Declaration(symbol.SymbolId);
+		if (declaration is null)
+			return null;
 		var typeText = FieldTypeText(declaration);
 		if (typeText is null)
 			return null;
