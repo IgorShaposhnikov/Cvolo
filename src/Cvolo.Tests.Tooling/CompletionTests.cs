@@ -55,6 +55,34 @@ public sealed class CompletionTests
 	}
 
 	[Fact]
+	public void PrefixMatch_IsCaseInsensitive_OverKeywordsAndSymbols()
+	{
+		const string source =
+			"struct ITest { int Value; }\n" +
+			"int Init()\n" +
+			"{\n" +
+			"	return 0;\n" +
+			"}\n" +
+			"int Main()\n" +
+			"{\n" +
+			"	i|\n" +
+			"	return 0;\n" +
+			"}\n";
+
+		var result = Complete(source);
+		var labels = result.Candidates.Select(c => c.Label).ToList();
+
+		// A lowercase "i" matches every name starting with i/I, not just the case-exact keyword forms.
+		Assert.Contains("ITest", labels);
+		Assert.Contains("Init", labels);
+		Assert.Contains("int", labels);
+		Assert.Contains("if", labels);
+
+		// A prefix that matches nothing keeps the list free of invented bare names.
+		Assert.DoesNotContain("zzzz", labels);
+	}
+
+	[Fact]
 	public void Parameters_AreOfferedInFunctionBody()
 	{
 		var result = Complete("void foo(int a, int b) { | }\n");

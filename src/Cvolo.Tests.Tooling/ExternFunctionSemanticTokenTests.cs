@@ -23,6 +23,34 @@ public sealed class ExternFunctionSemanticTokenTests
 		=> [.. tokens.Where(t => document.Text.GetText(t.Span) == text)];
 
 	[Fact]
+	public void StandaloneVariadicExternFunction_HasExternModifier_AtDeclarationAndCalls()
+	{
+		const string s =
+			"extern void printf(string format, ...);\n" +
+			"extern int getchar();\n" +
+			"int main()\n" +
+			"{\n" +
+			"    printf(\"hi\");\n" +
+			"    return getchar();\n" +
+			"}\n";
+		var x = Open("Main.cvl", ("Main.cvl", s));
+		using (x.Fixture)
+		{
+			var all = x.Document.GetSemanticTokens();
+			foreach (string name in new[] { "printf", "getchar" })
+			{
+				var tokens = WithText(x.Document, all, name);
+				Assert.Equal(2, tokens.Count);
+				Assert.All(tokens, t => Assert.Equal(ToolingSymbolKind.Function, t.Kind));
+				Assert.All(tokens, t => Assert.True(t.Modifiers.HasFlag(SemanticTokenModifiers.ExternFunction)));
+			}
+
+			Assert.Contains(WithText(x.Document, all, "printf"), t => t.Modifiers.HasFlag(SemanticTokenModifiers.Declaration));
+			Assert.Contains(WithText(x.Document, all, "getchar"), t => t.Modifiers.HasFlag(SemanticTokenModifiers.Declaration));
+		}
+	}
+
+	[Fact]
 	public void StandaloneExternFunction_HasExternModifier_AtDeclarationAndCall()
 	{
 		const string s = "extern int abs(int x);\nint main() { return abs(-1); }\n";

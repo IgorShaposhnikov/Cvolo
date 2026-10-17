@@ -82,7 +82,7 @@ internal static class CompletionService
 			var attributeCandidates = new List<Completion.CompletionCandidate>();
 			foreach (var name in DeclarationPass.IntrinsicAttributeNames)
 			{
-				if (!name.StartsWith(textContext.Prefix, StringComparison.Ordinal))
+				if (!name.StartsWith(textContext.Prefix, StringComparison.OrdinalIgnoreCase))
 					continue;
 
 				attributeCandidates.Add(new Completion.CompletionCandidate(
@@ -207,7 +207,7 @@ internal static class CompletionService
 
 		foreach (var candidate in queryCandidates)
 		{
-			if (!candidate.Label.StartsWith(textContext.Prefix, StringComparison.Ordinal))
+			if (!candidate.Label.StartsWith(textContext.Prefix, StringComparison.OrdinalIgnoreCase))
 				continue;
 
 			var kind = MapKind(candidate.Kind);
@@ -250,7 +250,7 @@ internal static class CompletionService
 
 		foreach (var keyword in CompletionKeywordProvider.For(queryContext))
 		{
-			if (!keyword.StartsWith(textContext.Prefix, StringComparison.Ordinal))
+			if (!keyword.StartsWith(textContext.Prefix, StringComparison.OrdinalIgnoreCase))
 				continue;
 
 			if (!seen.Add((keyword, Completion.CompletionKind.Keyword)))
