@@ -111,6 +111,30 @@ internal sealed record CompletionTextContext(
 			return OpensDeclarationParameterList(tokens, last);
 		if (token.Type == CvoloLexer.LBRACE)
 			return BraceOpensAggregateDeclaration(tokens, last);
+		if (token.Type == CvoloLexer.SEMI)
+		{
+			// A field type following an earlier field ends up after ';', not '{'.
+			// Locate the innermost enclosing brace rather than inspecting only the
+			// immediate predecessor. This must not classify a function statement or
+			// aggregate initializer as a struct/union field declaration.
+			var depth = 0;
+			for (var i = last - 1; i >= 0; i--)
+			{
+				var candidate = tokens[i];
+				if (candidate.Channel != Lexer.DefaultTokenChannel || candidate.Type == TokenConstants.EOF)
+					continue;
+				if (candidate.Type == CvoloLexer.RBRACE)
+				{
+					depth++;
+					continue;
+				}
+				if (candidate.Type != CvoloLexer.LBRACE)
+					continue;
+				if (depth == 0)
+					return BraceOpensAggregateDeclaration(tokens, i);
+				depth--;
+			}
+		}
 		return false;
 	}
 
