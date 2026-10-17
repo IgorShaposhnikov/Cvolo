@@ -340,6 +340,36 @@ public sealed class DiagnosticIdTests
 		Assert.DoesNotContain(diagnostics, diagnostic => diagnostic.Id is "CVL4173" or "CVL4004");
 	}
 
+	[Theory]
+	[InlineData("Console.WriteLine(\"ok\");")]
+	[InlineData("if (true) { return 1; }")]
+	[InlineData("while (false) { return 1; }")]
+	public void IncompleteQualifiedCall_DoesNotConsumeFollowingStatement(string following)
+	{
+		var source = "int Main() {\n"
+			+ "    Console.Wr\n"
+			+ "    " + following + "\n"
+			+ "    return 0;\n}\n";
+		var document = Open(source);
+		var diagnostics = document.GetDiagnostics();
+		var start = source.IndexOf("Console.Wr", StringComparison.Ordinal);
+		Assert.Contains(diagnostics, d => d.Id == "CVL4173"
+			&& d.Location.Span.Start == start && d.Location.Span.Length == "Console.Wr".Length);
+		Assert.DoesNotContain(diagnostics, d => d.Id is "CVL4004" or "CVL1045");
+		Assert.Contains(document.GetDocumentSymbols(), symbol => symbol.Name == "Main");
+	}
+
+	[Fact]
+	public void QualifiedCallMayContinueOnNextLine()
+	{
+		const string source = "int Main() {\n"
+			+ "    Console.WriteLine\n"
+			+ "    (\"ok\");\n"
+			+ "    return 0;\n}\n";
+		Assert.DoesNotContain(Open(source).GetDiagnostics(), d => d.Id == "CVL4173"
+			&& d.Message.Contains("Incomplete member access", StringComparison.Ordinal));
+	}
+
 	[Fact]
 	public void MultilineTypedVariable_RemainsLegal()
 	{
