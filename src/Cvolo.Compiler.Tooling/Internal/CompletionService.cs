@@ -261,6 +261,24 @@ internal static class CompletionService
 				candidate.Detail, null, CompletionResolvableFields.None));
 		}
 
+		// A declaration-only type slot in an unfinished struct or union may
+		// still have a partial unit with query context None. The lexer already
+		// identified the type position; supply the compiler's primitive types
+		// regardless of whether semantic analysis recovered the incomplete field.
+		if (textContext.IsTypeContext)
+		{
+			foreach (var keyword in CompletionKeywordProvider.TypeKeywordList)
+			{
+				if (keyword.StartsWith(textContext.Prefix, StringComparison.OrdinalIgnoreCase)
+					&& seen.Add((keyword, Completion.CompletionKind.Keyword)))
+				{
+					candidates.Add(new Completion.CompletionCandidate(
+						null, keyword, keyword, Completion.CompletionKind.Keyword,
+						null, null, CompletionResolvableFields.None));
+				}
+			}
+		}
+
 		foreach (var keyword in CompletionKeywordProvider.For(queryContext))
 		{
 			if (!keyword.StartsWith(textContext.Prefix, StringComparison.OrdinalIgnoreCase))
