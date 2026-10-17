@@ -67,20 +67,27 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			_diagnostics.Report(context, badGeneric.Span, badGeneric.Message, badGeneric.Id);
 		}
 
-		if (invalidGeneric is { } malformedType)
+		// Recover only clearly separated malformed tokens, not general newlines:
+		// declarations and expressions can legally continue across physical lines.
+		// Diagnostics stay attached to the original offending word; ANTLR receives
+		// a same-length view with that word blanked, preserving all later offsets.
+		var standalone = FindStandaloneRecoveryTokens(tokenStream.GetTokens());
+		foreach (var stray in standalone)
+			_diagnostics.Report(context, stray.Span, stray.Message, DiagnosticIds.UnexpectedToken);
+
+		var recoverySource = invalidGeneric is { } malformedType
+			? MaskInvalidDeclaration(context.Source, tokenStream.GetTokens(), malformedType.Span.Start)
+			: context.Source;
+		foreach (var stray in standalone)
+			recoverySource = MaskSourceRange(recoverySource, stray.Span.Start, stray.Span.End);
+
+		if (recoverySource != context.Source)
 		{
-			// Parse a same-length recovery view with only the syntactically broken
-			// top-level declaration blanked out. No invented type ever enters the AST.
-			// Original TextSpan offsets and all later declarations are preserved.
-			var recoverySource = MaskInvalidDeclaration(context.Source, tokenStream.GetTokens(), malformedType.Span.Start);
-			if (recoverySource != context.Source)
-			{
-				var recoveryLexer = new CvoloLexer(new AntlrInputStream(recoverySource));
-				recoveryLexer.RemoveErrorListeners();
-				recoveryLexer.AddErrorListener(new LexerErrorListener(_diagnostics, context, _rejectedImpossibleSpans));
-				tokenStream = new CommonTokenStream(recoveryLexer);
-				tokenStream.Fill();
-			}
+			var recoveryLexer = new CvoloLexer(new AntlrInputStream(recoverySource));
+			recoveryLexer.RemoveErrorListeners();
+			recoveryLexer.AddErrorListener(new LexerErrorListener(_diagnostics, context, _rejectedImpossibleSpans));
+			tokenStream = new CommonTokenStream(recoveryLexer);
+			tokenStream.Fill();
 		}
 
 		var parser = new CvoloParser(tokenStream);
@@ -158,6 +165,69 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		ReportPendingSignedMagnitudeOverflows();
 		return unit;
 	}
+
+	private sealed record StandaloneRecoveryToken(TextSpan Span, string Message);
+
+	/// <summary>
+	/// Find only the two unambiguous parser-cascade shapes that ANTLR otherwise
+	/// reports on the following valid declaration or statement. Both require a
+	/// physical line break and a statement/declaration boundary: newline itself
+	/// does not terminate statements in Cvolo.
+	/// </summary>
+	private static IReadOnlyList<StandaloneRecoveryToken> FindStandaloneRecoveryTokens(IList<IToken> tokens)
+	{
+		var visible = tokens.Where(t => t.Channel == Lexer.DefaultTokenChannel && t.Type != TokenConstants.EOF).ToArray();
+		var recovery = new List<StandaloneRecoveryToken>();
+		var braceDepth = 0;
+		for (var i = 0; i < visible.Length; i++)
+		{
+			var current = visible[i];
+			var previous = i > 0 ? visible[i - 1] : null;
+			var next = i + 1 < visible.Length ? visible[i + 1] : null;
+			var atBoundary = previous is null || previous.Type is CvoloLexer.SEMI or CvoloLexer.LBRACE or CvoloLexer.RBRACE;
+			if (atBoundary && next is not null && next.Line > current.Line && current.StartIndex >= 0)
+			{
+				// A stray word before a built-in return type should not turn the
+				// return-type keyword into an unexpected *function name*.
+				var strayTopLevel = braceDepth == 0
+					&& current.Type == CvoloLexer.Identifier
+					&& IsPrimitiveDeclarationType(next.Type)
+					&& i + 3 < visible.Length
+					&& visible[i + 2].Type == CvoloLexer.Identifier
+					&& visible[i + 3].Type == CvoloLexer.LPAREN;
+				// A primitive type alone before a fresh 'var/val' declaration
+				// is a separate incomplete statement, not 'doublevar'.
+				var bareType = braceDepth > 0
+					&& IsPrimitiveDeclarationType(current.Type)
+					&& next.Type is CvoloLexer.VAR or CvoloLexer.VAL
+					&& i + 2 < visible.Length
+					&& visible[i + 2].Type == CvoloLexer.Identifier;
+
+				if (strayTopLevel || bareType)
+				{
+					var span = new TextSpan(current.StartIndex, current.StopIndex - current.StartIndex + 1);
+					var message = strayTopLevel
+						? $"Unexpected token '{current.Text}' before a function declaration."
+						: $"Incomplete variable declaration: expected a name after '{current.Text}'.";
+					recovery.Add(new StandaloneRecoveryToken(span, message));
+				}
+			}
+
+			if (current.Type == CvoloLexer.LBRACE)
+				braceDepth++;
+			else if (current.Type == CvoloLexer.RBRACE && braceDepth > 0)
+				braceDepth--;
+		}
+		return recovery;
+	}
+
+	private static bool IsPrimitiveDeclarationType(int tokenType) => tokenType is
+		CvoloLexer.VOID or CvoloLexer.INT or CvoloLexer.UINT
+		or CvoloLexer.LONG or CvoloLexer.ULONG or CvoloLexer.SHORT
+		or CvoloLexer.USHORT or CvoloLexer.BYTE or CvoloLexer.SBYTE
+		or CvoloLexer.NINT or CvoloLexer.NUINT or CvoloLexer.FLOAT
+		or CvoloLexer.DOUBLE or CvoloLexer.BOOL or CvoloLexer.STRING
+		or CvoloLexer.CHAR;
 
 	/// <summary>
 	/// Remove the one broken top-level declaration from ANTLR's recovery input

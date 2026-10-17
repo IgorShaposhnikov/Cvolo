@@ -81,6 +81,59 @@ public sealed class DiagnosticIdTests
 	}
 
 	[Fact]
+	public void StrayIdentifierBeforeFunction_ReportsStrayWordNotReturnType()
+	{
+		const string source =
+			"int Helper() { return 1; }\n" +
+			"asdasd\n\n" +
+			"int Main() { return Helper(); }\n";
+		var document = Open(source);
+		var diagnostics = document.GetDiagnostics();
+		var badStart = source.IndexOf("asdasd", StringComparison.Ordinal);
+		Assert.Contains(diagnostics, d => d.Id == "CVL4173"
+			&& d.Location.Span.Start == badStart && d.Location.Span.Length == 6);
+		Assert.DoesNotContain(diagnostics, d => d.Id == "CVL4173"
+			&& d.Location.Span.Start == source.IndexOf("int Main", StringComparison.Ordinal));
+		Assert.Contains(document.GetDocumentSymbols(), symbol => symbol.Name == "Main");
+	}
+
+	[Fact]
+	public void BarePrimitiveBeforeVar_ReportsIncompleteTypeWithoutConsumingNextStatement()
+	{
+		const string source =
+			"int Main() {\n" +
+			"    var first = 1;\n" +
+			"    double\n\n" +
+			"    var window = first;\n" +
+			"    return window;\n" +
+			"}\n";
+		var document = Open(source);
+		var diagnostics = document.GetDiagnostics();
+		var bareStart = source.IndexOf("double", StringComparison.Ordinal);
+		Assert.Contains(diagnostics, d => d.Id == "CVL4173"
+			&& d.Location.Span.Start == bareStart && d.Location.Span.Length == "double".Length);
+		Assert.DoesNotContain(diagnostics, d => d.Message.Contains("doublevar", StringComparison.Ordinal));
+		Assert.DoesNotContain(diagnostics, d => d.Location.Span.Start == source.IndexOf("var window", StringComparison.Ordinal));
+		Assert.Contains(document.GetDocumentSymbols(), symbol => symbol.Name == "Main");
+	}
+
+	[Fact]
+	public void MultilineTypedVariable_RemainsLegal()
+	{
+		const string source = "int Main() {\n    double\n    value = 1.0;\n    return 0;\n}\n";
+		var diagnostics = Open(source).GetDiagnostics();
+		Assert.DoesNotContain(diagnostics, d => d.Id == "CVL4173");
+	}
+
+	[Fact]
+	public void CustomReturnTypeAcrossLines_IsNotMasked()
+	{
+		const string source = "MyType\nMain() { return default; }\n";
+		var diagnostics = Open(source).GetDiagnostics();
+		Assert.DoesNotContain(diagnostics, d => d.Id == "CVL4173");
+	}
+
+	[Fact]
 	public void SyntaxError_MissingToken_GetsItsOwnStableId()
 	{
 		// A missing statement terminator -> "missing ';'".
