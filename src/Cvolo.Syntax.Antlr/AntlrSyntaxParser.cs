@@ -171,7 +171,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 	// The namespace and extension bodies contain declarations rather than statements.
 	// Track those braces separately from function bodies to recover only genuine
 	// declaration boundaries without reinterpreting valid multiline expressions.
-	private enum RecoveryBraceKind { Other, Namespace, Extension }
+	private enum RecoveryBraceKind { Other, Namespace, Extension, Struct, Union }
 
 	/// <summary>
 	/// Find a few unambiguous parser-cascade shapes that ANTLR otherwise
@@ -197,6 +197,9 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			var insideExtension = (braceKinds.Count == 1 && braceKinds[0] == RecoveryBraceKind.Extension)
 				|| (braceKinds.Count == 2 && braceKinds[0] == RecoveryBraceKind.Namespace
 					&& braceKinds[1] == RecoveryBraceKind.Extension);
+			var insideFields = (braceKinds.Count == 1 && braceKinds[0] is RecoveryBraceKind.Struct or RecoveryBraceKind.Union)
+				|| (braceKinds.Count == 2 && braceKinds[0] == RecoveryBraceKind.Namespace
+					&& braceKinds[1] is RecoveryBraceKind.Struct or RecoveryBraceKind.Union);
 			if (atBoundary && next is not null && next.Line > current.Line && current.StartIndex >= 0)
 			{
 				// A stray word before a built-in return type should not turn the
@@ -262,7 +265,28 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 					&& ((atFileMember && (topLevelStarter || attributeStarter))
 						|| (insideExtension && (extensionMemberStarter || attributeStarter)));
 
-				if (strayTopLevel || bareType || bareIdentifier || strayMember)
+				// Within a struct/union, a primitive type keyword cannot be the
+				// missing name of a field whose type is the preceding identifier.
+				// Require a complete field shape so unfinished declarations still
+				// receive their own diagnostics. Pointer fields (void* p;) are common.
+				var fieldTypeIndex = i + 1;
+				if (next.Type is CvoloLexer.PUBLIC or CvoloLexer.PRIVATE or CvoloLexer.INTERNAL)
+					fieldTypeIndex++;
+				var fieldNameIndex = fieldTypeIndex + 1;
+				if (fieldTypeIndex < visible.Length && IsPrimitiveDeclarationType(visible[fieldTypeIndex].Type))
+				{
+					while (fieldNameIndex < visible.Length
+						&& visible[fieldNameIndex].Type is CvoloLexer.STAR or CvoloLexer.QMARK)
+						fieldNameIndex++;
+				}
+				var strayBeforeField = insideFields && current.Type == CvoloLexer.Identifier
+					&& fieldTypeIndex < visible.Length
+					&& IsPrimitiveDeclarationType(visible[fieldTypeIndex].Type)
+					&& fieldNameIndex + 1 < visible.Length
+					&& visible[fieldNameIndex].Type == CvoloLexer.Identifier
+					&& visible[fieldNameIndex + 1].Type == CvoloLexer.SEMI;
+
+				if (strayTopLevel || bareType || bareIdentifier || strayMember || strayBeforeField)
 				{
 					var span = new TextSpan(current.StartIndex, current.StopIndex - current.StartIndex + 1);
 					var message = strayTopLevel
@@ -280,6 +304,10 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				pendingOwner = RecoveryBraceKind.Namespace;
 			else if (atFileMember && current.Type == CvoloLexer.EXTENSION)
 				pendingOwner = RecoveryBraceKind.Extension;
+			else if (atFileMember && current.Type == CvoloLexer.STRUCT)
+				pendingOwner = RecoveryBraceKind.Struct;
+			else if (atFileMember && current.Type == CvoloLexer.UNION)
+				pendingOwner = RecoveryBraceKind.Union;
 
 			if (current.Type == CvoloLexer.LBRACE)
 			{

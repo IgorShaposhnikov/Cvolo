@@ -223,6 +223,42 @@ public sealed class DiagnosticIdTests
 		Assert.Contains(outline.SelectMany(symbol => symbol.Children), symbol => symbol.Name == "IsInit");
 	}
 
+	[Theory]
+	[InlineData("struct")]
+	[InlineData("union")]
+	public void StrayIdentifierBeforePrimitiveField_PreservesTheField(string containerKind)
+	{
+		var source = containerKind + " Window {\n"
+			+ "    a\n"
+			+ "    void* glfwWindow;\n"
+			+ "    int width;\n"
+			+ "}\n";
+		var document = Open(source);
+		var diagnostics = document.GetDiagnostics();
+		var badStart = source.IndexOf("    a\n", StringComparison.Ordinal) + 4;
+		Assert.Contains(diagnostics, d => d.Id == "CVL4173"
+			&& d.Location.Span.Start == badStart && d.Location.Span.Length == 1);
+		Assert.DoesNotContain(diagnostics, d => d.Id is "CVL4004" or "CVL4174"
+			|| d.Location.Span.Start == source.IndexOf("void*", StringComparison.Ordinal));
+		var container = Assert.Single(document.GetDocumentSymbols(), symbol => symbol.Name == "Window");
+		Assert.Contains(container.Children, field => field.Name == "glfwWindow");
+		Assert.Contains(container.Children, field => field.Name == "width");
+	}
+
+	[Fact]
+	public void CustomTypeAndFieldNameMaySpanLinesWithoutRecovery()
+	{
+		const string source = "struct Item { int value; }\n"
+			+ "struct Holder {\n"
+			+ "    Item\n"
+			+ "    item;\n"
+			+ "}\n";
+		var document = Open(source);
+		Assert.DoesNotContain(document.GetDiagnostics(), d => d.Id is "CVL4173" or "CVL4004");
+		var holder = Assert.Single(document.GetDocumentSymbols(), symbol => symbol.Name == "Holder");
+		Assert.Contains(holder.Children, field => field.Name == "item");
+	}
+
 	[Fact]
 	public void NamespaceBracesAndMultilineCustomReturnType_AreNotRecoveredAsStrayTokens()
 	{
