@@ -1192,6 +1192,8 @@ internal static class SymbolResolver
 			? $"extern \"{global.CallingConvention ?? "C"}\" global {(global.IsMutable ? "var " : string.Empty)}{global.Type} {global.Name}"
 			: $"{global.Type} {global.Name}",
 		FunctionDeclarationSyntax function => $"{function.ReturnType} {function.Name}{Generic(function.GenericParameters)}({ParameterList(function.Parameters)})",
+		ExternDeclarationSyntax externFunction => $"{externFunction.ReturnType} {externFunction.Name}({ExternParameterList(externFunction.Parameters, externFunction.IsVariadic)})",
+		ExternBlockFunctionSyntax externBlockFunction => $"{externBlockFunction.ReturnType} {externBlockFunction.Name}({ExternParameterList(externBlockFunction.Parameters, externBlockFunction.IsVariadic)})",
 		OperatorDeclarationSyntax op => $"{op.ReturnType} operator {op.Operator}({ParameterList(op.Parameters)})",
 		ConstructorDeclarationSyntax constructor => $"{constructor.StructName}({ParameterList(constructor.Parameters)})",
 		DestructorDeclarationSyntax destructor => $"~{destructor.StructName}()",
@@ -1232,6 +1234,12 @@ internal static class SymbolResolver
 
 	private static string ParameterList(IReadOnlyList<ParameterSyntax> parameters)
 		=> string.Join(", ", parameters.Select(p => $"{p.Type} {p.Name}"));
+
+	private static string ExternParameterList(IReadOnlyList<ParameterSyntax> parameters, bool variadic)
+	{
+		var fixedParameters = ParameterList(parameters);
+		return variadic ? (fixedParameters.Length == 0 ? "..." : fixedParameters + ", ...") : fixedParameters;
+	}
 
 	private static string Generic(IReadOnlyList<string> parameters)
 		=> parameters.Count == 0 ? "" : $"<{string.Join(", ", parameters)}>";
