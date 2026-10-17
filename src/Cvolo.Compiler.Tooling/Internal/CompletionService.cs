@@ -107,6 +107,19 @@ internal static class CompletionService
 			var recovered = TryRecoverUnit(project, doc, position);
 			if (recovered is null)
 			{
+				// An incomplete struct/union field may make the parser abandon the
+				// whole unit. Its lexical type slot is still known and the lexer is
+				// authoritative for primitive type keywords; keep completion useful.
+				if (textContext.IsTypeContext)
+				{
+					var typeKeywords = CompletionKeywordProvider.TypeKeywordList
+						.Where(keyword => keyword.StartsWith(textContext.Prefix, StringComparison.OrdinalIgnoreCase))
+						.Select(keyword => new Completion.CompletionCandidate(
+							null, keyword, keyword, Completion.CompletionKind.Keyword,
+							null, null, CompletionResolvableFields.None))
+						.ToArray();
+					return new CompletionResult(span, typeKeywords);
+				}
 				// The primary parse produced no unit. A member-shaped or aggregate-initializer
 				// request can still be recovered by the probes below; anything else degrades to empty.
 				if (!textContext.IsMemberAccessContext && !textContext.IsAggregateInitializerName)
