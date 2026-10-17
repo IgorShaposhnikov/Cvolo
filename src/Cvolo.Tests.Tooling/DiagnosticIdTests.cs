@@ -288,6 +288,58 @@ public sealed class DiagnosticIdTests
 			document.Text.GetText(token.Span) == "window" && token.Kind == ToolingSymbolKind.Local);
 	}
 
+	[Theory]
+	[InlineData("if")]
+	[InlineData("while")]
+	public void IncompleteControlBeforeQualifiedCall_DoesNotConsumeCall(string keyword)
+	{
+		var source = "using System;\nint Main() {\n"
+			+ "    " + keyword + "\n"
+			+ "    Console.WriteLine(\"ok\");\n"
+			+ "    return 0;\n}\n";
+		var document = Open(source);
+		var diagnostics = document.GetDiagnostics();
+		var tokenStart = source.IndexOf("    " + keyword + "\n", StringComparison.Ordinal) + 4;
+		Assert.Contains(diagnostics, diagnostic => diagnostic.Id == "CVL4173"
+			&& diagnostic.Location.Span.Start == tokenStart
+			&& diagnostic.Location.Span.Length == keyword.Length);
+		Assert.DoesNotContain(diagnostics, diagnostic => diagnostic.Id is "CVL4004" or "CVL1045"
+			|| diagnostic.Message.Contains("missing '('", StringComparison.Ordinal)
+			|| diagnostic.Location.Span.Start == source.IndexOf("Console.WriteLine", StringComparison.Ordinal));
+		Assert.Contains(document.GetDocumentSymbols(), symbol => symbol.Name == "Main");
+	}
+
+	[Fact]
+	public void ConsecutiveIncompleteControls_BothRecoverBeforeQualifiedCall()
+	{
+		const string source = "using System;\nint Main() {\n"
+			+ "    while\n"
+			+ "    if\n"
+			+ "    Console.WriteLine(\"ok\");\n"
+			+ "    return 0;\n}\n";
+		var document = Open(source);
+		var diagnostics = document.GetDiagnostics();
+		foreach (var keyword in new[] { "while", "if" })
+		{
+			var offset = source.IndexOf("    " + keyword + "\n", StringComparison.Ordinal) + 4;
+			Assert.Contains(diagnostics, diagnostic => diagnostic.Id == "CVL4173"
+				&& diagnostic.Location.Span.Start == offset && diagnostic.Location.Span.Length == keyword.Length);
+		}
+		Assert.DoesNotContain(diagnostics, diagnostic => diagnostic.Id is "CVL4004" or "CVL1045");
+		Assert.Contains(document.GetDocumentSymbols(), symbol => symbol.Name == "Main");
+	}
+
+	[Fact]
+	public void ControlConditionMayStartOnFollowingLine()
+	{
+		const string source = "int Main() {\n"
+			+ "    if\n        (true) { return 1; }\n"
+			+ "    while\n        (false) { return 2; }\n"
+			+ "    return 0;\n}\n";
+		var diagnostics = Open(source).GetDiagnostics();
+		Assert.DoesNotContain(diagnostics, diagnostic => diagnostic.Id is "CVL4173" or "CVL4004");
+	}
+
 	[Fact]
 	public void MultilineTypedVariable_RemainsLegal()
 	{

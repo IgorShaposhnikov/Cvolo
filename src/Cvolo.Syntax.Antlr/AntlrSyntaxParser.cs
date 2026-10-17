@@ -183,6 +183,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 	{
 		var visible = tokens.Where(t => t.Channel == Lexer.DefaultTokenChannel && t.Type != TokenConstants.EOF).ToArray();
 		var recovery = new List<StandaloneRecoveryToken>();
+		var recoveredTokenIndices = new HashSet<int>();
 		var braceKinds = new List<RecoveryBraceKind>();
 		var pendingOwner = RecoveryBraceKind.Other;
 		var braceDepth = 0;
@@ -191,7 +192,8 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			var current = visible[i];
 			var previous = i > 0 ? visible[i - 1] : null;
 			var next = i + 1 < visible.Length ? visible[i + 1] : null;
-			var atBoundary = previous is null || previous.Type is CvoloLexer.SEMI or CvoloLexer.LBRACE or CvoloLexer.RBRACE;
+			var atBoundary = previous is null || previous.Type is CvoloLexer.SEMI or CvoloLexer.LBRACE or CvoloLexer.RBRACE
+				|| recoveredTokenIndices.Contains(i - 1);
 			var insideNamespace = braceKinds.Count == 1 && braceKinds[0] == RecoveryBraceKind.Namespace;
 			var atFileMember = braceKinds.Count == 0 || insideNamespace;
 			var insideExtension = (braceKinds.Count == 1 && braceKinds[0] == RecoveryBraceKind.Extension)
@@ -236,6 +238,17 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				var bareIdentifier = braceDepth > 0 && !atFileMember && !insideExtension
 					&& current.Type == CvoloLexer.Identifier
 					&& (nextIsDeclaration || nextIsControlStatement || nextIsQualifiedCall);
+
+				// Control keywords require an immediate '(' token in the token
+				// stream, although the '(' may be on a later physical line.
+				// If the next line instead starts a new statement, recover the
+				// incomplete keyword rather than consuming the next statement.
+				// A previously recovered keyword also forms a recovery boundary,
+				// allowing 'while\nif\nwindow.Swap()' to report both roots.
+				var incompleteControl = braceDepth > 0 && !atFileMember
+					&& !insideExtension && !insideFields
+					&& current.Type is CvoloLexer.IF or CvoloLexer.WHILE
+					&& (nextIsControlStatement || nextIsQualifiedCall);
 
 				// 'a' before a new namespace or top-level declaration is not a type
 				// name: the next token is a keyword that cannot name a function.
@@ -286,15 +299,18 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 					&& visible[fieldNameIndex].Type == CvoloLexer.Identifier
 					&& visible[fieldNameIndex + 1].Type == CvoloLexer.SEMI;
 
-				if (strayTopLevel || bareType || bareIdentifier || strayMember || strayBeforeField)
+				if (strayTopLevel || bareType || bareIdentifier || strayMember || strayBeforeField || incompleteControl)
 				{
 					var span = new TextSpan(current.StartIndex, current.StopIndex - current.StartIndex + 1);
 					var message = strayTopLevel
 						? $"Unexpected token '{current.Text}' before a function declaration."
 						: bareType
 							? $"Incomplete variable declaration: expected a name after '{current.Text}'."
-							: $"Unexpected identifier '{current.Text}' before a new declaration. Complete the statement or remove the identifier.";
+							: incompleteControl
+								? $"Incomplete '{current.Text}' statement: expected '(' and a condition."
+								: $"Unexpected identifier '{current.Text}' before a new declaration. Complete the statement or remove the identifier.";
 					recovery.Add(new StandaloneRecoveryToken(span, message));
+					recoveredTokenIndices.Add(i);
 				}
 			}
 
