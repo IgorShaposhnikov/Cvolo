@@ -96,6 +96,36 @@ public sealed class SignatureHelpTests
 			&& signature.ActiveParameter == 0);
 	}
 
+	[Theory]
+	[InlineData("Clear();")]
+	[InlineData("Clear()\\n    Begin(1);")]
+	public void ImportedFunctionWithoutMatchingArguments_StillOffersSignatureHelp(string markedStatements)
+	{
+		var statements = markedStatements.Replace("\\n", "\n", StringComparison.Ordinal);
+		var mainSource = "using OpenGL;\\n"
+			+ "int Main() {\\n"
+			+ "    " + statements + "\\n"
+			+ "    return 0;\\n"
+			+ "}\\n";
+		mainSource = mainSource.Replace("\\n", "\n", StringComparison.Ordinal);
+		const string librarySource =
+			"namespace OpenGL;\n"
+			+ "public void Clear(int mask) {}\n";
+		const string beginSource = "void Begin(int mode) {}\n";
+		using var fixture = TempProject.Create(
+			("Main.cvl", mainSource),
+			("OpenGL.cvl", librarySource),
+			("Begin.cvl", beginSource));
+		var project = CvoloWorkspace.Create().OpenProject(fixture.ProjectFilePath);
+		var document = project.InitialSnapshot.GetDocument(project.GetDocumentId("Main.cvl"));
+		var callOffset = mainSource.IndexOf("    Clear(", StringComparison.Ordinal) + "    Clear(".Length;
+		var help = document.GetSignatureHelp(callOffset);
+
+		Assert.NotNull(help);
+		Assert.Contains(help!.Signatures, signature =>
+			signature.Label == "void Clear(int mask)" && signature.ActiveParameter == 0);
+	}
+
 	[Fact]
 	public void NonCallableKeywordOpener_StillHasNoSignatureHelp()
 	{

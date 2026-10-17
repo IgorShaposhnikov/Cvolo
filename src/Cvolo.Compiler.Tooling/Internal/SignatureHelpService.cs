@@ -122,9 +122,11 @@ internal static class SignatureHelpService
 		if (string.IsNullOrEmpty(call.FunctionName))
 			return null;
 
-		var namespaceName = unit.NamespaceDeclaration?.Name;
-		var key = context.GetMangledName(context.ExpandNamespaceAlias(unit, call.FunctionName), namespaceName);
-		if (!GroupFor(context, key, out var group) || group.Count == 0)
+		// When a malformed call lacks a bound symbol, resolve its overload
+		// group using the same visibility priorities as normal name binding:
+		// current namespace, global, then imported namespaces. In particular,
+		// OpenGL.Clear() must not be looked up only as App.Clear().
+		if (!TryFindVisibleGroup(context, unit, call.FunctionName, out var group) || group.Count == 0)
 			return null;
 
 		var signatures = new SignatureCandidateInfo[group.Count];
@@ -420,6 +422,57 @@ internal static class SignatureHelpService
 
 		group = [];
 		return false;
+	}
+
+	/// <summary>
+	/// Recovers visible overloads without guessing a globally same-spelled
+	/// callable from another package. Imports are considered only after local
+	/// and root names, and ambiguous imports fail closed.
+	/// </summary>
+	private static bool TryFindVisibleGroup(
+		BindingContext context,
+		CompilationUnitSyntax unit,
+		string functionName,
+		out IReadOnlyList<FunctionSymbol> group)
+	{
+		var expanded = context.ExpandNamespaceAlias(unit, functionName);
+		var currentNamespace = unit.NamespaceDeclaration?.Name;
+
+		if (expanded.Contains('.', StringComparison.Ordinal))
+		{
+			// Explicit qualification (including namespace aliases) takes
+			// precedence over the current namespace.
+			if (GroupFor(context, expanded, out group))
+				return true;
+			if (!string.IsNullOrEmpty(currentNamespace) &&
+				GroupFor(context, context.GetMangledName(expanded, currentNamespace), out group))
+				return true;
+		}
+		else
+		{
+			if (!string.IsNullOrEmpty(currentNamespace) &&
+				GroupFor(context, context.GetMangledName(expanded, currentNamespace), out group))
+				return true;
+			if (GroupFor(context, expanded, out group))
+				return true;
+		}
+
+		IReadOnlyList<FunctionSymbol>? imported = null;
+		foreach (var usingNamespace in context.GetActiveUsings(unit))
+		{
+			if (!GroupFor(context, context.GetMangledName(expanded, usingNamespace), out var found))
+				continue;
+			if (imported is not null)
+			{
+				// Multiple imports with the same visible spelling are ambiguous.
+				group = [];
+				return false;
+			}
+			imported = found;
+		}
+
+		group = imported ?? [];
+		return imported is not null;
 	}
 
 	private static string? KeyOf(BindingContext context, FunctionSymbol resolved)
