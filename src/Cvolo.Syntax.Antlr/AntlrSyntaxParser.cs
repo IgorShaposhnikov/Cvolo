@@ -169,8 +169,8 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 	private sealed record StandaloneRecoveryToken(TextSpan Span, string Message);
 
 	/// <summary>
-	/// Find only the two unambiguous parser-cascade shapes that ANTLR otherwise
-	/// reports on the following valid declaration or statement. Both require a
+	/// Find a few unambiguous parser-cascade shapes that ANTLR otherwise
+	/// reports on the following valid declaration or statement. All require a
 	/// physical line break and a statement/declaration boundary: newline itself
 	/// does not terminate statements in Cvolo.
 	/// </summary>
@@ -195,20 +195,30 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 					&& i + 3 < visible.Length
 					&& visible[i + 2].Type == CvoloLexer.Identifier
 					&& visible[i + 3].Type == CvoloLexer.LPAREN;
-				// A primitive type alone before a fresh 'var/val' declaration
-				// is a separate incomplete statement, not 'doublevar'.
+				// A standalone primitive or identifier before a fresh var/val
+				// declaration cannot legally form part of that declaration: VAR/VAL
+				// are reserved tokens, not user-defined variable names. Recover on
+				// the preceding word rather than swallowing the next declaration
+				// into ANTLR's 'doublevar' or 'd0ovar' failure.
+				var nextIsDeclaration = next.Type is CvoloLexer.VAR or CvoloLexer.VAL
+					&& i + 2 < visible.Length
+					&& (visible[i + 2].Type == CvoloLexer.Identifier
+						|| IsPrimitiveDeclarationType(visible[i + 2].Type));
 				var bareType = braceDepth > 0
 					&& IsPrimitiveDeclarationType(current.Type)
-					&& next.Type is CvoloLexer.VAR or CvoloLexer.VAL
-					&& i + 2 < visible.Length
-					&& visible[i + 2].Type == CvoloLexer.Identifier;
+					&& nextIsDeclaration;
+				var bareIdentifier = braceDepth > 0
+					&& current.Type == CvoloLexer.Identifier
+					&& nextIsDeclaration;
 
-				if (strayTopLevel || bareType)
+				if (strayTopLevel || bareType || bareIdentifier)
 				{
 					var span = new TextSpan(current.StartIndex, current.StopIndex - current.StartIndex + 1);
 					var message = strayTopLevel
 						? $"Unexpected token '{current.Text}' before a function declaration."
-						: $"Incomplete variable declaration: expected a name after '{current.Text}'.";
+						: bareType
+							? $"Incomplete variable declaration: expected a name after '{current.Text}'."
+							: $"Unexpected identifier '{current.Text}' before a new declaration. Complete the statement or remove the identifier.";
 					recovery.Add(new StandaloneRecoveryToken(span, message));
 				}
 			}

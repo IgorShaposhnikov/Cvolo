@@ -117,6 +117,44 @@ public sealed class DiagnosticIdTests
 		Assert.Contains(document.GetDocumentSymbols(), symbol => symbol.Name == "Main");
 	}
 
+	[Theory]
+	[InlineData("d0o", "var")]
+	[InlineData("asdasd", "val")]
+	public void StandaloneUnknownIdentifier_PreservesSubsequentInferredVariable(string badName, string declarationKeyword)
+	{
+		var source = $"int Main() {{\\n    {badName}\\n\\n    {declarationKeyword} window = 1;\\n    return window;\\n}}\\n";
+		var document = Open(source);
+		var diagnostics = document.GetDiagnostics();
+		var badStart = source.IndexOf(badName, StringComparison.Ordinal);
+		Assert.Contains(diagnostics, d => d.Id == "CVL4173"
+			&& d.Location.Span.Start == badStart
+			&& d.Location.Span.Length == badName.Length);
+		Assert.DoesNotContain(diagnostics, d => d.Message.Contains(badName + declarationKeyword, StringComparison.Ordinal)
+			|| d.Id == "CVL4004");
+		Assert.Contains(document.GetDocumentSymbols(), symbol => symbol.Name == "Main");
+
+		var declarationStart = source.IndexOf("window = 1", StringComparison.Ordinal);
+		var useStart = source.LastIndexOf("window", StringComparison.Ordinal);
+		var windowTokens = document.GetSemanticTokens()
+			.Where(token => document.Text.GetText(token.Span) == "window").ToArray();
+		Assert.Contains(windowTokens, token => token.Kind == ToolingSymbolKind.Local
+			&& token.Span.Start == declarationStart);
+		Assert.Contains(windowTokens, token => token.Kind == ToolingSymbolKind.Local
+			&& token.Span.Start == useStart);
+	}
+
+	[Fact]
+	public void MultilineCustomTypeDeclaration_IsNotTreatedAsStandaloneIdentifier()
+	{
+		const string source =
+			"struct Window { int Width; }\\n" +
+			"int Main() {\\n    Window\\n    window = Window { Width: 1 };\\n    return window.Width;\\n}\\n";
+		var document = Open(source);
+		Assert.DoesNotContain(document.GetDiagnostics(), d => d.Id == "CVL4173");
+		Assert.Contains(document.GetSemanticTokens(), token =>
+			document.Text.GetText(token.Span) == "window" && token.Kind == ToolingSymbolKind.Local);
+	}
+
 	[Fact]
 	public void MultilineTypedVariable_RemainsLegal()
 	{
