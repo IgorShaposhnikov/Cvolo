@@ -227,8 +227,18 @@ internal static class SemanticTokenService
 		if (string.IsNullOrEmpty(name) || spanStart < 0)
 			return;
 
-		// A local, parameter or field that shadows the receiver takes precedence.
-		if (CompletionQuery.ResolveSymbol(context, unit, spanStart, includeDocumentationAndType: false) is not null)
+		// A local, parameter or type that shadows the receiver takes precedence.
+		// A qualified call has only a callee AST node: at the receiver position the
+		// resolver can fall back to the call's *function* symbol (e.g. Cos), whose
+		// SubjectSpan is farther along the source. That is not a receiver shadow.
+		var firstSegmentLength = name.IndexOf('.') is var separator && separator >= 0
+			? separator
+			: name.Length;
+		var receiverResolution = CompletionQuery.ResolveSymbol(context, unit, spanStart, includeDocumentationAndType: false);
+		if (receiverResolution is { } shadow
+			&& shadow.SubjectSpan.Start == spanStart
+			&& shadow.SubjectSpan.Length >= firstSegmentLength
+			&& shadow.Kind != ResolvedSymbolKind.NamespaceAlias)
 			return;
 
 		// Qualified calls store the receiver as one dotted name, but VS Code semantic
