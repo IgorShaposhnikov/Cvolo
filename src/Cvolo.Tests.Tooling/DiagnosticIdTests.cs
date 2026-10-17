@@ -400,6 +400,38 @@ public sealed class DiagnosticIdTests
 	}
 
 	[Fact]
+	public void UnfinishedRepeatedCall_DoesNotReclassifyNextCallAsVariable()
+	{
+		const string source =
+			"void Clear(int value) {}\n"
+			+ "void Begin(int value) {}\n"
+			+ "int Main() {\n"
+			+ "    Clear(1);\n"
+			+ "    Clear\n"
+			+ "    Begin(2);\n"
+			+ "    return 0;\n"
+			+ "}\n";
+		var document = Open(source);
+		var diagnostics = document.GetDiagnostics();
+		var start = source.IndexOf("    Clear\n", StringComparison.Ordinal) + 4;
+		Assert.Contains(diagnostics, d => d.Id == "CVL4173"
+			&& d.Location.Span.Start == start && d.Location.Span.Length == "Clear".Length);
+		Assert.DoesNotContain(diagnostics, d => d.Id == "CVL4004"
+			|| d.Location.Span.Start == source.IndexOf("Begin(2)", StringComparison.Ordinal));
+		Assert.Contains(document.GetDocumentSymbols(), symbol => symbol.Name == "Main");
+	}
+
+	[Fact]
+	public void LegitimateMultilineTypedDeclaration_IsNotMistakenForUnfinishedCall()
+	{
+		const string source =
+			"struct Point { int x; }\n"
+			+ "int Main() { Point\n"
+			+ "    value; return 0; }\n";
+		Assert.DoesNotContain(Open(source).GetDiagnostics(), d => d.Id == "CVL4173");
+	}
+
+	[Fact]
 	public void MultilineTypedVariable_RemainsLegal()
 	{
 		const string source = "int Main() {\n    double\n    value = 1.0;\n    return 0;\n}\n";
