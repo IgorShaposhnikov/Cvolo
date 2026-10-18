@@ -268,15 +268,19 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			if (atBoundary && braceDepth > 0 && !atFileMember && !insideExtension && !insideFields
 				&& IsPrimitiveDeclarationType(current.Type) && next is not null)
 			{
+				// Skip outer namespaces and extension declarations before finding the
+				// function body. Extension member bodies are typically at depth two (or
+				// three inside a namespace), unlike top-level function bodies.
+				// Do not begin at the nested if/while body: earlier assignments in the
+				// enclosing function must remain visible to recovery.
 				var functionBodyStart = -1;
 				for (var scope = 0; scope < braceKinds.Count; scope++)
 				{
-					if (braceKinds[scope] == RecoveryBraceKind.Other
-						&& (scope == 0 || (scope == 1 && braceKinds[0] == RecoveryBraceKind.Namespace)))
-					{
+					if (braceKinds[scope] is RecoveryBraceKind.Namespace or RecoveryBraceKind.Extension)
+						continue;
+					if (braceKinds[scope] == RecoveryBraceKind.Other)
 						functionBodyStart = braceOpeners[scope] + 1;
-						break;
-					}
+					break;
 				}
 
 				if (next.Type == CvoloLexer.Identifier && next.Line > current.Line
