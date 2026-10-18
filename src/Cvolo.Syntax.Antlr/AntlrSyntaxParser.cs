@@ -80,7 +80,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		// a same-length view with that word blanked, preserving all later offsets.
 		var standalone = FindStandaloneRecoveryTokens(tokenStream.GetTokens());
 		foreach (var stray in standalone)
-			_diagnostics.Report(context, stray.Span, stray.Message, DiagnosticIds.UnexpectedToken);
+			_diagnostics.Report(context, stray.Span, stray.Message, stray.DiagnosticId);
 
 		var recoverySource = invalidGeneric is { } malformedType
 			? MaskInvalidDeclaration(context.Source, tokenStream.GetTokens(), malformedType.Span.Start)
@@ -175,7 +175,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		return unit;
 	}
 
-	private sealed record StandaloneRecoveryToken(TextSpan Span, string Message);
+	private sealed record StandaloneRecoveryToken(TextSpan Span, string Message, string DiagnosticId = DiagnosticIds.UnexpectedToken);
 	/// <summary>
 	/// Destructor syntax is ~Type() with no parameters. ANTLR's generic recovery
 	/// cascades through the entire body for ~Type(int[] a); erase only the list
@@ -240,6 +240,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		var recovery = new List<StandaloneRecoveryToken>();
 		var recoveredTokenIndices = new HashSet<int>();
 		var braceKinds = new List<RecoveryBraceKind>();
+		var braceOpeners = new List<int>();
 		var pendingOwner = RecoveryBraceKind.Other;
 		var braceDepth = 0;
 		for (var i = 0; i < visible.Length; i++)
@@ -257,6 +258,50 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			var insideFields = (braceKinds.Count == 1 && braceKinds[0] is RecoveryBraceKind.Struct or RecoveryBraceKind.Union)
 				|| (braceKinds.Count == 2 && braceKinds[0] == RecoveryBraceKind.Namespace
 					&& braceKinds[1] is RecoveryBraceKind.Struct or RecoveryBraceKind.Union);
+
+			// Lexical recovery for incomplete local declarations must not reclassify the
+			// next independent assignment as a declaration or an initializer. A line
+			// break alone is insufficient: "double\nvalue = 1;" is valid Cvolo.
+			// The first form needs evidence that the target was already being assigned
+			// in this function. The second has a complete declaration name, so an
+			// identifier at the start of the next line cannot continue that declaration.
+			if (atBoundary && braceDepth > 0 && !atFileMember && !insideExtension && !insideFields
+				&& IsPrimitiveDeclarationType(current.Type) && next is not null)
+			{
+				var functionBodyStart = -1;
+				for (var scope = 0; scope < braceKinds.Count; scope++)
+				{
+					if (braceKinds[scope] == RecoveryBraceKind.Other
+						&& (scope == 0 || (scope == 1 && braceKinds[0] == RecoveryBraceKind.Namespace)))
+					{
+						functionBodyStart = braceOpeners[scope] + 1;
+						break;
+					}
+				}
+
+				if (next.Type == CvoloLexer.Identifier && next.Line > current.Line
+					&& i + 2 < visible.Length && visible[i + 2].Type == CvoloLexer.ASSIGN
+					&& functionBodyStart >= 0
+					&& WasAssignedEarlier(visible, functionBodyStart, i, next.Text))
+				{
+					recovery.Add(new StandaloneRecoveryToken(
+						new TextSpan(current.StartIndex, current.StopIndex - current.StartIndex + 1),
+						$"Incomplete variable declaration: expected a name after '{current.Text}'."));
+					recoveredTokenIndices.Add(i);
+				}
+				else if (next.Type == CvoloLexer.Identifier && next.Line == current.Line
+					&& i + 3 < visible.Length
+					&& visible[i + 2].Type == CvoloLexer.Identifier
+					&& visible[i + 2].Line > next.Line
+					&& visible[i + 3].Type == CvoloLexer.ASSIGN)
+				{
+					recovery.Add(new StandaloneRecoveryToken(
+						new TextSpan(current.StartIndex, next.StopIndex - current.StartIndex + 1),
+						$"Missing ';' after variable declaration '{current.Text} {next.Text}'.",
+						DiagnosticIds.ExpectedToken));
+					recoveredTokenIndices.Add(i + 1);
+				}
+			}
 
 			// A half-typed dotted expression (Console.Wr) immediately followed
 			// by a new statement is not a declaration with return type Console.
@@ -440,12 +485,14 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			if (current.Type == CvoloLexer.LBRACE)
 			{
 				braceKinds.Add(pendingOwner);
+				braceOpeners.Add(i);
 				pendingOwner = RecoveryBraceKind.Other;
 				braceDepth++;
 			}
 			else if (current.Type == CvoloLexer.RBRACE && braceDepth > 0)
 			{
 				braceKinds.RemoveAt(braceKinds.Count - 1);
+				braceOpeners.RemoveAt(braceOpeners.Count - 1);
 				braceDepth--;
 			}
 			else if (current.Type == CvoloLexer.SEMI)
@@ -454,6 +501,24 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			}
 		}
 		return recovery;
+	}
+
+	/// <summary>
+	/// A prior standalone assignment in the same enclosing function body is
+	/// evidence that a line beginning with "double" was not intended to declare
+	/// its target again. This is deliberately stricter than treating newlines as
+	/// terminators: legal split declarations still parse unchanged.
+	/// </summary>
+	private static bool WasAssignedEarlier(IToken[] tokens, int bodyStart, int before, string name)
+	{
+		for (var i = bodyStart; i + 1 < before; i++)
+		{
+			if (tokens[i].Type == CvoloLexer.Identifier
+				&& tokens[i].Text == name
+				&& tokens[i + 1].Type == CvoloLexer.ASSIGN)
+				return true;
+		}
+		return false;
 	}
 
 	private static bool IsPrimitiveDeclarationType(int tokenType) => tokenType is
