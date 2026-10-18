@@ -259,13 +259,42 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				|| (braceKinds.Count == 2 && braceKinds[0] == RecoveryBraceKind.Namespace
 					&& braceKinds[1] is RecoveryBraceKind.Struct or RecoveryBraceKind.Union);
 
+			// Recover unfinished declaration-shaped input before a new control/declaration
+			// statement, regardless of whether its type is primitive, user-defined,
+			// optional, pointer, array, generic or reference. We inspect the tokens on
+			// the *same* physical line only, and require an unambiguous keyword on the
+			// next line. Valid split declarations (T\\n x = value;) remain untouched.
+			var recoveredIncompleteType = false;
+			if (atBoundary && braceDepth > 0 && !atFileMember && !insideExtension && !insideFields
+				&& IsDeclarationTypeHead(current.Type))
+			{
+				var endToken = i;
+				while (endToken + 1 < visible.Length
+					&& visible[endToken + 1].Line == current.Line
+					&& IsDeclarationFragmentToken(visible[endToken + 1].Type))
+					endToken++;
+				if (endToken + 1 < visible.Length
+					&& visible[endToken + 1].Line > visible[endToken].Line
+					&& IsStatementStarterKeyword(visible[endToken + 1].Type))
+				{
+					var end = visible[endToken].StopIndex + 1;
+					recovery.Add(new StandaloneRecoveryToken(
+						new TextSpan(current.StartIndex, end - current.StartIndex),
+						$"Incomplete declaration before '{visible[endToken + 1].Text}': complete the declaration or terminate it with ';'.",
+						DiagnosticIds.ExpectedToken));
+					recoveredTokenIndices.Add(i);
+					recoveredTokenIndices.Add(endToken);
+					recoveredIncompleteType = true;
+				}
+			}
+
 			// Lexical recovery for incomplete local declarations must not reclassify the
 			// next independent assignment as a declaration or an initializer. A line
 			// break alone is insufficient: "double\nvalue = 1;" is valid Cvolo.
 			// The first form needs evidence that the target was already being assigned
 			// in this function. The second has a complete declaration name, so an
 			// identifier at the start of the next line cannot continue that declaration.
-			if (atBoundary && braceDepth > 0 && !atFileMember && !insideExtension && !insideFields
+			if (!recoveredIncompleteType && atBoundary && braceDepth > 0 && !atFileMember && !insideExtension && !insideFields
 				&& IsPrimitiveDeclarationType(current.Type) && next is not null)
 			{
 				// Skip outer namespaces and extension declarations before finding the
@@ -504,7 +533,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 					&& visible[fieldNameIndex].Type == CvoloLexer.Identifier
 					&& visible[fieldNameIndex + 1].Type == CvoloLexer.SEMI;
 
-				if (strayTopLevel || bareType || bareIdentifier || strayMember || strayBeforeField || incompleteControl)
+				if (!recoveredIncompleteType && (strayTopLevel || bareType || bareIdentifier || strayMember || strayBeforeField || incompleteControl))
 				{
 					var span = new TextSpan(current.StartIndex, current.StopIndex - current.StartIndex + 1);
 					var message = strayTopLevel
@@ -570,6 +599,20 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		}
 		return false;
 	}
+
+	private static bool IsDeclarationTypeHead(int type) =>
+		IsPrimitiveDeclarationType(type) || type is CvoloLexer.Identifier or CvoloLexer.REF or CvoloLexer.REFVAR;
+
+	private static bool IsDeclarationFragmentToken(int type) =>
+		IsDeclarationTypeHead(type) || type is CvoloLexer.STAR or CvoloLexer.QMARK
+			or CvoloLexer.LBRACK or CvoloLexer.RBRACK or CvoloLexer.LT or CvoloLexer.GT
+			or CvoloLexer.COMMA or CvoloLexer.ASSIGN;
+
+	private static bool IsStatementStarterKeyword(int type) => type is
+		CvoloLexer.IF or CvoloLexer.WHILE or CvoloLexer.FOR or CvoloLexer.FOREACH
+		or CvoloLexer.RETURN or CvoloLexer.SWITCH or CvoloLexer.TRY
+		or CvoloLexer.DEFER or CvoloLexer.UNSAFE or CvoloLexer.BREAK
+		or CvoloLexer.CONTINUE or CvoloLexer.VAR or CvoloLexer.VAL;
 
 	private static bool IsPrimitiveDeclarationType(int tokenType) => tokenType is
 		CvoloLexer.VOID or CvoloLexer.INT or CvoloLexer.UINT
