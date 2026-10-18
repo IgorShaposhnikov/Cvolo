@@ -117,8 +117,11 @@ public sealed class DeclarationBoundaryE2ETests
         var project = CvoloWorkspace.Create().OpenProject(fixture.ProjectFilePath);
         var document = project.InitialSnapshot.GetDocument(project.GetDocumentId("Main.cvl"));
         var findings = document.GetDiagnostics();
-        var faultStart = source.IndexOf(before, StringComparison.Ordinal);
-        var nextStart = source.IndexOf(following, faultStart + before.Length, StringComparison.Ordinal);
+        // A fixture may already contain the same type/identifier in its setup.
+        // Anchor to the fragment immediately preceding this statement rather than
+        // the first occurrence anywhere in the document.
+        var nextStart = source.LastIndexOf(following, StringComparison.Ordinal);
+        var faultStart = nextStart < 0 ? -1 : source.LastIndexOf(before, nextStart, StringComparison.Ordinal);
         Assert.True(faultStart >= 0 && nextStart >= 0, "invalid regression fixture");
 
         var syntax = findings.Where(SyntaxFault).ToArray();
