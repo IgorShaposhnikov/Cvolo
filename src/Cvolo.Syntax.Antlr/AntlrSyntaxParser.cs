@@ -2921,6 +2921,18 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				}
 			}
 
+			if (expected.Contains(CvoloLexer.SEMI) && IsPrimitiveDeclarationType(offending.Type))
+			{
+				// In a struct/union, a primitive type begins the next field rather
+				// than completing the previous field's missing terminator. Report at
+				// the previous field's end, not on the following valid field type.
+				for (var rule = parser.Context; rule is not null; rule = rule.Parent as ParserRuleContext)
+				{
+					if (rule is CvoloParser.StructFieldContext or CvoloParser.UnionFieldContext)
+						return ReportMissingToken(offending, CvoloLexer.SEMI, "Expected ';' after field declaration.");
+				}
+			}
+
 			if (!expected.Contains(CvoloLexer.SEMI)
 				|| !(statementBoundary || offending.Type == CvoloLexer.RBRACE))
 				return false;
