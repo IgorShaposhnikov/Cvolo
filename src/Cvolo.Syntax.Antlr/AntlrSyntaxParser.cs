@@ -354,21 +354,6 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 					recoveredTokenIndices.Add(i);
 				}
 				else if (next.Type == CvoloLexer.Identifier && next.Line == current.Line
-					&& i + 4 < visible.Length
-					&& visible[i + 2].Type == CvoloLexer.ASSIGN
-					&& visible[i + 3].Type == CvoloLexer.Identifier
-					&& visible[i + 3].Line > visible[i + 2].Line
-					&& visible[i + 4].Type == CvoloLexer.ASSIGN
-					&& functionBodyStart >= 0
-					&& WasAssignedEarlier(visible, functionBodyStart, i, visible[i + 3].Text))
-				{
-					recovery.Add(new StandaloneRecoveryToken(
-						new TextSpan(current.StartIndex, visible[i + 2].StopIndex - current.StartIndex + 1),
-						$"Incomplete variable declaration '{current.Text} {next.Text} =': expected an initializer.",
-						DiagnosticIds.ExpectedToken));
-					recoveredTokenIndices.Add(i + 2);
-				}
-				else if (next.Type == CvoloLexer.Identifier && next.Line == current.Line
 					&& i + 3 < visible.Length
 					&& visible[i + 2].Type == CvoloLexer.Identifier
 					&& visible[i + 2].Line > next.Line
