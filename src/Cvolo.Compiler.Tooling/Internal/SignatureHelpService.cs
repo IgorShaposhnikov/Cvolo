@@ -563,8 +563,12 @@ internal static class SignatureHelpService
 		return best;
 	}
 
-	private static IEnumerable<SyntaxNode> Descendants(SyntaxNode root)
+	private static IEnumerable<SyntaxNode> Descendants(SyntaxNode? root)
 	{
+		// Parser recovery can leave missing children in an incomplete editor buffer.
+		if (root is null)
+			yield break;
+
 		yield return root;
 		foreach (var child in root.GetChildren())
 		{

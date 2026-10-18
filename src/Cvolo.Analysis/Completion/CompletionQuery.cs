@@ -469,8 +469,12 @@ finally
 		return null;
 	}
 
-	private static FunctionDeclarationSyntax? FindEnclosingFunction(SyntaxNode node, int position)
+	private static FunctionDeclarationSyntax? FindEnclosingFunction(SyntaxNode? node, int position)
 	{
+		// Parser recovery can leave missing children in an incomplete editor buffer.
+		if (node is null)
+			return null;
+
 		foreach (var child in node.GetChildren())
 		{
 			if (FindEnclosingFunction(child, position) is { } nested)

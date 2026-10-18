@@ -311,8 +311,12 @@ internal static class SymbolResolver
 	/// not part of <see cref="SyntaxNode.GetChildren"/>, so they are located by walking declaration
 	/// nodes directly.
 	/// </summary>
-	private static AttributeSyntax? FindAttributeAt(SyntaxNode node, int position)
+	private static AttributeSyntax? FindAttributeAt(SyntaxNode? node, int position)
 	{
+		// Parser recovery can leave missing children in an incomplete editor buffer.
+		if (node is null)
+			return null;
+
 		foreach (var attribute in AttributesOf(node))
 		{
 			if (Contains(attribute.Span, position))
