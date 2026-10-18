@@ -283,7 +283,38 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 					break;
 				}
 
-				if (next.Type == CvoloLexer.Identifier && next.Line > current.Line
+				// A control-flow keyword cannot be an identifier or the RHS of a
+				// declaration. Recover at its boundary, even when the user has only
+				// typed "double", "double x", or "double x =". Keep the following
+				// statement intact; do not make all newlines into terminators.
+				var fragmentEnd = i;
+				if (next.Type == CvoloLexer.Identifier && next.Line == current.Line)
+				{
+					fragmentEnd = i + 1;
+					if (fragmentEnd + 1 < visible.Length && visible[fragmentEnd + 1].Type == CvoloLexer.ASSIGN
+						&& visible[fragmentEnd + 1].Line == next.Line)
+						fragmentEnd++;
+				}
+				if (fragmentEnd + 1 < visible.Length
+					&& visible[fragmentEnd + 1].Line > visible[fragmentEnd].Line
+					&& visible[fragmentEnd + 1].Type is
+						CvoloLexer.IF or CvoloLexer.WHILE or CvoloLexer.FOR
+						or CvoloLexer.FOREACH or CvoloLexer.RETURN or CvoloLexer.SWITCH
+						or CvoloLexer.TRY or CvoloLexer.DEFER or CvoloLexer.UNSAFE
+						or CvoloLexer.BREAK or CvoloLexer.CONTINUE)
+				{
+					var end = visible[fragmentEnd].StopIndex + 1;
+					var incomplete = fragmentEnd == i
+						? $"Incomplete variable declaration: expected a name after '{current.Text}'."
+						: fragmentEnd == i + 1
+							? $"Missing ';' after variable declaration '{current.Text} {next.Text}'."
+							: $"Incomplete variable declaration '{current.Text} {next.Text} =': expected an initializer.";
+					recovery.Add(new StandaloneRecoveryToken(
+						new TextSpan(current.StartIndex, end - current.StartIndex),
+						incomplete, DiagnosticIds.ExpectedToken));
+					recoveredTokenIndices.Add(fragmentEnd);
+				}
+				else if (next.Type == CvoloLexer.Identifier && next.Line > current.Line
 					&& i + 2 < visible.Length && visible[i + 2].Type == CvoloLexer.ASSIGN
 					&& functionBodyStart >= 0
 					&& WasAssignedEarlier(visible, functionBodyStart, i, next.Text))
