@@ -275,7 +275,12 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 					endToken++;
 				if (endToken + 1 < visible.Length
 					&& visible[endToken + 1].Line > visible[endToken].Line
-					&& IsStatementStarterKeyword(visible[endToken + 1].Type))
+					&& IsStatementStarterKeyword(visible[endToken + 1].Type)
+					// Standalone identifiers and primitive heads already have dedicated
+					// recovery diagnostics. Preserve their stable IDs and messages.
+					&& !(endToken == i && current.Type == CvoloLexer.Identifier)
+					&& !(endToken == i && IsPrimitiveDeclarationType(current.Type)
+						&& visible[endToken + 1].Type is CvoloLexer.VAR or CvoloLexer.VAL))
 				{
 					var end = visible[endToken].StopIndex + 1;
 					recovery.Add(new StandaloneRecoveryToken(
