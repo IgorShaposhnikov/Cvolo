@@ -494,6 +494,10 @@ internal static class SdkLibraryResolver
 	{
 		foreach (var child in node.GetChildren())
 		{
+			// Incomplete editor buffers may have missing syntax children.
+			if (child is null)
+				continue;
+
 			yield return child;
 			foreach (var descendant in Descendants(child))
 			{
