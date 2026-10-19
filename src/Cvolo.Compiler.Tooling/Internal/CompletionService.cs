@@ -48,6 +48,23 @@ internal static class CompletionService
 
 		if (textContext.IsCommentOrLiteral)
 			return new CompletionResult(span, []);
+		// A brand new file often contains only a half-typed declaration keyword.
+		// No compilation unit exists yet, so do not depend on semantic recovery
+		// to offer the compiler's authoritative top-level keyword list.
+		var beforeCaret = doc.Text.ToString()[..position].Trim();
+		if (beforeCaret.Length > 0
+			&& string.Equals(beforeCaret, textContext.Prefix, StringComparison.Ordinal)
+			&& !textContext.IsMemberAccessContext
+			&& !textContext.IsAttributeContext)
+		{
+			var declarations = CompletionKeywordProvider.For(AnalysisContext.Declaration)
+				.Where(word => word.StartsWith(textContext.Prefix, StringComparison.OrdinalIgnoreCase))
+				.Select(word => new Completion.CompletionCandidate(
+					null, word, word, Completion.CompletionKind.Keyword,
+					null, null, CompletionResolvableFields.None))
+				.ToArray();
+			return new CompletionResult(span, declarations);
+		}
 		if (textContext.IsTryHandlerContext)
 		{
 			var words = new[] { "catch", "finally" };
