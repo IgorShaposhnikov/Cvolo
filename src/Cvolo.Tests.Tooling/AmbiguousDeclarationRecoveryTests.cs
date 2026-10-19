@@ -98,6 +98,24 @@ public sealed class AmbiguousDeclarationRecoveryTests
     }
 
     [Fact]
+    public void MissingSemicolonAfterCall_IsReportedBeforeNextAssignment()
+    {
+        var (document, source) = Open("int x;\nBegin(1)\nx = 1;");
+        var beginEnd = source.IndexOf("Begin(1)", StringComparison.Ordinal) + "Begin(1)".Length;
+        Assert.Contains(document.GetDiagnostics(), d =>
+            d.Message.Contains("';'", StringComparison.Ordinal)
+            && d.Location.Span.Start == beginEnd);
+    }
+
+    [Fact]
+    public void BrokenTree_StillProducesDiagnosticsAndEditorQueries()
+    {
+        var (document, _) = Open("if (true) { Begin(\n}");
+        Assert.NotNull(document.GetDiagnostics());
+        Assert.NotNull(document.GetSemanticTokens());
+    }
+
+    [Fact]
     public void ResolvedTypeBeforeCall_RemainsLegalSplitDeclaration()
     {
         var (document, _) = Open("Window\nitem;");
