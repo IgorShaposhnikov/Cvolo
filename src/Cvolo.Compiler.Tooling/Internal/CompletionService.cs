@@ -1,4 +1,7 @@
 using System.Runtime.CompilerServices;
+using System.Text.RegularExpressions;
+using Antlr4.Runtime;
+using Cvolo.Syntax.Antlr;
 using AnalysisKind = Cvolo.Analysis.Completion.CompletionKind;
 using AnalysisContext = Cvolo.Analysis.Completion.CompletionQueryContext;
 
@@ -48,6 +51,44 @@ internal static class CompletionService
 
 		if (textContext.IsCommentOrLiteral)
 			return new CompletionResult(span, []);
+		// Immediately after "extension " the parser may have no extension node
+		// yet. Offer only names introduced by real type-declaration tokens;
+		// arbitrary capitalized identifiers and expression functions are not
+		// extension targets. Prefer the closest preceding declaration.
+		var beforeExtensionCaret = doc.Text.ToString()[..position];
+		var targetMatch = Regex.Match(beforeExtensionCaret,
+			@"(?<![A-Za-z0-9_])extension[ \t]+(?<target>[A-Za-z_][A-Za-z0-9_]*)?$");
+		if (targetMatch.Success && !textContext.IsAttributeContext)
+		{
+			var prefix = targetMatch.Groups["target"].Value;
+			var lexer = new CvoloLexer(new AntlrInputStream(doc.Text.ToString()));
+			lexer.RemoveErrorListeners();
+			var stream = new CommonTokenStream(lexer);
+			stream.Fill();
+			var typeNames = new List<(string Name, int Offset)>();
+			var tokens = stream.GetTokens()
+				.Where(t => t.Channel == Lexer.DefaultTokenChannel && t.Type != TokenConstants.EOF)
+				.ToArray();
+			for (var i = 0; i + 1 < tokens.Length; i++)
+			{
+				if (tokens[i].StartIndex >= targetMatch.Index) break;
+				if (tokens[i].Type is not (CvoloLexer.STRUCT or CvoloLexer.UNION
+					or CvoloLexer.INTERFACE or CvoloLexer.PROTOCOL
+					or CvoloLexer.ENUM))
+					continue;
+				if (tokens[i + 1].Type == CvoloLexer.Identifier
+					&& tokens[i + 1].Text.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+					typeNames.Add((tokens[i + 1].Text, tokens[i + 1].StartIndex));
+			}
+			var types = typeNames.OrderByDescending(item => item.Offset)
+				.DistinctBy(item => item.Name)
+				.Select(item => new Completion.CompletionCandidate(
+					null, item.Name, item.Name, Completion.CompletionKind.Type,
+					null, null, CompletionResolvableFields.None))
+				.ToArray();
+			return new CompletionResult(span, types);
+		}
+
 		// A brand new file often contains only a half-typed declaration keyword.
 		// No compilation unit exists yet, so do not depend on semantic recovery
 		// to offer the compiler's authoritative top-level keyword list.
