@@ -1413,4 +1413,7 @@ public static class DiagnosticIds
 
 	/// <summary>A generic aggregate initializer omitted mandatory explicit type arguments.</summary>
 	public const string GenericInitializerRequiresTypeArguments = "CVL4219";
+
+	/// <summary>A local variable cannot have the valueless void type.</summary>
+	public const string VoidVariableType = "CVL4220";
 }

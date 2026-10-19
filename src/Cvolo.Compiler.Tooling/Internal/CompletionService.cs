@@ -48,6 +48,17 @@ internal static class CompletionService
 
 		if (textContext.IsCommentOrLiteral)
 			return new CompletionResult(span, []);
+		if (textContext.IsTryHandlerContext)
+		{
+			var words = new[] { "catch", "finally" };
+			var handlers = words
+				.Where(word => word.StartsWith(textContext.Prefix, StringComparison.OrdinalIgnoreCase))
+				.Select(word => new Completion.CompletionCandidate(
+					null, word, word, Completion.CompletionKind.Keyword,
+					null, null, CompletionResolvableFields.None))
+				.ToArray();
+			return new CompletionResult(span, handlers);
+		}
 
 		// Inside an extension body a `~` can only begin a destructor named after the extended
 		// type. Offer the full `~Type() { ... }` stub as a structured insertion template with a

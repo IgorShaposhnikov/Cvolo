@@ -589,6 +589,15 @@ internal sealed class StatementValidator(
 		var declaredType = isReferenceDeclaration || varDecl.Type is null
 			? null
 			: context.ResolveType(varDecl.Type);
+		// 'void' is a return type only. A local variable cannot store it.
+		// A pointer to void remains a valid, distinct type.
+		if (varDecl.Type == "void")
+		{
+			var file = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(file, varDecl.Span,
+				"A variable cannot have type 'void'.", DiagnosticIds.VoidVariableType);
+			return;
+		}
 
 		// Delegate-typed declarations: a lambda or function/method-group initializer is
 		// target-typed against the declared delegate (§4.2 / §22). Without an expected

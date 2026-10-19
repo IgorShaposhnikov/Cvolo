@@ -379,6 +379,31 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				recoveredTokenIndices.Add(i);
 			}
 
+			// An unfinished for/foreach header, heap expression or defer body
+			// cannot consume an independent statement keyword on the next line.
+			// Preserve legal multiline for(...) and heap value expressions.
+			if (atBoundary && braceDepth > 0 && !atFileMember && !insideExtension && !insideFields
+				&& current.Type is CvoloLexer.FOR or CvoloLexer.FOREACH
+					or CvoloLexer.DEFER or CvoloLexer.HEAP
+				&& next is not null && next.Line > current.Line
+				&& IsStatementStarterKeyword(next.Type))
+			{
+				var message = current.Type switch
+				{
+					CvoloLexer.FOR => "Expected '(' after 'for' to start the loop header.",
+					CvoloLexer.FOREACH => "Expected '(' after 'foreach' to start the loop header.",
+					CvoloLexer.DEFER => "Defer requires a statement or block body.",
+					_ => "Expected an allocation expression after 'heap'."
+				};
+				var span = new TextSpan(current.StartIndex, current.StopIndex - current.StartIndex + 1);
+				recovery.Add(new StandaloneRecoveryToken(
+					span, message,
+					current.Type == CvoloLexer.DEFER
+						? DiagnosticIds.DeferRequiresBody
+						: DiagnosticIds.ExpectedToken, span));
+				recoveredTokenIndices.Add(i);
+			}
+
 			// Recover incomplete expression-style statements before an unmistakable
 			// control-flow keyword on a later line. Mask the *whole* unfinished
 			// statement (including the opening parenthesis or '='), otherwise

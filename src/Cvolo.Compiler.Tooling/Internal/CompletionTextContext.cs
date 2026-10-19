@@ -56,6 +56,7 @@ internal sealed record CompletionTextContext(
 	/// aggregate initializer member names.
 	/// </summary>
 	internal bool IsStatementStartContext { get; init; }
+	internal bool IsTryHandlerContext { get; init; }
 
 	/// <summary>
 	/// The field name being assigned when the cursor sits in an aggregate initializer value slot
@@ -79,6 +80,8 @@ internal sealed record CompletionTextContext(
 		}
 
 		var tokens = Lex(text.ToString());
+		if (DetectTryHandlerContext(tokens, position))
+			context = context with { IsTryHandlerContext = true };
 		if (DetectAggregateInitializerValue(tokens, position, out var valueField, out var valueType))
 		{
 			context = context with
@@ -101,6 +104,51 @@ internal sealed record CompletionTextContext(
 			&& DetectStatementStartContext(tokens, position))
 			context = context with { IsStatementStartContext = true };
 		return context;
+	}
+
+	/// <summary>
+	/// Handler keywords belong after a complete try or catch block, never
+	/// in the ambient statement keyword list. Recognizes partially typed
+	/// prefixes and nested/typed catch blocks.
+	/// </summary>
+	private static bool DetectTryHandlerContext(IList<IToken> tokens, int position)
+	{
+		var visible = tokens.Where(t => t.Channel == Lexer.DefaultTokenChannel
+			&& t.Type != TokenConstants.EOF && t.StartIndex < position).ToList();
+		if (visible.Count == 0) return false;
+		var word = visible[^1];
+		if (word.StopIndex + 1 >= position && (word.Type == CvoloLexer.Identifier
+			|| word.Type is CvoloLexer.CATCH or CvoloLexer.FINALLY))
+			visible.RemoveAt(visible.Count - 1);
+
+		if (visible.Count == 0 || visible[^1].Type != CvoloLexer.RBRACE)
+			return false;
+
+		var depth = 0;
+		var opening = -1;
+		for (var i = visible.Count - 1; i >= 0; i--)
+		{
+			if (visible[i].Type == CvoloLexer.RBRACE) depth++;
+			else if (visible[i].Type == CvoloLexer.LBRACE && --depth == 0)
+			{
+				opening = i;
+				break;
+			}
+		}
+		if (opening <= 0) return false;
+		var before = visible[opening - 1].Type;
+		if (before is CvoloLexer.TRY or CvoloLexer.CATCH)
+			return true;
+		if (before != CvoloLexer.RPAREN) return false;
+
+		var parens = 0;
+		for (var i = opening - 1; i >= 0; i--)
+		{
+			if (visible[i].Type == CvoloLexer.RPAREN) parens++;
+			else if (visible[i].Type == CvoloLexer.LPAREN && --parens == 0)
+				return i > 0 && visible[i - 1].Type == CvoloLexer.CATCH;
+		}
+		return false;
 	}
 
 	/// <summary>
@@ -1019,7 +1067,7 @@ internal sealed record CompletionTextContext(
 	{
 		if (tokenType >= CvoloLexer.VAL && tokenType <= CvoloLexer.CATCH)
 			return true;
-		return tokenType == CvoloLexer.Identifier;
+		return tokenType == CvoloLexer.Identifier || tokenType == CvoloLexer.FINALLY;
 	}
 
 	private static int BackscanWordStart(string source, int from, int floor)
