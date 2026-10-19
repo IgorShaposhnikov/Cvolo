@@ -136,6 +136,26 @@ public sealed class SemanticTokenTests
 		}
 	}
 
+	[Theory]
+	[InlineData("Window", true)]
+	[InlineData("MissingType", false)]
+	[InlineData("Window x", true)]
+	public void RecoveredIncompleteDeclaration_ColoursOnlyResolvedType(string head, bool known)
+	{
+		var source = "struct Window { int Value; }\nint main() {\n    " + head
+			+ "\n    while (false) {}\n    return 0;\n}\n";
+		var x = Open(source);
+		using (x.Fixture)
+		{
+			var name = head.Split(' ')[0];
+			var at = source.IndexOf("    " + head, StringComparison.Ordinal) + 4;
+			var found = x.Document.GetSemanticTokens().Any(t =>
+				t.Span.Start == at && x.Document.Text.GetText(t.Span) == name
+				&& t.Kind is ToolingSymbolKind.Struct or ToolingSymbolKind.OtherType);
+			Assert.Equal(known, found);
+		}
+	}
+
 	[Fact]
 	public void UnresolvedIdentifier_IsOmitted()
 	{
