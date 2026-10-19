@@ -98,6 +98,29 @@ public sealed class AmbiguousDeclarationRecoveryTests
     }
 
     [Fact]
+    public void InvalidHeadBeforeBareLocal_DoesNotConsumeFollowingCall()
+    {
+        var source = """
+            void SwapBuffers(int handle) {}
+            void Swap() {
+                bool x;
+                Begi
+                x
+                SwapBuffers(1);
+            }
+            """;
+        using var fixture = TempProject.Create(("Main.cvl", source));
+        var project = CvoloWorkspace.Create().OpenProject(fixture.ProjectFilePath);
+        var document = project.InitialSnapshot.GetDocument(project.GetDocumentId("Main.cvl"));
+        var errors = document.GetDiagnostics();
+        Assert.Contains(errors, d => d.Id == "CVL4023" &&
+            d.Location.Span.Start == source.IndexOf("Begi", StringComparison.Ordinal));
+        Assert.Contains(errors, d => d.Id == "CVL4174" &&
+            d.Location.Span.Start == source.IndexOf("x\n", source.IndexOf("Begi", StringComparison.Ordinal), StringComparison.Ordinal));
+        Assert.DoesNotContain(errors, d => d.Location.Span.Start >= source.IndexOf("SwapBuffers(1)", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void MissingSemicolonAfterCall_IsReportedBeforeNextAssignment()
     {
         var (document, source) = Open("int x;\nBegin(1)\nx = 1;");
