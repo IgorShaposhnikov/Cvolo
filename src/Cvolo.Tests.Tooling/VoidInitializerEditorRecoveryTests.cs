@@ -22,20 +22,15 @@ public sealed class VoidInitializerEditorRecoveryTests
     }
 
     [Fact]
-    public void VoidCallOnNextLine_DoesNotBecomeTypedInitializer()
+    public void VoidCallOnNextLine_ReportsTypeMismatchRatherThanSplittingInitializer()
     {
-        var (document, source) = Open("        bool x =\n        SwapBuffers(glfwWindow);");
+        var (document, _) = Open("        bool x =\n        SwapBuffers(glfwWindow);");
         var diagnostics = document.GetDiagnostics();
 
-        var diagnostic = Assert.Single(diagnostics);
-        Assert.Equal("CVL4174", diagnostic.Id);
-        Assert.Equal(source.IndexOf("bool x =", StringComparison.Ordinal) + "bool x ".Length,
-            diagnostic.Location.Span.Start);
-        Assert.Equal(1, diagnostic.Location.Span.Length);
-        Assert.DoesNotContain(diagnostics, d =>
-            d.Message.Contains("Cannot initialize variable", StringComparison.Ordinal));
-        Assert.DoesNotContain(diagnostics, d =>
-            d.Location.Span.Start >= source.IndexOf("SwapBuffers(glfwWindow)", StringComparison.Ordinal));
+        Assert.Contains(diagnostics, d =>
+            d.Message.Contains("Cannot initialize variable of type 'bool' with value of type 'void'",
+                StringComparison.Ordinal));
+        Assert.DoesNotContain(diagnostics, d => d.Id == "CVL4174");
 
         var tokens = document.GetSemanticTokens();
         Assert.Contains(tokens, token =>

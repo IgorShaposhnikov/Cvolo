@@ -15,7 +15,6 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 {
 	private readonly DiagnosticBag _diagnostics = new();
 	private readonly IReadOnlyDictionary<int, (string TypeName, bool WasResolvedType)>? _ambiguousTypeHeads;
-	private readonly IReadOnlySet<int>? _voidCallInitializerEquals;
 
 	/// <summary>
 	/// Project-aware tooling can request a second parse after binding has established
@@ -23,11 +22,9 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 	/// Head positions refer to the unmodified source, not to an inferred newline token.
 	/// </summary>
 	public AntlrSyntaxParser(
-		IReadOnlyDictionary<int, (string TypeName, bool WasResolvedType)>? ambiguousTypeHeads = null,
-		IReadOnlySet<int>? voidCallInitializerEquals = null)
+		IReadOnlyDictionary<int, (string TypeName, bool WasResolvedType)>? ambiguousTypeHeads = null)
 	{
 		_ambiguousTypeHeads = ambiguousTypeHeads;
-		_voidCallInitializerEquals = voidCallInitializerEquals;
 	}
 	private CompilationContext? _compilationContext;
 	private int _malformedGenericSourceOffset = -1;
@@ -287,22 +284,6 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			var insideFields = (braceKinds.Count == 1 && braceKinds[0] is RecoveryBraceKind.Struct or RecoveryBraceKind.Union)
 				|| (braceKinds.Count == 2 && braceKinds[0] == RecoveryBraceKind.Namespace
 					&& braceKinds[1] is RecoveryBraceKind.Struct or RecoveryBraceKind.Union);
-
-			// A first semantic bind proved that the next-line call returns void,
-			// so it cannot initialize the declared variable. Change only the
-			// written '=' to a same-width ';' in the private recovery source.
-			// That retains the typed declaration and the independent call AST
-			// without changing any offsets in the original editor document.
-			if (current.Type == CvoloLexer.ASSIGN
-				&& _voidCallInitializerEquals?.Contains(current.StartIndex) == true)
-			{
-				var span = new TextSpan(current.StartIndex, current.StopIndex - current.StartIndex + 1);
-				recovery.Add(new StandaloneRecoveryToken(
-					span, "Expected an initializer expression after '='.",
-					DiagnosticIds.ExpectedToken, span, ";"));
-				recoveredTokenIndices.Add(i);
-				continue;
-			}
 
 			// A prior semantic bind established that a line-spanning typed initializer
 			// was not a viable declaration. Remove only its head from the recovery
@@ -1018,10 +999,8 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 	}
 
 	/// <summary>
-	/// A call may start with any number of qualified identifier segments:
-	/// Begin(...), Console.WriteLine(...), System.Console.WriteLine(...).
-	/// Only the full dotted name followed by '(' proves this is a new
-	/// independent call rather than a continuation of the prior declaration.
+	/// A following call can be a bare or qualified name, including multiple
+	/// dotted segments. Keep that entire independent invocation intact.
 	/// </summary>
 	private static bool IsCallHead(IToken[] tokens, int index)
 	{
