@@ -732,7 +732,8 @@ public sealed class BindingContext
 			return null;
 
 		// 1. Check Canonical Type Cache first (Flyweight Pattern)
-		if (_typeCache.TryGetValue(name, out var cached))
+		var cacheKey = TypeCacheKey(name);
+		if (_typeCache.TryGetValue(cacheKey, out var cached))
 			return cached;
 
 		// 1a. Expand Namespace Aliases ('using Alias = Namespace.Path;'). Only the namespace prefix of
@@ -744,7 +745,7 @@ public sealed class BindingContext
 		{
 			var aliasedType = ResolveType(namespaceAliased);
 			if (aliasedType is not null)
-				_typeCache[name] = aliasedType;
+				_typeCache[cacheKey] = aliasedType;
 			return aliasedType;
 		}
 
@@ -785,7 +786,7 @@ public sealed class BindingContext
 
 				var aliasResolved = ResolveType(aliasTarget);
 				if (aliasResolved?.Name == name)
-					_typeCache[name] = aliasResolved;
+					_typeCache[cacheKey] = aliasResolved;
 				return aliasResolved;
 			}
 			finally
@@ -802,7 +803,7 @@ public sealed class BindingContext
 			if (innerType is not null)
 			{
 				var ptrType = new RawPointerTypeSymbol(innerType);
-				_typeCache[name] = ptrType;
+				_typeCache[cacheKey] = ptrType;
 				return ptrType;
 			}
 		}
@@ -817,7 +818,7 @@ public sealed class BindingContext
 				return null;
 
 			var ptrType = new PointerTypeSymbol(innerType, isMutable);
-			_typeCache[name] = ptrType;
+			_typeCache[cacheKey] = ptrType;
 			return ptrType;
 		}
 
@@ -847,7 +848,7 @@ public sealed class BindingContext
 			{
 				var npoOptionType = ResolveType($"Option<{innerName}>");
 				if (npoOptionType is not null)
-					_typeCache[name] = npoOptionType;
+					_typeCache[cacheKey] = npoOptionType;
 				return npoOptionType;
 			}
 
@@ -857,7 +858,7 @@ public sealed class BindingContext
 
 			var optionType = ResolveType($"Option<{innerName}>");
 			if (optionType is not null)
-				_typeCache[name] = optionType;
+				_typeCache[cacheKey] = optionType;
 			return optionType;
 		}
 
@@ -874,7 +875,7 @@ public sealed class BindingContext
 				&& computedSize <= int.MaxValue)
 			{
 				var arrType = new ArrayTypeSymbol(innerType, (int)computedSize);
-				_typeCache[name] = arrType;
+				_typeCache[cacheKey] = arrType;
 				return arrType;
 			}
 		}
@@ -887,7 +888,7 @@ public sealed class BindingContext
 			if (innerType is not null)
 			{
 				var sliceType = new SliceTypeSymbol(innerType);
-				_typeCache[name] = sliceType;
+				_typeCache[cacheKey] = sliceType;
 				return sliceType;
 			}
 		}
@@ -895,7 +896,7 @@ public sealed class BindingContext
 		// 5b. Resolve Generic Instantiations (e.g., Point<int>, Option<int>)
 		if (name.Contains('<'))
 		{
-			if (_typeCache.TryGetValue(name, out var cachedType))
+			if (_typeCache.TryGetValue(cacheKey, out var cachedType))
 				return cachedType;
 
 			var openBracket = name.IndexOf('<');
@@ -957,7 +958,7 @@ public sealed class BindingContext
 
 				var instantiatedType = InstantiateGenericStruct(templateDecl, baseType.Name, typeArgs, name);
 				StructTypes[name] = instantiatedType;
-				_typeCache[name] = instantiatedType;
+				_typeCache[cacheKey] = instantiatedType;
 				return instantiatedType;
 			}
 			else if (baseType is UnionTypeSymbol baseUnion && GenericUnionTemplates.TryGetValue(baseUnion.Name, out var unionTemplateDecl))
@@ -1006,7 +1007,7 @@ public sealed class BindingContext
 
 				var instantiatedType = InstantiateGenericUnion(unionTemplateDecl, baseUnion.Name, unionTypeArgs);
 				UnionTypes[name] = instantiatedType;
-				_typeCache[name] = instantiatedType;
+				_typeCache[cacheKey] = instantiatedType;
 				return instantiatedType;
 			}
 			else if (baseType is ProtocolTypeSymbol baseProtocol && ProtocolTemplates.TryGetValue(baseProtocol.Name, out var protocolDecl))
@@ -1025,7 +1026,7 @@ public sealed class BindingContext
 				}
 
 				var instantiatedProtocol = InstantiateGenericProtocol(protocolDecl, baseProtocol.Name, protocolTypeArgs);
-				_typeCache[name] = instantiatedProtocol;
+				_typeCache[cacheKey] = instantiatedProtocol;
 				return instantiatedProtocol;
 			}
 			else if (baseType is DelegateTypeSymbol baseDelegate && GenericDelegateTemplates.TryGetValue(baseDelegate.Name, out var delegateDecl))
@@ -1042,7 +1043,7 @@ public sealed class BindingContext
 				if (instantiatedType is not null)
 				{
 					DelegateTypes[name] = instantiatedType;
-					_typeCache[name] = instantiatedType;
+					_typeCache[cacheKey] = instantiatedType;
 				}
 
 				return instantiatedType;
@@ -1053,7 +1054,7 @@ public sealed class BindingContext
 		var primitive = TypeSymbol.FromName(name);
 		if (primitive is not null)
 		{
-			_typeCache[name] = primitive;
+			_typeCache[cacheKey] = primitive;
 			return primitive;
 		}
 
@@ -1655,10 +1656,15 @@ public sealed class BindingContext
 	/// unqualified key — otherwise a `using`-imported `System.Result` cached under `Result`
 	/// would shadow a user's global `Result` declared in another namespace context.
 	/// </summary>
+	private string TypeCacheKey(string name) =>
+		string.IsNullOrEmpty(CurrentNamespace) || name.Contains('.')
+			? name
+			: CurrentNamespace + "\u001f" + name;
+
 	private void CacheCandidate(string name, TypeSymbol candidate)
 	{
 		if (candidate.Name == name)
-			_typeCache[name] = candidate;
+			_typeCache[TypeCacheKey(name)] = candidate;
 	}
 
 
