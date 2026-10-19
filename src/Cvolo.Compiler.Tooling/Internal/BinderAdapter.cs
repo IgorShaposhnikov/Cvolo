@@ -161,7 +161,15 @@ internal static class BinderAdapter
 		if (binderContext is not null && binderDiagnostics is not null)
 		{
 			var semantic = DiagnosticAdapter.ConvertDiagnostics(binderDiagnostics, docByFilePath);
-			if (parseDiagnostics.Any(d => d.Severity == DiagnosticSeverity.Error))
+			// A syntax error in one editor document must never mute legitimate
+			// semantic errors in every other open document of the project.
+			// Only semantic errors *inside the damaged document* need recovery
+			// filtering; unaffected documents retain their normal diagnostics.
+			var syntaxErrorDocuments = parseDiagnostics
+				.Where(d => d.Severity == DiagnosticSeverity.Error)
+				.Select(d => d.Location.DocumentId)
+				.ToHashSet();
+			if (syntaxErrorDocuments.Count > 0)
 			{
 				// The parser may have repaired a malformed declaration head such as
 				// 'Begi\nx = Init();'. Its error must not hide the independent
@@ -187,7 +195,10 @@ internal static class BinderAdapter
 				}
 
 				allDiagnostics.AddRange(semantic.Where(d =>
-					d.Id == DiagnosticIds.DuplicateTypeDefinition
+					// Parser-clean documents can be semantically invalid even
+					// while a neighboring file is incomplete in the editor.
+					!syntaxErrorDocuments.Contains(d.Location.DocumentId)
+					|| d.Id == DiagnosticIds.DuplicateTypeDefinition
 					|| (d.Id == DiagnosticIds.CannotAssignToImmutableVariable
 						&& writtenTargets.Contains((
 							d.Location.DocumentId,
