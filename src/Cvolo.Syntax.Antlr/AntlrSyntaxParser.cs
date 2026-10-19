@@ -625,6 +625,53 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				recoveredIncompleteType = true;
 			}
 
+			// 'bool x' followed by 'SwapBuffers(...)' on another line cannot
+			// continue the declaration: an initializer needs '=' or '('.
+			// Recover the missing terminator at x, not at the valid next call.
+			// Preserve both AST statements by inserting ';' into existing
+			// horizontal whitespace in the same-length private parser view.
+			// This never touches a line break or shifts a source position.
+			if (!recoveredIncompleteType && atBoundary && braceDepth > 0
+				&& !atFileMember && !insideExtension && !insideFields
+				&& (current.Type is CvoloLexer.VAR or CvoloLexer.VAL
+					|| IsPrimitiveDeclarationType(current.Type)
+					|| current.Type == CvoloLexer.Identifier)
+				&& next?.Type == CvoloLexer.Identifier
+				&& next.Line == current.Line
+				&& i + 3 < visible.Length
+				&& visible[i + 2].Type == CvoloLexer.Identifier
+				&& visible[i + 2].Line > next.Line
+				&& (visible[i + 3].Type == CvoloLexer.LPAREN
+					|| (i + 5 < visible.Length
+						&& visible[i + 3].Type == CvoloLexer.DOT
+						&& visible[i + 4].Type == CvoloLexer.Identifier
+						&& visible[i + 5].Type == CvoloLexer.LPAREN)))
+			{
+				var endOfDeclaration = next.StopIndex + 1;
+				var callStart = visible[i + 2].StartIndex;
+				var slot = FindMissingSemicolonSlot(_compilationContext!.Source, endOfDeclaration, callStart);
+				var diagnosticSpan = new TextSpan(endOfDeclaration, 0);
+				if (slot >= 0)
+				{
+					recovery.Add(new StandaloneRecoveryToken(
+						new TextSpan(slot, 1),
+						"Expected ';' after variable declaration.",
+						DiagnosticIds.ExpectedToken, diagnosticSpan, ";"));
+				}
+				else
+				{
+					// No horizontal whitespace exists at either statement
+					// boundary. Preserve the call rather than moving source
+					// offsets by fabricating a character in the parse view.
+					recovery.Add(new StandaloneRecoveryToken(
+						new TextSpan(current.StartIndex, endOfDeclaration - current.StartIndex),
+						"Expected ';' after variable declaration.",
+						DiagnosticIds.ExpectedToken, diagnosticSpan));
+				}
+				recoveredTokenIndices.Add(i + 1);
+				recoveredIncompleteType = true;
+			}
+
 			// Lexical recovery for incomplete local declarations must not reclassify the
 			// next independent assignment as a declaration or an initializer. A line
 			// break alone is insufficient: "double\nvalue = 1;" is valid Cvolo.
@@ -1039,6 +1086,30 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			chars[offset] = filled < replacement.Length ? replacement[filled++] : ' ';
 		}
 		return new string(chars);
+	}
+
+	/// <summary>
+	/// Finds an existing horizontal whitespace position for a synthetic ';'.
+	/// Never overwrite newlines, comment contents or tokens: AST offsets
+	/// must continue referring to the original source.
+	/// </summary>
+	private static int FindMissingSemicolonSlot(string source, int endOfName, int nextStart)
+	{
+		if (endOfName < 0 || nextStart <= endOfName || nextStart > source.Length)
+			return -1;
+
+		if (source[endOfName] is ' ' or '\t')
+			return endOfName;
+
+		var lineStart = source.LastIndexOf('\n', nextStart - 1) + 1;
+		if (lineStart >= nextStart)
+			return -1;
+
+		for (var i = lineStart; i < nextStart; i++)
+			if (source[i] is not (' ' or '\t'))
+				return -1;
+
+		return lineStart;
 	}
 
 	private static string MaskSourceRange(string source, int start, int end)
