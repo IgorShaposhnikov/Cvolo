@@ -86,9 +86,10 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			? MaskInvalidDeclaration(context.Source, tokenStream.GetTokens(), malformedType.Span.Start)
 			: context.Source;
 		foreach (var stray in standalone)
-			recoverySource = stray.RecoveryReplacement is { } replacement
-				? ReplaceSourceRange(recoverySource, stray.Span.Start, stray.Span.End, replacement)
-				: MaskSourceRange(recoverySource, stray.Span.Start, stray.Span.End);
+			if (!stray.PreserveSource)
+				recoverySource = stray.RecoveryReplacement is { } replacement
+					? ReplaceSourceRange(recoverySource, stray.Span.Start, stray.Span.End, replacement)
+					: MaskSourceRange(recoverySource, stray.Span.Start, stray.Span.End);
 		foreach (var malformedDestructor in invalidDestructors)
 			recoverySource = MaskSourceRange(recoverySource, malformedDestructor.Span.Start, malformedDestructor.Span.End);
 
@@ -104,7 +105,10 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		var parser = new CvoloParser(tokenStream);
 
 		parser.RemoveErrorListeners();
-		var errorListener = new SyntaxErrorListener(_diagnostics, context, tokenStream, _rejectedImpossibleSpans);
+		var errorListener = new SyntaxErrorListener(_diagnostics, context, tokenStream, _rejectedImpossibleSpans)
+		{
+			SuppressIncompleteHeaderEof = standalone.Any(item => item.PreserveSource)
+		};
 		parser.AddErrorListener(errorListener);
 		if (invalidGeneric is { } malformed)
 			errorListener.SuppressGenericRecovery(malformed.RecoveryStart, malformed.RecoveryEnd);
@@ -179,7 +183,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 
 	private sealed record StandaloneRecoveryToken(
 		TextSpan Span, string Message, string DiagnosticId = DiagnosticIds.UnexpectedToken,
-		TextSpan? DiagnosticSpan = null, string? RecoveryReplacement = null);
+		TextSpan? DiagnosticSpan = null, string? RecoveryReplacement = null, bool PreserveSource = false);
 	/// <summary>
 	/// Destructor syntax is ~Type() with no parameters. ANTLR's generic recovery
 	/// cascades through the entire body for ~Type(int[] a); erase only the list
@@ -268,6 +272,41 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			var insideFields = (braceKinds.Count == 1 && braceKinds[0] is RecoveryBraceKind.Struct or RecoveryBraceKind.Union)
 				|| (braceKinds.Count == 2 && braceKinds[0] == RecoveryBraceKind.Namespace
 					&& braceKinds[1] is RecoveryBraceKind.Struct or RecoveryBraceKind.Union);
+
+			// End-of-buffer declaration headers are normal while typing. Report
+			// the missing language construct instead of ANTLR's generic EOF.
+			// Keep complete header text intact so a partial struct can still
+			// contribute its name to CodeLens and navigation.
+			if (atFileMember && atBoundary && next is null
+				&& current.Type == CvoloLexer.Identifier
+				&& current.Text is { Length: >= 2 } partial
+				&& partial.Length < "struct".Length
+				&& "struct".StartsWith(partial, StringComparison.Ordinal))
+			{
+				var span = new TextSpan(current.StartIndex, current.StopIndex - current.StartIndex + 1);
+				recovery.Add(new StandaloneRecoveryToken(span,
+					$"Incomplete keyword '{partial}': did you mean 'struct'?",
+					DiagnosticIds.ExpectedToken, span));
+				recoveredTokenIndices.Add(i);
+			}
+
+			if (atFileMember && atBoundary
+				&& current.Type is CvoloLexer.STRUCT or CvoloLexer.EXTENSION
+				&& (next is null || (next.Type == CvoloLexer.Identifier && i + 2 == visible.Length)))
+			{
+				var endToken = next ?? current;
+				var hasName = next is not null;
+				var noun = current.Type == CvoloLexer.STRUCT ? "struct" : "extension";
+				var message = hasName
+					? $"Expected '{{' to start {noun} '{endToken.Text}' body."
+					: $"Expected a type name after '{noun}'.";
+				recovery.Add(new StandaloneRecoveryToken(
+					new TextSpan(current.StartIndex, endToken.StopIndex - current.StartIndex + 1),
+					message, DiagnosticIds.ExpectedToken,
+					new TextSpan(endToken.StopIndex + 1, 0), PreserveSource: true));
+				recoveredTokenIndices.Add(i);
+				if (hasName) recoveredTokenIndices.Add(i + 1);
+			}
 
 			// An unfinished primitive field at a closing struct/union brace
 			// must not erase the enclosing type declaration and its CodeLens.
@@ -3045,6 +3084,8 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		private int _genericRecoveryStart = -1;
 		private int _genericRecoveryEnd = -1;
 
+		public bool SuppressIncompleteHeaderEof { get; init; }
+
 		public void SuppressGenericRecovery(int start, int end)
 		{
 			_genericRecoveryStart = start;
@@ -3060,6 +3101,11 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 
 		public override void SyntaxError(TextWriter output, IRecognizer recognizer, IToken offendingSymbol, int line, int charPositionInLine, string msg, RecognitionException e)
 		{
+			// A more precise missing-header diagnostic is already anchored on the
+			// last source token. Do not stack a generic EOF on the same incomplete
+			// declaration; keep the original parse tree for outline/CodeLens.
+			if (SuppressIncompleteHeaderEof && offendingSymbol is { Type: TokenConstants.EOF })
+				return;
 			// A lexical generic-argument diagnostic is already the root cause.
 			// Drop only ANTLR's dependent recovery errors inside that construct;
 			// later independent declarations keep their own parser diagnostics.

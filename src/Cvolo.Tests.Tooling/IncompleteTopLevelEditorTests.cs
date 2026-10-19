@@ -13,6 +13,26 @@ public sealed class IncompleteTopLevelEditorTests
     }
 
     [Theory]
+    [InlineData("stru", "Incomplete keyword")]
+    [InlineData("struc", "Incomplete keyword")]
+    [InlineData("struct", "Expected a type name")]
+    [InlineData("struct Window", "Expected '{'")]
+    [InlineData("extension", "Expected a type name")]
+    [InlineData("extension Win", "Expected '{'")]
+    public void UnfinishedTopLevelHeader_HasLocalSpecificDiagnosticNotEof(
+        string source, string expected)
+    {
+        var (document, fixture) = Open(source);
+        using (fixture)
+        {
+            var diagnostics = document.GetDiagnostics();
+            Assert.Contains(diagnostics, d =>
+                d.Message.Contains(expected, StringComparison.OrdinalIgnoreCase));
+            Assert.DoesNotContain(diagnostics, d => d.Id == "CVL4175");
+        }
+    }
+
+    [Theory]
     [InlineData("str|")]
     [InlineData("stru|")]
     [InlineData("struc|")]

@@ -1,6 +1,8 @@
 using Cvolo.Analysis;
 using Cvolo.Analysis.Passes.Validation;
 using Cvolo.Core.AST.Base;
+using Cvolo.Core.AST.Declarations;
+using Cvolo.Core.Diagnostics;
 using Cvolo.Projects;
 
 namespace Cvolo.Compiler.Tooling.Internal;
@@ -80,7 +82,15 @@ internal static class BinderAdapter
 
 			// Package/artifact units carry the same declarations the compiler binds. Add them to
 			// the bound unit set and classify them exactly as the compiler driver does.
-			var allUnits = new List<CompilationUnitSyntax>(units);
+			// A newly typed empty duplicate must never replace the already
+			// established layout of a richer struct in another editor document.
+			// This ordering affects Tooling's recovery binding only; every
+			// duplicate still receives the compiler's CVL4054 diagnostic.
+			var allUnits = units
+				.OrderByDescending(unit => (unit.NamespaceDeclaration?.Members ?? unit.Members)
+					.OfType<StructDeclarationSyntax>().Sum(declaration => declaration.Fields.Count))
+				.ThenBy(unit => unit.Context?.FilePath, StringComparer.OrdinalIgnoreCase)
+				.ToList();
 			foreach (var external in snapshot.ExternalUnits)
 			{
 				allUnits.Add(external.Unit);
@@ -122,12 +132,17 @@ internal static class BinderAdapter
 				binderContext = null;
 			}
 
-			// Bind diagnostics are surfaced only when every document parsed cleanly, matching the
-			// pre-existing contract (bind diagnostics are still produced so completion can reuse them).
-			if (parseDiagnostics.All(d => d.Severity != DiagnosticSeverity.Error))
+			// A malformed editor buffer must not hide an independent duplicate
+			// type declaration in another document. During parsing errors, retain
+			// only provenance-stable type-collision diagnostics; other binder
+			// findings may depend on synthetic recovery nodes and can cascade.
+			if (binderContext is not null)
 			{
-				allDiagnostics.AddRange(DiagnosticAdapter.ConvertDiagnostics(
-					binder.Diagnostics, docByFilePath));
+				var semantic = DiagnosticAdapter.ConvertDiagnostics(binder.Diagnostics, docByFilePath);
+				if (parseDiagnostics.Any(d => d.Severity == DiagnosticSeverity.Error))
+					allDiagnostics.AddRange(semantic.Where(d => d.Id == DiagnosticIds.DuplicateTypeDefinition));
+				else
+					allDiagnostics.AddRange(semantic);
 			}
 		}
 

@@ -22,6 +22,13 @@ public sealed class DuplicateTypeEditorTests
             Assert.Contains(errors, d => d.Id == "CVL4054"
                 && d.Message.Contains("Window", StringComparison.Ordinal));
         }
+        if (complete)
+        {
+            // A duplicate empty editor struct must not become the canonical
+            // Window that provides fields for the existing Main.cvl code.
+            Assert.DoesNotContain(main.GetDiagnostics(), d =>
+                d.Message.Contains("Unknown field", StringComparison.OrdinalIgnoreCase));
+        }
         // The original declaration must remain available in navigation even
         // while a competing file is edited.
         Assert.Contains(main.GetDocumentSymbols(), s => s.Name == "Window");

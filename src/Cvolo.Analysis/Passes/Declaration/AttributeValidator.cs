@@ -345,7 +345,10 @@ internal sealed class AttributeValidator(BindingContext context)
 		var warningId = literal.Value;
 		if (!KnownWarningIds.Contains(warningId))
 		{
-			ReportDiagnostic(attr, $"Unknown warning id '{warningId}'.", DiagnosticIds.UnknownWarningId);
+			// The warning id argument is invalid, not the attribute syntax itself.
+			// Highlight the literal (including its quotes), preserving full-attribute
+			// spans for placement and target errors elsewhere in this validator.
+			ReportDiagnostic(literal, $"Unknown warning id '{warningId}'.", DiagnosticIds.UnknownWarningId);
 			return;
 		}
 
