@@ -7,6 +7,8 @@ using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
 using Cvolo.Core.AST.Directives;
 using Cvolo.Core.AST.Expressions;
+using Cvolo.Syntax.Antlr;
+using Antlr4.Runtime;
 
 namespace Cvolo.Compiler.Tooling.Internal;
 
@@ -68,10 +70,87 @@ internal static class SemanticTokenService
 					tokens.Add(new SemanticTokenInfo(span, NavigationIndex.MapKind(resolved.Kind), ModifiersFor(node, source, span, resolved)));
 				}
 			}
+
+			// Recovery masks incomplete declarations from the syntax tree, but the
+			// original source still contains their type heads. Restore semantic
+			// colours only when those names resolve to real compiler types.
+			AddRecoveredTypeHeads(analysis.BinderContext, unit, source, tokens, seen);
 		}
 
 		return [.. tokens.OrderBy(token => token.Span.Start).ThenBy(token => token.Span.Length)];
 	}
+
+	/// <summary>
+	/// Colour a known type in a partial declaration before the next independent
+	/// control-flow statement. Such declarations are deliberately masked during
+	/// parser recovery, so they have no AST node for the usual semantic-token walk.
+	/// Inspect lexer tokens rather than text/uppercase heuristics: comments,
+	/// strings and unknown identifiers must never be invented as types.
+	/// </summary>
+	private static void AddRecoveredTypeHeads(
+		BindingContext context, CompilationUnitSyntax unit, string source,
+		List<SemanticTokenInfo> tokens, HashSet<(int Start, int Length)> seen)
+	{
+		var lexer = new CvoloLexer(new AntlrInputStream(source));
+		lexer.RemoveErrorListeners();
+		var stream = new CommonTokenStream(lexer);
+		stream.Fill();
+		var visible = stream.GetTokens()
+			.Where(t => t.Channel == Lexer.DefaultTokenChannel && t.Type != TokenConstants.EOF)
+			.ToArray();
+
+		var previousUnit = context.CurrentUnit;
+		var previousNamespace = context.CurrentNamespace;
+		try
+		{
+			context.CurrentUnit = unit;
+			context.CurrentNamespace = unit.NamespaceDeclaration?.Name;
+
+			for (var i = 1; i + 1 < visible.Length; i++)
+			{
+				var head = visible[i];
+				if (head.Type != CvoloLexer.Identifier
+					|| visible[i - 1].Type is not (CvoloLexer.SEMI or CvoloLexer.LBRACE or CvoloLexer.RBRACE))
+					continue;
+
+				// The declaration may have a name, e.g. "Window x", but it must
+				// still be unambiguously separated from the next control keyword.
+				var end = i;
+				if (i + 2 < visible.Length
+					&& visible[i + 1].Type == CvoloLexer.Identifier
+					&& visible[i + 1].Line == head.Line)
+					end++;
+
+				if (end + 1 >= visible.Length
+					|| visible[end + 1].Line <= visible[end].Line
+					|| !IsRecoveryStatementKeyword(visible[end + 1].Type)
+					|| head.StartIndex < 0)
+					continue;
+
+				var span = new TextSpan(head.StartIndex, head.Text!.Length);
+				if (seen.Contains((span.Start, span.Length)))
+					continue;
+
+				var type = context.ResolveType(head.Text!);
+				if (type is null)
+					continue;
+
+				seen.Add((span.Start, span.Length));
+				tokens.Add(new SemanticTokenInfo(span, TypeKind(type), SemanticTokenModifiers.None));
+			}
+		}
+		finally
+		{
+			context.CurrentUnit = previousUnit;
+			context.CurrentNamespace = previousNamespace;
+		}
+	}
+
+	private static bool IsRecoveryStatementKeyword(int type) => type is
+		CvoloLexer.IF or CvoloLexer.WHILE or CvoloLexer.FOR or CvoloLexer.FOREACH
+		or CvoloLexer.RETURN or CvoloLexer.SWITCH or CvoloLexer.TRY
+		or CvoloLexer.BREAK or CvoloLexer.CONTINUE or CvoloLexer.DEFER
+		or CvoloLexer.UNSAFE or CvoloLexer.VAR or CvoloLexer.VAL;
 
 	/// <summary>
 	/// Classifies a non-dotted call name that denotes a type. A call node has no callee
