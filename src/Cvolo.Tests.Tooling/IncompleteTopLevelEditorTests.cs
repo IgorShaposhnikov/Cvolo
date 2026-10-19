@@ -1,6 +1,5 @@
 using Cvolo.Compiler.Tooling;
 using Cvolo.Compiler.Tooling.Completion;
-using Cvolo.Compiler.Tooling.CodeLens;
 
 namespace Cvolo.Tests.Tooling;
 
