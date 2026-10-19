@@ -48,8 +48,15 @@ public sealed class CrossDocumentDiagnosticIsolationTests
             d.Id == "CVL4020"
             && d.Message.Contains("value of type 'void'", StringComparison.Ordinal));
         Assert.DoesNotContain(diagnostics, d => d.Id is "CVL4173" or "CVL4174");
-        Assert.DoesNotContain(diagnostics, d => d.Location.Span.Start ==
-            SemanticallyInvalidSource.IndexOf("void* pointer;", StringComparison.Ordinal));
+        // Raw pointers are legal types, but creating a raw-pointer local
+        // outside an unsafe block is independently forbidden (CVL4088).
+        // The test must not confuse that rule with the prohibition on 'void'.
+        Assert.DoesNotContain(diagnostics, d => d.Id == "CVL4220"
+            && d.Location.Span.Start == SemanticallyInvalidSource.IndexOf(
+                "void* pointer;", StringComparison.Ordinal));
+        Assert.Contains(diagnostics, d => d.Id == "CVL4088"
+            && d.Location.Span.Start == SemanticallyInvalidSource.IndexOf(
+                "void* pointer;", StringComparison.Ordinal));
     }
 
     [Fact]
