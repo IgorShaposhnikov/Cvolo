@@ -65,12 +65,20 @@ internal static class BinderAdapter
 
 		// Parse all files (generation-owned text when the snapshot came from a frozen capture).
 		var (units, unitsByDocument, parseDiagnostics) = snapshot.ParseAll();
-		allDiagnostics.AddRange(parseDiagnostics);
 
 		BindingContext? binderContext = null;
+		DiagnosticBag? binderDiagnostics = null;
 
-		if (units.Count > 0 || snapshot.ExternalUnits.Count > 0)
+		// Bind once to disambiguate declarations in their real namespace/type
+		// environment. Reparse only proven ambiguities and bind that final AST
+		// once more; ordinary editing needs only the original single bind.
+		for (var pass = 0; pass < 2; pass++)
 		{
+			binderContext = null;
+			binderDiagnostics = null;
+			if (units.Count == 0 && snapshot.ExternalUnits.Count == 0)
+				break;
+
 			var binder = new Binder();
 
 			// Map AST units to compilation contexts for the binder.
@@ -132,18 +140,30 @@ internal static class BinderAdapter
 				binderContext = null;
 			}
 
-			// A malformed editor buffer must not hide an independent duplicate
-			// type declaration in another document. During parsing errors, retain
-			// only provenance-stable type-collision diagnostics; other binder
-			// findings may depend on synthetic recovery nodes and can cascade.
 			if (binderContext is not null)
 			{
-				var semantic = DiagnosticAdapter.ConvertDiagnostics(binder.Diagnostics, docByFilePath);
-				if (parseDiagnostics.Any(d => d.Severity == DiagnosticSeverity.Error))
-					allDiagnostics.AddRange(semantic.Where(d => d.Id == DiagnosticIds.DuplicateTypeDefinition));
-				else
-					allDiagnostics.AddRange(semantic);
+				binderDiagnostics = binder.Diagnostics;
+				if (pass == 0 && AmbiguousDeclarationRecovery.TryRecover(
+					snapshot, binderContext, unitsByDocument, parseDiagnostics) is { } repaired)
+				{
+					(units, unitsByDocument, parseDiagnostics) = repaired;
+					continue;
+				}
 			}
+			break;
+		}
+
+		allDiagnostics.AddRange(parseDiagnostics);
+		// Parser recovery diagnostics own damaged spans. During parse errors
+		// publish only provenance-stable duplicate-type binder findings, not
+		// synthetic follow-on errors from incomplete statements.
+		if (binderContext is not null && binderDiagnostics is not null)
+		{
+			var semantic = DiagnosticAdapter.ConvertDiagnostics(binderDiagnostics, docByFilePath);
+			if (parseDiagnostics.Any(d => d.Severity == DiagnosticSeverity.Error))
+				allDiagnostics.AddRange(semantic.Where(d => d.Id == DiagnosticIds.DuplicateTypeDefinition));
+			else
+				allDiagnostics.AddRange(semantic);
 		}
 
 		return new AnalyzedProject

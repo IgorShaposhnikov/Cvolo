@@ -14,6 +14,18 @@ namespace Cvolo.Syntax.Antlr;
 public sealed class AntlrSyntaxParser : ISyntaxParser
 {
 	private readonly DiagnosticBag _diagnostics = new();
+	private readonly IReadOnlyDictionary<int, (string TypeName, bool WasResolvedType)>? _ambiguousTypeHeads;
+
+	/// <summary>
+	/// Project-aware tooling can request a second parse after binding has established
+	/// that an ambiguous declaration head belongs to an independent incomplete line.
+	/// Head positions refer to the unmodified source, not to an inferred newline token.
+	/// </summary>
+	public AntlrSyntaxParser(
+		IReadOnlyDictionary<int, (string TypeName, bool WasResolvedType)>? ambiguousTypeHeads = null)
+	{
+		_ambiguousTypeHeads = ambiguousTypeHeads;
+	}
 	private CompilationContext? _compilationContext;
 	private int _malformedGenericSourceOffset = -1;
 
@@ -242,7 +254,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 	/// physical line break and a statement/declaration boundary: newline itself
 	/// does not terminate statements in Cvolo.
 	/// </summary>
-	private static IReadOnlyList<StandaloneRecoveryToken> FindStandaloneRecoveryTokens(IList<IToken> tokens)
+	private IReadOnlyList<StandaloneRecoveryToken> FindStandaloneRecoveryTokens(IList<IToken> tokens)
 	{
 		var visible = tokens.Where(t => t.Channel == Lexer.DefaultTokenChannel && t.Type != TokenConstants.EOF).ToArray();
 		var recovery = new List<StandaloneRecoveryToken>();
@@ -272,6 +284,25 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			var insideFields = (braceKinds.Count == 1 && braceKinds[0] is RecoveryBraceKind.Struct or RecoveryBraceKind.Union)
 				|| (braceKinds.Count == 2 && braceKinds[0] == RecoveryBraceKind.Namespace
 					&& braceKinds[1] is RecoveryBraceKind.Struct or RecoveryBraceKind.Union);
+
+			// A prior semantic bind established that a line-spanning typed initializer
+			// was not a viable declaration. Remove only its head from the recovery
+			// view; the real following call then has its own AST and semantic tokens.
+			if (atBoundary && _ambiguousTypeHeads is not null
+				&& _ambiguousTypeHeads.TryGetValue(current.StartIndex, out var head)
+				&& string.Equals(current.Text, head.TypeName, StringComparison.Ordinal))
+			{
+				var span = new TextSpan(current.StartIndex, current.StopIndex - current.StartIndex + 1);
+				var message = head.WasResolvedType
+					? $"Incomplete variable declaration: expected a name after '{head.TypeName}' before the function call."
+					: $"Cannot resolve type '{head.TypeName}'.";
+				recovery.Add(new StandaloneRecoveryToken(
+					span, message,
+					head.WasResolvedType ? DiagnosticIds.ExpectedToken : DiagnosticIds.CannotResolveType,
+					span));
+				recoveredTokenIndices.Add(i);
+				continue;
+			}
 
 			// End-of-buffer declaration headers are normal while typing. Report
 			// the missing language construct instead of ANTLR's generic EOF.
