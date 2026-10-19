@@ -55,9 +55,11 @@ public sealed class DestructorDeclarationRecoveryTests
         Assert.DoesNotContain("before 'if'", roots[0].Message, StringComparison.OrdinalIgnoreCase);
         var expectedStart = fragment.EndsWith("=", StringComparison.Ordinal)
             ? declarationStart + "        ".Length + fragment.Length - 1
-            : fragment.Contains(" x", StringComparison.Ordinal)
-                ? declarationStart + "        ".Length + fragment.LastIndexOf('x')
-                : declarationStart + "        ".Length;
+            : fragment.Contains(" = ", StringComparison.Ordinal)
+                ? declarationStart + "        ".Length + fragment.LastIndexOf(' ') + 1
+                : fragment.EndsWith(" x", StringComparison.Ordinal)
+                    ? declarationStart + "        ".Length + fragment.Length - 1
+                    : declarationStart + "        ".Length;
         Assert.Equal(expectedStart, roots[0].Location.Span.Start);
 
         Assert.DoesNotContain(diagnostics, d =>
