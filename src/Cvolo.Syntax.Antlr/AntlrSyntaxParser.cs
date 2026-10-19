@@ -380,16 +380,21 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				recoveredTokenIndices.Add(i);
 			}
 
-			// A catch handler requires either '{' or '(Type...) {'. A
-			// control-flow keyword on a later line cannot complete it.
+			// A catch/finally handler must have a block. If the next physical
+			// line begins an independent statement, report the incomplete handler
+			// itself and preserve that statement for parser/editor recovery.
+			// A newline before '{' is valid and is deliberately left untouched.
 			if (atBoundary && braceDepth > 0 && !atFileMember && !insideExtension && !insideFields
-				&& current.Type == CvoloLexer.CATCH && next is not null
-				&& next.Line > current.Line && IsStatementStarterKeyword(next.Type))
+				&& current.Type is CvoloLexer.CATCH or CvoloLexer.FINALLY
+				&& next is not null && next.Line > current.Line
+				&& IsStatementStarterKeyword(next.Type))
 			{
 				var span = new TextSpan(current.StartIndex, current.StopIndex - current.StartIndex + 1);
+				var message = current.Type == CvoloLexer.FINALLY
+					? "Expected '{' after 'finally' to start the handler block."
+					: "Expected '{' or '(Type)' after 'catch'.";
 				recovery.Add(new StandaloneRecoveryToken(
-					span, "Expected '{' or '(Type)' after 'catch'.",
-					DiagnosticIds.ExpectedToken, span));
+					span, message, DiagnosticIds.ExpectedToken, span));
 				recoveredTokenIndices.Add(i);
 			}
 
