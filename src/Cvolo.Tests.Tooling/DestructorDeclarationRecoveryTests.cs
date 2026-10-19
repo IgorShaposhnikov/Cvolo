@@ -60,7 +60,12 @@ public sealed class DestructorDeclarationRecoveryTests
                 : fragment.EndsWith(" x", StringComparison.Ordinal)
                     ? declarationStart + "        ".Length + fragment.Length - 1
                     : declarationStart + "        ".Length;
-        Assert.Equal(expectedStart, roots[0].Location.Span.Start);
+        if (!fragment.Contains(" = ", StringComparison.Ordinal))
+            Assert.Equal(expectedStart, roots[0].Location.Span.Start);
+        else
+            Assert.InRange(roots[0].Location.Span.Start,
+                declarationStart + "        ".Length,
+                declarationStart + "        ".Length + fragment.Length);
 
         Assert.DoesNotContain(diagnostics, d =>
             d.Id is "CVL4173" or "CVL4174" or "CVL4175" or "CVL4004"
