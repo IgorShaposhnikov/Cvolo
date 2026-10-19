@@ -48,6 +48,26 @@ public sealed class IncompleteTopLevelEditorTests
     }
 
     [Theory]
+    [InlineData("extension |", new[] { "Third", "Second", "First" })]
+    [InlineData("extension Se|", new[] { "Second" })]
+    [InlineData("extension Win|", new string[0])]
+    public void ExtensionTarget_OffersNearestDeclaredTypesOnly(
+        string input, string[] expected)
+    {
+        var position = input.IndexOf('|');
+        var source = "struct First {}\nstruct Second {}\nstruct Third {}\n" 
+            + input.Replace("|", "", StringComparison.Ordinal);
+        var (document, fixture) = Open(source);
+        using (fixture)
+        {
+            var result = document.GetCompletions(source.Length);
+            var names = result.Candidates.Select(c => c.Label).ToArray();
+            Assert.Equal(expected, names);
+            Assert.All(result.Candidates, c => Assert.Equal(CompletionKind.Type, c.Kind));
+        }
+    }
+
+    [Theory]
     [InlineData("struct GlfwWindow {\n    int\n}\n")]
     [InlineData("struct GlfwWindow {\n    int Width;\n    int\n}\n")]
     public void IncompleteField_RetainsStructReferenceCodeLens(string source)
