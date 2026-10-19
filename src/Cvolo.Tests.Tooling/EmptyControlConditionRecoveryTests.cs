@@ -5,6 +5,25 @@ namespace Cvolo.Tests.Tooling;
 public sealed class EmptyControlConditionRecoveryTests
 {
     [Theory]
+    [InlineData("if")]
+    [InlineData("while")]
+    public void UnterminatedControlHeader_BeforeNextWhile_IsIsolated(string keyword)
+    {
+        var source = "void Go() {\n    " + keyword + "(\n    while (false) {}\n}\n";
+        using var fixture = TempProject.Create(("Main.cvl", source));
+        var project = CvoloWorkspace.Create().OpenProject(fixture.ProjectFilePath);
+        var document = project.InitialSnapshot.GetDocument(project.GetDocumentId("Main.cvl"));
+        var syntax = document.GetDiagnostics()
+            .Where(d => d.Id is "CVL4173" or "CVL4174" or "CVL4175" or "CVL4004").ToArray();
+        var root = source.IndexOf(keyword + "(", StringComparison.Ordinal);
+        var following = source.IndexOf("while (false)", root + keyword.Length + 1, StringComparison.Ordinal);
+        var local = syntax.Where(d => d.Location.Span.Start >= root && d.Location.Span.Start < following).ToArray();
+        Assert.Single(local);
+        Assert.Contains("condition", local[0].Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(syntax, d => d.Location.Span.Start >= following);
+    }
+
+    [Theory]
     [InlineData("if", "", "while (false) {}")]
     [InlineData("while", "", "while (false) {}")]
     [InlineData("if", " {}", "while (false) {}")]
