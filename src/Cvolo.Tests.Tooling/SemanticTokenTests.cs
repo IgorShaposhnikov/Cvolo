@@ -137,6 +137,31 @@ public sealed class SemanticTokenTests
 	}
 
 	[Theory]
+	[InlineData("Window x =", true)]
+	[InlineData("Window* x =", true)]
+	[InlineData("Window? x =", true)]
+	[InlineData("Window[] x =", true)]
+	[InlineData("MissingType x =", false)]
+	[InlineData("Window x", true)]
+	[InlineData("Window", true)]
+	public void RecoveredDeclarationPrefix_ResolvesTypesWithOrWithoutInitializer(
+		string fragment, bool expected)
+	{
+		var source = "struct Window { int Value; }\nvoid Go() {\n    " + fragment
+			+ "\n    while (false) {}\n}\n";
+		var x = Open(source);
+		using (x.Fixture)
+		{
+			var start = source.IndexOf("    " + fragment, StringComparison.Ordinal) + 4;
+			var found = x.Document.GetSemanticTokens().Any(t =>
+				t.Span.Start == start
+				&& x.Document.Text.GetText(t.Span) == fragment.Split([' ', '*', '?', '['])[0]
+				&& t.Kind is ToolingSymbolKind.Struct or ToolingSymbolKind.OtherType);
+			Assert.Equal(expected, found);
+		}
+	}
+
+	[Theory]
 	[InlineData("Window", true)]
 	[InlineData("MissingType", false)]
 	[InlineData("Window x", true)]

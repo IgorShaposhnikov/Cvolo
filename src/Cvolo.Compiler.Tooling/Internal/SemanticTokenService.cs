@@ -116,10 +116,15 @@ internal static class SemanticTokenService
 				// The declaration may have a name, e.g. "Window x", but it must
 				// still be unambiguously separated from the next control keyword.
 				var end = i;
-				if (i + 2 < visible.Length
-					&& visible[i + 1].Type == CvoloLexer.Identifier
-					&& visible[i + 1].Line == head.Line)
+				while (end + 1 < visible.Length
+					&& visible[end + 1].Line == head.Line
+					&& IsPartialDeclarationToken(visible[end + 1].Type))
 					end++;
+				// Only accept an unfinished declaration prefix, never an
+				// assignment to a same-named value (Type = ...).
+				if (visible[end].Type == CvoloLexer.ASSIGN
+					&& end == i + 1)
+					continue;
 
 				if (end + 1 >= visible.Length
 					|| visible[end + 1].Line <= visible[end].Line
@@ -145,6 +150,13 @@ internal static class SemanticTokenService
 			context.CurrentNamespace = previousNamespace;
 		}
 	}
+
+	private static bool IsPartialDeclarationToken(int type) => type is
+		CvoloLexer.Identifier or CvoloLexer.ASSIGN or CvoloLexer.STAR
+		or CvoloLexer.QMARK or CvoloLexer.LT or CvoloLexer.GT
+		or CvoloLexer.COMMA or CvoloLexer.LBRACK or CvoloLexer.RBRACK
+		or CvoloLexer.DOT or CvoloLexer.INT or CvoloLexer.UINT
+		or CvoloLexer.LONG or CvoloLexer.ULONG or CvoloLexer.BOOL;
 
 	private static bool IsRecoveryStatementKeyword(int type) => type is
 		CvoloLexer.IF or CvoloLexer.WHILE or CvoloLexer.FOR or CvoloLexer.FOREACH

@@ -267,26 +267,48 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				|| (braceKinds.Count == 2 && braceKinds[0] == RecoveryBraceKind.Namespace
 					&& braceKinds[1] is RecoveryBraceKind.Struct or RecoveryBraceKind.Union);
 
-			// An empty control condition is an error in the condition itself,
-			// not an unterminated ')' on a later, unrelated statement. When the
-			// control has a braced body, mask only its malformed header in the
-			// recovery view: the block still parses as an independent block, and
-			// the statements after it retain their source positions.
+			// Recover a broken control header as a single error in its own
+			// condition, never on the next independent statement. The body can be
+			// braced, an unbraced statement, or not typed yet. A physical newline
+			// alone is not an instruction delimiter; we only split when the
+			// following keyword cannot occur inside an expression.
 			if (atBoundary && braceDepth > 0 && !atFileMember && !insideExtension && !insideFields
 				&& current.Type is CvoloLexer.WHILE or CvoloLexer.IF
-				&& next?.Type == CvoloLexer.LPAREN
-				&& i + 3 < visible.Length
-				&& visible[i + 2].Type == CvoloLexer.RPAREN
-				&& visible[i + 3].Type == CvoloLexer.LBRACE)
+				&& next?.Type == CvoloLexer.LPAREN)
 			{
-				var closing = visible[i + 2];
-				var end = closing.StopIndex + 1;
-				recovery.Add(new StandaloneRecoveryToken(
-					new TextSpan(current.StartIndex, end - current.StartIndex),
-					$"Expected a condition expression in '{current.Text}(...)'.",
-					DiagnosticIds.ExpectedToken,
-					new TextSpan(closing.StartIndex, 0)));
-				recoveredTokenIndices.Add(i + 2);
+				var headerEnd = -1;
+				var empty = i + 2 < visible.Length && visible[i + 2].Type == CvoloLexer.RPAREN;
+				if (empty)
+					headerEnd = i + 2;
+				else
+				{
+					// An unterminated header followed on a later line by 'if',
+					// 'while', 'return' etc. The keyword cannot be part of the
+					// condition. Keep legal multiline expressions unchanged.
+					var j = i + 2;
+					while (j < visible.Length && visible[j].Line == next.Line
+						&& visible[j].Type != CvoloLexer.RPAREN)
+						j++;
+					if (j < visible.Length && j > i + 1
+						&& visible[j].Line > visible[j - 1].Line
+						&& IsStatementStarterKeyword(visible[j].Type))
+						headerEnd = j - 1;
+				}
+				if (headerEnd >= 0)
+				{
+					var end = visible[headerEnd].StopIndex + 1;
+					var span = new TextSpan(current.StartIndex, end - current.StartIndex);
+					var errorLocation = empty
+						? visible[i + 2].StartIndex
+						: end;
+					var message = empty
+						? $"Expected a condition expression in '{current.Text}(...)'."
+						: $"Expected ')' to complete the '{current.Text}' condition.";
+					recovery.Add(new StandaloneRecoveryToken(
+						span, message, DiagnosticIds.ExpectedToken,
+						new TextSpan(errorLocation, 0)));
+					recoveredTokenIndices.Add(headerEnd);
+				}
 			}
 
 			// Recover incomplete expression-style statements before an unmistakable
