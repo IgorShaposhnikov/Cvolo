@@ -27,11 +27,11 @@ public sealed class EditorRecoveryControlFlowTests
     [InlineData("for")]
     [InlineData("foreach")]
     [InlineData("switch")]
-    public void MissingParenthesisedHeader_BeforeNextCall_IsOneLocalExpectedToken(string keyword)
+    public void MissingParenthesisedHeader_BeforeNextCall_PreservesStableUnexpectedToken(string keyword)
     {
         var errors = Check(keyword + "\nBegin(1);").Where(Syntax).ToArray();
         var error = Assert.Single(errors);
-        Assert.Equal("CVL4174", error.Id);
+        Assert.Equal("CVL4173", error.Id);
         Assert.Contains(keyword, error.Message, StringComparison.Ordinal);
         Assert.Contains("condition", error.Message, StringComparison.OrdinalIgnoreCase);
     }

@@ -115,8 +115,10 @@ public sealed class AmbiguousDeclarationRecoveryTests
         var errors = document.GetDiagnostics();
         Assert.Contains(errors, d => d.Id == "CVL4023" &&
             d.Location.Span.Start == source.IndexOf("Begi", StringComparison.Ordinal));
-        Assert.Contains(errors, d => d.Id == "CVL4174" &&
-            d.Location.Span.Start == source.IndexOf("x\n", source.IndexOf("Begi", StringComparison.Ordinal), StringComparison.Ordinal));
+        Assert.Contains(errors, d => d.Id == "CVL4174"
+            && d.Message.Contains("'x'", StringComparison.Ordinal)
+            && d.Location.Span.Start > source.IndexOf("Begi", StringComparison.Ordinal)
+            && d.Location.Span.End < source.IndexOf("SwapBuffers(1)", StringComparison.Ordinal));
         Assert.DoesNotContain(errors, d => d.Location.Span.Start >= source.IndexOf("SwapBuffers(1)", StringComparison.Ordinal));
     }
 

@@ -2,6 +2,7 @@ using Cvolo.Analysis;
 using Cvolo.Analysis.Completion;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
+using Cvolo.Core.AST.Expressions;
 using Cvolo.Core.Diagnostics;
 using Cvolo.Syntax.Antlr;
 
@@ -34,6 +35,7 @@ internal static class AmbiguousDeclarationRecovery
 			IReadOnlyList<Diagnostic> originalDiagnostics)
 	{
 		var repairs = new Dictionary<DocumentId, Dictionary<int, (string TypeName, bool WasResolvedType)>>();
+		var voidInitializerRepairs = new Dictionary<DocumentId, HashSet<int>>();
 		var previousUnit = binding.CurrentUnit;
 		var previousNamespace = binding.CurrentNamespace;
 
@@ -56,8 +58,12 @@ internal static class AmbiguousDeclarationRecovery
 					.SelectMany(fn => fn.GenericParameters)
 					.ToHashSet(StringComparer.Ordinal);
 				var heads = new Dictionary<int, (string TypeName, bool WasResolvedType)>();
+				var equalsToRepair = new HashSet<int>();
 				foreach (var variable in Descendants(unit).OfType<VariableDeclarationSyntax>())
 				{
+					if (TryGetVoidCallInitializerEquals(source, variable, binding, out var equalsPosition))
+						equalsToRepair.Add(equalsPosition);
+
 					if (!TryGetSplitHead(source, variable, out var headStart, out var nameStart, out var assignment)
 						|| variable.Type is not { } typeName
 						|| genericNames.Contains(typeName))
@@ -87,6 +93,8 @@ internal static class AmbiguousDeclarationRecovery
 
 				if (heads.Count != 0)
 					repairs.Add(documentId, heads);
+				if (equalsToRepair.Count != 0)
+					voidInitializerRepairs.Add(documentId, equalsToRepair);
 			}
 		}
 		finally
@@ -95,22 +103,26 @@ internal static class AmbiguousDeclarationRecovery
 			binding.CurrentNamespace = previousNamespace;
 		}
 
-		if (repairs.Count == 0)
+		if (repairs.Count == 0 && voidInitializerRepairs.Count == 0)
 			return null;
+
+		var changedDocuments = repairs.Keys.Concat(voidInitializerRepairs.Keys).Distinct().ToArray();
 
 		// Never mutate the generation-owned parse cache or the first binder's AST.
 		// All replacement units are created from the same immutable snapshot text.
 		var newUnits = new Dictionary<DocumentId, CompilationUnitSyntax?>(originalUnits);
 		var newDiagnostics = originalDiagnostics
-			.Where(d => !repairs.ContainsKey(d.Location.DocumentId))
+			.Where(d => !changedDocuments.Contains(d.Location.DocumentId))
 			.ToList();
 		var docByFile = snapshot.Documents.ToDictionary(
 			pair => pair.Value.FilePath, pair => pair.Key, StringComparer.OrdinalIgnoreCase);
 
-		foreach (var (documentId, heads) in repairs)
+		foreach (var documentId in changedDocuments)
 		{
 			var document = snapshot.Documents[documentId];
-			var parser = new AntlrSyntaxParser(heads);
+			repairs.TryGetValue(documentId, out var heads);
+			voidInitializerRepairs.TryGetValue(documentId, out var equals);
+			var parser = new AntlrSyntaxParser(heads, equals);
 			var unit = parser.Parse(new CompilationContext(document.Text.ToString(), document.FilePath));
 			if (unit is null)
 				return null; // Never replace a usable AST with a failed speculative parse.
@@ -126,6 +138,54 @@ internal static class AmbiguousDeclarationRecovery
 				.ToArray(),
 			newUnits,
 			newDiagnostics);
+	}
+
+	/// <summary>
+	/// A void-returning call can never supply the value of a typed variable.
+	/// A newline after '=' is otherwise fully legal Cvolo, so disambiguation
+	/// needs the first binder's *actual resolved function return type*, not
+	/// identifier spelling, capitalization, or a lexical line heuristic.
+	/// </summary>
+	private static bool TryGetVoidCallInitializerEquals(
+		string source, VariableDeclarationSyntax variable, BindingContext binding, out int equalsPosition)
+	{
+		equalsPosition = -1;
+		if (variable.Type is null || variable.Initializer is not CallExpressionSyntax call
+			|| !binding.ResolvedCalls.TryGetValue(call, out var callee)
+			|| !string.Equals(callee.ReturnType.Name, "void", StringComparison.Ordinal))
+			return false;
+
+		var start = variable.Span.Start;
+		var initializerStart = call.Span.Start;
+		if (start < 0 || initializerStart > source.Length || initializerStart <= start)
+			return false;
+
+		// Locate an '=' immediately before the next-line call, permitting only
+		// whitespace between them. Same-line void calls deliberately keep the
+		// original type-mismatch diagnostic rather than being split.
+		var cursor = initializerStart - 1;
+		var crossedNewline = false;
+		while (cursor >= start && char.IsWhiteSpace(source[cursor]))
+		{
+			if (source[cursor] is '\r' or '\n')
+				crossedNewline = true;
+			cursor--;
+		}
+		if (!crossedNewline || cursor < start || source[cursor] != '=')
+			return false;
+
+		// Ensure '=' really belongs to this variable declarator and not
+		// to a nested or recovered expression that happened to look similar.
+		var nameEnd = cursor;
+		while (nameEnd > start && char.IsWhiteSpace(source[nameEnd - 1]))
+			nameEnd--;
+		if (variable.Name.Length == 0 || nameEnd - variable.Name.Length < start
+			|| !source.AsSpan(nameEnd - variable.Name.Length, variable.Name.Length)
+				.SequenceEqual(variable.Name.AsSpan()))
+			return false;
+
+		equalsPosition = cursor;
+		return true;
 	}
 
 	private static bool HasVisibleAssignableName(
