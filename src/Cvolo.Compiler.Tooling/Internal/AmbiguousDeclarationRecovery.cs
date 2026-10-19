@@ -208,13 +208,15 @@ internal static class AmbiguousDeclarationRecovery
 		return true;
 	}
 
-	private static IEnumerable<SyntaxNode> Descendants(SyntaxNode node)
+	private static IEnumerable<SyntaxNode> Descendants(SyntaxNode? node)
 	{
+		// Damaged ANTLR trees can omit required children. Recovery must never
+		// crash unrelated editor queries when traversing a null placeholder.
+		if (node is null)
+			yield break;
 		yield return node;
 		foreach (var child in node.GetChildren())
-		{
 			foreach (var descendant in Descendants(child))
 				yield return descendant;
-		}
 	}
 }

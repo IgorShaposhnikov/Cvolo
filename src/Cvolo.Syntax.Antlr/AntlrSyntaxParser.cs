@@ -838,7 +838,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 									: $"Unexpected identifier '{current.Text}' before a new declaration. Complete the statement or remove the identifier.";
 					recovery.Add(new StandaloneRecoveryToken(
 						span, message,
-						incompleteControl ? DiagnosticIds.ExpectedToken : DiagnosticIds.UnexpectedToken));
+						DiagnosticIds.UnexpectedToken));
 					recoveredTokenIndices.Add(i);
 				}
 			}
@@ -3326,6 +3326,8 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 					{
 						if (rule is CvoloParser.VariableDeclarationContext)
 							return ReportMissingToken(offending, CvoloLexer.SEMI, "Expected ';' after variable declaration.");
+						if (rule is CvoloParser.ExpressionStatementContext)
+							return ReportMissingToken(offending, CvoloLexer.SEMI, "Expected ';' after expression statement.");
 					}
 				}
 			}

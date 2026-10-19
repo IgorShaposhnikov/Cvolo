@@ -207,14 +207,14 @@ internal static class BinderAdapter
 		};
 	}
 	/// <summary>Walk only original/recovered AST nodes, never lexer guesses.</summary>
-	private static IEnumerable<SyntaxNode> Descendants(SyntaxNode node)
+	private static IEnumerable<SyntaxNode> Descendants(SyntaxNode? node)
 	{
+		if (node is null)
+			yield break;
 		yield return node;
 		foreach (var child in node.GetChildren())
-		{
 			foreach (var descendant in Descendants(child))
 				yield return descendant;
-		}
 	}
 
 }
