@@ -45,6 +45,24 @@ public sealed class EditorRecoveryControlFlowTests
     }
 
     [Theory]
+    [InlineData("try {} catch {} finally\\nwhile (false) {}")]
+    [InlineData("try {} finally\\nif (true) {}")]
+    public void MissingFinallyBlock_LeavesFollowingControlStatementIntact(string body)
+    {
+        var errors = Check(body).Where(Syntax).ToArray();
+        Assert.Single(errors);
+        Assert.Contains("finally", errors[0].Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(errors, d =>
+            d.Message.Contains("end of file", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Theory]
+    [InlineData("try {} catch {} finally {}")]
+    [InlineData("try {} catch {} finally\\n{}")]
+    public void FinishedFinallyBlock_IsValid(string body) =>
+        Assert.Empty(Check(body).Where(Syntax));
+
+    [Theory]
     [InlineData("if (x == 0) {} else while (false) {}")]
     [InlineData("if (x == 0) {} else\nwhile (false) {}")]
     [InlineData("if (x == 0) {} else\n{}")]
