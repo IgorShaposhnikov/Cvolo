@@ -79,6 +79,25 @@ public sealed class AmbiguousDeclarationRecoveryTests
     }
 
     [Fact]
+    public void BrokenHead_DoesNotHideRealImmutableAssignment()
+    {
+        var (document, _) = Open("bool x;\nBegi\nx = true;");
+        var diagnostics = document.GetDiagnostics();
+        Assert.Contains(diagnostics, d => d.Id == "CVL4023");
+        Assert.Contains(diagnostics, d => d.Message == "Cannot assign to immutable variable 'x'");
+        Assert.DoesNotContain(diagnostics, d => d.Message.Contains("already declared", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void BrokenHead_DoesNotHideTwoImmutableAssignments()
+    {
+        var (document, _) = Open("bool x;\nBegi\nx = true;\nx = false;");
+        var diagnostics = document.GetDiagnostics();
+        Assert.Contains(diagnostics, d => d.Id == "CVL4023");
+        Assert.Equal(2, diagnostics.Count(d => d.Message == "Cannot assign to immutable variable 'x'"));
+    }
+
+    [Fact]
     public void ResolvedTypeBeforeCall_RemainsLegalSplitDeclaration()
     {
         var (document, _) = Open("Window\nitem;");
