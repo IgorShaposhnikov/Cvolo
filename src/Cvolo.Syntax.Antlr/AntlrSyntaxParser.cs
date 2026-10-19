@@ -246,6 +246,12 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		for (var i = 0; i < visible.Length; i++)
 		{
 			var current = visible[i];
+			// A previous recovery may own the whole declaration, not just its
+			// first token. Never re-diagnose its identifier as a fresh statement.
+			// Braces are not part of recovered declaration fragments.
+			if (recovery.Any(r => current.StartIndex >= r.Span.Start
+				&& current.StopIndex < r.Span.End))
+				continue;
 			var previous = i > 0 ? visible[i - 1] : null;
 			var next = i + 1 < visible.Length ? visible[i + 1] : null;
 			var atBoundary = previous is null || previous.Type is CvoloLexer.SEMI or CvoloLexer.LBRACE or CvoloLexer.RBRACE
