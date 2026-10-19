@@ -58,15 +58,29 @@ internal static class AmbiguousDeclarationRecovery
 				var heads = new Dictionary<int, (string TypeName, bool WasResolvedType)>();
 				foreach (var variable in Descendants(unit).OfType<VariableDeclarationSyntax>())
 				{
-					if (!TryGetSplitHead(source, variable, out var headStart, out var nameStart)
+					if (!TryGetSplitHead(source, variable, out var headStart, out var nameStart, out var assignment)
 						|| variable.Type is not { } typeName
 						|| genericNames.Contains(typeName))
 						continue;
 
 					var typeResolved = binding.ResolveType(typeName) is not null;
-					if (typeResolved && (!BuiltinTypeNames.Contains(typeName)
+
+					// 'Begi\ns = value;' must not introduce a second local when 's'
+					// already exists in the lexical scope (including extension fields).
+					// Conversely, 'MissingType\nnewName = value;' may be an intended
+					// multiline declaration: without proof of an existing target
+					// keep its ordinary unknown-type diagnostic.
+					if (assignment)
+					{
+						if (typeResolved
+							|| !HasVisibleAssignableName(binding, unit, nameStart, variable.Name))
+							continue;
+					}
+					else if (typeResolved && (!BuiltinTypeNames.Contains(typeName)
 						|| !HasVisibleFunction(binding, unit, nameStart, variable.Name)))
+					{
 						continue;
+					}
 
 					heads[headStart] = (typeName, typeResolved);
 				}
@@ -114,6 +128,18 @@ internal static class AmbiguousDeclarationRecovery
 			newDiagnostics);
 	}
 
+	private static bool HasVisibleAssignableName(
+		BindingContext binding, CompilationUnitSyntax unit, int nameStart, string name)
+	{
+		// Completion's lexical-scope walker excludes the declaration currently
+		// being inspected. It includes earlier locals, parameters, globals, and
+		// accessible fields of the enclosing extension's receiver.
+		return CompletionQuery.Compute(binding, unit, nameStart).Candidates.Any(
+			candidate => candidate.Kind is CompletionKind.Local
+				or CompletionKind.Parameter or CompletionKind.Global
+				&& string.Equals(candidate.Label, name, StringComparison.Ordinal));
+	}
+
 	private static bool HasVisibleFunction(
 		BindingContext binding, CompilationUnitSyntax unit, int nameStart, string name)
 	{
@@ -127,10 +153,11 @@ internal static class AmbiguousDeclarationRecovery
 
 	private static bool TryGetSplitHead(
 		string source, VariableDeclarationSyntax variable,
-		out int headStart, out int nameStart)
+		out int headStart, out int nameStart, out bool assignment)
 	{
 		headStart = -1;
 		nameStart = -1;
+		assignment = false;
 		var typeName = variable.Type;
 		if (string.IsNullOrEmpty(typeName) || string.IsNullOrEmpty(variable.Name)
 			|| variable.Initializer is null)
@@ -166,11 +193,15 @@ internal static class AmbiguousDeclarationRecovery
 		if (cursor < source.Length && (char.IsLetterOrDigit(source[cursor]) || source[cursor] == '_'))
 			return false;
 
-		// The second line must be an invocation. 'Window\nvariable;' remains
-		// an ordinary valid multiline variable declaration.
+		// Only a second-line call or assignment is ambiguous. A normal
+		// multiline declaration ('Window\nvariable;') remains one declaration.
 		while (cursor < source.Length && source[cursor] is ' ' or '\t')
 			cursor++;
-		if (cursor >= source.Length || source[cursor] != '(')
+		if (cursor >= source.Length || source[cursor] is not ('(' or '='))
+			return false;
+
+		assignment = source[cursor] == '=';
+		if (assignment && cursor + 1 < source.Length && source[cursor + 1] == '=')
 			return false;
 
 		headStart = start;
