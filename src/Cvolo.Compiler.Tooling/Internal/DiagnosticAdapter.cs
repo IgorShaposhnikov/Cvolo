@@ -31,8 +31,17 @@ internal static class DiagnosticAdapter
 		if (!docByFilePath.TryGetValue(coreDiag.Context.FilePath, out var docId))
 			return null;
 
+		// A recovered parser node can report a synthetic/out-of-source span.
+		// Do not invent replacement coordinates or poison this snapshot's
+		// hover, signature help, completion and inlay-hint queries.
+		var start = coreDiag.Span.Start;
+		var length = coreDiag.Span.Length;
+		var sourceLength = coreDiag.Context.Source.Length;
+		if (start < 0 || length < 0 || start > sourceLength || length > sourceLength - start)
+			return null;
+
 		var severity = MapSeverity(coreDiag.Severity);
-		var span = new TextSpan(coreDiag.Span.Start, coreDiag.Span.Length);
+		var span = new TextSpan(start, length);
 		var location = new DiagnosticLocation(docId, span);
 		var id = coreDiag.Id;
 

@@ -599,6 +599,22 @@ internal sealed class StatementValidator(
 			return;
 		}
 
+		// A missing explicit type is never inferred as 'int'. Do not invent a
+		// local symbol for a type name which could not be resolved.
+		if (varDecl.Type is { } explicitType && !isReferenceDeclaration && declaredType is null)
+		{
+			var file = context.FileContexts[context.CurrentUnit!];
+			var start = Math.Clamp(varDecl.Span.Start, 0, file.Source.Length);
+			var end = Math.Clamp(varDecl.Span.End, start, file.Source.Length);
+			var typeStart = file.Source.IndexOf(explicitType, start, end - start, StringComparison.Ordinal);
+			var typeSpan = typeStart >= 0
+				? new TextSpan(typeStart, explicitType.Length)
+				: varDecl.Span;
+			context.Diagnostics.Report(file, typeSpan,
+				$"Cannot resolve type '{explicitType}'.", DiagnosticIds.CannotResolveType);
+			return;
+		}
+
 		// Delegate-typed declarations: a lambda or function/method-group initializer is
 		// target-typed against the declared delegate (§4.2 / §22). Without an expected
 		// delegate type a lambda has no standalone type and is rejected.
