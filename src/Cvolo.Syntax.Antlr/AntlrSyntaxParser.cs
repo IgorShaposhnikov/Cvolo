@@ -86,7 +86,9 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			? MaskInvalidDeclaration(context.Source, tokenStream.GetTokens(), malformedType.Span.Start)
 			: context.Source;
 		foreach (var stray in standalone)
-			recoverySource = MaskSourceRange(recoverySource, stray.Span.Start, stray.Span.End);
+			recoverySource = stray.RecoveryReplacement is { } replacement
+				? ReplaceSourceRange(recoverySource, stray.Span.Start, stray.Span.End, replacement)
+				: MaskSourceRange(recoverySource, stray.Span.Start, stray.Span.End);
 		foreach (var malformedDestructor in invalidDestructors)
 			recoverySource = MaskSourceRange(recoverySource, malformedDestructor.Span.Start, malformedDestructor.Span.End);
 
@@ -177,7 +179,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 
 	private sealed record StandaloneRecoveryToken(
 		TextSpan Span, string Message, string DiagnosticId = DiagnosticIds.UnexpectedToken,
-		TextSpan? DiagnosticSpan = null);
+		TextSpan? DiagnosticSpan = null, string? RecoveryReplacement = null);
 	/// <summary>
 	/// Destructor syntax is ~Type() with no parameters. ANTLR's generic recovery
 	/// cascades through the entire body for ~Type(int[] a); erase only the list
@@ -311,6 +313,44 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				}
 			}
 
+			// If the last token before ')' is a binary operator, the condition
+			// has no right operand. Preserve the owning IF/ELSE or WHILE tree by
+			// parsing a same-length, syntactically valid condition in the recovery
+			// view. Masking the IF header would otherwise orphan its ELSE.
+			// A valid multiline RHS is never touched because it ends in an operand.
+			if (atBoundary && braceDepth > 0 && !atFileMember && !insideExtension && !insideFields
+				&& current.Type is CvoloLexer.IF or CvoloLexer.WHILE
+				&& next?.Type == CvoloLexer.LPAREN)
+			{
+				var parenDepth = 1;
+				for (var close = i + 2; close < visible.Length; close++)
+				{
+					if (visible[close].Type == CvoloLexer.LPAREN) parenDepth++;
+					else if (visible[close].Type == CvoloLexer.RPAREN && --parenDepth == 0)
+					{
+						if (close > i + 2 && IsUnfinishedConditionOperator(visible[close - 1].Type))
+						{
+							var begin = next.StopIndex + 1;
+							var length = visible[close].StartIndex - begin;
+							// A four-character placeholder fits 'x ==' and longer
+							// expressions without changing offsets or line endings.
+							if (length >= 4)
+							{
+								recovery.Add(new StandaloneRecoveryToken(
+									new TextSpan(begin, length),
+									$"Expected an expression after '{visible[close - 1].Text}' in '{current.Text}' condition.",
+									DiagnosticIds.ExpectedToken,
+									new TextSpan(visible[close].StartIndex, 0),
+									"true"));
+							}
+						}
+						break;
+					}
+					if (visible[close].Type is CvoloLexer.LBRACE or CvoloLexer.SEMI)
+						break;
+				}
+			}
+
 			// 'try' requires a braced body. A later control keyword cannot be
 			// its body; mask only the incomplete 'try' and leave the next
 			// statement (and its braces) untouched. A newline followed by '{'
@@ -322,6 +362,19 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				var span = new TextSpan(current.StartIndex, current.StopIndex - current.StartIndex + 1);
 				recovery.Add(new StandaloneRecoveryToken(
 					span, "Expected '{' after 'try' to start the protected block.",
+					DiagnosticIds.ExpectedToken, span));
+				recoveredTokenIndices.Add(i);
+			}
+
+			// A catch handler requires either '{' or '(Type...) {'. A
+			// control-flow keyword on a later line cannot complete it.
+			if (atBoundary && braceDepth > 0 && !atFileMember && !insideExtension && !insideFields
+				&& current.Type == CvoloLexer.CATCH && next is not null
+				&& next.Line > current.Line && IsStatementStarterKeyword(next.Type))
+			{
+				var span = new TextSpan(current.StartIndex, current.StopIndex - current.StartIndex + 1);
+				recovery.Add(new StandaloneRecoveryToken(
+					span, "Expected '{' or '(Type)' after 'catch'.",
 					DiagnosticIds.ExpectedToken, span));
 				recoveredTokenIndices.Add(i);
 			}
@@ -764,6 +817,28 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		if (memberStart >= 0 && invalidPosition >= memberStart)
 			return MaskSourceRange(source, memberStart, source.Length);
 		return source;
+	}
+
+	private static bool IsUnfinishedConditionOperator(int type) => type is
+		CvoloLexer.EQ or CvoloLexer.NEQ or CvoloLexer.LT or CvoloLexer.GT
+		or CvoloLexer.AND or CvoloLexer.OR or CvoloLexer.PLUS
+		or CvoloLexer.MINUS or CvoloLexer.STAR or CvoloLexer.DIV;
+
+	/// <summary>
+	/// Substitute a valid placeholder only in the parser's private source view.
+	/// Length and line endings never change; diagnostics refer to the original.
+	/// </summary>
+	private static string ReplaceSourceRange(string source, int start, int end, string replacement)
+	{
+		var chars = source.ToCharArray();
+		var filled = 0;
+		for (var offset = Math.Max(0, start); offset < Math.Min(end, chars.Length); offset++)
+		{
+			if (chars[offset] is '\r' or '\n')
+				continue;
+			chars[offset] = filled < replacement.Length ? replacement[filled++] : ' ';
+		}
+		return new string(chars);
 	}
 
 	private static string MaskSourceRange(string source, int start, int end)
