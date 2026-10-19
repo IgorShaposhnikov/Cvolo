@@ -311,6 +311,21 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				}
 			}
 
+			// 'try' requires a braced body. A later control keyword cannot be
+			// its body; mask only the incomplete 'try' and leave the next
+			// statement (and its braces) untouched. A newline followed by '{'
+			// is a valid multiline try block and must not be recovered.
+			if (atBoundary && braceDepth > 0 && !atFileMember && !insideExtension && !insideFields
+				&& current.Type == CvoloLexer.TRY && next is not null
+				&& next.Line > current.Line && IsStatementStarterKeyword(next.Type))
+			{
+				var span = new TextSpan(current.StartIndex, current.StopIndex - current.StartIndex + 1);
+				recovery.Add(new StandaloneRecoveryToken(
+					span, "Expected '{' after 'try' to start the protected block.",
+					DiagnosticIds.ExpectedToken, span));
+				recoveredTokenIndices.Add(i);
+			}
+
 			// Recover incomplete expression-style statements before an unmistakable
 			// control-flow keyword on a later line. Mask the *whole* unfinished
 			// statement (including the opening parenthesis or '='), otherwise
@@ -3108,7 +3123,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 			CvoloLexer.RETURN or CvoloLexer.VAL or CvoloLexer.VAR or CvoloLexer.REF or CvoloLexer.REFVAR
 			or CvoloLexer.IF or CvoloLexer.WHILE or CvoloLexer.FOR or CvoloLexer.FOREACH
 			or CvoloLexer.SWITCH or CvoloLexer.BREAK or CvoloLexer.CONTINUE or CvoloLexer.DEFER
-			or TokenConstants.EOF;
+			or CvoloLexer.TRY or TokenConstants.EOF;
 
 		private static string SimplifyMessage(IToken? offendingSymbol, string message)
 		{
