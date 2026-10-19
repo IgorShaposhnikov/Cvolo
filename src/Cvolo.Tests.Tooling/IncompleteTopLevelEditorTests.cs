@@ -31,6 +31,23 @@ public sealed class IncompleteTopLevelEditorTests
     }
 
     [Theory]
+    [InlineData("int x = 1;\nint x\nwhile (false) {}", true)]
+    [InlineData("int x = 1;\nint y\nwhile (false) {}", false)]
+    [InlineData("{ int x = 1; }\nint x\nwhile (false) {}", false)]
+    public void IncompleteLocal_NameAlreadyDeclaredInSameBrace_ReportsDuplicate(
+        string body, bool duplicate)
+    {
+        var source = "void Go() {\n" + body + "\n}\n";
+        var (document, fixture) = Open(source);
+        using (fixture)
+        {
+            var diagnostics = document.GetDiagnostics();
+            Assert.Equal(duplicate, diagnostics.Any(d =>
+                d.Id == "CVL4140" && d.Message.Contains("x", StringComparison.Ordinal)));
+        }
+    }
+
+    [Theory]
     [InlineData("struct GlfwWindow {\n    int\n}\n")]
     [InlineData("struct GlfwWindow {\n    int Width;\n    int\n}\n")]
     public void IncompleteField_RetainsStructReferenceCodeLens(string source)
