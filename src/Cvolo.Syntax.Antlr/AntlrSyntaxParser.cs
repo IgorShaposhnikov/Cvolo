@@ -497,8 +497,12 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 						&& endToken > i
 						&& (current.Type is not (CvoloLexer.REF or CvoloLexer.REFVAR)
 							|| endToken > i + 1);
+					var duplicateName = hasVariableName
+						&& WasDeclaredEarlierInSameBrace(visible, i, last.Text!);
 					var message = missingInitializer
 						? "Expected an initializer expression after '='."
+						: duplicateName
+							? $"Variable '{last.Text}' is already declared in this scope."
 						: hasVariableName
 							? "Expected ';' after variable declaration."
 							: "Expected a variable name after the type.";
@@ -507,7 +511,9 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 						: new TextSpan(current.StartIndex, end - current.StartIndex);
 					recovery.Add(new StandaloneRecoveryToken(
 						new TextSpan(current.StartIndex, end - current.StartIndex),
-						message, DiagnosticIds.ExpectedToken, errorSpan));
+						message, duplicateName && !missingInitializer
+							? DiagnosticIds.VariableIsAlreadyDeclaredInThisScope
+							: DiagnosticIds.ExpectedToken, errorSpan));
 					recoveredTokenIndices.Add(i);
 					recoveredTokenIndices.Add(endToken);
 					recoveredIncompleteType = true;
@@ -799,6 +805,45 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 	/// its target again. This is deliberately stricter than treating newlines as
 	/// terminators: legal split declarations still parse unchanged.
 	/// </summary>
+	/// <summary>
+	/// Recognise a previous complete local declaration in the same lexical brace
+	/// body. This is deliberately more restrictive than searching for the same
+	/// word: parameters, globals and locals in sibling/nested blocks are not
+	/// evidence of a duplicate declaration at this parser-recovery boundary.
+	/// </summary>
+	private static bool WasDeclaredEarlierInSameBrace(IToken[] visible, int before, string name)
+	{
+		var nesting = 0;
+		for (var k = 0; k < before; k++)
+		{
+			if (visible[k].Type == CvoloLexer.LBRACE) nesting++;
+			else if (visible[k].Type == CvoloLexer.RBRACE) nesting--;
+		}
+		if (nesting <= 0) return false;
+		var targetDepth = nesting;
+		nesting = 0;
+		for (var k = 0; k + 2 < before; k++)
+		{
+			var token = visible[k];
+			if (token.Type == CvoloLexer.LBRACE) { nesting++; continue; }
+			if (token.Type == CvoloLexer.RBRACE) { nesting--; continue; }
+			if (nesting != targetDepth
+				|| !IsDeclarationTypeHead(token.Type)
+				|| visible[k + 1].Type != CvoloLexer.Identifier
+				|| !string.Equals(visible[k + 1].Text, name, StringComparison.Ordinal))
+				continue;
+			// The declaration must have reached its terminator before the
+			// fragment under edit, without crossing an enclosing scope.
+			for (var j = k + 2; j < before; j++)
+			{
+				if (visible[j].Type == CvoloLexer.SEMI) return true;
+				if (visible[j].Type is CvoloLexer.LBRACE or CvoloLexer.RBRACE)
+					break;
+			}
+		}
+		return false;
+	}
+
 	private static bool WasAssignedEarlier(IToken[] tokens, int bodyStart, int before, string name)
 	{
 		for (var i = bodyStart; i + 1 < before; i++)
