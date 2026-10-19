@@ -2,6 +2,7 @@ using Cvolo.Analysis;
 using Cvolo.Analysis.Passes.Validation;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
+using Cvolo.Core.AST.Expressions;
 using Cvolo.Core.Diagnostics;
 using Cvolo.Projects;
 
@@ -161,7 +162,38 @@ internal static class BinderAdapter
 		{
 			var semantic = DiagnosticAdapter.ConvertDiagnostics(binderDiagnostics, docByFilePath);
 			if (parseDiagnostics.Any(d => d.Severity == DiagnosticSeverity.Error))
-				allDiagnostics.AddRange(semantic.Where(d => d.Id == DiagnosticIds.DuplicateTypeDefinition));
+			{
+				// The parser may have repaired a malformed declaration head such as
+				// 'Begi\nx = Init();'. Its error must not hide the independent
+				// immutability violation on the *real* assignment to x.
+				//
+				// Retain only diagnostics on a corresponding written assignment
+				// target in the final recovered tree. Never publish a semantic
+				// error solely because ANTLR synthesized a missing token.
+				var writtenTargets = new HashSet<(DocumentId Document, int Start, int Length)>();
+				foreach (var (documentId, unit) in unitsByDocument)
+				{
+					if (unit is null)
+						continue;
+					foreach (var node in Descendants(unit))
+					{
+						if (node is BinaryExpressionSyntax
+							{
+								Operator: "=",
+								Left: IdentifierExpressionSyntax target
+							} && target.Span.Start >= 0 && target.Span.Length > 0)
+							writtenTargets.Add((documentId, target.Span.Start, target.Span.Length));
+					}
+				}
+
+				allDiagnostics.AddRange(semantic.Where(d =>
+					d.Id == DiagnosticIds.DuplicateTypeDefinition
+					|| (d.Id == DiagnosticIds.CannotAssignToImmutableVariable
+						&& writtenTargets.Contains((
+							d.Location.DocumentId,
+							d.Location.Span.Start,
+							d.Location.Span.Length)))));
+			}
 			else
 				allDiagnostics.AddRange(semantic);
 		}
@@ -174,4 +206,15 @@ internal static class BinderAdapter
 			BinderContext = binderContext,
 		};
 	}
+	/// <summary>Walk only original/recovered AST nodes, never lexer guesses.</summary>
+	private static IEnumerable<SyntaxNode> Descendants(SyntaxNode node)
+	{
+		yield return node;
+		foreach (var child in node.GetChildren())
+		{
+			foreach (var descendant in Descendants(child))
+				yield return descendant;
+		}
+	}
+
 }
