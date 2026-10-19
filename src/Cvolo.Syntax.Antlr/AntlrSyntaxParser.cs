@@ -267,6 +267,28 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				|| (braceKinds.Count == 2 && braceKinds[0] == RecoveryBraceKind.Namespace
 					&& braceKinds[1] is RecoveryBraceKind.Struct or RecoveryBraceKind.Union);
 
+			// An empty control condition is an error in the condition itself,
+			// not an unterminated ')' on a later, unrelated statement. When the
+			// control has a braced body, mask only its malformed header in the
+			// recovery view: the block still parses as an independent block, and
+			// the statements after it retain their source positions.
+			if (atBoundary && braceDepth > 0 && !atFileMember && !insideExtension && !insideFields
+				&& current.Type is CvoloLexer.WHILE or CvoloLexer.IF
+				&& next?.Type == CvoloLexer.LPAREN
+				&& i + 3 < visible.Length
+				&& visible[i + 2].Type == CvoloLexer.RPAREN
+				&& visible[i + 3].Type == CvoloLexer.LBRACE)
+			{
+				var closing = visible[i + 2];
+				var end = closing.StopIndex + 1;
+				recovery.Add(new StandaloneRecoveryToken(
+					new TextSpan(current.StartIndex, end - current.StartIndex),
+					$"Expected a condition expression in '{current.Text}(...)'.",
+					DiagnosticIds.ExpectedToken,
+					new TextSpan(closing.StartIndex, 0)));
+				recoveredTokenIndices.Add(i + 2);
+			}
+
 			// Recover incomplete expression-style statements before an unmistakable
 			// control-flow keyword on a later line. Mask the *whole* unfinished
 			// statement (including the opening parenthesis or '='), otherwise
