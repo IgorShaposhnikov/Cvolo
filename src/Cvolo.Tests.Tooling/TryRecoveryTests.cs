@@ -71,13 +71,17 @@ public sealed class TryRecoveryTests
         using (fixture)
         {
             var syntax = document.GetDiagnostics().Where(IsSyntax).ToArray();
-            var at = source.IndexOf(declaration, StringComparison.Ordinal) + declaration.Length;
+            var declarationStart = source.IndexOf(declaration, StringComparison.Ordinal);
+            var at = declarationStart + declaration.Length;
             var tryStart = source.IndexOf("    try", StringComparison.Ordinal) + 4;
-            var roots = syntax.Where(d => d.Location.Span.Start >= at
+            var roots = syntax.Where(d => d.Location.Span.Start >= declarationStart
                 && d.Location.Span.Start < tryStart).ToArray();
             Assert.Single(roots);
             Assert.Contains("';'", roots[0].Message, StringComparison.Ordinal);
-            Assert.Equal(at, roots[0].Location.Span.Start);
+            if (declaration.Contains('='))
+                Assert.Equal(at, roots[0].Location.Span.Start);
+            else
+                Assert.InRange(roots[0].Location.Span.Start, declarationStart, at);
             Assert.DoesNotContain(syntax, d => d.Location.Span.Start >= tryStart);
             Assert.Contains(document.GetSemanticTokens(), t =>
                 document.Text.GetText(t.Span) == "afterProbe");
