@@ -13,7 +13,7 @@ public sealed class VoidInitializerEditorRecoveryTests
     private static (DocumentSnapshot Document, string Source) Open(string body)
     {
         var source = Preamble + "\nextension Window {\n"
-            + "    public void Swap(ref this) {\n"
+            + "    void Swap(ref this) {\n"
             + body + "\n"
             + "    }\n}\n";
         using var fixture = TempProject.Create(("Main.cvl", source));
