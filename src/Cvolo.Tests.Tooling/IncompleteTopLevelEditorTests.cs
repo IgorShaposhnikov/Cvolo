@@ -48,9 +48,9 @@ public sealed class IncompleteTopLevelEditorTests
     }
 
     [Theory]
-    [InlineData("extension |", new[] { "Third", "Second", "First" })]
-    [InlineData("extension Se|", new[] { "Second" })]
-    [InlineData("extension Win|", new string[0])]
+    [InlineData("extension |", new string[] { "Third", "Second", "First" })]
+    [InlineData("extension Se|", new string[] { "Second" })]
+    [InlineData("extension Win|", new string[] { })]
     public void ExtensionTarget_OffersNearestDeclaredTypesOnly(
         string input, string[] expected)
     {
