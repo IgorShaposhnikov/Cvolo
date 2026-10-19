@@ -269,6 +269,20 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				|| (braceKinds.Count == 2 && braceKinds[0] == RecoveryBraceKind.Namespace
 					&& braceKinds[1] is RecoveryBraceKind.Struct or RecoveryBraceKind.Union);
 
+			// An unfinished primitive field at a closing struct/union brace
+			// must not erase the enclosing type declaration and its CodeLens.
+			// Keep the closing brace, and blank only the unfinished field.
+			if (insideFields && atBoundary
+				&& IsPrimitiveDeclarationType(current.Type)
+				&& next?.Type == CvoloLexer.RBRACE)
+			{
+				var span = new TextSpan(current.StartIndex, current.StopIndex - current.StartIndex + 1);
+				recovery.Add(new StandaloneRecoveryToken(
+					span, "Expected a field name after the type.",
+					DiagnosticIds.ExpectedToken, span));
+				recoveredTokenIndices.Add(i);
+			}
+
 			// Recover a broken control header as a single error in its own
 			// condition, never on the next independent statement. The body can be
 			// braced, an unbraced statement, or not typed yet. A physical newline
