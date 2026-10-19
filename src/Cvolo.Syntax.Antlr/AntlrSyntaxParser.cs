@@ -259,6 +259,46 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				|| (braceKinds.Count == 2 && braceKinds[0] == RecoveryBraceKind.Namespace
 					&& braceKinds[1] is RecoveryBraceKind.Struct or RecoveryBraceKind.Union);
 
+			// Recover incomplete expression-style statements before an unmistakable
+			// control-flow keyword on a later line. Mask the *whole* unfinished
+			// statement (including the opening parenthesis or '='), otherwise
+			// ANTLR treats the next 'if'/'while' body as part of the unfinished
+			// expression and emits misleading errors throughout the next block.
+			// A newline is NOT a statement terminator; these are syntax-closed
+			// keyword boundaries, not a general newline-based heuristic.
+			if (atBoundary && braceDepth > 0 && !atFileMember && !insideExtension && !insideFields)
+			{
+				var prefixEnd = -1;
+				if (current.Type == CvoloLexer.RETURN && next is not null
+					&& next.Line > current.Line && IsStatementStarterKeyword(next.Type))
+					prefixEnd = i;
+				else if (current.Type is CvoloLexer.VAR or CvoloLexer.VAL
+					&& i + 3 < visible.Length && next?.Type == CvoloLexer.Identifier
+					&& visible[i + 2].Type == CvoloLexer.ASSIGN
+					&& visible[i + 2].Line == next.Line
+					&& visible[i + 3].Line > visible[i + 2].Line
+					&& IsStatementStarterKeyword(visible[i + 3].Type))
+					prefixEnd = i + 2;
+				else if (current.Type == CvoloLexer.Identifier && next?.Type == CvoloLexer.LPAREN
+					&& next.Line == current.Line && i + 2 < visible.Length
+					&& visible[i + 2].Line > next.Line
+					&& IsStatementStarterKeyword(visible[i + 2].Type))
+					prefixEnd = i + 1;
+
+				if (prefixEnd >= 0)
+				{
+					var end = visible[prefixEnd].StopIndex + 1;
+					var span = new TextSpan(current.StartIndex, end - current.StartIndex);
+					var message = current.Type == CvoloLexer.RETURN
+						? "Incomplete return statement: expected ';' before the next statement."
+						: current.Type is CvoloLexer.VAR or CvoloLexer.VAL
+							? $"Incomplete variable declaration: expected initializer after '{next?.Text} ='."
+							: $"Incomplete call '{current.Text}(': expected arguments and ')' before the next statement.";
+					recovery.Add(new StandaloneRecoveryToken(span, message, DiagnosticIds.ExpectedToken));
+					recoveredTokenIndices.Add(prefixEnd);
+				}
+			}
+
 			// Recover unfinished declaration-shaped input before a new control/declaration
 			// statement, regardless of whether its type is primitive, user-defined,
 			// optional, pointer, array, generic or reference. We inspect the tokens on
@@ -2935,6 +2975,27 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				{
 					if (rule is CvoloParser.StructFieldContext or CvoloParser.UnionFieldContext)
 						return ReportMissingToken(offending, CvoloLexer.SEMI, "Expected ';' after field declaration.");
+				}
+			}
+
+			// An identifier on the next physical line can also start an independent
+			// assignment. If the parser is waiting for ';' inside a variable
+			// declaration, point to the *missing insertion location* after the
+			// previous expression, not to the next valid identifier.
+			if (expected.Contains(CvoloLexer.SEMI)
+				&& offending.Type == CvoloLexer.Identifier
+				&& offending.TokenIndex > 0)
+			{
+				var precedingIndex = offending.TokenIndex - 1;
+				while (precedingIndex >= 0 && tokenStream.Get(precedingIndex).Channel != Lexer.DefaultTokenChannel)
+					precedingIndex--;
+				if (precedingIndex >= 0 && tokenStream.Get(precedingIndex).Line < offending.Line)
+				{
+					for (var rule = parser.Context; rule is not null; rule = rule.Parent as ParserRuleContext)
+					{
+						if (rule is CvoloParser.VariableDeclarationContext)
+							return ReportMissingToken(offending, CvoloLexer.SEMI, "Expected ';' after variable declaration.");
+					}
 				}
 			}
 
