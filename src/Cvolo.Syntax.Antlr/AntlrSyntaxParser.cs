@@ -735,10 +735,14 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				// incomplete keyword rather than consuming the next statement.
 				// A previously recovered keyword also forms a recovery boundary,
 				// allowing 'while\nif\nwindow.Swap()' to report both roots.
+				// The next named invocation is a standalone statement, not the
+				// missing '(' of a control-flow header. Keep it in the AST.
+				var nextIsIndependentCall = nextIsSimpleCall && next.Line > current.Line;
 				var incompleteControl = braceDepth > 0 && !atFileMember
 					&& !insideExtension && !insideFields
 					&& current.Type is CvoloLexer.IF or CvoloLexer.WHILE
-					&& (nextIsControlStatement || nextIsQualifiedCall);
+						or CvoloLexer.FOR or CvoloLexer.FOREACH or CvoloLexer.SWITCH
+					&& (nextIsControlStatement || nextIsQualifiedCall || nextIsIndependentCall);
 
 				// 'a' before a new namespace or top-level declaration is not a type
 				// name: the next token is a keyword that cannot name a function.
@@ -801,7 +805,9 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 								: incompletePriorCall
 									? $"Incomplete call '{current.Text}': expected arguments and ';' before the next statement."
 									: $"Unexpected identifier '{current.Text}' before a new declaration. Complete the statement or remove the identifier.";
-					recovery.Add(new StandaloneRecoveryToken(span, message));
+					recovery.Add(new StandaloneRecoveryToken(
+						span, message,
+						incompleteControl ? DiagnosticIds.ExpectedToken : DiagnosticIds.UnexpectedToken));
 					recoveredTokenIndices.Add(i);
 				}
 			}

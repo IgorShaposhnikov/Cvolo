@@ -22,6 +22,21 @@ public sealed class EditorRecoveryControlFlowTests
     }
 
     [Theory]
+    [InlineData("if")]
+    [InlineData("while")]
+    [InlineData("for")]
+    [InlineData("foreach")]
+    [InlineData("switch")]
+    public void MissingParenthesisedHeader_BeforeNextCall_IsOneLocalExpectedToken(string keyword)
+    {
+        var errors = Check(keyword + "\nBegin(1);").Where(Syntax).ToArray();
+        var error = Assert.Single(errors);
+        Assert.Equal("CVL4174", error.Id);
+        Assert.Contains(keyword, error.Message, StringComparison.Ordinal);
+        Assert.Contains("condition", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
     [InlineData("if (x ==) {} else {}", "expression")]
     [InlineData("while (x ==) {}", "expression")]
     [InlineData("if (x ==) {} else\nwhile (false) {}", "expression")]
