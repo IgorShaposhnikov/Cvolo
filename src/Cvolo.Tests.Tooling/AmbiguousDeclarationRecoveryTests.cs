@@ -1,0 +1,59 @@
+using Cvolo.Compiler.Tooling;
+
+namespace Cvolo.Tests.Tooling;
+
+public sealed class AmbiguousDeclarationRecoveryTests
+{
+    private const string Prelude = """
+        public struct Window { public int Value; }
+        void Begin(int mode) {}
+        """;
+
+    private static (DocumentSnapshot Document, string Source) Open(string statement)
+    {
+        var source = Prelude + "\nvoid Go() {\n" + statement + "\n}\n";
+        using var fixture = TempProject.Create(("Main.cvl", source));
+        var project = CvoloWorkspace.Create().OpenProject(fixture.ProjectFilePath);
+        return (project.InitialSnapshot.GetDocument(project.GetDocumentId("Main.cvl")), source);
+    }
+
+    [Theory]
+    [InlineData("Beg")]
+    [InlineData("MissingType")]
+    public void UnresolvedTypeBeforeCall_ReportsOnlyHeadAndPreservesCall(string head)
+    {
+        var (document, source) = Open(head + "\nBegin(1);");
+        var errors = document.GetDiagnostics();
+        var problem = Assert.Single(errors);
+        Assert.Equal("CVL4023", problem.Id);
+        Assert.Equal(source.IndexOf(head + "\nBegin", StringComparison.Ordinal), problem.Location.Span.Start);
+        Assert.DoesNotContain(errors, d => d.Location.Span.Start >= source.IndexOf("Begin(1);", StringComparison.Ordinal));
+
+        var tokens = document.GetSemanticTokens();
+        Assert.DoesNotContain(tokens, t =>
+            document.Text.GetText(t.Span) == "Begin"
+            && t.Kind is ToolingSymbolKind.Local or ToolingSymbolKind.Parameter);
+    }
+
+    [Fact]
+    public void ResolvedTypeBeforeCall_RemainsLegalSplitDeclaration()
+    {
+        var (document, _) = Open("Window\nitem;");
+        Assert.Empty(document.GetDiagnostics());
+        Assert.Contains(document.GetSemanticTokens(), t => document.Text.GetText(t.Span) == "item");
+    }
+
+    [Fact]
+    public void ExplicitCtorStyleInitializer_StaysSingleDeclaration()
+    {
+        var (document, _) = Open("Window item(1);");
+        Assert.DoesNotContain(document.GetDiagnostics(), d => d.Id == "CVL4023");
+    }
+
+    [Fact]
+    public void DeferredCallAcrossNewline_IsAllowed()
+    {
+        var (document, _) = Open("defer\nBegin(1);");
+        Assert.DoesNotContain(document.GetDiagnostics(), d => d.Id is "CVL4004" or "CVL4174" or "CVL4173");
+    }
+}
