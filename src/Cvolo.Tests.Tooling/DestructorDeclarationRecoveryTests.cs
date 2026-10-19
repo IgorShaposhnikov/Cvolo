@@ -52,6 +52,14 @@ public sealed class DestructorDeclarationRecoveryTests
         Assert.True(roots.Length == 1,
             $"'{fragment}': expected exactly one root, got {roots.Length}: "
             + string.Join(" | ", diagnostics.Select(d => $"{d.Id} at {d.Location.Span.Start}: {d.Message}")));
+        Assert.DoesNotContain("before 'if'", roots[0].Message, StringComparison.OrdinalIgnoreCase);
+        var expectedStart = fragment.EndsWith("=", StringComparison.Ordinal)
+            ? declarationStart + "        ".Length + fragment.Length - 1
+            : fragment.Contains(" x", StringComparison.Ordinal)
+                ? declarationStart + "        ".Length + fragment.LastIndexOf('x')
+                : declarationStart + "        ".Length;
+        Assert.Equal(expectedStart, roots[0].Location.Span.Start);
+
         Assert.DoesNotContain(diagnostics, d =>
             d.Id is "CVL4173" or "CVL4174" or "CVL4175" or "CVL4004"
             && d.Location.Span.Start >= nextStart);
