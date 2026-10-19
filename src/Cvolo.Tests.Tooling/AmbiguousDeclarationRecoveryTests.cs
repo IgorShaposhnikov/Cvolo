@@ -35,6 +35,49 @@ public sealed class AmbiguousDeclarationRecoveryTests
             && t.Kind is ToolingSymbolKind.Local or ToolingSymbolKind.Parameter);
     }
 
+    [Theory]
+    [InlineData("Begi")]
+    [InlineData("MissingType")]
+    public void InvalidHeadBeforeExistingLocalAssignment_DoesNotDuplicateLocal(string head)
+    {
+        var (document, source) = Open("int s;\n" + head + "\ns = 1;");
+        var diagnostics = document.GetDiagnostics();
+        Assert.Contains(diagnostics, d => d.Id == "CVL4023"
+            && d.Location.Span.Start == source.IndexOf(head + "\ns =", StringComparison.Ordinal));
+        Assert.DoesNotContain(diagnostics, d => d.Id == "CVL4140"
+            || d.Message.Contains("already declared", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void InvalidHeadBeforeExtensionFieldAssignment_DoesNotRedeclareField()
+    {
+        var source = """
+            struct Window { int glfwWindow; }
+            extension Window {
+                void Swap(ref this) {
+                    Begi
+                    glfwWindow = 42;
+                }
+            }
+            """;
+        using var fixture = TempProject.Create(("Main.cvl", source));
+        var project = CvoloWorkspace.Create().OpenProject(fixture.ProjectFilePath);
+        var document = project.InitialSnapshot.GetDocument(project.GetDocumentId("Main.cvl"));
+
+        var diagnostics = document.GetDiagnostics();
+        Assert.Contains(diagnostics, d => d.Id == "CVL4023");
+        Assert.DoesNotContain(diagnostics, d =>
+            d.Message.Contains("already declared", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void UnknownTypeWithFreshName_RemainsDeclaration()
+    {
+        var (document, _) = Open("MissingType\nnewName = 1;");
+        Assert.Contains(document.GetDiagnostics(), d => d.Id == "CVL4023");
+        Assert.DoesNotContain(document.GetDiagnostics(), d => d.Id == "CVL4174");
+    }
+
     [Fact]
     public void ResolvedTypeBeforeCall_RemainsLegalSplitDeclaration()
     {
