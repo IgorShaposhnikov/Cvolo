@@ -80,7 +80,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		// a same-length view with that word blanked, preserving all later offsets.
 		var standalone = FindStandaloneRecoveryTokens(tokenStream.GetTokens());
 		foreach (var stray in standalone)
-			_diagnostics.Report(context, stray.Span, stray.Message, stray.DiagnosticId);
+			_diagnostics.Report(context, stray.DiagnosticSpan ?? stray.Span, stray.Message, stray.DiagnosticId);
 
 		var recoverySource = invalidGeneric is { } malformedType
 			? MaskInvalidDeclaration(context.Source, tokenStream.GetTokens(), malformedType.Span.Start)
@@ -175,7 +175,9 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		return unit;
 	}
 
-	private sealed record StandaloneRecoveryToken(TextSpan Span, string Message, string DiagnosticId = DiagnosticIds.UnexpectedToken);
+	private sealed record StandaloneRecoveryToken(
+		TextSpan Span, string Message, string DiagnosticId = DiagnosticIds.UnexpectedToken,
+		TextSpan? DiagnosticSpan = null);
 	/// <summary>
 	/// Destructor syntax is ~Type() with no parameters. ANTLR's generic recovery
 	/// cascades through the entire body for ~Type(int[] a); erase only the list
@@ -328,11 +330,28 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 					&& !(endToken == i && IsPrimitiveDeclarationType(current.Type)
 						&& visible[endToken + 1].Type is CvoloLexer.VAR or CvoloLexer.VAL))
 				{
-					var end = visible[endToken].StopIndex + 1;
+					var last = visible[endToken];
+					var end = last.StopIndex + 1;
+					// Keep the entire malformed declaration masked for the parser, but
+					// underline the actual missing part, not the next statement.
+					// The diagnostic must not depend on whether the next keyword is
+					// 'if', 'while', 'return', etc.
+					var missingInitializer = last.Type == CvoloLexer.ASSIGN;
+					var hasVariableName = last.Type == CvoloLexer.Identifier
+						&& endToken > i
+						&& (current.Type is not (CvoloLexer.REF or CvoloLexer.REFVAR)
+							|| endToken > i + 1);
+					var message = missingInitializer
+						? "Expected an initializer expression after '='."
+						: hasVariableName
+							? "Expected ';' after variable declaration."
+							: "Expected a variable name after the type.";
+					var errorSpan = missingInitializer || hasVariableName
+						? new TextSpan(last.StartIndex, end - last.StartIndex)
+						: new TextSpan(current.StartIndex, end - current.StartIndex);
 					recovery.Add(new StandaloneRecoveryToken(
 						new TextSpan(current.StartIndex, end - current.StartIndex),
-						$"Incomplete declaration before '{visible[endToken + 1].Text}': complete the declaration or terminate it with ';'.",
-						DiagnosticIds.ExpectedToken));
+						message, DiagnosticIds.ExpectedToken, errorSpan));
 					recoveredTokenIndices.Add(i);
 					recoveredTokenIndices.Add(endToken);
 					recoveredIncompleteType = true;
