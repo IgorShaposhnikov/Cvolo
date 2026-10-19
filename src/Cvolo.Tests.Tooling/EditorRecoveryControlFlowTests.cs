@@ -45,8 +45,8 @@ public sealed class EditorRecoveryControlFlowTests
     }
 
     [Theory]
-    [InlineData("try {} catch {} finally\\nwhile (false) {}")]
-    [InlineData("try {} finally\\nif (true) {}")]
+    [InlineData("try {} catch {} finally\nwhile (false) {}")]
+    [InlineData("try {} finally\nif (true) {}")]
     public void MissingFinallyBlock_LeavesFollowingControlStatementIntact(string body)
     {
         var errors = Check(body).Where(Syntax).ToArray();
@@ -58,7 +58,7 @@ public sealed class EditorRecoveryControlFlowTests
 
     [Theory]
     [InlineData("try {} catch {} finally {}")]
-    [InlineData("try {} catch {} finally\\n{}")]
+    [InlineData("try {} catch {} finally\n{}")]
     public void FinishedFinallyBlock_IsValid(string body) =>
         Assert.Empty(Check(body).Where(Syntax));
 
