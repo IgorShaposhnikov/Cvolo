@@ -590,6 +590,41 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 				}
 			}
 
+			// A malformed standalone type head followed by an already-declared
+			// local's bare name must not fuse with the next valid statement:
+			//
+			//     bool x;
+			//     Begi
+			//     x
+			//     SwapBuffers(...);
+			//
+			// This is not a general newline terminator. Require an existing
+			// same-brace declaration and a syntactically complete next call.
+			// Recover both incomplete words, leaving the actual call intact.
+			if (!recoveredIncompleteType && atBoundary && braceDepth > 0
+				&& !atFileMember && !insideExtension && !insideFields
+				&& current.Type == CvoloLexer.Identifier
+				&& next?.Type == CvoloLexer.Identifier
+				&& next.Line > current.Line
+				&& i + 3 < visible.Length
+				&& visible[i + 2].Type == CvoloLexer.Identifier
+				&& visible[i + 2].Line > next.Line
+				&& visible[i + 3].Type == CvoloLexer.LPAREN
+				&& WasDeclaredEarlierInSameBrace(visible, i, next.Text!))
+			{
+				var headSpan = new TextSpan(current.StartIndex, current.StopIndex - current.StartIndex + 1);
+				var bareNameSpan = new TextSpan(next.StartIndex, next.StopIndex - next.StartIndex + 1);
+				recovery.Add(new StandaloneRecoveryToken(
+					headSpan, $"Cannot resolve type '{current.Text}'.",
+					DiagnosticIds.CannotResolveType, headSpan));
+				recovery.Add(new StandaloneRecoveryToken(
+					bareNameSpan, $"Expected ';' after expression '{next.Text}'.",
+					DiagnosticIds.ExpectedToken, bareNameSpan));
+				recoveredTokenIndices.Add(i);
+				recoveredTokenIndices.Add(i + 1);
+				recoveredIncompleteType = true;
+			}
+
 			// Lexical recovery for incomplete local declarations must not reclassify the
 			// next independent assignment as a declaration or an initializer. A line
 			// break alone is insufficient: "double\nvalue = 1;" is valid Cvolo.
