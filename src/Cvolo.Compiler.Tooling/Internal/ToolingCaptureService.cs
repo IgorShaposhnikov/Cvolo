@@ -159,7 +159,7 @@ internal static class ToolingCaptureService
 			.ToArray();
 
 		// Generation-owned parse: fresh AST objects, no process-wide cache, no disk access.
-		var preparsed = ParserAdapter.ParseFresh(documents);
+		var preparsed = ParserAdapter.ParseFresh(documents, workspace.Observer);
 
 		var snapshot = ProjectSnapshot.CreateOwned(
 			projectId,
@@ -167,7 +167,8 @@ internal static class ToolingCaptureService
 			externalUnits,
 			packageSources,
 			capture.BaseSourceFiles,
-			preparsed);
+			preparsed,
+			workspace.Observer);
 
 		var project = new CvoloProject(workspace, projectId, capture.ProjectPath, snapshot);
 

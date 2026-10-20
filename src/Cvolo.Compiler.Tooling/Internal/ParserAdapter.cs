@@ -1,5 +1,6 @@
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.Diagnostics;
+using Cvolo.Observability.Abstractions;
 using Cvolo.Syntax.Antlr;
 
 namespace Cvolo.Compiler.Tooling.Internal;
@@ -57,7 +58,12 @@ internal static class ParserAdapter
 	/// parse), and the combined parse diagnostics across all documents.
 	/// </summary>
 	public static (IReadOnlyList<CompilationUnitSyntax> Units, IReadOnlyDictionary<DocumentId, CompilationUnitSyntax?> UnitsByDocument, IReadOnlyList<Diagnostic> Diagnostics) ParseAll(IReadOnlyDictionary<DocumentId, DocumentSnapshot> documents)
-		=> Parse(documents, useCache: true);
+		=> Parse(documents, useCache: true, NoopCompilerObserver.Instance);
+
+	/// <summary>Parses all documents with observability: one <c>parse.document</c> span per
+	/// document inside a <c>parse.project</c> span (§38). Never changes parse results.</summary>
+	public static (IReadOnlyList<CompilationUnitSyntax> Units, IReadOnlyDictionary<DocumentId, CompilationUnitSyntax?> UnitsByDocument, IReadOnlyList<Diagnostic> Diagnostics) ParseAll(IReadOnlyDictionary<DocumentId, DocumentSnapshot> documents, ICompilerObserver observer)
+		=> Parse(documents, useCache: true, observer);
 
 	/// <summary>
 	/// Parses all <paramref name="documents"/> without consulting or populating the process-wide parse
@@ -65,9 +71,13 @@ internal static class ParserAdapter
 	/// syntax object is shared between two independently bindable generations.
 	/// </summary>
 	public static (IReadOnlyList<CompilationUnitSyntax> Units, IReadOnlyDictionary<DocumentId, CompilationUnitSyntax?> UnitsByDocument, IReadOnlyList<Diagnostic> Diagnostics) ParseFresh(IReadOnlyDictionary<DocumentId, DocumentSnapshot> documents)
-		=> Parse(documents, useCache: false);
+		=> Parse(documents, useCache: false, NoopCompilerObserver.Instance);
 
-	private static (IReadOnlyList<CompilationUnitSyntax> Units, IReadOnlyDictionary<DocumentId, CompilationUnitSyntax?> UnitsByDocument, IReadOnlyList<Diagnostic> Diagnostics) Parse(IReadOnlyDictionary<DocumentId, DocumentSnapshot> documents, bool useCache)
+	/// <summary>Parses all documents fresh with observability (same results as <see cref="ParseFresh(IReadOnlyDictionary{DocumentId, DocumentSnapshot})"/>).</summary>
+	public static (IReadOnlyList<CompilationUnitSyntax> Units, IReadOnlyDictionary<DocumentId, CompilationUnitSyntax?> UnitsByDocument, IReadOnlyList<Diagnostic> Diagnostics) ParseFresh(IReadOnlyDictionary<DocumentId, DocumentSnapshot> documents, ICompilerObserver observer)
+		=> Parse(documents, useCache: false, observer);
+
+	private static (IReadOnlyList<CompilationUnitSyntax> Units, IReadOnlyDictionary<DocumentId, CompilationUnitSyntax?> UnitsByDocument, IReadOnlyList<Diagnostic> Diagnostics) Parse(IReadOnlyDictionary<DocumentId, DocumentSnapshot> documents, bool useCache, ICompilerObserver observer)
 	{
 		var units = new List<CompilationUnitSyntax>();
 		var unitsByDocument = new Dictionary<DocumentId, CompilationUnitSyntax?>();
@@ -79,8 +89,27 @@ internal static class ParserAdapter
 			docByFilePath[doc.FilePath] = docId;
 		}
 
+		using var projectScope = observer.BeginOperation(new OperationStart
+		{
+			Event = "parse.project.started",
+			Stage = "parse.project",
+			Kind = CompilerEventKind.Phase,
+			Detail = DiagnosticDetail.L1,
+			Attributes = [new KeyValuePair<string, string>("documentCount", documents.Count.ToString())],
+		});
+
+		var projectErrorCount = 0;
 		foreach (var (docId, doc) in documents)
 		{
+			using var documentScope = observer.BeginOperation(new OperationStart
+			{
+				Event = "parse.document.started",
+				Stage = "parse.document",
+				Kind = CompilerEventKind.Phase,
+				Detail = DiagnosticDetail.L1,
+				ParentOperationId = projectScope.OperationId,
+			});
+
 			var (unit, diagnostics) = ParseOne(doc.FilePath, doc.Text.ToString(), useCache);
 
 			unitsByDocument[docId] = unit;
@@ -88,9 +117,35 @@ internal static class ParserAdapter
 			if (unit is not null)
 				units.Add(unit);
 
-			allDiagnostics.AddRange(DiagnosticAdapter.ConvertDiagnostics(
-				diagnostics, docByFilePath));
+			var converted = DiagnosticAdapter.ConvertDiagnostics(
+				diagnostics, docByFilePath);
+			allDiagnostics.AddRange(converted);
+
+			var errorCount = 0;
+			foreach (var diagnostic in converted)
+			{
+				if (diagnostic.Severity == DiagnosticSeverity.Error)
+					errorCount++;
+			}
+
+			projectErrorCount += errorCount;
+			documentScope.Complete(
+				errorCount == 0 ? "success" : "failed",
+				attributes:
+				[
+					new KeyValuePair<string, string>("errorCount", errorCount.ToString()),
+					new KeyValuePair<string, string>("hasUnit", (unit is not null).ToString()),
+				]);
 		}
+
+		projectScope.Complete(
+			"success",
+			attributes:
+			[
+				new KeyValuePair<string, string>("documentCount", documents.Count.ToString()),
+				new KeyValuePair<string, string>("unitCount", units.Count.ToString()),
+				new KeyValuePair<string, string>("errorCount", projectErrorCount.ToString()),
+			]);
 
 		return (units, unitsByDocument, allDiagnostics);
 	}

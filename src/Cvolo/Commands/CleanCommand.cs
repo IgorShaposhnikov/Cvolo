@@ -24,8 +24,7 @@ internal sealed class CleanCommand : Command
 			if (projectDir is null || !Directory.Exists(projectDir))
 			{
 				Console.Error.WriteLine($"Error: project directory '{path}' not found.");
-				Environment.Exit(1);
-				return;
+				return 1;
 			}
 
 			try
@@ -46,17 +45,17 @@ internal sealed class CleanCommand : Command
 				}
 
 				Console.WriteLine("Clean completed successfully.");
-				Environment.Exit(0);
+				return 0;
 			}
 			catch (ArgumentException ex)
 			{
 				Console.Error.WriteLine($"Error: {ex.Message}");
-				Environment.Exit(1);
+				return 1;
 			}
 			catch (Exception ex)
 			{
 				Console.Error.WriteLine($"Error during cleanup: {ex.Message}");
-				Environment.Exit(1);
+				return 1;
 			}
 		});
 	}

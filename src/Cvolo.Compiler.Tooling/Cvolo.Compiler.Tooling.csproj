@@ -11,6 +11,8 @@
 		<ProjectReference Include="..\Cvolo.Syntax.Antlr\Cvolo.Syntax.Antlr.csproj" />
 		<ProjectReference Include="..\Cvolo.Analysis\Cvolo.Analysis.csproj" />
 		<ProjectReference Include="..\Cvolo.Projects\Cvolo.Projects.csproj" />
+		<ProjectReference Include="..\Cvolo.Observability.Abstractions\Cvolo.Observability.Abstractions.csproj" />
+		<ProjectReference Include="..\Cvolo.Observability\Cvolo.Observability.csproj" />
 		<PackageReference Include="Antlr4.Runtime.Standard" />
 	</ItemGroup>
 

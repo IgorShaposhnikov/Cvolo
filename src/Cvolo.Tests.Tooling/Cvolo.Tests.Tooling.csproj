@@ -24,6 +24,7 @@
 		<ProjectReference Include="..\Cvolo.Tests.Shared\Cvolo.Tests.Shared.csproj" />
 		<ProjectReference Include="..\Cvolo.Packaging\Cvolo.Packaging.csproj" />
 		<ProjectReference Include="..\Cvolo.Projects\Cvolo.Projects.csproj" />
+		<ProjectReference Include="..\Cvolo.Observability\Cvolo.Observability.csproj" />
 	</ItemGroup>
 
 	<ItemGroup>

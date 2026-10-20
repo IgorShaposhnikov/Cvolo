@@ -2,6 +2,7 @@ using Cvolo.Compiler.Tooling.Completion;
 using Cvolo.Compiler.Tooling.Internal;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.Diagnostics;
+using Cvolo.Observability.Abstractions;
 using Cvolo.Projects;
 
 namespace Cvolo.Compiler.Tooling;
@@ -17,11 +18,11 @@ public sealed class ProjectSnapshot
 	private readonly IReadOnlyList<ExternalSemanticUnit> _externalUnits;
 	private readonly IReadOnlyList<PackageSourceDocument> _packageSources;
 	private readonly (IReadOnlyList<CompilationUnitSyntax> Units, IReadOnlyDictionary<DocumentId, CompilationUnitSyntax?> UnitsByDocument, IReadOnlyList<Diagnostic> Diagnostics)? _preparsed;
-	private readonly Lazy<AnalyzedProject> _lazyAnalysis;
-	private readonly Lazy<NavigationIndex> _lazyNavigation;
-	private readonly Lazy<CodeFixIndex> _lazyCodeFixes;
-	private readonly Lazy<OccurrenceIndex> _lazyOccurrences;
-	private readonly Lazy<IReadOnlyDictionary<DocumentId, CompilationUnitSyntax?>> _lazyParsedUnits;
+	private readonly ObservedLazy<AnalyzedProject> _lazyAnalysis;
+	private readonly ObservedLazy<NavigationIndex> _lazyNavigation;
+	private readonly ObservedLazy<CodeFixIndex> _lazyCodeFixes;
+	private readonly ObservedLazy<OccurrenceIndex> _lazyOccurrences;
+	private readonly ObservedLazy<IReadOnlyDictionary<DocumentId, CompilationUnitSyntax?>> _lazyParsedUnits;
 
 	/// <summary>
 	/// The identifier of the project this snapshot belongs to.
@@ -31,10 +32,24 @@ public sealed class ProjectSnapshot
 	/// The document identifiers, in snapshot order.
 	/// </summary>
 	public IReadOnlyList<DocumentId> DocumentIds { get; }
+
 	/// <summary>
 	/// The documents keyed by <see cref="DocumentId"/>.
 	/// </summary>
 	public IReadOnlyDictionary<DocumentId, DocumentSnapshot> Documents => _documents;
+
+	/// <summary>
+	/// The observer this snapshot reports lazy-analysis lifecycle to. Never null: snapshots
+	/// without a host-injected observer use the shared no-op instance (§30, §47).
+	/// </summary>
+	internal ICompilerObserver Observer { get; }
+
+	/// <summary>
+	/// The identity of this snapshot in observability events (lazy init, analysis spans).
+	/// Allocated only when the observer has diagnostics enabled — disabled sessions pay
+	/// nothing (§59.1). Null when observability is off.
+	/// </summary>
+	internal string? SnapshotId { get; }
 
 	private ProjectSnapshot(
 		ProjectId projectId,
@@ -42,7 +57,8 @@ public sealed class ProjectSnapshot
 		IReadOnlyList<ExternalSemanticUnit> externalUnits,
 		IReadOnlyList<PackageSourceDocument> packageSources,
 		IReadOnlyList<string> baseSourceFiles,
-		(IReadOnlyList<CompilationUnitSyntax> Units, IReadOnlyDictionary<DocumentId, CompilationUnitSyntax?> UnitsByDocument, IReadOnlyList<Diagnostic> Diagnostics)? preparsed)
+		(IReadOnlyList<CompilationUnitSyntax> Units, IReadOnlyDictionary<DocumentId, CompilationUnitSyntax?> UnitsByDocument, IReadOnlyList<Diagnostic> Diagnostics)? preparsed,
+		ICompilerObserver? observer)
 	{
 		ProjectId = projectId;
 		_documents = documents;
@@ -50,13 +66,17 @@ public sealed class ProjectSnapshot
 		_packageSources = packageSources;
 		BaseSourceFiles = baseSourceFiles;
 		_preparsed = preparsed;
+		Observer = observer ?? NoopCompilerObserver.Instance;
+		SnapshotId = Observer.IsEnabled(CompilerEventKind.Phase, DiagnosticDetail.L0)
+			? "snap-" + Guid.NewGuid().ToString("N")
+			: null;
 		DocumentIds = [.. documents.Keys];
-		_lazyAnalysis = new Lazy<AnalyzedProject>(() => BinderAdapter.AnalyzeSnapshot(this));
-		_lazyNavigation = new Lazy<NavigationIndex>(() => NavigationIndex.Build(this));
-		_lazyCodeFixes = new Lazy<CodeFixIndex>(() => CodeFixIndex.Build(this));
-		_lazyOccurrences = new Lazy<OccurrenceIndex>(() => OccurrenceIndex.Build(this));
-		_lazyParsedUnits = new Lazy<IReadOnlyDictionary<DocumentId, CompilationUnitSyntax?>>(
-			() => ParseAll().UnitsByDocument);
+		_lazyAnalysis = new ObservedLazy<AnalyzedProject>(() => BinderAdapter.AnalyzeSnapshot(this), Observer, "analysis", SnapshotId);
+		_lazyNavigation = new ObservedLazy<NavigationIndex>(() => NavigationIndex.Build(this), Observer, "navigation", SnapshotId);
+		_lazyCodeFixes = new ObservedLazy<CodeFixIndex>(() => CodeFixIndex.Build(this), Observer, "code_fixes", SnapshotId);
+		_lazyOccurrences = new ObservedLazy<OccurrenceIndex>(() => OccurrenceIndex.Build(this), Observer, "occurrences", SnapshotId);
+		_lazyParsedUnits = new ObservedLazy<IReadOnlyDictionary<DocumentId, CompilationUnitSyntax?>>(
+			() => ParseAll().UnitsByDocument, Observer, "parsed_units", SnapshotId);
 	}
 
 	internal static ProjectSnapshot CreateOwned(
@@ -65,9 +85,10 @@ public sealed class ProjectSnapshot
 		IReadOnlyList<ExternalSemanticUnit>? externalUnits = null,
 		IReadOnlyList<PackageSourceDocument>? packageSources = null,
 		IReadOnlyList<string>? baseSourceFiles = null,
-		(IReadOnlyList<CompilationUnitSyntax> Units, IReadOnlyDictionary<DocumentId, CompilationUnitSyntax?> UnitsByDocument, IReadOnlyList<Diagnostic> Diagnostics)? preparsed = null)
+		(IReadOnlyList<CompilationUnitSyntax> Units, IReadOnlyDictionary<DocumentId, CompilationUnitSyntax?> UnitsByDocument, IReadOnlyList<Diagnostic> Diagnostics)? preparsed = null,
+		ICompilerObserver? observer = null)
 	{
-		var snapshot = new ProjectSnapshot(projectId, documents, externalUnits ?? [], packageSources ?? [], baseSourceFiles ?? [], preparsed);
+		var snapshot = new ProjectSnapshot(projectId, documents, externalUnits ?? [], packageSources ?? [], baseSourceFiles ?? [], preparsed, observer);
 
 		foreach (var document in snapshot.Documents.Values)
 			document.OwningSnapshot = snapshot;
@@ -82,7 +103,7 @@ public sealed class ProjectSnapshot
 	/// </summary>
 	internal (IReadOnlyList<CompilationUnitSyntax> Units, IReadOnlyDictionary<DocumentId, CompilationUnitSyntax?> UnitsByDocument, IReadOnlyList<Diagnostic> Diagnostics) ParseAll()
 	{
-		return _preparsed ?? ParserAdapter.ParseAll(_documents);
+		return _preparsed ?? ParserAdapter.ParseAll(_documents, Observer);
 	}
 
 	/// <summary>
@@ -382,6 +403,6 @@ public sealed class ProjectSnapshot
 			newDocuments[id] = new DocumentSnapshot(id, old.FilePath, text, null);
 		}
 
-		return CreateOwned(ProjectId, newDocuments, _externalUnits, _packageSources, BaseSourceFiles);
+		return CreateOwned(ProjectId, newDocuments, _externalUnits, _packageSources, BaseSourceFiles, observer: Observer);
 	}
 }

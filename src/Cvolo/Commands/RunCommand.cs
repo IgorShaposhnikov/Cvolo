@@ -72,7 +72,7 @@ internal sealed class RunCommand : Command
 			if (!DebugOptionResolver.TryResolve(debugVal, parseResult, optOption, optLevel, configurationVal, out var resolvedOptLevel, out var debugOptionError))
 			{
 				DebugOptionResolver.Report(debugOptionError!);
-				Environment.Exit(1);
+				return 1;
 			}
 
 			optLevel = resolvedOptLevel;
@@ -108,19 +108,19 @@ internal sealed class RunCommand : Command
 				var exitCode = _compilerDriver.Compile(path, llvmOnly: false, isShared: false, emitIr: false, optLevel, checkOnly: false, runAfterCompile: true, verbose: verboseVal, emitLowered: emitLoweredVal, noWarn: noWarnVal, suppressWarnings: !warnVal, legacyVisibility: legacyVisibilityVal, strictOption: strictOptionVal, noTbaa: noTbaaVal, targetOs: targetOsVal, checkedFfiBounds: checkedFfiBoundsVal, configuration: configurationVal, useProjectReferencePackages: useProjectReferenceArtifacts, freestanding: freestandingVal, debug: debugVal);
 				if (exitCode == 0 && projectGraph is not null && projectBuildKey is not null)
 					ProjectBuildPlan.RecordSuccessful(projectGraph, projectBuildKey, configurationVal);
-				Environment.Exit(exitCode);
+				return exitCode;
 			}
 			catch (PackageException ex)
 			{
 				Console.Error.WriteLine($"error {ex.Code}: {FormatPackageExceptionMessage(ex)}");
 				if (!string.IsNullOrWhiteSpace(ex.Detail))
 					Console.Error.WriteLine(ex.Detail);
-				Environment.Exit(1);
+				return 1;
 			}
 			catch (Exception ex)
 			{
 				Console.Error.WriteLine($"error: {ex.Message}");
-				Environment.Exit(1);
+				return 1;
 			}
 		});
 	}

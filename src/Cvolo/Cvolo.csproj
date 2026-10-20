@@ -24,6 +24,14 @@
 		<ProjectReference Include="..\Cvolo.Emitter.LLVM\Cvolo.Emitter.LLVM.csproj" />
 		<ProjectReference Include="..\Cvolo.CLI.Packages\Cvolo.CLI.Packages.csproj" />
 		<ProjectReference Include="..\Cvolo.Projects\Cvolo.Projects.csproj" />
+		<ProjectReference Include="..\Cvolo.Observability.Abstractions\Cvolo.Observability.Abstractions.csproj" />
+		<ProjectReference Include="..\Cvolo.Observability\Cvolo.Observability.csproj" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
+			<_Parameter1>Cvolo.Tests</_Parameter1>
+		</AssemblyAttribute>
 	</ItemGroup>
 
 	<!--

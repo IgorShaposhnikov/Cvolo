@@ -15,6 +15,8 @@ using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
 using Cvolo.Core.Diagnostics;
 using Cvolo.Analysis.Completion;
+using Cvolo.Observability;
+using Cvolo.Observability.Abstractions;
 
 namespace Cvolo.Compiler.Tooling.Internal;
 
@@ -42,9 +44,90 @@ internal static class CompletionService
 	/// Computes the completion result for <paramref name="doc"/> at <paramref name="position"/> using
 	/// <paramref name="project"/>'s already-established analysis. Never throws for recoverable editor
 	/// input: comments, literals and unrecoverable parse contexts yield an empty candidate list with a
-	/// valid replacement span.
+	/// valid replacement span. The whole request is one observable <c>completion.document</c> span (L0).
 	/// </summary>
 	public static CompletionResult Compute(ProjectSnapshot project, DocumentSnapshot doc, int position)
+	{
+		var observer = project.Observer;
+		var scope = observer.BeginOperation(new OperationStart
+		{
+			Event = "completion.document.started",
+			Stage = "completion.document",
+			Kind = CompilerEventKind.Phase,
+			Detail = DiagnosticDetail.L0,
+			SnapshotId = project.SnapshotId,
+		});
+
+		try
+		{
+			var provenance = new CompletionProvenance();
+			var result = ComputeCore(project, doc, position, provenance);
+			EmitRecoveryDecision(observer, project, provenance, result);
+			scope.Complete("success", attributes:
+			[
+				new KeyValuePair<string, string>("candidateCount", result.Candidates.Count.ToString()),
+			]);
+			return result;
+		}
+		catch (Exception)
+		{
+			scope.Complete("faulted", reason: "exception");
+			throw;
+		}
+	}
+
+	/// <summary>
+	/// Provenance of the semantic query for one completion request: the original parse status
+	/// before any recovery, the fallback/probe (if any) that shaped the final query context, and
+	/// the resulting context (§32 <c>decision.completion.recovery</c>).
+	/// </summary>
+	private sealed class CompletionProvenance
+	{
+		/// <summary>Original parse status: lexical (no analysis requested), unit_present, or no_unit.</summary>
+		public string ParseStatus { get; set; } = "lexical";
+
+		/// <summary>Last applied recovery, shaping the final context: none | unit_probe | member_probe | member_fallback | initializer_probe | initializer_fallback.</summary>
+		public string Recovery { get; set; } = "none";
+
+		/// <summary>Final semantic query context, or not_run when no semantic query executed.</summary>
+		public string QueryContext { get; set; } = "not_run";
+	}
+
+	private static void EmitRecoveryDecision(
+		ICompilerObserver observer, ProjectSnapshot project, CompletionProvenance provenance, CompletionResult result)
+	{
+		if (provenance.ParseStatus == "lexical"
+			|| !observer.IsEnabled(CompilerEventKind.Decision, DiagnosticDetail.L1))
+		{
+			return;
+		}
+
+		var outcome = provenance.Recovery == "none"
+			? "none"
+			: provenance.Recovery.Contains("fallback", StringComparison.Ordinal)
+				? "fallback"
+				: "probe";
+
+		observer.Emit(new CompilerEvent
+		{
+			Event = "decision.completion.recovery",
+			Kind = CompilerEventKind.Decision,
+			Detail = DiagnosticDetail.L1,
+			Priority = EventPriority.P1,
+			Stage = "completion.document",
+			Outcome = outcome,
+			Reason = provenance.Recovery,
+			SnapshotId = project.SnapshotId,
+			Attributes =
+			[
+				new KeyValuePair<string, string>("parseStatus", provenance.ParseStatus),
+				new KeyValuePair<string, string>("queryContext", provenance.QueryContext),
+				new KeyValuePair<string, string>("candidateCount", result.Candidates.Count.ToString()),
+			],
+		});
+	}
+
+	private static CompletionResult ComputeCore(ProjectSnapshot project, DocumentSnapshot doc, int position, CompletionProvenance provenance)
 	{
 		var textContext = CompletionTextContext.Analyze(doc.Text, position);
 		var span = textContext.ReplacementSpan;
@@ -167,6 +250,7 @@ internal static class CompletionService
 		var unit = analysis.UnitsByDocument.TryGetValue(doc.Id, out var parsed)
 			? parsed
 			: null;
+		provenance.ParseStatus = unit is not null ? "unit_present" : "no_unit";
 
 		var queryPosition = position;
 		AnalyzedProject? analyzedForCandidates = null;
@@ -210,6 +294,7 @@ internal static class CompletionService
 				unit = recovered.Value.Unit;
 				queryPosition = recovered.Value.Position;
 				analyzedForCandidates = analysis;
+				provenance.Recovery = "unit_probe";
 			}
 		}
 		else
@@ -224,7 +309,7 @@ internal static class CompletionService
 		// context). That must not suppress a recoverable member request; the probe below
 		// runs a parseable snapshot instead.
 		if (unit is not null && analysis.BinderContext is { } binderContext)
-			(queryContext, queryCandidates) = RunQuery(binderContext, unit, queryPosition, textContext.IsAggregateInitializerValue);
+			(queryContext, queryCandidates) = RunQuery(project.Observer, binderContext, unit, queryPosition, textContext.IsAggregateInitializerValue);
 
 		// A malformed statement block can have a partial unit but no semantic
 		// binder. Preserve only compiler-defined statement keywords in that case.
@@ -256,6 +341,7 @@ internal static class CompletionService
 				analyzedForCandidates = recoveredResult.Project;
 				queryContext = recoveredResult.Context;
 				queryCandidates = recoveredResult.Candidates;
+				provenance.Recovery = "member_probe";
 			}
 
 			// Never degrade a member-shaped request to the general completion surface. If
@@ -265,6 +351,7 @@ internal static class CompletionService
 			{
 				queryContext = AnalysisContext.Member;
 				queryCandidates = [];
+				provenance.Recovery = "member_fallback";
 			}
 		}
 
@@ -282,6 +369,7 @@ internal static class CompletionService
 				analyzedForCandidates = recoveredResult.Project;
 				queryContext = recoveredResult.Context;
 				queryCandidates = recoveredResult.Candidates;
+				provenance.Recovery = "initializer_probe";
 			}
 
 			// Once the cursor is known to sit in a field-name slot, an unresolved aggregate
@@ -291,6 +379,7 @@ internal static class CompletionService
 			{
 				queryContext = AnalysisContext.Initializer;
 				queryCandidates = [];
+				provenance.Recovery = "initializer_fallback";
 			}
 		}
 
@@ -444,6 +533,7 @@ internal static class CompletionService
 				!(candidate.Kind == Completion.CompletionKind.Keyword && isKeywordAllowed(candidate.Label)));
 		}
 
+		provenance.QueryContext = queryContext.ToString();
 		return new CompletionResult(span, candidates);
 	}
 
@@ -857,16 +947,17 @@ internal static class CompletionService
 			.Replace("*", "Ptr");
 
 	private static (AnalysisContext Context, IReadOnlyList<Analysis.Completion.CompletionCandidate> Candidates) RunQuery(
-		BindingContext binderContext, CompilationUnitSyntax unit, int position, bool inAggregateInitializerValue = false)
+		ICompilerObserver observer, BindingContext binderContext, CompilationUnitSyntax unit, int position, bool inAggregateInitializerValue = false)
 	{
 		// CompletionQuery temporarily mutates CurrentUnit/CurrentNamespace on the shared binder
 		// context to resolve names from the requesting file's perspective; the lock keeps that
-		// mutation serialized across concurrent completion requests.
-		lock (binderContext)
+		// mutation serialized across concurrent completion requests. The observed wrapper records
+		// lock wait/hold without changing lock ordering.
+		return ObservedBinderLock.Run(observer, binderContext, "binder_context.lock_wait", () =>
 		{
 			var result = CompletionQuery.Compute(binderContext, unit, position, inAggregateInitializerValue);
 			return (result.Context, result.Candidates);
-		}
+		});
 	}
 
 	private static (AnalyzedProject Project, AnalysisContext Context, IReadOnlyList<Analysis.Completion.CompletionCandidate> Candidates)? TryRecoverMemberQuery(
@@ -881,7 +972,7 @@ internal static class CompletionService
 			if (!probed.UnitsByDocument.TryGetValue(doc.Id, out var unit) || unit is null)
 				continue;
 
-			var result = RunQuery(binder, unit, position);
+			var result = RunQuery(project.Observer, binder, unit, position);
 			if (result.Context == AnalysisContext.Member)
 				return (probed, result.Context, result.Candidates);
 		}
@@ -901,7 +992,7 @@ internal static class CompletionService
 			if (!probed.UnitsByDocument.TryGetValue(doc.Id, out var unit) || unit is null)
 				continue;
 
-			var result = RunQuery(binder, unit, position);
+			var result = RunQuery(project.Observer, binder, unit, position);
 			if (result.Context == AnalysisContext.Initializer)
 				return (probed, result.Context, result.Candidates);
 		}

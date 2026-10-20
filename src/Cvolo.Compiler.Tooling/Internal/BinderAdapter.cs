@@ -4,6 +4,8 @@ using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
 using Cvolo.Core.AST.Expressions;
 using Cvolo.Core.Diagnostics;
+using Cvolo.Observability;
+using Cvolo.Observability.Abstractions;
 using Cvolo.Projects;
 
 namespace Cvolo.Compiler.Tooling.Internal;
@@ -53,9 +55,66 @@ internal static class BinderAdapter
 	/// (so the binder context is available to completion even when an unrelated document has parse
 	/// errors). Bind diagnostics are only merged into the result when no parse errors remain,
 	/// preserving the existing diagnostics contract.
+	/// Instrumented with a <c>bind.project</c> operation (§38): parse spans come from
+	/// ParserAdapter, pass spans from Binder, and degraded/faulted states are recorded
+	/// honestly without changing semantics (§12).
 	/// </summary>
 	public static AnalyzedProject AnalyzeSnapshot(ProjectSnapshot snapshot)
 	{
+		var observer = snapshot.Observer;
+		var snapshotId = snapshot.SnapshotId;
+
+		using var analysisScope = observer.BeginOperation(new OperationStart
+		{
+			Event = "operation.started",
+			Stage = "bind.project",
+			Kind = CompilerEventKind.Phase,
+			Detail = DiagnosticDetail.L1,
+			OperationId = snapshotId is { } id ? id + ":bind" : null,
+			AnalysisId = snapshotId,
+			SnapshotId = snapshotId,
+			Attributes = [new KeyValuePair<string, string>("documentCount", snapshot.Documents.Count.ToString())],
+		});
+
+		AnalyzedProject result;
+		try
+		{
+			result = AnalyzeCore(snapshot, observer, analysisScope.OperationId, out var degradedReason);
+			if (degradedReason is null)
+			{
+				analysisScope.Complete("success");
+			}
+			else
+			{
+				analysisScope.Complete("degraded", reason: degradedReason);
+			}
+		}
+		catch (Exception ex)
+		{
+			// Record the fault honestly and rethrow: exception caching/propagation semantics
+			// are owned by ProjectSnapshot's Lazy and must not change (never mask, §12).
+			observer.Emit(new CompilerEvent
+			{
+				Event = "analysis.faulted",
+				Kind = CompilerEventKind.Phase,
+				Detail = DiagnosticDetail.L0,
+				Stage = "bind.project",
+				Outcome = "faulted",
+				Reason = "exception",
+				AnalysisId = snapshotId,
+				SnapshotId = snapshotId,
+				Attributes = ExceptionFacts.Describe(ex, includeStack: false),
+			});
+			analysisScope.Complete("faulted", reason: "exception");
+			throw;
+		}
+
+		return result;
+	}
+
+	private static AnalyzedProject AnalyzeCore(ProjectSnapshot snapshot, ICompilerObserver observer, string? bindOperationId, out string? degradedReason)
+	{
+		degradedReason = null;
 		var allDiagnostics = new List<Diagnostic>();
 		var docByFilePath = new Dictionary<string, DocumentId>(StringComparer.OrdinalIgnoreCase);
 
@@ -126,7 +185,7 @@ internal static class BinderAdapter
 			{
 				lock (BindLock)
 				{
-					binder.Bind(allUnits);
+					binder.Bind(allUnits, observer, bindOperationId);
 				}
 				binderContext = binder.Context;
 			}
@@ -139,6 +198,28 @@ internal static class BinderAdapter
 				// Do not expose a half-bound context; keep the original parser
 				// diagnostics and the independently available syntax-only services.
 				binderContext = null;
+				degradedReason = "binder_exception_with_parse_errors";
+
+				// Degradation is recorded as such — never as a successful analysis (§12).
+				observer.Emit(new CompilerEvent
+				{
+					Event = "analysis.degraded",
+					Kind = CompilerEventKind.Phase,
+					Detail = DiagnosticDetail.L0,
+					Stage = "bind.project",
+					Outcome = "analysis_unavailable",
+					Reason = "binder_exception_with_parse_errors",
+					OperationId = bindOperationId,
+					AnalysisId = snapshot.SnapshotId,
+					SnapshotId = snapshot.SnapshotId,
+					Attributes =
+					[
+						new KeyValuePair<string, string>("fallback", "syntax_only"),
+						new KeyValuePair<string, string>(
+							"parseErrorCount",
+							parseDiagnostics.Count(d => d.Severity == DiagnosticSeverity.Error).ToString()),
+					],
+				});
 			}
 
 			if (binderContext is not null)
@@ -194,7 +275,7 @@ internal static class BinderAdapter
 					}
 				}
 
-				allDiagnostics.AddRange(semantic.Where(d =>
+				var keptSemantic = semantic.Where(d =>
 					// Parser-clean documents can be semantically invalid even
 					// while a neighboring file is incomplete in the editor.
 					!syntaxErrorDocuments.Contains(d.Location.DocumentId)
@@ -203,7 +284,31 @@ internal static class BinderAdapter
 						&& writtenTargets.Contains((
 							d.Location.DocumentId,
 							d.Location.Span.Start,
-							d.Location.Span.Length)))));
+							d.Location.Span.Length)))).ToList();
+
+				// Suppression is a real diagnostics-contract decision — make it visible (§38).
+				var suppressedCount = semantic.Count - keptSemantic.Count;
+				if (suppressedCount > 0)
+				{
+					observer.Emit(new CompilerEvent
+					{
+						Event = "bind.diagnostics_suppressed",
+						Kind = CompilerEventKind.Phase,
+						Detail = DiagnosticDetail.L1,
+						Stage = "bind.project",
+						Outcome = "suppressed",
+						OperationId = bindOperationId,
+						AnalysisId = snapshot.SnapshotId,
+						SnapshotId = snapshot.SnapshotId,
+						Attributes =
+						[
+							new KeyValuePair<string, string>("suppressedCount", suppressedCount.ToString()),
+							new KeyValuePair<string, string>("cause", "parse_errors_in_damaged_documents"),
+						],
+					});
+				}
+
+				allDiagnostics.AddRange(keptSemantic);
 			}
 			else
 				allDiagnostics.AddRange(semantic);

@@ -11,6 +11,7 @@
     <File Path="../README.md" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="Cvolo.Tests.Observability/Cvolo.Tests.Observability.csproj" />
     <Project Path="Cvolo.Tests.Packages/Cvolo.Tests.Packages.csproj" />
     <Project Path="Cvolo.Tests.Packaging/Cvolo.Tests.Packaging.csproj" />
     <Project Path="Cvolo.Tests.Std/Cvolo.Tests.Std.csproj" />
@@ -28,6 +29,8 @@
   <Project Path="Cvolo.Emitter.LLVM/Cvolo.Emitter.LLVM.csproj" />
   <Project Path="Cvolo.Packaging/Cvolo.Packaging.csproj" />
   <Project Path="Cvolo.Projects/Cvolo.Projects.csproj" />
+  <Project Path="Cvolo.Observability.Abstractions/Cvolo.Observability.Abstractions.csproj" />
+  <Project Path="Cvolo.Observability/Cvolo.Observability.csproj" />
   <Project Path="Cvolo.Syntax.Antlr/Cvolo.Syntax.Antlr.csproj" />
   <Project Path="Cvolo.Syntax/Cvolo.Syntax.csproj" />
   <Project Path="Cvolo/Cvolo.csproj" />

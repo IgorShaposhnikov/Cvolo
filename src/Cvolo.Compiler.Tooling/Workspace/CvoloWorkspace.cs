@@ -1,4 +1,5 @@
 using Cvolo.Compiler.Tooling.Internal;
+using Cvolo.Observability.Abstractions;
 using Cvolo.Packaging;
 
 namespace Cvolo.Compiler.Tooling;
@@ -14,17 +15,34 @@ public sealed class CvoloWorkspace
 	private int _nextProjectId;
 	private int _nextDocumentId;
 
-	private CvoloWorkspace()
+	private CvoloWorkspace(ICompilerObserver observer)
 	{
+		Observer = observer;
 	}
 
 	/// <summary>
-	/// Creates a new, empty workspace session.
+	/// Creates a new, empty workspace session with observability disabled (no-op events, §47).
 	/// </summary>
 	public static CvoloWorkspace Create()
 	{
-		return new();
+		return new(NoopCompilerObserver.Instance);
 	}
+
+	/// <summary>
+	/// Creates a new, empty workspace session that reports compiler-observability events
+	/// (lazy analysis, binder, parser) to <paramref name="observer"/>. The observer travels
+	/// with the workspace into every snapshot it opens; no global/static wiring (§29.4, §39).
+	/// </summary>
+	public static CvoloWorkspace Create(ICompilerObserver observer)
+	{
+		ArgumentNullException.ThrowIfNull(observer);
+		return new(observer);
+	}
+
+	/// <summary>
+	/// The observer every snapshot opened by this workspace reports to.
+	/// </summary>
+	internal ICompilerObserver Observer { get; }
 
 	/// <summary>
 	/// Opens the project at <paramref name="projectPath"/> (a .cvlproj file, a directory, or a
@@ -78,7 +96,7 @@ public sealed class CvoloWorkspace
 			documents[documentId] = new DocumentSnapshot(documentId, source.FilePath, SourceText.From(source.Source), null);
 		}
 
-		var snapshot = ProjectSnapshot.CreateOwned(projectId, documents);
+		var snapshot = ProjectSnapshot.CreateOwned(projectId, documents, observer: Observer);
 
 		return new CvoloProject(this, projectId, absolutePath, snapshot);
 	}
@@ -117,7 +135,7 @@ public sealed class CvoloWorkspace
 			AllocateDocumentId,
 			libraryPaths,
 			packageCache);
-		var snapshot = ProjectSnapshot.CreateOwned(projectId, documents, externalUnits, packageSources, baseSourceFiles);
+		var snapshot = ProjectSnapshot.CreateOwned(projectId, documents, externalUnits, packageSources, baseSourceFiles, observer: Observer);
 
 		return new CvoloProject(this, projectId, absolutePath, snapshot, libraryPaths, packageCache);
 	}

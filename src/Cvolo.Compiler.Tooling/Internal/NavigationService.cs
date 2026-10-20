@@ -8,6 +8,8 @@ using Cvolo.Core.AST.Declarations;
 using Cvolo.Core.AST.Directives;
 using Cvolo.Core.AST.Expressions;
 using Cvolo.Core.AST.Statements;
+using Cvolo.Observability;
+using Cvolo.Observability.Abstractions;
 using Cvolo.Projects;
 using Cvolo.Syntax.Antlr;
 using CompilationContext = Cvolo.Core.Diagnostics.CompilationContext;
@@ -25,13 +27,76 @@ internal static class NavigationService
 		=> snapshot.GetNavigationIndex().Lookup(document.Id, position);
 
 	internal static IReadOnlyList<SymbolDefinition> GetDefinitions(ProjectSnapshot snapshot, SymbolId symbol)
-		=> snapshot.GetNavigationIndex().Definitions(symbol);
+	{
+		var observer = snapshot.Observer;
+		var scope = observer.BeginOperation(new OperationStart
+		{
+			Event = "navigation.definition.started",
+			Stage = "navigation.definition",
+			Kind = CompilerEventKind.Phase,
+			Detail = DiagnosticDetail.L0,
+			SnapshotId = snapshot.SnapshotId,
+		});
+		try
+		{
+			var definitions = snapshot.GetNavigationIndex().Definitions(symbol);
+			scope.Complete(
+				definitions.Count > 0 ? "found" : "not_found",
+				attributes: [new KeyValuePair<string, string>("definitionCount", definitions.Count.ToString())]);
+			return definitions;
+		}
+		catch
+		{
+			scope.Complete("faulted", reason: "exception");
+			throw;
+		}
+	}
 
 	internal static IReadOnlyList<PackageSourceDefinition> GetPackageSourceDefinitions(ProjectSnapshot snapshot, SymbolId symbol)
-		=> snapshot.GetNavigationIndex().PackageSourceDefinitions(symbol);
+	{
+		var definitions = snapshot.GetNavigationIndex().PackageSourceDefinitions(symbol);
+		var observer = snapshot.Observer;
+		if (observer.IsEnabled(CompilerEventKind.Decision, DiagnosticDetail.L1))
+		{
+			observer.Emit(new CompilerEvent
+			{
+				Event = "navigation.source_map",
+				Kind = CompilerEventKind.Decision,
+				Detail = DiagnosticDetail.L1,
+				Stage = "navigation.source_map",
+				Outcome = definitions.Count > 0 ? "mapped" : "unmapped",
+				SnapshotId = snapshot.SnapshotId,
+				Attributes = [new KeyValuePair<string, string>("definitionCount", definitions.Count.ToString())],
+			});
+		}
+		return definitions;
+	}
 
 	internal static IReadOnlyList<DocumentSymbolInfo> GetDocumentSymbols(ProjectSnapshot snapshot, DocumentId document)
-		=> snapshot.GetNavigationIndex().DocumentSymbols(document);
+	{
+		var observer = snapshot.Observer;
+		var scope = observer.BeginOperation(new OperationStart
+		{
+			Event = "document_symbols.started",
+			Stage = "document_symbols",
+			Kind = CompilerEventKind.Phase,
+			Detail = DiagnosticDetail.L0,
+			SnapshotId = snapshot.SnapshotId,
+		});
+		try
+		{
+			var symbols = snapshot.GetNavigationIndex().DocumentSymbols(document);
+			scope.Complete(
+				"success",
+				attributes: [new KeyValuePair<string, string>("symbolCount", symbols.Count.ToString())]);
+			return symbols;
+		}
+		catch
+		{
+			scope.Complete("faulted", reason: "exception");
+			throw;
+		}
+	}
 }
 
 /// <summary>
@@ -57,6 +122,15 @@ internal sealed class NavigationIndex
 	private NavigationIndex(ProjectSnapshot snapshot)
 	{
 		_snapshot = snapshot;
+		var observer = snapshot.Observer;
+		var indexScope = observer.BeginOperation(new OperationStart
+		{
+			Event = "declaration_index.started",
+			Stage = "index.declarations",
+			Kind = CompilerEventKind.Phase,
+			Detail = DiagnosticDetail.L1,
+			SnapshotId = snapshot.SnapshotId,
+		});
 		_analysis = snapshot.GetAnalysis();
 		_binderContext = _analysis.BinderContext;
 		BuildDeclarations();
@@ -64,6 +138,11 @@ internal sealed class NavigationIndex
 		BuildPackageSourceDefinitions();
 		BuildConformanceRedirects();
 		BuildOutlines();
+		indexScope.Complete("success", attributes:
+		[
+			new KeyValuePair<string, string>("declarationCount", _byId.Count.ToString()),
+			new KeyValuePair<string, string>("outlineCount", _outlines.Count.ToString()),
+		]);
 	}
 
 	internal static NavigationIndex Build(ProjectSnapshot snapshot) => new(snapshot);
@@ -73,20 +152,106 @@ internal sealed class NavigationIndex
 		if (!_snapshot.TryGetDocument(document, out _))
 			throw new KeyNotFoundException($"Document {document} not found in this snapshot.");
 
-		if (_binderContext is null || !_analysis.UnitsByDocument.TryGetValue(document, out var unit) || unit is null)
-			return null;
-
-		if (LookupBuiltinOperator(unit, position) is { } builtinResult)
-			return builtinResult;
-
-		ResolvedSymbol? resolved;
-		lock (_binderContext)
+		var observer = _snapshot.Observer;
+		var scope = observer.BeginOperation(new OperationStart
 		{
-			resolved = CompletionQuery.ResolveSymbol(_binderContext, unit, position);
+			Event = "symbols.resolve.started",
+			Stage = "symbols.resolve",
+			Kind = CompilerEventKind.Phase,
+			Detail = DiagnosticDetail.L1,
+			SnapshotId = _snapshot.SnapshotId,
+			Attributes = [new KeyValuePair<string, string>("position", position.ToString())],
+		});
+
+		string? missReason;
+		string? resolvedKind;
+		bool viaConformanceRedirect;
+		SymbolLookupResult? result;
+		try
+		{
+			result = LookupCore(document, position, observer, out missReason, out resolvedKind, out viaConformanceRedirect);
+		}
+		catch
+		{
+			scope.Complete("faulted", reason: "exception");
+			throw;
 		}
 
-		if (resolved is null || !_byDeclaration.TryGetValue(resolved.Declaration, out var entry))
+		var outcome = result is null ? "not_found" : "found";
+		var terminalAttributes = new List<KeyValuePair<string, string>>
+		{
+			new("resolvedKind", resolvedKind ?? "unknown"),
+			new("viaConformanceRedirect", viaConformanceRedirect ? "true" : "false"),
+		};
+		if (missReason is not null)
+			terminalAttributes.Add(new("missReason", missReason));
+		scope.Complete(outcome, attributes: terminalAttributes);
+
+		if (observer.IsEnabled(CompilerEventKind.Decision, DiagnosticDetail.L1))
+		{
+			observer.Emit(new CompilerEvent
+			{
+				Event = "decision.made",
+				Kind = CompilerEventKind.Decision,
+				Detail = DiagnosticDetail.L1,
+				Stage = "symbols.resolve",
+				Outcome = outcome,
+				Reason = missReason,
+				SnapshotId = _snapshot.SnapshotId,
+				Attributes =
+				[
+					new("position", position.ToString()),
+					new("resolvedKind", resolvedKind ?? "unknown"),
+					new("viaConformanceRedirect", viaConformanceRedirect ? "true" : "false"),
+				],
+			});
+		}
+
+		return result;
+	}
+
+	private SymbolLookupResult? LookupCore(
+		DocumentId document,
+		int position,
+		ICompilerObserver observer,
+		out string? missReason,
+		out string? resolvedKind,
+		out bool viaConformanceRedirect)
+	{
+		missReason = null;
+		resolvedKind = null;
+		viaConformanceRedirect = false;
+
+		if (_binderContext is null || !_analysis.UnitsByDocument.TryGetValue(document, out var unit) || unit is null)
+		{
+			missReason = "no_bound_unit";
 			return null;
+		}
+
+		if (LookupBuiltinOperator(unit, position) is { } builtinResult)
+		{
+			resolvedKind = "builtin_operator";
+			return builtinResult;
+		}
+
+		var binderContext = _binderContext;
+		var resolved = ObservedBinderLock.Run(
+			observer,
+			binderContext,
+			"binder_context.lock_wait",
+			() => CompletionQuery.ResolveSymbol(binderContext, unit, position));
+
+		if (resolved is null)
+		{
+			missReason = "unresolved";
+			return null;
+		}
+
+		if (!_byDeclaration.TryGetValue(resolved.Declaration, out var entry))
+		{
+			missReason = "not_in_declaration_index";
+			return null;
+		}
 
 		// An extension method that implements an interface member navigates to the interface's
 		// declaration (F12). Calls to the method keep the implementation: only the declaration
@@ -96,8 +261,10 @@ internal sealed class NavigationIndex
 			_conformanceTargets.TryGetValue(entry, out var interfaceEntry))
 		{
 			entry = interfaceEntry;
+			viaConformanceRedirect = true;
 		}
 
+		resolvedKind = resolved.Kind.ToString();
 		return new SymbolLookupResult(
 			entry.Id,
 			new TextSpan(resolved.SubjectSpan.Start, resolved.SubjectSpan.Length),
@@ -207,9 +374,40 @@ internal sealed class NavigationIndex
 	internal IReadOnlyList<SymbolDefinition> Definitions(SymbolId symbol)
 	{
 		if (symbol.SnapshotToken != _token)
+		{
+			EmitMappingRejected("foreign_snapshot");
 			return [];
+		}
 
-		return _byId.TryGetValue(symbol.Value, out var entry) ? entry.Definitions : [];
+		if (!_byId.TryGetValue(symbol.Value, out var entry))
+		{
+			EmitMappingRejected("unknown_symbol");
+			return [];
+		}
+
+		return entry.Definitions;
+	}
+
+	/// <summary>
+	/// Records that a definition mapping was refused (foreign or unknown symbol) so an empty F12
+	/// result is always explainable from the trace rather than indistinguishable from "no definitions".
+	/// </summary>
+	private void EmitMappingRejected(string reason)
+	{
+		var observer = _snapshot.Observer;
+		if (!observer.IsEnabled(CompilerEventKind.Decision, DiagnosticDetail.L1))
+			return;
+
+		observer.Emit(new CompilerEvent
+		{
+			Event = "definition.mapping.rejected",
+			Kind = CompilerEventKind.Decision,
+			Detail = DiagnosticDetail.L1,
+			Stage = "navigation.definition",
+			Outcome = "rejected",
+			Reason = reason,
+			SnapshotId = _snapshot.SnapshotId,
+		});
 	}
 
 	internal IReadOnlyList<PackageSourceDefinition> PackageSourceDefinitions(SymbolId symbol)

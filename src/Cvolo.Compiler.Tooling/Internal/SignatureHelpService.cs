@@ -7,6 +7,8 @@ using Cvolo.Compiler.Tooling.SignatureHelp;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
 using Cvolo.Core.AST.Expressions;
+using Cvolo.Observability;
+using Cvolo.Observability.Abstractions;
 
 namespace Cvolo.Compiler.Tooling.Internal;
 
@@ -21,7 +23,40 @@ namespace Cvolo.Compiler.Tooling.Internal;
 internal static class SignatureHelpService
 {
 	internal static SignatureHelpInfo? Compute(ProjectSnapshot snapshot, DocumentSnapshot document, int position)
-		=> Compute(snapshot, document, position, allowIncompleteProbe: true);
+	{
+		var observer = snapshot.Observer;
+		var scope = observer.BeginOperation(new OperationStart
+		{
+			Event = "signature_help.document.started",
+			Stage = "signature_help.document",
+			Kind = CompilerEventKind.Phase,
+			Detail = DiagnosticDetail.L0,
+			SnapshotId = snapshot.SnapshotId,
+		});
+
+		try
+		{
+			var result = Compute(snapshot, document, position, allowIncompleteProbe: true);
+			if (result is null)
+			{
+				scope.Complete("not_found");
+			}
+			else
+			{
+				scope.Complete("success", attributes: new KeyValuePair<string, string>[]
+				{
+					new("signatureCount", result.Signatures.Count.ToString()),
+				});
+			}
+
+			return result;
+		}
+		catch
+		{
+			scope.Complete("faulted", reason: "exception");
+			throw;
+		}
+	}
 
 	private static SignatureHelpInfo? Compute(ProjectSnapshot snapshot, DocumentSnapshot document, int position, bool allowIncompleteProbe)
 	{
@@ -39,8 +74,7 @@ internal static class SignatureHelpService
 
 		var source = document.Text.ToString();
 
-		SignatureHelpInfo? recovered;
-		lock (context)
+		var recovered = ObservedBinderLock.Run(snapshot.Observer, context, "binder_context.lock_wait", () =>
 		{
 			if (context.ResolvedCalls.TryGetValue(call, out var function))
 				return Build(function, context, call, source, position);
@@ -48,8 +82,8 @@ internal static class SignatureHelpService
 			if (context.ResolvedDelegateCalls.TryGetValue(call, out var delegateType))
 				return Build(delegateType, call, source, position);
 
-			recovered = RecoverBySyntax(context, unit, call, source, position);
-		}
+			return RecoverBySyntax(context, unit, call, source, position);
+		});
 
 		// A parser-recovered call node can exist without a bound overload.
 		// In that case the targeted syntax probe must still get a chance.

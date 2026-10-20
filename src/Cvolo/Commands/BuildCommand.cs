@@ -72,7 +72,7 @@ internal sealed class BuildCommand : Command
 			if (!DebugOptionResolver.TryResolve(debugVal, parseResult, optOption, optLevel, configurationVal, out var resolvedOptLevel, out var debugOptionError))
 			{
 				DebugOptionResolver.Report(debugOptionError!);
-				Environment.Exit(1);
+				return 1;
 			}
 
 			optLevel = resolvedOptLevel;
@@ -94,8 +94,7 @@ internal sealed class BuildCommand : Command
 				if (incremental is { } cached && IncrementalBuildState.IsUpToDate(cached.Graph, cached.BuildKey, cached.OutputPath, cached.Configuration))
 				{
 					Console.WriteLine($"Up-to-date -> {cached.OutputPath}");
-					Environment.Exit(0);
-					return;
+					return 0;
 				}
 
 				var useProjectReferenceArtifacts = false;
@@ -121,8 +120,7 @@ internal sealed class BuildCommand : Command
 					}
 
 					Console.WriteLine($"{AnsiConsoleStyle.Success("Built")} {AnsiConsoleStyle.Value(packageResult!.PackageId)} {AnsiConsoleStyle.Value(packageResult.Version.ToString())} -> {AnsiConsoleStyle.Path(packageResult.OutputPath)}");
-					Environment.Exit(0);
-					return;
+					return 0;
 				}
 
 				var exitCode = _compilerDriver.Compile(path, llvmOnly, isShared, emitIrVal, optLevel, emitLowered: emitLoweredVal, noWarn: noWarnVal, verbose: parseResult.GetValue(verboseOption), legacyVisibility: legacyVisibilityVal, strictOption: strictOptionVal, noTbaa: noTbaaVal, targetOs: targetOsVal, checkedFfiBounds: checkedFfiBoundsVal, configuration: configurationVal, useProjectReferencePackages: useProjectReferenceArtifacts, freestanding: freestandingVal, debug: debugVal);
@@ -132,19 +130,19 @@ internal sealed class BuildCommand : Command
 					ProjectBuildPlan.RecordSuccessful(compiledBuild.Graph, compiledBuild.BuildKey, compiledBuild.Configuration);
 				}
 
-				Environment.Exit(exitCode);
+				return exitCode;
 			}
 			catch (PackageException ex)
 			{
 				Console.Error.WriteLine($"error {ex.Code}: {FormatPackageExceptionMessage(ex)}");
 				if (!string.IsNullOrWhiteSpace(ex.Detail))
 					Console.Error.WriteLine(ex.Detail);
-				Environment.Exit(1);
+				return 1;
 			}
 			catch (Exception ex)
 			{
 				Console.Error.WriteLine($"error: {DescribeException(ex)}");
-				Environment.Exit(1);
+				return 1;
 			}
 		});
 	}

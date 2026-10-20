@@ -7,6 +7,8 @@ using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
 using Cvolo.Core.AST.Directives;
 using Cvolo.Core.AST.Expressions;
+using Cvolo.Observability;
+using Cvolo.Observability.Abstractions;
 using Cvolo.Syntax.Antlr;
 using Antlr4.Runtime;
 
@@ -21,22 +23,43 @@ internal static class SemanticTokenService
 {
 	internal static IReadOnlyList<SemanticTokenInfo> Compute(ProjectSnapshot snapshot, DocumentSnapshot document)
 	{
+		var observer = snapshot.Observer;
+		var scope = observer.BeginOperation(new OperationStart
+		{
+			Event = "classification.document.started",
+			Stage = "classification.document",
+			Kind = CompilerEventKind.Phase,
+			Detail = DiagnosticDetail.L1,
+			SnapshotId = snapshot.SnapshotId,
+		});
+
 		var analysis = snapshot.GetAnalysis();
 		if (analysis.BinderContext is null
 			|| !analysis.UnitsByDocument.TryGetValue(document.Id, out var unit)
 			|| unit is null)
 		{
+			scope.Complete("not_available", attributes: [new KeyValuePair<string, string>("unavailableReason", "no_bound_unit")]);
 			return [];
 		}
 
 		var source = document.Text.ToString();
 		var tokens = new List<SemanticTokenInfo>();
 		var seen = new HashSet<(int Start, int Length)>();
+		var candidateCount = 0;
+		var unresolvedCount = 0;
+		var firstUnresolvedPosition = -1;
+		var binderContext = analysis.BinderContext;
 
-		lock (analysis.BinderContext)
+		ObservedBinderLock.Run(observer, binderContext, "binder_context.lock_wait", () =>
 		{
 			foreach (var node in Descendants(unit))
 			{
+				if (node is NamespaceDeclarationSyntax declaration)
+					AddNamespaceHeaderTokens(node, declaration.Name, source, tokens, seen);
+				else if (node is UsingDirectiveSyntax import &&
+					NamespaceExists(binderContext, import.NamespaceName))
+					AddNamespaceHeaderTokens(node, import.NamespaceName, source, tokens, seen);
+
 				if (TryAddDirectToken(node, source, tokens, seen))
 					continue;
 
@@ -44,24 +67,30 @@ internal static class SemanticTokenService
 				// no callee child node), so a name that denotes a type would otherwise fall
 				// back to the lexical function colour. Resolve it as a type here.
 				if (node is CallExpressionSyntax calleeTypeCall)
-					TryAddCalleeTypeToken(analysis.BinderContext, unit, calleeTypeCall, source, tokens, seen);
+					TryAddCalleeTypeToken(binderContext, unit, calleeTypeCall, source, tokens, seen);
 
 				// A namespace or namespace-alias receiver in a qualified reference resolves to no
 				// value/type symbol, so it would otherwise lose its scope colour. Classify the
 				// receiver name directly when it names a declared namespace or alias.
 				if (node is MemberAccessExpressionSyntax memberAccess)
-					TryAddNamespaceReceiverToken(analysis.BinderContext, unit, memberAccess.Expression, source, tokens, seen);
+					TryAddNamespaceReceiverToken(binderContext, unit, memberAccess.Expression, source, tokens, seen);
 				else if (node is CallExpressionSyntax receiverCall)
-					TryAddNamespaceReceiverToken(analysis.BinderContext, unit, receiverCall, source, tokens, seen);
+					TryAddNamespaceReceiverToken(binderContext, unit, receiverCall, source, tokens, seen);
 
 				foreach (var position in CandidatePositions(node, source))
 				{
 					if (position < 0)
 						continue;
 
-					var resolved = CompletionQuery.ResolveSymbol(analysis.BinderContext, unit, position, includeDocumentationAndType: false);
+					candidateCount++;
+					var resolved = CompletionQuery.ResolveSymbol(binderContext, unit, position, includeDocumentationAndType: false);
 					if (resolved is null)
+					{
+						unresolvedCount++;
+						if (firstUnresolvedPosition < 0)
+							firstUnresolvedPosition = position;
 						continue;
+					}
 
 					var span = new TextSpan(resolved.SubjectSpan.Start, resolved.SubjectSpan.Length);
 					if (span.Length <= 0 || !seen.Add((span.Start, span.Length)))
@@ -74,10 +103,40 @@ internal static class SemanticTokenService
 			// Recovery masks incomplete declarations from the syntax tree, but the
 			// original source still contains their type heads. Restore semantic
 			// colours only when those names resolve to real compiler types.
-			AddRecoveredTypeHeads(analysis.BinderContext, unit, source, tokens, seen);
+			AddRecoveredTypeHeads(binderContext, unit, source, tokens, seen);
+			return true;
+		});
+
+		var ordered = tokens
+			.OrderBy(token => token.Span.Start)
+			.ThenBy(token => token.Span.Length)
+			.ToArray();
+
+		var summaryAttributes = new List<KeyValuePair<string, string>>
+		{
+			new("tokenCount", ordered.Length.ToString()),
+			new("candidateCount", candidateCount.ToString()),
+			new("unresolvedCount", unresolvedCount.ToString()),
+		};
+		if (firstUnresolvedPosition >= 0)
+			summaryAttributes.Add(new("firstUnresolvedPosition", firstUnresolvedPosition.ToString()));
+
+		if (observer.IsEnabled(CompilerEventKind.Metric, DiagnosticDetail.L1))
+		{
+			observer.Emit(new CompilerEvent
+			{
+				Event = "semantic_tokens.encoded",
+				Kind = CompilerEventKind.Metric,
+				Detail = DiagnosticDetail.L1,
+				Stage = "classification.document",
+				Outcome = "encoded",
+				SnapshotId = snapshot.SnapshotId,
+				Attributes = summaryAttributes,
+			});
 		}
 
-		return [.. tokens.OrderBy(token => token.Span.Start).ThenBy(token => token.Span.Length)];
+		scope.Complete("success", attributes: summaryAttributes);
+		return ordered;
 	}
 
 	/// <summary>
@@ -283,10 +342,45 @@ internal static class SemanticTokenService
 		return false;
 	}
 
+	private static bool NamespaceExists(BindingContext context, string name) =>
+		context.DeclaredNamespaces.Contains(name) ||
+		context.DeclaredNamespaces.Any(ns => ns.StartsWith(name + ".", StringComparison.Ordinal));
+
+	private static void AddNamespaceHeaderTokens(
+		SyntaxNode node, string name, string source,
+		List<SemanticTokenInfo> tokens, HashSet<(int Start, int Length)> seen)
+	{
+		// Read actual lexer spans: comments and whitespace may separate dotted names.
+		var lexer = new CvoloLexer(new AntlrInputStream(source[node.Span.Start..]));
+		lexer.RemoveErrorListeners();
+		var header = new List<IToken>();
+		for (var token = lexer.NextToken(); token.Type != TokenConstants.EOF; token = lexer.NextToken())
+		{
+			if (token.Text is ";" or "{")
+				break;
+			if (token.Channel == Lexer.DefaultTokenChannel)
+				header.Add(token);
+		}
+		var start = header.FindIndex(token => token.Text == "=");
+		start = start >= 0 ? start + 1 : header.FindIndex(token => token.Text is "namespace" or "using") + 1;
+		var parts = name.Split('.');
+		if (start <= 0 || header.Count - start != parts.Length * 2 - 1)
+			return;
+		for (var i = 0; i < parts.Length; i++)
+			if (header[start + i * 2].Text != parts[i] ||
+				(i > 0 && header[start + i * 2 - 1].Text != "."))
+				return;
+		for (var i = 0; i < parts.Length; i++)
+		{
+			var token = header[start + i * 2];
+			AddDirectToken(tokens, seen,
+				new Cvolo.Core.Diagnostics.TextSpan(node.Span.Start + token.StartIndex, token.Text.Length),
+				ToolingSymbolKind.Namespace);
+		}
+	}
+
 	/// <summary>
-	/// Classifies the receiver of a qualified reference when the receiver names a declared
-	/// namespace or a namespace alias. Such a receiver has no value/type symbol, so the
-	/// resolver cannot classify it; a real symbol of the same spelling always wins.
+	/// Classifies a namespace receiver unless a real value/type symbol shadows it.
 	/// </summary>
 	private static void TryAddNamespaceReceiverToken(
 		BindingContext context,

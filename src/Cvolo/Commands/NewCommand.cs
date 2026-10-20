@@ -16,12 +16,12 @@ internal sealed class NewCommand : Command
 			try
 			{
 				CompilationProject.CreateNewProject(name);
-				Environment.Exit(0);
+				return 0;
 			}
 			catch (Exception ex)
 			{
 				Console.Error.WriteLine($"Error: {ex.Message}");
-				Environment.Exit(1);
+				return 1;
 			}
 		});
 	}

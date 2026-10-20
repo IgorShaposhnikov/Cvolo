@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<RootNamespace>Cvolo.Observability.Abstractions</RootNamespace>
+		<Description>Narrow typed observability contracts for Cvolo compiler/tooling (no disk, network, JSON, LSP or Tooling dependencies).</Description>
+	</PropertyGroup>
+
+</Project>

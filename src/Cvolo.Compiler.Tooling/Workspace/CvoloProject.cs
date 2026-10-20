@@ -62,7 +62,7 @@ public sealed class CvoloProject
 			_documentIds,
 			allowRestore: false);
 
-		var snapshot = ProjectSnapshot.CreateOwned(Id, documents, externalUnits, packageSources, baseSourceFiles);
+		var snapshot = ProjectSnapshot.CreateOwned(Id, documents, externalUnits, packageSources, baseSourceFiles, observer: _workspace.Observer);
 		return new CvoloProject(
 			_workspace,
 			Id,

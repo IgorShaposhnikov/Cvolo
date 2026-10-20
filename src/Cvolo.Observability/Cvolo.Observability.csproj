@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<RootNamespace>Cvolo.Observability</RootNamespace>
+		<Description>Cvolo observability runtime: bounded queue, JSONL writer/reader, validation and replay support.</Description>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\Cvolo.Observability.Abstractions\Cvolo.Observability.Abstractions.csproj" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<InternalsVisibleTo Include="Cvolo.Tests.Observability" />
+	</ItemGroup>
+
+</Project>

@@ -20,6 +20,25 @@ public sealed class SemanticTokenTests
 		=> [.. tokens.Where(t => document.Text.GetText(t.Span) == text)];
 
 	[Fact]
+	public void NamespaceHeaders_ClassifyIndividualIdentifiersAndSkipComments()
+	{
+		const string source = "using M = Sample /* comment */ . Tools;\nnamespace Sample.Tools;\nint main() { return 0; }\n";
+		var x = Open(source);
+		using (x.Fixture)
+		{
+			var tokens = x.Document.GetSemanticTokens();
+			foreach (var name in new[] { "Sample", "Tools" })
+			{
+				var matches = WithText(x.Document, tokens, name);
+				Assert.Equal(2, matches.Count);
+				Assert.All(matches, token => Assert.Equal(ToolingSymbolKind.Namespace, token.Kind));
+			}
+			Assert.Single(WithText(x.Document, tokens, "M"));
+			Assert.DoesNotContain(tokens, token => x.Document.Text.GetText(token.Span).Contains('.'));
+		}
+	}
+
+	[Fact]
 	public void QualifiedSdkCall_ClassifiesEveryNamespaceSegment()
 	{
 		const string source =

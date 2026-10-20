@@ -31,8 +31,7 @@ internal sealed class CheckCommand : Command
 			var legacyVisibilityVal = parseResult.GetValue(legacyVisibilityOption);
 			var strictOptionVal = parseResult.GetValue(strictOption);
 			var freestandingVal = parseResult.GetValue(freestandingOption);
-			var exitCode = _compilerDriver.Compile(path, llvmOnly: false, isShared: false, emitIr: false, optLevel: "O0", checkOnly: true, legacyVisibility: legacyVisibilityVal, strictOption: strictOptionVal, format: formatVal, freestanding: freestandingVal);
-			Environment.Exit(exitCode);
+			return _compilerDriver.Compile(path, llvmOnly: false, isShared: false, emitIr: false, optLevel: "O0", checkOnly: true, legacyVisibility: legacyVisibilityVal, strictOption: strictOptionVal, format: formatVal, freestanding: freestandingVal);
 		});
 	}
 }
