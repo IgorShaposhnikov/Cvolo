@@ -9,8 +9,9 @@ namespace Cvolo.Compiler.Tooling.Internal;
 /// which consumers reused the completed value, and which consumers re-observed a cached
 /// failure. The computation itself keeps <see cref="Lazy{T}"/> semantics exactly — execution
 /// and publication by a single winner, cached exceptions — observability never changes
-/// semantics. When the observer has the lazy detail level disabled, <see cref="Value"/>
-/// reduces to a plain lazy read: no atomics, no allocations (§30, §59.1).
+/// semantics. Disabled recording does not emit events or allocate diagnostic payloads.
+/// A first access while disabled still tracks the computation state so a later transition
+/// to detailed recording cannot invent a new computation (§56, OBS-AUD-002).
 /// </summary>
 internal sealed class ObservedLazy<T>
 {
@@ -42,10 +43,9 @@ internal sealed class ObservedLazy<T>
 	{
 		get
 		{
-			// Hot path when disabled: plain lazy access, nothing else (§59.1 zero-cost off).
 			if (!_observer.IsEnabled(CompilerEventKind.Phase, DiagnosticDetail.L1))
 			{
-				return _inner.Value;
+				return ReadWithoutEvents();
 			}
 
 			var observed = Volatile.Read(ref _state);
@@ -78,6 +78,41 @@ internal sealed class ObservedLazy<T>
 				},
 				outcome: observed == StateFaulted ? "faulted" : null);
 			return _inner.Value;
+		}
+	}
+
+	/// <summary>
+	/// Observe the existing Lazy without emitting. A cold disabled access must claim
+	/// StateComputing before entering Lazy.Value: otherwise enabling detailed recording
+	/// while that factory is running could incorrectly report a second consumer as the
+	/// computation's starter. The cold CAS is performed at most once; no event payload,
+	/// timestamp, or disk I/O is produced. This small state bookkeeping is necessary
+	/// for truthful mode transitions, including a cached failure.
+	/// </summary>
+	private T ReadWithoutEvents()
+	{
+		var observed = Volatile.Read(ref _state);
+		if (observed == StateEmpty)
+		{
+			Interlocked.CompareExchange(ref _state, StateComputing, StateEmpty);
+		}
+
+		try
+		{
+			var value = _inner.Value;
+			if (observed != StateCompleted)
+			{
+				Volatile.Write(ref _state, StateCompleted);
+			}
+			return value;
+		}
+		catch
+		{
+			if (observed != StateFaulted)
+			{
+				Volatile.Write(ref _state, StateFaulted);
+			}
+			throw;
 		}
 	}
 
