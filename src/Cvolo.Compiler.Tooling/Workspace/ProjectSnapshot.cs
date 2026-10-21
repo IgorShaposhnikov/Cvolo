@@ -52,7 +52,7 @@ public sealed class ProjectSnapshot
 	/// enabled later (§56, OBS-AUD-002). Concurrent first reads publish one winner;
 	/// switching recording off again never changes an assigned identity.
 	/// </summary>
-	internal string? SnapshotId
+	public string? SnapshotId
 	{
 		get
 		{

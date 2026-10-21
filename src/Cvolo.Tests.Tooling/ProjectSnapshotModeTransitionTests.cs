@@ -38,6 +38,33 @@ public sealed class ProjectSnapshotModeTransitionTests
 	}
 
 	[Fact]
+	public void Snapshot_identity_has_a_public_read_only_contract_without_allocating_while_off()
+	{
+		var identityProperty = typeof(ProjectSnapshot).GetProperty(
+			nameof(ProjectSnapshot.SnapshotId),
+			System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public);
+		Assert.NotNull(identityProperty);
+		Assert.True(identityProperty.CanRead);
+		Assert.False(identityProperty.CanWrite);
+		Assert.True(identityProperty.GetMethod!.IsPublic);
+
+		using var fixture = TempProject.Create(("Main.cvl", MainText));
+		var (observer, _) = CreateOffObserver();
+		var snapshot = CvoloWorkspace.Create(observer).OpenProject(fixture.ProjectFilePath).InitialSnapshot;
+
+		Assert.Null(identityProperty.GetValue(snapshot));
+		Assert.Null(snapshot.SnapshotId);
+		observer.SetMode(ObservabilityMode.Detailed);
+
+		var actualId = Assert.IsType<string>(identityProperty.GetValue(snapshot));
+		Assert.Equal(snapshot.SnapshotId, actualId);
+
+		// The real snapshot identity survives a transition back to Off.
+		observer.SetMode(ObservabilityMode.Off);
+		Assert.Equal(actualId, identityProperty.GetValue(snapshot));
+	}
+
+	[Fact]
 	public void Snapshot_created_off_gets_a_stable_id_and_reports_it_on_first_lazy_start()
 	{
 		using var fixture = TempProject.Create(("Main.cvl", MainText));
