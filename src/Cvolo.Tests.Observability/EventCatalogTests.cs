@@ -68,6 +68,55 @@ public class EventCatalogTests
 		Assert.Contains(violations, v => v.StartsWith("missing_field:operation.completed:operationId"));
 	}
 
+	[Theory]
+	[InlineData("rpc.request.received", "lsp")]
+	[InlineData("rpc.response.sent", "lsp")]
+	[InlineData("document.update.rejected", "core")]
+	[InlineData("diagnostics.publish_sent", "lsp")]
+	[InlineData("snapshot.capture.completed", "core")]
+	[InlineData("feature.request.started", "lsp.feature")]
+	public void Kernel_catalog_registers_LSP_and_core_events(string code, string component)
+	{
+		var catalog = EventCatalog.CreateKernelCatalog();
+		Assert.True(catalog.TryGet(code, out var definition), $"Missing event: {code}");
+		Assert.Equal(component, definition.Component);
+	}
+
+	[Fact]
+	public void Rpc_received_requires_real_uid_and_valid_outcome()
+	{
+		var catalog = EventCatalog.CreateKernelCatalog();
+		var valid = new CompilerEvent
+		{
+			Event = "rpc.request.received",
+			Kind = CompilerEventKind.Phase,
+			Detail = DiagnosticDetail.L0,
+			Priority = EventPriority.P1,
+			Outcome = "received",
+			RequestUid = "server-1/rpc/1",
+			RpcRequestId = RpcRequestId.Number(1),
+		};
+		Assert.Empty(catalog.Validate(valid));
+
+		var missingUid = ObservabilityTestSupport.Event("rpc.request.received", outcome: "received");
+		Assert.Contains(catalog.Validate(missingUid),
+			v => v == "missing_field:rpc.request.received:requestUid");
+		Assert.Contains(catalog.Validate(valid with { Outcome = "success" }),
+			v => v == "unknown_outcome:rpc.request.received:success");
+	}
+
+	[Fact]
+	public void Rejected_document_update_requires_machine_reason()
+	{
+		var catalog = EventCatalog.CreateKernelCatalog();
+		var missing = ObservabilityTestSupport.Event("document.update.rejected", outcome: "rejected");
+		Assert.Contains(catalog.Validate(missing),
+			v => v == "missing_field:document.update.rejected:reason");
+		var rejected = ObservabilityTestSupport.Event(
+			"document.update.rejected", outcome: "rejected", reason: "stale_version");
+		Assert.Empty(catalog.Validate(rejected));
+	}
+
 	[Fact]
 	public void Hot_path_counters_accumulate_the_same_classifications()
 	{

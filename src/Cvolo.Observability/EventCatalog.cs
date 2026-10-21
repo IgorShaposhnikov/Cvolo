@@ -561,6 +561,518 @@ public sealed class EventCatalog
 				AllowedReasons = new HashSet<string>(["nonzero_exit_code", "exception"], StringComparer.Ordinal),
 				RequiredFields = ["operationId", "outcome", "reason"],
 			},
+			new EventDefinition
+			{
+				EventCode = "server.start",
+				Component = "lsp",
+			},
+			new EventDefinition
+			{
+				EventCode = "server.stop",
+				Component = "lsp",
+			},
+			new EventDefinition
+			{
+				EventCode = "server.crash_detected",
+				Component = "lsp",
+				RequiredFields = ["reason"],
+			},
+			new EventDefinition
+			{
+				EventCode = "transport.ready",
+				Component = "lsp",
+			},
+			new EventDefinition
+			{
+				EventCode = "rpc.request.received",
+				Component = "lsp",
+				AllowedOutcomes = new HashSet<string>(["received"], StringComparer.Ordinal),
+				RequiredFields = ["requestUid"],
+			},
+			new EventDefinition
+			{
+				EventCode = "rpc.response.sent",
+				Component = "lsp",
+				AllowedOutcomes = new HashSet<string>(Outcomes("success", "error", "cancelled"), StringComparer.Ordinal),
+				RequiredFields = ["requestUid", "outcome"],
+			},
+			new EventDefinition
+			{
+				EventCode = "rpc.notification.received",
+				Component = "lsp",
+				AllowedOutcomes = new HashSet<string>(["received"], StringComparer.Ordinal),
+			},
+			new EventDefinition
+			{
+				EventCode = "document.update.received",
+				Component = "core",
+				AllowedOutcomes = new HashSet<string>(["received"], StringComparer.Ordinal),
+				RequiredFields = ["outcome"],
+			},
+			new EventDefinition
+			{
+				EventCode = "document.update.applied",
+				Component = "core",
+				AllowedOutcomes = new HashSet<string>(["applied"], StringComparer.Ordinal),
+				RequiredFields = ["outcome"],
+			},
+			new EventDefinition
+			{
+				EventCode = "document.update.rejected",
+				Component = "core",
+				AllowedOutcomes = new HashSet<string>(["rejected"], StringComparer.Ordinal),
+				RequiredFields = ["outcome", "reason"],
+			},
+			new EventDefinition
+			{
+				EventCode = "document.did_open",
+				Component = "lsp",
+				AllowedOutcomes = new HashSet<string>(Outcomes("applied", "rejected"), StringComparer.Ordinal),
+				RequiredFields = ["outcome"],
+			},
+			new EventDefinition
+			{
+				EventCode = "document.did_change.received",
+				Component = "lsp",
+				AllowedOutcomes = new HashSet<string>(["received"], StringComparer.Ordinal),
+				RequiredFields = ["outcome"],
+			},
+			new EventDefinition
+			{
+				EventCode = "document.did_change.applied",
+				Component = "lsp",
+				AllowedOutcomes = new HashSet<string>(["applied"], StringComparer.Ordinal),
+				RequiredFields = ["outcome"],
+			},
+			new EventDefinition
+			{
+				EventCode = "document.did_change.rejected",
+				Component = "lsp",
+				AllowedOutcomes = new HashSet<string>(["rejected"], StringComparer.Ordinal),
+				RequiredFields = ["outcome", "reason"],
+			},
+			new EventDefinition
+			{
+				EventCode = "document.did_close",
+				Component = "lsp",
+				AllowedOutcomes = new HashSet<string>(Outcomes("applied", "rejected"), StringComparer.Ordinal),
+				RequiredFields = ["outcome"],
+			},
+			new EventDefinition
+			{
+				EventCode = "document.did_save",
+				Component = "lsp",
+				AllowedOutcomes = new HashSet<string>(Outcomes("applied", "rejected"), StringComparer.Ordinal),
+				RequiredFields = ["outcome"],
+			},
+			new EventDefinition
+			{
+				EventCode = "diagnostics.scheduled",
+				Component = "lsp",
+				AllowedOutcomes = new HashSet<string>(["scheduled"], StringComparer.Ordinal),
+			},
+			new EventDefinition
+			{
+				EventCode = "diagnostics.requested",
+				Component = "lsp",
+				AllowedOutcomes = new HashSet<string>(["requested"], StringComparer.Ordinal),
+			},
+			new EventDefinition
+			{
+				EventCode = "diagnostics.coalesced",
+				Component = "lsp",
+				AllowedOutcomes = new HashSet<string>(["coalesced"], StringComparer.Ordinal),
+			},
+			new EventDefinition
+			{
+				EventCode = "diagnostics.committed",
+				Component = "lsp",
+				AllowedOutcomes = new HashSet<string>(["committed"], StringComparer.Ordinal),
+			},
+			new EventDefinition
+			{
+				EventCode = "diagnostics.discarded",
+				Component = "lsp",
+				AllowedOutcomes = new HashSet<string>(["discarded"], StringComparer.Ordinal),
+				RequiredFields = ["reason"],
+			},
+			new EventDefinition
+			{
+				EventCode = "diagnostics.publish_attempt",
+				Component = "lsp",
+				AllowedOutcomes = new HashSet<string>(["attempted"], StringComparer.Ordinal),
+			},
+			new EventDefinition
+			{
+				EventCode = "diagnostics.publish_sent",
+				Component = "lsp",
+				AllowedOutcomes = new HashSet<string>(["sent"], StringComparer.Ordinal),
+			},
+			new EventDefinition
+			{
+				EventCode = "diagnostics.publish_faulted",
+				Component = "lsp",
+				AllowedOutcomes = new HashSet<string>(["faulted"], StringComparer.Ordinal),
+				RequiredFields = ["reason"],
+			},
+			new EventDefinition
+			{
+				EventCode = "diagnostics.clear_sent",
+				Component = "lsp",
+				AllowedOutcomes = new HashSet<string>(["sent"], StringComparer.Ordinal),
+			},
+			new EventDefinition
+			{
+				EventCode = "decision.diagnostics.publish",
+				Component = "lsp",
+				RequiredFields = ["outcome"],
+			},
+			new EventDefinition
+			{
+				EventCode = "worker.queued",
+				Component = "lsp",
+				AllowedOutcomes = new HashSet<string>(["queued"], StringComparer.Ordinal),
+			},
+			new EventDefinition
+			{
+				EventCode = "worker.started",
+				Component = "lsp",
+				AllowedOutcomes = new HashSet<string>(["started"], StringComparer.Ordinal),
+			},
+			new EventDefinition
+			{
+				EventCode = "analysis.started",
+				Component = "lsp",
+				AllowedOutcomes = new HashSet<string>(["started"], StringComparer.Ordinal),
+			},
+			new EventDefinition
+			{
+				EventCode = "analysis.completed",
+				Component = "lsp",
+				AllowedOutcomes = new HashSet<string>(Outcomes("success", "faulted"), StringComparer.Ordinal),
+			},
+			new EventDefinition
+			{
+				EventCode = "snapshot.created",
+				Component = "core",
+				AllowedOutcomes = new HashSet<string>(["created"], StringComparer.Ordinal),
+				RequiredFields = ["snapshotId"],
+			},
+			new EventDefinition
+			{
+				EventCode = "snapshot.advanced",
+				Component = "core",
+				AllowedOutcomes = new HashSet<string>(["advanced"], StringComparer.Ordinal),
+				RequiredFields = ["snapshotId"],
+			},
+			new EventDefinition
+			{
+				EventCode = "snapshot.fallback",
+				Component = "core",
+				AllowedOutcomes = new HashSet<string>(["fallback"], StringComparer.Ordinal),
+				RequiredFields = ["reason"],
+			},
+			new EventDefinition
+			{
+				EventCode = "snapshot.freshness_checked",
+				Component = "core",
+				AllowedOutcomes = new HashSet<string>(Outcomes("fresh", "stale"), StringComparer.Ordinal),
+				RequiredFields = ["outcome"],
+			},
+			new EventDefinition
+			{
+				EventCode = "snapshot.capture.started",
+				Component = "core",
+				AllowedOutcomes = new HashSet<string>(["started"], StringComparer.Ordinal),
+				RequiredFields = ["operationId"],
+			},
+			new EventDefinition
+			{
+				EventCode = "snapshot.capture.completed",
+				Component = "core",
+				AllowedOutcomes = new HashSet<string>(Outcomes("success", "faulted", "not_found"), StringComparer.Ordinal),
+				RequiredFields = ["operationId", "outcome"],
+			},
+			new EventDefinition
+			{
+				EventCode = "project.discovered",
+				Component = "core",
+				AllowedOutcomes = new HashSet<string>(["discovered"], StringComparer.Ordinal),
+			},
+			new EventDefinition
+			{
+				EventCode = "generation.changed",
+				Component = "core",
+				AllowedOutcomes = new HashSet<string>(["changed"], StringComparer.Ordinal),
+			},
+			new EventDefinition
+			{
+				EventCode = "cancellation.requested",
+				Component = "lsp",
+				AllowedOutcomes = new HashSet<string>(["requested"], StringComparer.Ordinal),
+			},
+			new EventDefinition
+			{
+				EventCode = "cancellation.observed",
+				Component = "lsp",
+				AllowedOutcomes = new HashSet<string>(["observed"], StringComparer.Ordinal),
+			},
+			new EventDefinition
+			{
+				EventCode = "cancellation.deferred",
+				Component = "lsp",
+				AllowedOutcomes = new HashSet<string>(["deferred"], StringComparer.Ordinal),
+			},
+			new EventDefinition
+			{
+				EventCode = "operation.completed_after_cancellation",
+				Component = "lsp",
+				AllowedOutcomes = new HashSet<string>(["completed"], StringComparer.Ordinal),
+			},
+			new EventDefinition
+			{
+				EventCode = "cache.hit",
+				Component = "core",
+			},
+			new EventDefinition
+			{
+				EventCode = "cache.miss",
+				Component = "core",
+			},
+			new EventDefinition
+			{
+				EventCode = "cache.invalidated",
+				Component = "core",
+				RequiredFields = ["reason"],
+			},
+			new EventDefinition
+			{
+				EventCode = "watchdog.slow_operation",
+				Component = "lsp",
+				RequiredFields = ["stage"],
+			},
+			new EventDefinition
+			{
+				EventCode = "request.started",
+				Component = "lsp",
+				AllowedOutcomes = new HashSet<string>(["started"], StringComparer.Ordinal),
+				RequiredFields = ["operationId"],
+			},
+			new EventDefinition
+			{
+				EventCode = "request.completed",
+				Component = "lsp",
+				AllowedOutcomes = new HashSet<string>(
+					Outcomes("success", "not_found", "unsupported", "unavailable", "degraded", "stale_discarded"),
+					StringComparer.Ordinal),
+				RequiredFields = ["outcome"],
+			},
+			new EventDefinition
+			{
+				EventCode = "request.faulted",
+				Component = "lsp",
+				AllowedOutcomes = new HashSet<string>(["faulted"], StringComparer.Ordinal),
+				RequiredFields = ["reason"],
+			},
+			new EventDefinition
+			{
+				EventCode = "request.cancelled",
+				Component = "lsp",
+				AllowedOutcomes = new HashSet<string>(["cancelled"], StringComparer.Ordinal),
+				RequiredFields = ["reason"],
+			},
+			new EventDefinition
+			{
+				EventCode = "definition.position_mapped",
+				Component = "lsp.definition",
+				AllowedOutcomes = new HashSet<string>(["mapped", "unmapped", "invalid"], StringComparer.Ordinal),
+				RequiredFields = ["outcome"],
+			},
+			new EventDefinition
+			{
+				EventCode = "symbol.lookup.started",
+				Component = "lsp.definition",
+				AllowedOutcomes = new HashSet<string>(["started"], StringComparer.Ordinal),
+				RequiredFields = ["operationId"],
+			},
+			new EventDefinition
+			{
+				EventCode = "symbol.lookup.completed",
+				Component = "lsp.definition",
+				AllowedOutcomes = new HashSet<string>(Outcomes("found", "not_found"), StringComparer.Ordinal),
+				RequiredFields = ["operationId", "outcome"],
+			},
+			new EventDefinition
+			{
+				EventCode = "symbol.lookup.faulted",
+				Component = "lsp.definition",
+				AllowedOutcomes = new HashSet<string>(["faulted"], StringComparer.Ordinal),
+				AllowedReasons = new HashSet<string>(["exception"], StringComparer.Ordinal),
+				RequiredFields = ["operationId", "reason"],
+			},
+			new EventDefinition
+			{
+				EventCode = "definition.targets.started",
+				Component = "lsp.definition",
+				AllowedOutcomes = new HashSet<string>(["started"], StringComparer.Ordinal),
+				RequiredFields = ["operationId"],
+			},
+			new EventDefinition
+			{
+				EventCode = "definition.targets.completed",
+				Component = "lsp.definition",
+				AllowedOutcomes = new HashSet<string>(Outcomes("found", "none"), StringComparer.Ordinal),
+				RequiredFields = ["operationId", "outcome"],
+			},
+			new EventDefinition
+			{
+				EventCode = "definition.mapping.started",
+				Component = "lsp.definition",
+				AllowedOutcomes = new HashSet<string>(["started"], StringComparer.Ordinal),
+				RequiredFields = ["operationId"],
+			},
+			new EventDefinition
+			{
+				EventCode = "definition.mapping.completed",
+				Component = "lsp.definition",
+				AllowedOutcomes = new HashSet<string>(Outcomes("mapped", "partial", "rejected"), StringComparer.Ordinal),
+				RequiredFields = ["operationId", "outcome"],
+			},
+			new EventDefinition
+			{
+				EventCode = "definition.response.completed",
+				Component = "lsp.definition",
+				AllowedOutcomes = new HashSet<string>(Outcomes("found", "not_found"), StringComparer.Ordinal),
+				RequiredFields = ["outcome"],
+			},
+			new EventDefinition
+			{
+				EventCode = "snapshot.advance.started",
+				Component = "lsp.adapter",
+				AllowedOutcomes = new HashSet<string>(["started"], StringComparer.Ordinal),
+				RequiredFields = ["operationId"],
+			},
+			new EventDefinition
+			{
+				EventCode = "snapshot.advance.completed",
+				Component = "lsp.adapter",
+				AllowedOutcomes = new HashSet<string>(Outcomes("advanced", "unchanged"), StringComparer.Ordinal),
+				RequiredFields = ["operationId", "outcome"],
+			},
+			new EventDefinition
+			{
+				EventCode = "snapshot.advance.fallback",
+				Component = "lsp.adapter",
+				AllowedOutcomes = new HashSet<string>(["fallback"], StringComparer.Ordinal),
+				RequiredFields = ["reason"],
+			},
+			new EventDefinition
+			{
+				EventCode = "package_session.opened",
+				Component = "lsp.adapter",
+				AllowedOutcomes = new HashSet<string>(Outcomes("opened", "existing"), StringComparer.Ordinal),
+				RequiredFields = ["outcome"],
+			},
+			new EventDefinition
+			{
+				EventCode = "backend.mapping.completed",
+				Component = "lsp.adapter",
+				AllowedOutcomes = new HashSet<string>(Outcomes("mapped", "rejected"), StringComparer.Ordinal),
+				RequiredFields = ["outcome"],
+			},
+			new EventDefinition
+			{
+				EventCode = "document.resolve.completed",
+				Component = "lsp.adapter",
+				AllowedOutcomes = new HashSet<string>(Outcomes("resolved", "refreshed", "not_found"), StringComparer.Ordinal),
+				RequiredFields = ["outcome"],
+			},
+			new EventDefinition
+			{
+				EventCode = "client.initialized",
+				Component = "lsp",
+				AllowedOutcomes = new HashSet<string>(Outcomes("initialized", "rejected"), StringComparer.Ordinal),
+				RequiredFields = ["outcome"],
+			},
+			new EventDefinition
+			{
+				EventCode = "capabilities.negotiated",
+				Component = "lsp",
+				AllowedOutcomes = new HashSet<string>(["negotiated"], StringComparer.Ordinal),
+				RequiredFields = ["outcome"],
+			},
+			new EventDefinition
+			{
+				EventCode = "configuration.applied",
+				Component = "lsp",
+				AllowedOutcomes = new HashSet<string>(Outcomes("applied", "unchanged"), StringComparer.Ordinal),
+				RequiredFields = ["outcome"],
+			},
+			new EventDefinition
+			{
+				EventCode = "feature.request.started",
+				Component = "lsp.feature",
+				AllowedOutcomes = new HashSet<string>(["started"], StringComparer.Ordinal),
+				RequiredFields = ["operationId"],
+			},
+			new EventDefinition
+			{
+				EventCode = "feature.request.completed",
+				Component = "lsp.feature",
+				AllowedOutcomes = new HashSet<string>(
+					Outcomes("success", "not_found", "unsupported", "unavailable", "stale_discarded"),
+					StringComparer.Ordinal),
+				RequiredFields = ["operationId", "outcome"],
+			},
+			new EventDefinition
+			{
+				EventCode = "feature.request.faulted",
+				Component = "lsp.feature",
+				AllowedOutcomes = new HashSet<string>(["faulted"], StringComparer.Ordinal),
+				RequiredFields = ["operationId", "reason"],
+			},
+			new EventDefinition
+			{
+				EventCode = "feature.request.cancelled",
+				Component = "lsp.feature",
+				AllowedOutcomes = new HashSet<string>(["cancelled"], StringComparer.Ordinal),
+				RequiredFields = ["operationId", "reason"],
+			},
+			new EventDefinition
+			{
+				EventCode = "feature.backend.started",
+				Component = "lsp.feature",
+				AllowedOutcomes = new HashSet<string>(["started"], StringComparer.Ordinal),
+				RequiredFields = ["operationId"],
+			},
+			new EventDefinition
+			{
+				EventCode = "feature.backend.completed",
+				Component = "lsp.feature",
+				AllowedOutcomes = new HashSet<string>(Outcomes("completed"), StringComparer.Ordinal),
+				RequiredFields = ["operationId", "outcome"],
+			},
+			new EventDefinition
+			{
+				EventCode = "feature.backend.faulted",
+				Component = "lsp.feature",
+				AllowedOutcomes = new HashSet<string>(["faulted"], StringComparer.Ordinal),
+				RequiredFields = ["operationId", "reason"],
+			},
+			new EventDefinition
+			{
+				EventCode = "feature.freshness.checked",
+				Component = "lsp.feature",
+				AllowedOutcomes = new HashSet<string>(Outcomes("fresh", "stale"), StringComparer.Ordinal),
+				RequiredFields = ["outcome"],
+			},
+			new EventDefinition
+			{
+				EventCode = "feature.mapping.rejected",
+				Component = "lsp.feature",
+				AllowedOutcomes = new HashSet<string>(["rejected"], StringComparer.Ordinal),
+				RequiredFields = ["outcome", "reason"],
+			},
 		]);
 	}
 }
