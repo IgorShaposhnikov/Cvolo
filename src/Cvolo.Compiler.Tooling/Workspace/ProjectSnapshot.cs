@@ -1,3 +1,4 @@
+using System.Threading;
 using Cvolo.Compiler.Tooling.Completion;
 using Cvolo.Compiler.Tooling.Internal;
 using Cvolo.Core.AST.Base;
@@ -23,6 +24,7 @@ public sealed class ProjectSnapshot
 	private readonly ObservedLazy<CodeFixIndex> _lazyCodeFixes;
 	private readonly ObservedLazy<OccurrenceIndex> _lazyOccurrences;
 	private readonly ObservedLazy<IReadOnlyDictionary<DocumentId, CompilationUnitSyntax?>> _lazyParsedUnits;
+	private string? _snapshotId;
 
 	/// <summary>
 	/// The identifier of the project this snapshot belongs to.
@@ -45,11 +47,25 @@ public sealed class ProjectSnapshot
 	internal ICompilerObserver Observer { get; }
 
 	/// <summary>
-	/// The identity of this snapshot in observability events (lazy init, analysis spans).
-	/// Allocated only when the observer has diagnostics enabled — disabled sessions pay
-	/// nothing (§59.1). Null when observability is off.
+	/// Stable identity of this snapshot in telemetry. No identity is allocated while
+	/// recording is off, but an existing snapshot can acquire one if recording is
+	/// enabled later (§56, OBS-AUD-002). Concurrent first reads publish one winner;
+	/// switching recording off again never changes an assigned identity.
 	/// </summary>
-	internal string? SnapshotId { get; }
+	internal string? SnapshotId
+	{
+		get
+		{
+			var existing = Volatile.Read(ref _snapshotId);
+			if (existing is not null || !Observer.IsEnabled(CompilerEventKind.Phase, DiagnosticDetail.L0))
+			{
+				return existing;
+			}
+
+			var created = "snap-" + Guid.NewGuid().ToString("N");
+			return Interlocked.CompareExchange(ref _snapshotId, created, null) ?? created;
+		}
+	}
 
 	private ProjectSnapshot(
 		ProjectId projectId,
@@ -67,16 +83,15 @@ public sealed class ProjectSnapshot
 		BaseSourceFiles = baseSourceFiles;
 		_preparsed = preparsed;
 		Observer = observer ?? NoopCompilerObserver.Instance;
-		SnapshotId = Observer.IsEnabled(CompilerEventKind.Phase, DiagnosticDetail.L0)
-			? "snap-" + Guid.NewGuid().ToString("N")
-			: null;
+		// Preserve eager identity when recording is already enabled; defer it otherwise.
+		var initialSnapshotId = SnapshotId;
 		DocumentIds = [.. documents.Keys];
-		_lazyAnalysis = new ObservedLazy<AnalyzedProject>(() => BinderAdapter.AnalyzeSnapshot(this), Observer, "analysis", SnapshotId);
-		_lazyNavigation = new ObservedLazy<NavigationIndex>(() => NavigationIndex.Build(this), Observer, "navigation", SnapshotId);
-		_lazyCodeFixes = new ObservedLazy<CodeFixIndex>(() => CodeFixIndex.Build(this), Observer, "code_fixes", SnapshotId);
-		_lazyOccurrences = new ObservedLazy<OccurrenceIndex>(() => OccurrenceIndex.Build(this), Observer, "occurrences", SnapshotId);
+		_lazyAnalysis = new ObservedLazy<AnalyzedProject>(() => BinderAdapter.AnalyzeSnapshot(this), Observer, "analysis", initialSnapshotId, this);
+		_lazyNavigation = new ObservedLazy<NavigationIndex>(() => NavigationIndex.Build(this), Observer, "navigation", initialSnapshotId, this);
+		_lazyCodeFixes = new ObservedLazy<CodeFixIndex>(() => CodeFixIndex.Build(this), Observer, "code_fixes", initialSnapshotId, this);
+		_lazyOccurrences = new ObservedLazy<OccurrenceIndex>(() => OccurrenceIndex.Build(this), Observer, "occurrences", initialSnapshotId, this);
 		_lazyParsedUnits = new ObservedLazy<IReadOnlyDictionary<DocumentId, CompilationUnitSyntax?>>(
-			() => ParseAll().UnitsByDocument, Observer, "parsed_units", SnapshotId);
+			() => ParseAll().UnitsByDocument, Observer, "parsed_units", initialSnapshotId, this);
 	}
 
 	internal static ProjectSnapshot CreateOwned(

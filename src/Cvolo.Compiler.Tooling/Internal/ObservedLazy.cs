@@ -24,15 +24,22 @@ internal sealed class ObservedLazy<T>
 	private readonly ICompilerObserver _observer;
 	private readonly string _kind;
 	private readonly string? _snapshotId;
+	private readonly ProjectSnapshot? _owningSnapshot;
 	private int _state;
 
-	public ObservedLazy(Func<T> factory, ICompilerObserver observer, string kind, string? snapshotId)
+	public ObservedLazy(
+		Func<T> factory,
+		ICompilerObserver observer,
+		string kind,
+		string? snapshotId,
+		ProjectSnapshot? owningSnapshot = null)
 	{
 		ArgumentNullException.ThrowIfNull(factory);
 		_inner = new Lazy<T>(factory, LazyThreadSafetyMode.ExecutionAndPublication);
 		_observer = observer;
 		_kind = kind;
 		_snapshotId = snapshotId;
+		_owningSnapshot = owningSnapshot;
 	}
 
 	/// <summary>
@@ -120,7 +127,11 @@ internal sealed class ObservedLazy<T>
 	{
 		// Catalog requires operationId on lazy.started_by_consumer; the id names the
 		// (snapshot, kind) computation — a real identity, not a fabricated correlation.
-		var operationId = _snapshotId is null ? _kind : $"{_snapshotId}:{_kind}";
+		// A snapshot can be created with recording off and acquire an identity later.
+		// Resolve at emission time so every lazy within it uses that same identity.
+		// Passing the owning snapshot adds no allocations while the recorder is off.
+		var snapshotId = _owningSnapshot?.SnapshotId ?? _snapshotId;
+		var operationId = snapshotId is null ? _kind : $"{snapshotId}:{_kind}";
 
 		_observer.Emit(new CompilerEvent
 		{
@@ -129,10 +140,11 @@ internal sealed class ObservedLazy<T>
 			Detail = DiagnosticDetail.L1,
 			Outcome = outcome,
 			OperationId = eventCode == "lazy.started_by_consumer" ? operationId : null,
+			SnapshotId = snapshotId,
 			Attributes =
 			[
 				new KeyValuePair<string, string>("kind", _kind),
-				new("snapshotId", _snapshotId ?? string.Empty),
+				new("snapshotId", snapshotId ?? string.Empty),
 			],
 		});
 	}
