@@ -150,9 +150,14 @@ public sealed class CompilerObserver : ICompilerObserver
 				_catalog.CountViolations(value);
 			}
 
-			// §59: clock read + small immutable stamp + non-blocking enqueue only.
+			// Strip sensitive metadata *before* the bounded collector sees it.
+			// This is a bounded projection of already-materialized attributes;
+			// Off mode returns above without inspecting the payload.
+			var projected = EventPrivacyFilter.Project(value);
+
+			// §59: monotonic stamp + non-blocking enqueue, no disk I/O.
 			var stamped = new StampedEvent(
-				value,
+				projected,
 				_sequences.Next(),
 				timestampUtcTicks: _clock.UtcNowTicks,
 				monotonicTicks: _clock.Timestamp,
@@ -179,7 +184,7 @@ public sealed class CompilerObserver : ICompilerObserver
 		try
 		{
 			var stamped = new StampedEvent(
-				value,
+				EventPrivacyFilter.Project(value),
 				_sequences.Next(),
 				timestampUtcTicks: _clock.UtcNowTicks,
 				monotonicTicks: _clock.Timestamp,
