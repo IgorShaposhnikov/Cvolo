@@ -7,8 +7,8 @@ namespace Cvolo.Observability;
 /// precedes queue insertion, so neither an in-memory collector nor the JSONL
 /// writer can recover the omitted payload from a StampedEvent.
 ///
-/// This guards attributes only. A full privacy contract must also classify
-/// scalar envelope fields and implement separately consented repro capture.
+/// Reason and string RPC IDs are sanitized as well as attributes. Full
+/// source consent/revoke and envelope-wide field policies remain outstanding.
 /// </summary>
 internal static class EventPrivacyFilter
 {
@@ -22,8 +22,10 @@ internal static class EventPrivacyFilter
     internal static CompilerEvent Project(in CompilerEvent value)
     {
         var attributes = value.Attributes;
+        var safeReason = SafeMachineReason(value.Reason);
+        var safeRpcId = SafeRpcId(value.RpcRequestId);
         if (attributes is null || attributes.Count == 0)
-            return value;
+            return value with { Reason = safeReason, RpcRequestId = safeRpcId };
 
         var sanitized = new List<KeyValuePair<string, string>>(attributes.Count + 1);
         var omitted = 0;
@@ -43,7 +45,54 @@ internal static class EventPrivacyFilter
             sanitized.Add(new("redaction.omittedAttributeCount", omitted.ToString(
                 System.Globalization.CultureInfo.InvariantCulture)));
 
-        return value with { Attributes = sanitized.ToArray() };
+        return value with
+        {
+            Reason = safeReason,
+            RpcRequestId = safeRpcId,
+            Attributes = sanitized.ToArray(),
+        };
+    }
+
+    private static string? SafeMachineReason(string? reason)
+    {
+        if (reason is null)
+            return null;
+        if (reason.Length is < 1 or > 96 || IsSensitiveValue(reason))
+            return "redacted_evidence";
+
+        // Machine reason codes are not free-form exception messages.
+        foreach (char ch in reason)
+        {
+            if (!((ch >= 'a' && ch <= 'z')
+                || (ch >= 'A' && ch <= 'Z')
+                || (ch >= '0' && ch <= '9')
+                || ch is '.' or '_' or '-' or ':'))
+                return "redacted_evidence";
+        }
+        return reason;
+    }
+
+    private static RpcRequestId? SafeRpcId(RpcRequestId? rpcRequestId)
+    {
+        if (rpcRequestId is not { IsNumber: false } textId)
+            return rpcRequestId;
+
+        // JSON-RPC allows arbitrary string request IDs. The generated
+        // RequestUid remains the correlation identity even if the client's
+        // original protocol ID has to be redacted.
+        string raw = textId.Value;
+        if (raw.Length is < 1 or > 96 || IsSensitiveValue(raw))
+            return RpcRequestId.Text("[redacted]");
+
+        foreach (char ch in raw)
+        {
+            if (!((ch >= 'a' && ch <= 'z')
+                || (ch >= 'A' && ch <= 'Z')
+                || (ch >= '0' && ch <= '9')
+                || ch is '.' or '_' or '-' or ':'))
+                return RpcRequestId.Text("[redacted]");
+        }
+        return rpcRequestId;
     }
 
     private static bool IsSensitiveKey(string? key)

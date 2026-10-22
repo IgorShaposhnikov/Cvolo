@@ -71,6 +71,54 @@ public sealed class EventPrivacyFilterTests
         Assert.Equal("1", attrs["redaction.omittedAttributeCount"]);
     }
 
+    [Theory]
+    [InlineData(ObservabilityMode.Basic)]
+    [InlineData(ObservabilityMode.Detailed)]
+    public void Scalar_reason_and_string_rpc_id_are_redacted_before_queue(
+        ObservabilityMode mode)
+    {
+        var observer = ObservabilityTestSupport.CreateObserver(mode, out var queue);
+        observer.Emit(new CompilerEvent
+        {
+            Event = "rpc.response.sent",
+            Kind = CompilerEventKind.Phase,
+            Detail = DiagnosticDetail.L0,
+            Outcome = "faulted",
+            Reason = @"C:\Users\person\private.cvl",
+            RpcRequestId = RpcRequestId.Text("file:///home/user/secret.cvl"),
+            RequestUid = "abc/rpc/5",
+        });
+
+        var recorded = Assert.Single(queue.DrainAll());
+        Assert.Equal("redacted_evidence", recorded.Event.Reason);
+        Assert.Equal("string", recorded.Event.RpcRequestId!.Value.Type);
+        Assert.Equal("[redacted]", recorded.Event.RpcRequestId!.Value.Value);
+        Assert.Equal("abc/rpc/5", recorded.Event.RequestUid);
+
+        var jsonl = Encoding.UTF8.GetString(
+            EventJson.SerializeLine(recorded, observer.Identity, "clock-test"));
+        Assert.DoesNotContain("private.cvl", jsonl);
+        Assert.DoesNotContain("secret.cvl", jsonl);
+    }
+
+    [Fact]
+    public void Safe_machine_reason_and_numeric_rpc_id_keep_protocol_type()
+    {
+        var observer = ObservabilityTestSupport.CreateObserver(ObservabilityMode.Basic, out var queue);
+        observer.Emit(new CompilerEvent
+        {
+            Event = "rpc.response.sent",
+            Kind = CompilerEventKind.Phase,
+            Detail = DiagnosticDetail.L0,
+            Reason = "symbol_not_found",
+            RpcRequestId = RpcRequestId.Number(42),
+        });
+        var evt = Assert.Single(queue.DrainAll()).Event;
+        Assert.Equal("symbol_not_found", evt.Reason);
+        Assert.True(evt.RpcRequestId!.Value.IsNumber);
+        Assert.Equal("42", evt.RpcRequestId.Value.Value);
+    }
+
     [Fact]
     public void Metadata_only_sanitizer_preserves_bounded_machine_attributes()
     {

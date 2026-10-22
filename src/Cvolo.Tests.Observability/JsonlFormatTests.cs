@@ -15,12 +15,13 @@ public class JsonlFormatTests
 		var identity = observer.Identity;
 
 		var nasty = "unicode: Hello, 世界, 🚀, ÅÆØ; quotes: \"`'; backslash: \\; newline: \n; tab: \t";
-		observer.Emit(ObservabilityTestSupport.Event(
+		// Test the low-level encoder directly: the runtime observer now
+		// redacts non-machine reason strings before queuing.
+		var raw = ObservabilityTestSupport.Event(
 			"operation.completed",
 			outcome: "success",
-			reason: nasty));
-
-		var stamped = Assert.Single(queue.DrainAll());
+			reason: nasty);
+		var stamped = new StampedEvent(raw, 1, clock.UtcNowTicks, clock.Timestamp, 0);
 		var line = System.Text.Encoding.UTF8.GetString(EventJson.SerializeLine(stamped, identity, clock.ClockId));
 
 		// One physical line: the newline inside the reason is escaped, never raw (§4 JSONL).
@@ -93,6 +94,8 @@ public class JsonlFormatTests
 		var written = document.RootElement.GetProperty("attributes");
 		Assert.Contains("InvalidOperationException", written.GetProperty("exception.type").GetString());
 		Assert.Contains("->", written.GetProperty("exception.type").GetString());
+		Assert.False(written.TryGetProperty("exception.message", out _));
+		Assert.True(written.TryGetProperty("redaction.omittedAttributeCount", out _));
 	}
 
 	[Fact]
