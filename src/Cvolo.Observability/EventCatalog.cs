@@ -1066,6 +1066,15 @@ public sealed class EventCatalog
 				AllowedOutcomes = new HashSet<string>(Outcomes("fresh", "stale"), StringComparer.Ordinal),
 				RequiredFields = ["outcome"],
 			},
+			// A user-authored diagnostic marker is causality-critical P0 metadata.
+			// The human note never enters basic/detailed event attributes.
+			new EventDefinition
+			{
+				EventCode = "diagnostic.marker",
+				Component = "lsp",
+				AllowedOutcomes = new HashSet<string>(["added"], StringComparer.Ordinal),
+				RequiredFields = ["outcome", "clientActionId"],
+			},
 			new EventDefinition
 			{
 				EventCode = "feature.mapping.rejected",

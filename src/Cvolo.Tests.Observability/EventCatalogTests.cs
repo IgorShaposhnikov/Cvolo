@@ -7,6 +7,27 @@ namespace Cvolo.Tests.Observability;
 public class EventCatalogTests
 {
 	[Fact]
+	public void Diagnostic_marker_requires_server_action_identity_and_allowed_outcome()
+	{
+		var catalog = EventCatalog.CreateKernelCatalog();
+		var marker = new CompilerEvent
+		{
+			Event = "diagnostic.marker",
+			Kind = CompilerEventKind.Lifecycle,
+			Detail = DiagnosticDetail.L0,
+			Priority = EventPriority.P0,
+			Outcome = "added",
+			ClientActionId = "marker-abc",
+			Attributes = [new("category", "definition")],
+		};
+		Assert.Empty(catalog.Validate(marker));
+		Assert.Contains(catalog.Validate(marker with { ClientActionId = null }),
+			violation => violation == "missing_field:diagnostic.marker:clientActionId");
+		Assert.Contains(catalog.Validate(marker with { Outcome = "written" }),
+			violation => violation == "unknown_outcome:diagnostic.marker:written");
+	}
+
+	[Fact]
 	public void Valid_event_passes_catalog_validation()
 	{
 		var catalog = EventCatalog.CreateKernelCatalog();
