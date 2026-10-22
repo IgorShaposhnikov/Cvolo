@@ -95,6 +95,36 @@ internal static class EventPrivacyFilter
         return rpcRequestId;
     }
 
+    // The denylist applies to names of data-bearing fields. Values are
+    // independently examined by IsSensitiveValue. Machine-coded fields like
+    // queryContext and tokenCount must remain observable.
+    private static readonly HashSet<string> SensitiveAttributeNames =
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            "source", "sourceText", "sourceCode", "rawSource", "rawText",
+            "text", "content", "documentText", "documentContent",
+            "fileContent", "symbolName", "symbolDisplayName", "displayName",
+            "filePath", "fileUri", "documentUri", "workspaceUri",
+            "workspacePath", "projectPath", "absolutePath", "homePath",
+            "path", "uri", "stackTrace", "stack", "exception.message",
+            "exception.stack", "password", "passwd", "secret", "secretKey",
+            "token", "accessToken", "refreshToken", "authToken",
+            "authorization", "cookie", "apiKey", "commandLine",
+            "environment", "environmentVariables",
+        };
+
+    private static readonly string[] SensitiveAttributeSuffixes =
+    [
+        ".source", ".sourceText", ".sourceCode", ".rawText",
+        ".content", ".documentText", ".text", ".filePath",
+        ".fileUri", ".documentUri", ".path", ".uri",
+        ".exception.message", ".exception.stack", ".message",
+        ".stack", ".stackTrace", ".symbolName", ".displayName",
+        ".password", ".secret", ".token", ".accessToken",
+        ".refreshToken", ".authorization", ".cookie",
+        ".apiKey", ".commandLine", ".environment",
+    ];
+
     private static bool IsSensitiveKey(string? key)
     {
         if (string.IsNullOrEmpty(key) || key.Length > MaxKeyLength)
@@ -108,22 +138,23 @@ internal static class EventPrivacyFilter
                 return true;
         }
 
-        return Contains(key, "source")
-            || Contains(key, "content")
-            || Contains(key, "text")
-            || Contains(key, "path")
-            || Contains(key, "uri")
-            || Contains(key, "symbolname")
-            || Contains(key, "exception.message")
-            || Contains(key, "stack")
-            || Contains(key, "password")
-            || Contains(key, "secret")
-            || Contains(key, "token")
-            || Contains(key, "authorization")
-            || Contains(key, "cookie")
-            || Contains(key, "commandline")
-            || Contains(key, "environment")
-            || Contains(key, "apikey");
+        // Match semantic field names, not arbitrary substrings. For example,
+        // queryContext and tokenCount are safe machine telemetry while
+        // sourceText and accessToken are not. Substring matching broke
+        // completion/classification observability.
+        if (SensitiveAttributeNames.Contains(key))
+            return true;
+
+        // Nested providers may prefix private fields (e.g. inner.exception.message
+        // or transport.rawSource). Only segment boundaries may match, never
+        // a fragment inside a machine counter name.
+        foreach (string suffix in SensitiveAttributeSuffixes)
+        {
+            if (key.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
     }
 
     private static bool IsSensitiveValue(string? value)

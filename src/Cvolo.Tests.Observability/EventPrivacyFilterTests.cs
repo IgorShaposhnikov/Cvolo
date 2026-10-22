@@ -119,6 +119,69 @@ public sealed class EventPrivacyFilterTests
         Assert.Equal("42", evt.RpcRequestId.Value.Value);
     }
 
+    [Theory]
+    [InlineData(ObservabilityMode.Basic)]
+    [InlineData(ObservabilityMode.Detailed)]
+    public void Completion_and_classification_machine_fields_survive_privacy_filter(
+        ObservabilityMode mode)
+    {
+        var observer = ObservabilityTestSupport.CreateObserver(mode, out var queue);
+        observer.Emit(new CompilerEvent
+        {
+            Event = "classification.document.completed",
+            Kind = CompilerEventKind.Phase,
+            Detail = DiagnosticDetail.L0,
+            Outcome = "success",
+            Attributes =
+            [
+                new("queryContext", "Member"),
+                new("tokenCount", "8"),
+                new("candidateCount", "17"),
+                new("parseStatus", "unit_present"),
+                new("sourceText", "private Cvolo source code"),
+                new("exception.inner.message", "sensitive message"),
+                new("accessToken", "aSecret"),
+            ],
+        });
+
+        var projected = Assert.Single(queue.DrainAll()).Event.Attributes!
+            .ToDictionary(pair => pair.Key, pair => pair.Value);
+        Assert.Equal("Member", projected["queryContext"]);
+        Assert.Equal("8", projected["tokenCount"]);
+        Assert.Equal("17", projected["candidateCount"]);
+        Assert.Equal("unit_present", projected["parseStatus"]);
+        Assert.Equal("3", projected["redaction.omittedAttributeCount"]);
+        Assert.DoesNotContain("sourceText", projected.Keys);
+        Assert.DoesNotContain("exception.inner.message", projected.Keys);
+        Assert.DoesNotContain("accessToken", projected.Keys);
+    }
+
+    [Fact]
+    public void Ordinary_suffixes_do_not_bypass_sensitive_name_classification()
+    {
+        var observer = ObservabilityTestSupport.CreateObserver(
+            ObservabilityMode.Detailed, out var queue);
+        observer.Emit(new CompilerEvent
+        {
+            Event = "operation.completed",
+            Kind = CompilerEventKind.Phase,
+            Detail = DiagnosticDetail.L0,
+            Attributes =
+            [
+                new("transport.fileUri", "synthetic-uri"),
+                new("compiler.exception.stack", "synthetic-stack"),
+                new("completion.queryContext", "Expression"),
+                new("classification.tokenCount", "3"),
+            ],
+        });
+
+        var projected = Assert.Single(queue.DrainAll()).Event.Attributes!
+            .ToDictionary(pair => pair.Key, pair => pair.Value);
+        Assert.Equal("Expression", projected["completion.queryContext"]);
+        Assert.Equal("3", projected["classification.tokenCount"]);
+        Assert.Equal("2", projected["redaction.omittedAttributeCount"]);
+    }
+
     [Fact]
     public void Metadata_only_sanitizer_preserves_bounded_machine_attributes()
     {
