@@ -1,0 +1,7 @@
+int main()
+{
+    long source = 300;
+    var int target = 0;
+    target = source;
+    return 0;
+}

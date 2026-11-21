@@ -1,0 +1,22 @@
+using System;
+
+int main()
+{
+    byte literal = 200;
+    short signedSmall = -5;
+    long wider = signedSmall;
+    uint unsignedLiteral = 4000000000;
+    int source = 300;
+    double floating = source;
+    float shortFloat = 1.25f;
+    double expanded = shortFloat;
+    byte explicitlyNarrowed = (byte)source;
+
+    Console.WriteLine(literal);
+    Console.WriteLine(wider);
+    Console.WriteLine(unsignedLiteral);
+    Console.WriteLine((int)floating);
+    Console.WriteLine((int)expanded);
+    Console.WriteLine(explicitlyNarrowed);
+    return 0;
+}

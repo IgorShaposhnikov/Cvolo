@@ -1,0 +1,6 @@
+int main()
+{
+    long source = 300;
+    int result = source;
+    return 0;
+}

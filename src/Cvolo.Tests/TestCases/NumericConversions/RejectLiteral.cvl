@@ -1,0 +1,5 @@
+int main()
+{
+    byte result = 300;
+    return 0;
+}

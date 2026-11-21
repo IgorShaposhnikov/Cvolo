@@ -1,0 +1,10 @@
+void Accept(byte number)
+{
+}
+
+int main()
+{
+    int source = 300;
+    Accept(source);
+    return 0;
+}

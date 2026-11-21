@@ -1,0 +1,6 @@
+int main()
+{
+    double source = 1.5;
+    float result = source;
+    return 0;
+}

@@ -1,0 +1,6 @@
+int main()
+{
+    int source = 300;
+    byte result = source;
+    return 0;
+}
