@@ -73,7 +73,7 @@ public static bool IsImplicitNumericConversion(TypeSymbol from, TypeSymbol to)
 }
 
 /// <summary>Implicit conversion of an unsuffixed integer constant is allowed only when it fits.</summary>
-public static bool IsImplicitIntegerConstant(Cvolo.Core.AST.Expressions.ExpressionSyntax expr, TypeSymbol to)
+public static bool IsImplicitIntegerConstant(Cvolo.Core.AST.Base.ExpressionSyntax expr, TypeSymbol to)
 {
     if (!IsNumericIntegerType(to))
         return false;

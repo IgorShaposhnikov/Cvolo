@@ -2,6 +2,7 @@ using Cvolo.Analysis.Symbols;
 using Cvolo.Analysis.Symbols.Base;
 using Cvolo.Analysis.Symbols.Collections;
 using Cvolo.Analysis.Symbols.Structs;
+using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Expressions;
 
 namespace Cvolo.Analysis.Resolution;
