@@ -92,7 +92,10 @@ public static bool IsImplicitIntegerConstant(Cvolo.Core.AST.Base.ExpressionSynta
 
 private static bool FitsIntLiteral(ulong amount, bool negative, string? suffix, TypeSymbol to)
 {
-    if (suffix is not null)
+    // The parser currently labels large unsuffixed decimal literals as "long".
+    // Preserve those direct initializers while rejecting explicitly suffixed small literals.
+    // A future syntax model should distinguish inferred width from an L suffix.
+    if (suffix is not null && !(suffix == "long" && amount > int.MaxValue))
         return false;
     var bits = IntegerBitWidth(to);
     if (bits <= 0 || bits > 64)
