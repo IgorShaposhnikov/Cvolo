@@ -719,7 +719,7 @@ internal sealed class ExpressionValidator(
 		// their argument shape explicitly. Reuse the ordinary signature compatibility rules to
 		// preserve integer-width/reference conversions and contextual native-delegate null.
 		var parameterTypes = delegateType.Parameters.Select(parameter => parameter.Type).ToArray();
-		if (Overloads.CompareSignature(parameterTypes, argumentTypes, isVariadic: false) < 0)
+		if (Overloads.CompareSignature(parameterTypes, argumentTypes, isVariadic: false, call.Arguments) < 0)
 		{
 			var currentFileContext = context.FileContexts[context.CurrentUnit!];
 			var actual = string.Join(", ", argumentTypes.Select(type => type.Name));

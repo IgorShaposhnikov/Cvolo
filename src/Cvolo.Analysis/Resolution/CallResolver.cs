@@ -44,7 +44,7 @@ internal sealed class CallResolver(BindingContext context, OverloadResolver over
 		mismatchOwnerName = null;
 		return TryResolveEnumName(call, argumentTypes, scope)
 			?? TryResolveFlagsHasFlag(call, argumentTypes, scope)
-			?? overloads.Resolve(call.FunctionName, argumentTypes, scope, null, out mismatch, out mismatchOwnerName);
+			?? overloads.Resolve(call.FunctionName, argumentTypes, scope, call, out mismatch, out mismatchOwnerName);
 	}
 
 	/// <summary>
