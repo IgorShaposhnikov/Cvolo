@@ -1,0 +1,9 @@
+int main()
+{
+    int source = 300;
+    unsafe
+    {
+        byte result = source;
+    }
+    return 0;
+}

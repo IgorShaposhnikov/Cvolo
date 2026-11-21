@@ -1,0 +1,15 @@
+using System;
+
+int main()
+{
+    short small = 120;
+    long wide = small;
+    byte literal = 200;
+    int source = 300;
+    byte narrowed = (byte)source;
+
+    Console.WriteLine(wide);
+    Console.WriteLine(literal);
+    Console.WriteLine(narrowed);
+    return 0;
+}

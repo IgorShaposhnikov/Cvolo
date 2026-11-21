@@ -1,0 +1,9 @@
+byte Narrow(int source)
+{
+    return source;
+}
+
+int main()
+{
+    return 0;
+}

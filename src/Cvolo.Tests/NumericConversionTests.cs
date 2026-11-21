@@ -49,4 +49,31 @@ public sealed class NumericConversionTests : CompilerTestBase
 		Assert.NotEqual(0, exitCode);
 		Assert.Contains(expectedDiagnostic, stderr);
 	}
+
+	[Fact]
+	public void ImplicitIntegerWideningAndExplicitNarrowing_CompileAndRun()
+	{
+		const string caseName = "IntegerWideningAndExplicitNarrowing";
+		var (exitCode, stdout, stderr) = RunCompiler($"{Category}/{caseName}.cvl");
+		AssertCompilationSucceeded(exitCode, stdout, stderr, caseName);
+
+		var (runCode, runStdout) = ExecuteBinary(caseName, Category);
+		Assert.Equal(0, runCode);
+		Assert.Equal("120\n200\n44", runStdout.Replace("\r\n", "\n").Trim());
+	}
+
+	[Theory]
+	[InlineData("RejectImplicitNarrowing", "CVL4020")]
+	[InlineData("RejectImplicitAssignment", "CVL1912")]
+	[InlineData("RejectImplicitArgument", "CVL1078")]
+	[InlineData("RejectImplicitReturn", "CVL4065")]
+	[InlineData("RejectUnsafeNarrowing", "CVL4020")]
+	[InlineData("RejectUnsignedToSigned", "CVL4020")]
+	public void ImplicitIntegerConversionRules_RejectLossyConversions(string caseName, string diagnosticId)
+	{
+		var (exitCode, _, stderr) = RunCompiler($"{Category}/{caseName}.cvl");
+
+		Assert.NotEqual(0, exitCode);
+		Assert.Contains(diagnosticId, stderr);
+	}
 }
