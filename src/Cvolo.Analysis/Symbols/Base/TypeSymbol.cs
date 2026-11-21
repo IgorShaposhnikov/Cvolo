@@ -49,7 +49,62 @@ public class TypeSymbol(string name) : IEquatable<TypeSymbol>
 		_ => null,
 	};
 
-	public static bool IsSignedIntegerType(TypeSymbol t) => t.Name switch
+	/// <summary>Implicit numeric conversions follow the C# widening matrix; unsafe does not bypass the rule.</summary>
+public static bool IsImplicitNumericConversion(TypeSymbol from, TypeSymbol to)
+{
+    if (from.Equals(to))
+        return true;
+    return from.Name switch
+    {
+        "sbyte" => to.Name is "short" or "int" or "long" or "nint" or "float" or "double",
+        "byte" => to.Name is "short" or "ushort" or "int" or "uint" or "long" or "ulong" or "nint" or "nuint" or "float" or "double",
+        "short" => to.Name is "int" or "long" or "nint" or "float" or "double",
+        "ushort" => to.Name is "int" or "uint" or "long" or "ulong" or "nint" or "nuint" or "float" or "double",
+        "int" => to.Name is "long" or "nint" or "float" or "double",
+        "uint" => to.Name is "long" or "ulong" or "nuint" or "float" or "double",
+        "long" => to.Name is "float" or "double",
+        "ulong" => to.Name is "float" or "double",
+        "nint" => to.Name is "long" or "float" or "double",
+        "nuint" => to.Name is "ulong" or "float" or "double",
+        "float" => to.Name is "double",
+        "char" => to.Name is "ushort" or "int" or "uint" or "long" or "ulong" or "nint" or "nuint" or "float" or "double",
+        _ => false,
+    };
+}
+
+/// <summary>Implicit conversion of an unsuffixed integer constant is allowed only when it fits.</summary>
+public static bool IsImplicitIntegerConstant(Cvolo.Core.AST.Expressions.ExpressionSyntax expr, TypeSymbol to)
+{
+    if (!IsNumericIntegerType(to))
+        return false;
+    return expr switch
+    {
+        Cvolo.Core.AST.Expressions.IntegerLiteralExpressionSyntax literal
+            => FitsIntLiteral(literal.Value, false, literal.LiteralType, to),
+        Cvolo.Core.AST.Expressions.UnaryExpressionSyntax
+        {
+            Operator: "-",
+            Operand: Cvolo.Core.AST.Expressions.IntegerLiteralExpressionSyntax literal
+        } => FitsIntLiteral(literal.Value, true, literal.LiteralType, to),
+        _ => false,
+    };
+}
+
+private static bool FitsIntLiteral(ulong amount, bool negative, string? suffix, TypeSymbol to)
+{
+    if (suffix is not null)
+        return false;
+    var bits = IntegerBitWidth(to);
+    if (bits <= 0 || bits > 64)
+        return false;
+    if (negative)
+        return IsSignedIntegerType(to) && amount <= (1UL << (bits - 1));
+    if (IsSignedIntegerType(to))
+        return amount <= ((1UL << (bits - 1)) - 1);
+    return bits == 64 || amount <= ((1UL << bits) - 1);
+}
+
+public static bool IsSignedIntegerType(TypeSymbol t) => t.Name switch
 	{
 		"sbyte" or "short" or "int" or "long" or "nint" => true,
 		_ => false,

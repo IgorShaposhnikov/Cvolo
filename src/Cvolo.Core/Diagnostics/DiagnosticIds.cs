@@ -546,6 +546,9 @@ public static class DiagnosticIds
 	/// <summary>Cannot assign `null` to a safe reference (`ref`/`refvar`).</summary>
 	public const string NullToSafeReference = "CVL1910";
 
+	/// <summary>Implicit numeric conversion needs an explicit cast because it may narrow or change signedness.</summary>
+	public const string ImplicitNumericConversionRequiresCast = "CVL1911";
+
 	// ── Strings (CVL20xx) ──
 
 	/// <summary>A raw string literal is missing its closing quote.</summary>

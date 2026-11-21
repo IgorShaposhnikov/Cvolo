@@ -228,7 +228,8 @@ internal sealed class OverloadResolver(BindingContext context)
 		foreach (var candidate in candidates)
 		{
 			var parameterTypes = candidate.Parameters.Select(parameter => parameter.Type).ToList();
-			var score = CompareSignature(parameterTypes, adjustedArgumentTypes, candidate.IsVariadic);
+			var score = CompareSignature(parameterTypes, adjustedArgumentTypes, candidate.IsVariadic,
+				call?.Arguments, adjustedArgumentTypes.Count - argumentTypes.Count);
 			if (score > bestScore)
 			{
 				bestScore = score;
@@ -351,10 +352,10 @@ internal sealed class OverloadResolver(BindingContext context)
 						 || parameterTypes[i] is UnionTypeSymbol { IsOption: true }
 						 || parameterTypes[i] is DelegateTypeSymbol { IsNative: true }))
 				score += 3;
-			else if (TypeSymbol.IsIntegerType(parameterTypes[i]) && TypeSymbol.IsIntegerType(argumentTypes[i]))
+			else if (TypeSymbol.IsImplicitNumericConversion(argumentTypes[i], parameterTypes[i]))
 				score += 1;
-			else if (TypeSymbol.IsFloatingPointType(parameterTypes[i]) && TypeSymbol.IsIntegerType(argumentTypes[i]))
-				score += 1;
+			else
+				return -1;
 		}
 
 		return score;
@@ -364,7 +365,8 @@ internal sealed class OverloadResolver(BindingContext context)
 	/// Scores a candidate signature against call-site argument types and returns <c>-1</c> when the
 	/// candidate is incompatible.
 	/// </summary>
-	public int CompareSignature(IReadOnlyList<TypeSymbol> parameterTypes, IReadOnlyList<TypeSymbol> argumentTypes, bool isVariadic)
+	public int CompareSignature(IReadOnlyList<TypeSymbol> parameterTypes, IReadOnlyList<TypeSymbol> argumentTypes, bool isVariadic,
+		IReadOnlyList<ExpressionSyntax>? argumentExpressions = null, int argumentOffset = 0)
 	{
 		if (!isVariadic && parameterTypes.Count != argumentTypes.Count)
 			return -1;
@@ -430,11 +432,13 @@ internal sealed class OverloadResolver(BindingContext context)
 			{
 				score += 2;
 			}
-			else if (parameter.Equals(TypeSymbol.Double) && argument.Equals(TypeSymbol.Int))
+			else if (TypeSymbol.IsImplicitNumericConversion(argument, parameter))
 			{
 				score += 1;
 			}
-			else if (TypeSymbol.IsNumericIntegerType(parameter) && TypeSymbol.IsNumericIntegerType(argument) && !parameter.Equals(argument))
+			else if (argumentExpressions is not null && i >= argumentOffset
+				&& i - argumentOffset < argumentExpressions.Count
+				&& TypeSymbol.IsImplicitIntegerConstant(argumentExpressions[i - argumentOffset], parameter))
 			{
 				score += 1;
 			}

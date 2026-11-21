@@ -397,6 +397,21 @@ internal sealed class ExpressionValidator(
 							}
 						}
 
+						// Numeric assignments follow the same rules, including inside unsafe.
+						var targetNumericType = GetType(bin.Left, scope);
+						var sourceNumericType = GetType(bin.Right, scope);
+						if (targetNumericType is not null && sourceNumericType is not null
+							&& (TypeSymbol.IsNumericIntegerType(targetNumericType) || TypeSymbol.IsFloatingPointType(targetNumericType))
+							&& (TypeSymbol.IsNumericIntegerType(sourceNumericType) || TypeSymbol.IsFloatingPointType(sourceNumericType))
+							&& !TypeSymbol.IsImplicitNumericConversion(sourceNumericType, targetNumericType)
+							&& !TypeSymbol.IsImplicitIntegerConstant(bin.Right, targetNumericType))
+						{
+							var file = context.FileContexts[context.CurrentUnit!];
+							context.Diagnostics.Report(file, bin.Span,
+								$"Implicit numeric conversion from '{sourceNumericType.Name}' to '{targetNumericType.Name}' is not allowed. Use an explicit cast.",
+								DiagnosticIds.ImplicitNumericConversionRequiresCast);
+						}
+
 						// 2. Evaluate the left-hand side second (re-initialization happens here)
 						if (bin.Left is IdentifierExpressionSyntax id)
 						{

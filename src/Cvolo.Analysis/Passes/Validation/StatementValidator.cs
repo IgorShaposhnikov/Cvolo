@@ -636,16 +636,10 @@ internal sealed class StatementValidator(
 								  (resolvedType is RawPointerTypeSymbol ||
 								  (resolvedType is UnionTypeSymbol union && union.IsOption));
 
-				// Integer width family: implicit conversion between exact-width integers
-				// (byte/short/int/long and unsigned variants) is allowed.
-				var isIntegerWidthConversion = TypeSymbol.IsNumericIntegerType(resolvedType)
-					&& TypeSymbol.IsNumericIntegerType(initializerType);
-
-				// Implicit float -> double widening is allowed; the reverse needs an
-				// explicit cast (a bare `double` literal to `float` is a dedicated error).
-				var isFloatWidening = TypeSymbol.IsFloatingPointType(resolvedType)
-					&& TypeSymbol.IsFloatingPointType(initializerType)
-					&& resolvedType.Equals(TypeSymbol.Double);
+				// Only C#-style numeric widening and in-range unsuffixed integer constants
+				// are implicit. Unsafe does not permit implicit narrowing.
+				var isImplicitNumeric = TypeSymbol.IsImplicitNumericConversion(initializerType, resolvedType)
+					|| TypeSymbol.IsImplicitIntegerConstant(varDecl.Initializer!, resolvedType);
 
 				if (initializerType.Equals(TypeSymbol.Null) && _validation.UnsafeDepth > 0)
 				{
@@ -661,11 +655,23 @@ internal sealed class StatementValidator(
 						context.Diagnostics.Report(currentFileContext, varDecl.Span, "The 'null' literal requires a pointer type (Option or raw pointer).", DiagnosticIds.NullOutsideUnsafeContext);
 					}
 				}
-				else if (!isIntegerWidthConversion && !isFloatWidening)
+				else if (!isImplicitNumeric)
 				{
 					if (resolvedType.Equals(TypeSymbol.Float) && varDecl.Initializer is DoubleLiteralExpressionSyntax)
 					{
 						context.Diagnostics.Report(currentFileContext, varDecl.Initializer.Span, "Cannot implicitly convert `double` literal to `float`. Use `f` suffix.", DiagnosticIds.DoubleLiteralToFloatAssignment);
+					}
+					else if (varDecl.Initializer is IntegerLiteralExpressionSyntax { LiteralType: null }
+						&& TypeSymbol.IsNumericIntegerType(resolvedType))
+					{
+						// The literal-range check below reports CVL1902.
+					}
+					else if ((TypeSymbol.IsNumericIntegerType(resolvedType) || TypeSymbol.IsFloatingPointType(resolvedType))
+						&& (TypeSymbol.IsNumericIntegerType(initializerType) || TypeSymbol.IsFloatingPointType(initializerType)))
+					{
+						context.Diagnostics.Report(currentFileContext, varDecl.Span,
+							$"Implicit numeric conversion from '{initializerType.Name}' to '{resolvedType.Name}' is not allowed. Use an explicit cast.",
+							DiagnosticIds.ImplicitNumericConversionRequiresCast);
 					}
 					else
 					{
@@ -779,7 +785,9 @@ internal sealed class StatementValidator(
 				return;
 			}
 
-			if (!actualType.Equals(expectedType))
+			if (!actualType.Equals(expectedType)
+				&& !TypeSymbol.IsImplicitNumericConversion(actualType, expectedType)
+				&& !TypeSymbol.IsImplicitIntegerConstant(ret.Expression, expectedType))
 			{
 				var isValidNull = actualType.Equals(TypeSymbol.Null) &&
 								  (expectedType is RawPointerTypeSymbol ||
