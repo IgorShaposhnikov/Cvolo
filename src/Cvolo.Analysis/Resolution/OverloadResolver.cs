@@ -501,8 +501,6 @@ internal sealed class OverloadResolver(BindingContext context)
 						 || parameterTypes[i] is UnionTypeSymbol { IsOption: true }
 						 || parameterTypes[i] is DelegateTypeSymbol { IsNative: true }))
 				score += 3;
-			else if (TypeSymbol.IsIntegerType(parameterTypes[i]) && TypeSymbol.IsIntegerType(argumentTypes[i]))
-				score += 1;
 			else if (NumericConversionSemantics.IsImplicitConversionAllowed(parameterTypes[i], argumentTypes[i]))
 				score += 1;
 			else
@@ -606,10 +604,6 @@ internal sealed class OverloadResolver(BindingContext context)
 				rank = 2;
 			}
 			else if (NumericConversionSemantics.IsImplicitConversionAllowed(parameter, argument, argumentExpression, context))
-			{
-				rank = 1;
-			}
-			else if (TypeSymbol.IsNumericIntegerType(parameter) && TypeSymbol.IsNumericIntegerType(argument) && !parameter.Equals(argument))
 			{
 				rank = 1;
 			}

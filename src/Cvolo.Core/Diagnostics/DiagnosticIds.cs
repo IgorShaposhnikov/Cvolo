@@ -564,6 +564,9 @@ public static class DiagnosticIds
 	/// <summary>The lexer could not recognize a character, so it is not part of the language.</summary>
 	public const string UnrecognizedCharacter = "CVL1911";
 
+	/// <summary>A narrowing implicit numeric assignment requires an explicit cast.</summary>
+	public const string ImplicitNumericConversionRequiresCast = "CVL1912";
+
 	// ── Strings (CVL20xx) ──
 
 	/// <summary>A raw string literal is missing its closing quote.</summary>

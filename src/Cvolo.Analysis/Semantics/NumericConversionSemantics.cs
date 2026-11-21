@@ -6,7 +6,7 @@ using Cvolo.Core.AST.Expressions;
 namespace Cvolo.Analysis.Semantics;
 
 /// <summary>
-/// Canonical numeric conversion rules for implicit integer-to-floating coercion.
+/// Canonical implicit numeric conversion rules.
 /// Runtime conversions are allowed only when the entire source integer domain is exactly
 /// representable. Proven integer constants may additionally convert when that concrete value is
 /// exactly representable in the target IEEE format.
@@ -22,7 +22,15 @@ public static class NumericConversionSemantics
 			return true;
 
 		if (TypeSymbol.IsNumericIntegerType(target) && TypeSymbol.IsNumericIntegerType(source))
-			return true;
+		{
+			if (IsLosslessIntegerConversion(source, target))
+				return true;
+
+			return expression is not null
+				&& TryEvaluateIntegerConstant(expression, context, out var constant, out var literalType)
+				&& literalType is null
+				&& IntegerFitsType(constant, target);
+		}
 
 		if (target.Equals(TypeSymbol.Double) && TypeSymbol.IsFloatingPointType(source))
 			return true;
@@ -185,6 +193,30 @@ public static class NumericConversionSemantics
 
 		value = 0;
 		return false;
+	}
+
+	private static bool IsLosslessIntegerConversion(TypeSymbol source, TypeSymbol target)
+	{
+		var sourceWidth = TypeSymbol.IntegerBitWidth(source);
+		var targetWidth = TypeSymbol.IntegerBitWidth(target);
+		var sourceSigned = TypeSymbol.IsSignedIntegerType(source);
+		var targetSigned = TypeSymbol.IsSignedIntegerType(target);
+
+		return sourceSigned == targetSigned
+			? targetWidth >= sourceWidth
+			: !sourceSigned && targetSigned && targetWidth > sourceWidth;
+	}
+
+	private static bool IntegerFitsType(BigInteger value, TypeSymbol target)
+	{
+		var width = TypeSymbol.IntegerBitWidth(target);
+		if (TypeSymbol.IsSignedIntegerType(target))
+		{
+			var bound = BigInteger.One << (width - 1);
+			return value >= -bound && value < bound;
+		}
+
+		return value >= BigInteger.Zero && value < (BigInteger.One << width);
 	}
 
 	private static bool IsIntegerDomainExactlyRepresentable(TypeSymbol source, TypeSymbol target)
