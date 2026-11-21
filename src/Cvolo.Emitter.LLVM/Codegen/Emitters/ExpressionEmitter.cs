@@ -826,8 +826,7 @@ internal sealed class ExpressionEmitter(
 					else
 					{
 						var actualPtr = Builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), ptr, "target_ptr");
-						var coerced = coercion.CoerceIntegerWidth(right, rTy, type);
-						coerced = coercion.CoerceFloatWidth(coerced, rTy, type);
+						var coerced = coercion.CoerceImplicitNumeric(right, rTy, type);
 						Builder.BuildStore(coerced, actualPtr);
 					}
 				}
@@ -851,8 +850,7 @@ internal sealed class ExpressionEmitter(
 						var coerced = (bin.Right is MemberAccessExpressionSyntax or IndexExpressionSyntax)
 							? coercion.CoerceReferenceToValue(right, expressionTypes.Resolve(bin.Right))
 							: right;
-						coerced = coercion.CoerceIntegerWidth(coerced, rTy, type);
-						coerced = coercion.CoerceFloatWidth(coerced, rTy, type);
+						coerced = coercion.CoerceImplicitNumeric(coerced, rTy, type);
 						if (type.Equals(TypeSymbol.Bool) && IsForeignGlobalStorage(id.Name, ptr))
 							coerced = Builder.BuildZExt(coerced, LLVMTypeRef.Int8, "foreign_bool_from_internal");
 						Builder.BuildStore(coerced, ptr);
@@ -871,8 +869,7 @@ internal sealed class ExpressionEmitter(
 					var coerced = (bin.Right is MemberAccessExpressionSyntax or IndexExpressionSyntax)
 						? coercion.CoerceReferenceToValue(right, expressionTypes.Resolve(bin.Right))
 						: right;
-					coerced = coercion.CoerceIntegerWidth(coerced, rTy, globalType);
-					coerced = coercion.CoerceFloatWidth(coerced, rTy, globalType);
+					coerced = coercion.CoerceImplicitNumeric(coerced, rTy, globalType);
 					if (globalType.Equals(TypeSymbol.Bool) && codegen.ForeignGlobalNames.Contains(globalKey))
 						coerced = Builder.BuildZExt(coerced, LLVMTypeRef.Int8, "foreign_bool_from_internal");
 					Builder.BuildStore(coerced, globalPtr);
@@ -895,8 +892,8 @@ internal sealed class ExpressionEmitter(
 							aggregates.EmitStructInitializationInPlace(fieldReinit, fieldPtr);
 						else
 						{
-							var coerced = coercion.CoerceIntegerWidth(right, rTy, field.Type);
-							var store = Builder.BuildStore(coercion.CoerceFloatWidth(coerced, rTy, field.Type), fieldPtr);
+							var coerced = coercion.CoerceImplicitNumeric(right, rTy, field.Type);
+							var store = Builder.BuildStore(coerced, fieldPtr);
 							aggregates.ApplyTbaa(tbaa, store);
 						}
 
@@ -913,8 +910,8 @@ internal sealed class ExpressionEmitter(
 							aggregates.EmitStructInitializationInPlace(thisFieldReinit, fieldPtr);
 						else
 						{
-							var coerced = coercion.CoerceIntegerWidth(right, rTy, field.Type);
-							Builder.BuildStore(coercion.CoerceFloatWidth(coerced, rTy, field.Type), fieldPtr);
+							var coerced = coercion.CoerceImplicitNumeric(right, rTy, field.Type);
+							Builder.BuildStore(coerced, fieldPtr);
 						}
 
 						return right;
@@ -953,8 +950,7 @@ internal sealed class ExpressionEmitter(
 				var coerced = (bin.Right is MemberAccessExpressionSyntax or IndexExpressionSyntax)
 					? coercion.CoerceReferenceToValue(right, expressionTypes.Resolve(bin.Right))
 					: right;
-				coerced = coercion.CoerceIntegerWidth(coerced, rTy, fieldType);
-				coerced = coercion.CoerceFloatWidth(coerced, rTy, fieldType);
+				coerced = coercion.CoerceImplicitNumeric(coerced, rTy, fieldType);
 				var fieldStore = Builder.BuildStore(coerced, fieldPtr);
 				aggregates.ApplyTbaa(tbaa, fieldStore);
 			}
@@ -978,8 +974,7 @@ internal sealed class ExpressionEmitter(
 				var coerced = (bin.Right is MemberAccessExpressionSyntax or IndexExpressionSyntax)
 					? coercion.CoerceReferenceToValue(right, expressionTypes.Resolve(bin.Right))
 					: right;
-				coerced = coercion.CoerceIntegerWidth(coerced, rTy, elementType);
-				coerced = coercion.CoerceFloatWidth(coerced, rTy, elementType);
+				coerced = coercion.CoerceImplicitNumeric(coerced, rTy, elementType);
 				var elemStore = Builder.BuildStore(coerced, elementPtr);
 				aggregates.ApplyTbaa(tbaa, elemStore);
 			}
@@ -1007,8 +1002,7 @@ internal sealed class ExpressionEmitter(
 				var coerced = (bin.Right is MemberAccessExpressionSyntax or IndexExpressionSyntax)
 					? coercion.CoerceReferenceToValue(right, expressionTypes.Resolve(bin.Right))
 					: right;
-				coerced = coercion.CoerceIntegerWidth(coerced, rTy, targetType);
-				coerced = coercion.CoerceFloatWidth(coerced, rTy, targetType);
+				coerced = coercion.CoerceImplicitNumeric(coerced, rTy, targetType);
 				Builder.BuildStore(coerced, targetPtr);
 			}
 
@@ -1038,8 +1032,7 @@ internal sealed class ExpressionEmitter(
 				var coerced = (bin.Right is MemberAccessExpressionSyntax or IndexExpressionSyntax)
 					? coercion.CoerceReferenceToValue(right, expressionTypes.Resolve(bin.Right))
 					: right;
-				coerced = coercion.CoerceIntegerWidth(coerced, rTy, targetType);
-				coerced = coercion.CoerceFloatWidth(coerced, rTy, targetType);
+				coerced = coercion.CoerceImplicitNumeric(coerced, rTy, targetType);
 				Builder.BuildStore(coerced, targetPtr);
 			}
 

@@ -69,6 +69,18 @@ internal sealed class ValueCoercion(CodegenContext codegen)
 			: Builder.BuildFPTrunc(value, LLVMTypeRef.Float, "store_fptrunc");
 	}
 
+	/// <summary>Performs numeric representation changes only after semantic validation.</summary>
+	public LLVMValueRef CoerceImplicitNumeric(LLVMValueRef value, TypeSymbol from, TypeSymbol to)
+	{
+		if (TypeSymbol.IsIntegerType(from) && TypeSymbol.IsFloatingPointType(to))
+			return TypeSymbol.IsSignedIntegerType(from)
+				? Builder.BuildSIToFP(value, codegen.Types.Lower(to), "implicit_sitofp")
+				: Builder.BuildUIToFP(value, codegen.Types.Lower(to), "implicit_uitofp");
+
+		value = CoerceIntegerWidth(value, from, to);
+		return CoerceFloatWidth(value, from, to);
+	}
+
 	/// <summary>
 	/// Dereferences a <c>ref T</c>-represented pointer when a value destination consumes the
 	/// referenced <c>T</c> rather than the reference itself.

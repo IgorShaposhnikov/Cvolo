@@ -307,16 +307,10 @@ internal sealed class CallEmitter(
 			}
 			else if (paramTy is not null)
 			{
-				if (TypeSymbol.IsFloatingPointType(paramTy) && TypeSymbol.IsIntegerType(valTy))
+				if ((TypeSymbol.IsIntegerType(valTy) || TypeSymbol.IsFloatingPointType(valTy))
+					&& (TypeSymbol.IsIntegerType(paramTy) || TypeSymbol.IsFloatingPointType(paramTy)))
 				{
-					val = TypeSymbol.IsSignedIntegerType(valTy)
-						? Builder.BuildSIToFP(val, codegen.Types.Lower(paramTy), "call_sitofp")
-						: Builder.BuildUIToFP(val, codegen.Types.Lower(paramTy), "call_uitofp");
-					valTy = paramTy;
-				}
-				else if (TypeSymbol.IsIntegerType(valTy) && TypeSymbol.IsIntegerType(paramTy))
-				{
-					val = coercion.CoerceIntegerWidth(val, valTy, paramTy);
+					val = coercion.CoerceImplicitNumeric(val, valTy, paramTy);
 					valTy = paramTy;
 				}
 
@@ -542,7 +536,7 @@ internal sealed class CallEmitter(
 					else
 					{
 						var argumentType = expressionTypes.Resolve(argument);
-						argVal = coercion.CoerceIntegerWidth(argVal, argumentType, parameterType);
+						argVal = coercion.CoerceImplicitNumeric(argVal, argumentType, parameterType);
 					}
 				}
 
@@ -605,7 +599,7 @@ internal sealed class CallEmitter(
 				if (argExpr is NullLiteralExpressionSyntax && parameterType is DelegateTypeSymbol { IsNative: true })
 					argVal = LLVMValueRef.CreateConstPointerNull(codegen.Types.Lower(parameterType));
 				else
-					argVal = coercion.CoerceIntegerWidth(argVal, expressionTypes.Resolve(argExpr), parameterType);
+					argVal = coercion.CoerceImplicitNumeric(argVal, expressionTypes.Resolve(argExpr), parameterType);
 			}
 
 			args.Add(argVal);

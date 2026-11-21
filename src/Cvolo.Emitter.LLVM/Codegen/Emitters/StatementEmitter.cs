@@ -202,6 +202,8 @@ internal sealed class StatementEmitter(
 				type = retPtr.ReferencedType;
 			}
 
+			value = coercion.CoerceImplicitNumeric(value, type, expectedType);
+
 			if (Function.NativeAbiPlan is { } nativePlan
 				&& nativePlan.Return.Kind is NativeAbiValuePassKind.DirectIntegerAggregate or NativeAbiValuePassKind.IndirectAggregate)
 			{
@@ -394,8 +396,7 @@ internal sealed class StatementEmitter(
 						&& (varDecl.Initializer is MemberAccessExpressionSyntax or IndexExpressionSyntax)
 						? coercion.CoerceReferenceToValue(value, expressionTypes.Resolve(varDecl.Initializer!))
 						: value;
-					coerced = coercion.CoerceIntegerWidth(coerced, expressionTypes.Resolve(varDecl.Initializer!) ?? typeSymbol, typeSymbol);
-					coerced = coercion.CoerceFloatWidth(coerced, expressionTypes.Resolve(varDecl.Initializer!) ?? typeSymbol, typeSymbol);
+					coerced = coercion.CoerceImplicitNumeric(coerced, expressionTypes.Resolve(varDecl.Initializer!) ?? typeSymbol, typeSymbol);
 					Builder.BuildStore(coerced, alloca);
 				}
 			}

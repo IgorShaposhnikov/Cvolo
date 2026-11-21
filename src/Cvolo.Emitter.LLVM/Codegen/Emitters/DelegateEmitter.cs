@@ -145,7 +145,7 @@ internal sealed class DelegateEmitter(
 				}
 				else
 				{
-					Builder.BuildRet(coercion.CoerceIntegerWidth(
+					Builder.BuildRet(coercion.CoerceImplicitNumeric(
 						bodyValue,
 						expressionTypes.Resolve(lambda.ExpressionBody),
 						delegateType.ReturnType));
