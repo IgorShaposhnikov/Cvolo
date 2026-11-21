@@ -621,6 +621,22 @@ internal sealed class ExpressionValidator(
 						// 1. Evaluate the right-hand side first (reads and moves happen here)
 						Check(bin.Right, scope);
 
+						var assignmentTarget = GetType(bin.Left, scope);
+						var assignmentSource = GetType(bin.Right, scope);
+						if (assignmentTarget is PointerTypeSymbol pointer && assignmentSource is not PointerTypeSymbol)
+							assignmentTarget = pointer.ReferencedType;
+
+						if (assignmentTarget is not null && assignmentSource is not null
+							&& (TypeSymbol.IsNumericIntegerType(assignmentTarget) || TypeSymbol.IsFloatingPointType(assignmentTarget))
+							&& (TypeSymbol.IsNumericIntegerType(assignmentSource) || TypeSymbol.IsFloatingPointType(assignmentSource))
+							&& !NumericConversionSemantics.IsImplicitConversionAllowed(assignmentTarget, assignmentSource, bin.Right, context))
+						{
+							var currentFileContext = context.FileContexts[context.CurrentUnit!];
+							context.Diagnostics.Report(currentFileContext, bin.Right.Span,
+								$"Cannot implicitly convert '{assignmentSource.Name}' to '{assignmentTarget.Name}'. Use an explicit cast.",
+								DiagnosticIds.ImplicitNumericConversionRequiresCast);
+						}
+
 						// Plain delegate-value assignment still has nominal/category compatibility rules
 						// even when no contextual conversion is involved. Native delegates are nominal,
 						// and safe/native representations never convert implicitly.
