@@ -4,6 +4,7 @@
 [![.NET 10](https://img.shields.io/badge/.NET-10.0-512BD4?logo=dotnet)](https://dotnet.microsoft.com/)
 [![ANTLR](https://img.shields.io/badge/Parser-ANTLR_4-red?logo=antlr)](https://www.antlr.org/)
 [![LLVM](https://img.shields.io/badge/Backend-LLVM-6A1B9A?logo=llvm)](https://llvm.org/)
+[![Documentation](https://img.shields.io/badge/Documentation-Online-007ACC?logo=readthedocs)](https://cvololang.github.io/book/)
 
 **Cvolo** is a compiled systems programming language designed to combine the performance and memory safety of languages like C/Rust with the familiar, clean syntax of C#.
 
