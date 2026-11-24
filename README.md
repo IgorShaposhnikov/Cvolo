@@ -6,6 +6,8 @@
 [![LLVM](https://img.shields.io/badge/Backend-LLVM-6A1B9A?logo=llvm)](https://llvm.org/)
 [![Documentation](https://img.shields.io/badge/Documentation-Online-007ACC?logo=readthedocs)](https://cvololang.github.io/book/)
 
+📖 **Official documentation:** [Read Cvolo Docs](https://cvololang.github.io/book/)
+
 **Cvolo** is a compiled systems programming language designed to combine the performance and memory safety of languages like C/Rust with the familiar, clean syntax of C#.
 
 Writing low-level code or performance-critical systems often forces developers to choose between the syntax ergonomics of high-level languages (like C# or Java) and the raw power of GC-free execution (like C++ or Rust). Cvolo bridges this gap. By implementing compile-time ownership tracking instead of a heavy runtime Garbage Collector, Cvolo provides deterministic memory management without sacrificing developer productivity.
