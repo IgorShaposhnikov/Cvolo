@@ -168,6 +168,9 @@ internal sealed class ExpressionValidator(
 
 				break;
 			case ParenthesizedStructInitializerExpressionSyntax parenStruct:
+				// The field slots inside aggregate literals set this during their own validation.
+				// Other contexts (such as an explicitly typed local) supply the target type here.
+				parenStruct.ResolvedStructTypeName ??= expectedType?.Name;
 				CheckParenthesizedStructInitialization(parenStruct, scope);
 				break;
 			case TernaryExpressionSyntax ternary:
@@ -2186,77 +2189,7 @@ internal sealed class ExpressionValidator(
 		}
 
 		if (type is UnionTypeSymbol unionType)
-		{
-			if (expr.Initializers.Count != 1)
-			{
-				var currentFileContext = context.FileContexts[context.CurrentUnit!];
-				context.Diagnostics.Report(currentFileContext, expr.Span, $"Union initialization of '{unionType.Name}' must specify exactly one variant.", DiagnosticIds.UnionInitializationOfMustSpecifyExactlyOneVariant);
-				return unionType;
-			}
-
-			var init = expr.Initializers[0];
-			var field = unionType.FindField(init.MemberName);
-			if (field is null)
-			{
-				if (context.TryFindInvalidAggregateMember(unionType.Name, init.MemberName, isUnion: true, out _))
-					return null; // Declared, but invalid: original type declaration owns the error.
-				var currentFileContext = context.FileContexts[context.CurrentUnit!];
-				context.Diagnostics.Report(currentFileContext, init.Span, $"Union '{unionType.Name}' does not contain variant '{init.MemberName}'", DiagnosticIds.UnionDoesNotContainVariant);
-				return unionType;
-			}
-
-			if (!context.LegacyVisibility && field.Visibility == Visibility.Private && !VisibilityChecker.IsAccessible(field.Visibility, context.CurrentUnit, GetDeclaringUnit(unionType)))
-			{
-				var currentFileContext = context.FileContexts[context.CurrentUnit!];
-				context.Diagnostics.Report(currentFileContext, init.Span,
-					$"Cannot initialize private field '{init.MemberName}' using an external struct literal. Use an authorized constructor within the type's defining package module boundary.", DiagnosticIds.PrivateFieldLiteralInit);
-			}
-
-			if (init.Expression is DefaultExpressionSyntax slotDefault)
-			{
-				// A default expression directly occupying a field slot is
-				// target-typed to the field type. A union variant slot is not a struct field,
-				// so it keeps General formation semantics (no embedded raw-pointer privilege).
-				BindFieldSlotDefault(slotDefault, field.Type, unionType.Name, init.MemberName, scope, GeneralFormationContext.Instance);
-			}
-			else if (init.Expression is ParenthesizedStructInitializerExpressionSyntax nested)
-			{
-				nested.ResolvedStructTypeName = field.Type.Name;
-				CheckParenthesizedStructInitialization(nested, scope);
-			}
-			else if (field.Type is DelegateTypeSymbol delegateFieldType)
-			{
-				CheckDelegateValue(init.Expression, delegateFieldType, scope);
-			}
-			else
-			{
-				Check(init.Expression, scope);
-			}
-
-			// Delegate fields are target-typed against the declared member type; the
-			// group/lambda check above already verified assignability. Defaults were
-			// checked against the field type inside BindFieldSlotDefault.
-			var initType = field.Type is DelegateTypeSymbol || init.Expression is DefaultExpressionSyntax ? null : GetType(init.Expression, scope);
-			if (initType is not null && !TypesAssignable(field.Type, initType))
-			{
-				var isValidNull = IsValidNullFieldValue(field.Type, initType);
-
-				if (!isValidNull)
-				{
-					var currentFileContext = context.FileContexts[context.CurrentUnit!];
-					if (_validation.UnsafeDepth > 0 && initType.Equals(TypeSymbol.Null))
-					{
-						context.Diagnostics.Report(currentFileContext, init.Span, "The 'null' literal requires a pointer type (Option or raw pointer).", DiagnosticIds.TheNullLiteralRequiresAPointerTypeOptionOrRawPointer);
-					}
-					else
-					{
-						context.Diagnostics.Report(currentFileContext, init.Span, $"Cannot initialize field '{init.MemberName}' of type '{field.Type.Name}' with value of type '{initType.Name}'", DiagnosticIds.CannotInitializeFieldOfTypeWithValueOfType);
-					}
-				}
-			}
-
-			return context.HasInvalidAggregateMembers(unionType.Name, isUnion: true) ? null : unionType;
-		}
+			return CheckUnionInitialization(unionType, expr.Initializers, scope, expr.Span);
 
 		if (type is not StructTypeSymbol structType)
 		{
@@ -2402,16 +2335,16 @@ internal sealed class ExpressionValidator(
 		switch (expression)
 		{
 			case IdentifierExpressionSyntax identifier:
-			{
-				var symbol = scope.Lookup(identifier.Name) as VariableSymbol
-					?? context.ResolveGlobalReference(identifier.Name, out _);
-				if (symbol is null && identifier.Name == "this")
-					symbol = scope.Lookup("this") as VariableSymbol;
-				if (symbol is null)
-					return false;
-				return symbol.Type is PointerTypeSymbol reference
-					? !reference.IsMutable : symbol.IsExplicitVal;
-			}
+				{
+					var symbol = scope.Lookup(identifier.Name) as VariableSymbol
+						?? context.ResolveGlobalReference(identifier.Name, out _);
+					if (symbol is null && identifier.Name == "this")
+						symbol = scope.Lookup("this") as VariableSymbol;
+					if (symbol is null)
+						return false;
+					return symbol.Type is PointerTypeSymbol reference
+						? !reference.IsMutable : symbol.IsExplicitVal;
+				}
 			case MemberAccessExpressionSyntax member:
 				return IsExplicitReadOnlyPath(member.Expression, scope);
 			case IndexExpressionSyntax index:
@@ -3501,15 +3434,110 @@ internal sealed class ExpressionValidator(
 	}
 
 	/// <summary>
+	/// Validates union aggregate initialization shared by explicit and contextual forms.
+	/// </summary>
+	private TypeSymbol? CheckUnionInitialization(UnionTypeSymbol unionType, IReadOnlyList<MemberInitializerSyntax> initializers, SymbolTable scope, TextSpan initializerSpan)
+	{
+		if (initializers.Count != 1)
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, initializerSpan, $"Union initialization of '{unionType.Name}' must specify exactly one variant.", DiagnosticIds.UnionInitializationOfMustSpecifyExactlyOneVariant);
+			return unionType;
+		}
+
+		var init = initializers[0];
+		var field = unionType.FindField(init.MemberName);
+		if (field is null)
+		{
+			if (context.TryFindInvalidAggregateMember(unionType.Name, init.MemberName, isUnion: true, out _))
+				return null; // Declared, but invalid: original type declaration owns the error.
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, init.Span, $"Union '{unionType.Name}' does not contain variant '{init.MemberName}'", DiagnosticIds.UnionDoesNotContainVariant);
+			return unionType;
+		}
+
+		if (!context.LegacyVisibility && field.Visibility == Visibility.Private && !VisibilityChecker.IsAccessible(field.Visibility, context.CurrentUnit, GetDeclaringUnit(unionType)))
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, init.Span,
+				$"Cannot initialize private field '{init.MemberName}' using an external struct literal. Use an authorized constructor within the type's defining package module boundary.", DiagnosticIds.PrivateFieldLiteralInit);
+		}
+
+		if (init.Expression is DefaultExpressionSyntax slotDefault)
+		{
+			// A default expression directly occupying a field slot is
+			// target-typed to the field type. A union variant slot is not a struct field,
+			// so it keeps General formation semantics (no embedded raw-pointer privilege).
+			BindFieldSlotDefault(slotDefault, field.Type, unionType.Name, init.MemberName, scope, GeneralFormationContext.Instance);
+		}
+		else if (init.Expression is ParenthesizedStructInitializerExpressionSyntax nested)
+		{
+			nested.ResolvedStructTypeName = field.Type.Name;
+			CheckParenthesizedStructInitialization(nested, scope);
+		}
+		else if (field.Type is DelegateTypeSymbol delegateFieldType)
+		{
+			CheckDelegateValue(init.Expression, delegateFieldType, scope);
+		}
+		else
+		{
+			Check(init.Expression, scope);
+		}
+
+		// Delegate fields are target-typed against the declared member type; the
+		// group/lambda check above already verified assignability. Defaults were
+		// checked against the field type inside BindFieldSlotDefault.
+		var initType = field.Type is DelegateTypeSymbol || init.Expression is DefaultExpressionSyntax ? null : GetType(init.Expression, scope);
+		if (initType is not null && !TypesAssignable(field.Type, initType))
+		{
+			var isValidNull = IsValidNullFieldValue(field.Type, initType);
+
+			if (!isValidNull)
+			{
+				var currentFileContext = context.FileContexts[context.CurrentUnit!];
+				if (_validation.UnsafeDepth > 0 && initType.Equals(TypeSymbol.Null))
+				{
+					context.Diagnostics.Report(currentFileContext, init.Span, "The 'null' literal requires a pointer type (Option or raw pointer).", DiagnosticIds.TheNullLiteralRequiresAPointerTypeOptionOrRawPointer);
+				}
+				else
+				{
+					context.Diagnostics.Report(currentFileContext, init.Span, $"Cannot initialize field '{init.MemberName}' of type '{field.Type.Name}' with value of type '{initType.Name}'", DiagnosticIds.CannotInitializeFieldOfTypeWithValueOfType);
+				}
+			}
+		}
+
+		return context.HasInvalidAggregateMembers(unionType.Name, isUnion: true) ? null : unionType;
+	}
+
+	/// <summary>
 	/// Validates positional aggregate initialization against declaration field order.
 	/// </summary>
 	private void CheckParenthesizedStructInitialization(ParenthesizedStructInitializerExpressionSyntax expr, SymbolTable scope)
 	{
 		if (expr.ResolvedStructTypeName is null)
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, expr.Span,
+				"Contextual initializer '(Member: value)' requires an expected struct or union type.",
+				DiagnosticIds.ContextualInitializerRequiresExpectedType);
 			return;
+		}
+
 		var type = context.ResolveType(expr.ResolvedStructTypeName);
-		if (type is not StructTypeSymbol structType)
+		if (type is UnionTypeSymbol unionType)
+		{
+			CheckUnionInitialization(unionType, expr.Initializers, scope, expr.Span);
 			return;
+		}
+
+		if (type is not StructTypeSymbol structType)
+		{
+			var currentFileContext = context.FileContexts[context.CurrentUnit!];
+			context.Diagnostics.Report(currentFileContext, expr.Span,
+				"Contextual initializer '(Member: value)' requires an expected struct or union type.",
+				DiagnosticIds.ContextualInitializerRequiresExpectedType);
+			return;
+		}
 
 		foreach (var init in expr.Initializers)
 		{

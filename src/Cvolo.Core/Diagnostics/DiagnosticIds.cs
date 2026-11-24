@@ -1363,6 +1363,11 @@ public static class DiagnosticIds
 	public const string RawPointerDefaultRequiresUnsafeOrEmbedded = "CVL4198";
 
 	/// <summary>
+	/// A contextual '(Member: value)' initializer has no expected struct or union type.
+	/// </summary>
+	public const string ContextualInitializerRequiresExpectedType = "CVL4199";
+
+	/// <summary>
 	/// A division or remainder by a statically known zero divisor is rejected before code generation.
 	/// </summary>
 	public const string DivisionByZeroConstant = "CVL4210";

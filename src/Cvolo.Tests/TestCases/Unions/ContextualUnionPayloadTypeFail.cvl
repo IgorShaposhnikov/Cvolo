@@ -1,0 +1,30 @@
+/// <summary>
+/// Verifies that a contextual union initializer type-checks its payload against the variant type.
+/// </summary>
+/// <remarks>
+/// Test: UnionsTests.Semantic_Rejections.
+/// Fixture Role: Payload type mismatch rejection for contextual union initialization.
+/// Compiler Target: Shared explicit/contextual union validation.
+/// Expected: CVL4019 reports that field 'Number' of type 'int' cannot hold a 'string'.
+/// </remarks>
+using System;
+
+union Choice
+{
+    int Number;
+    string Text;
+}
+
+struct Wrapper
+{
+    Choice Value;
+}
+
+int main()
+{
+    var a = Wrapper
+    {
+        Value = (Number: "wrong")
+    };
+    return 0;
+}

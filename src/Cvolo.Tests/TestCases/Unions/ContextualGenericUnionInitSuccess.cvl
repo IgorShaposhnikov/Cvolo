@@ -1,0 +1,51 @@
+/// <summary>
+/// Verifies contextual tagged-union initialization for generic Option and Result fields.
+/// </summary>
+/// <remarks>
+/// Test: UnionsTests.Execution_Success.
+/// Fixture Role: Generic specialization parity for contextual union initialization.
+/// Compiler Target: ResolvedStructTypeName resolution through specialized union field types.
+/// Expected: The program prints '42' and '7'.
+/// </remarks>
+using System;
+
+[Error]
+struct TestError
+{
+    public int Code;
+}
+
+struct GenericCase
+{
+    Option<int> Maybe;
+    Result<int, TestError> Outcome;
+}
+
+int main()
+{
+    var value = GenericCase
+    {
+        Maybe = (Some: 42),
+        Outcome = (Ok: 7)
+    };
+
+    if (value.Maybe is Some some)
+    {
+        Console.WriteLine(some);
+    }
+    else
+    {
+        return 1;
+    }
+
+    if (value.Outcome is Ok ok)
+    {
+        Console.WriteLine(ok);
+    }
+    else
+    {
+        return 2;
+    }
+
+    return 0;
+}

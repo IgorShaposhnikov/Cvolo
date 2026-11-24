@@ -1,0 +1,51 @@
+/// <summary>
+/// Verifies that contextual union initialization moves an owning payload and destroys it once.
+/// </summary>
+/// <remarks>
+/// Test: UnionsTests.Execution_Success.
+/// Fixture Role: Ownership and destructor parity with explicit union construction.
+/// Compiler Target: Payload emission through a contextual Option field.
+/// Expected: The program prints 'some=7', 'Done' and 'Dropping: 7' in that order.
+/// </remarks>
+using System;
+
+struct Resource
+{
+    int Handle;
+}
+
+extension Resource
+{
+    ~Resource()
+    {
+        Console.WriteLine($"Dropping: {Handle}");
+    }
+}
+
+struct Owner
+{
+    Option<Resource> Value;
+}
+
+int main()
+{
+    var owner = Owner
+    {
+        Value = (Some: Resource
+        {
+            Handle = 7
+        })
+    };
+
+    if (ref owner.Value is Some resource)
+    {
+        Console.WriteLine($"some={resource.Handle}");
+    }
+    else
+    {
+        Console.WriteLine("none");
+    }
+
+    Console.WriteLine("Done");
+    return 0;
+}

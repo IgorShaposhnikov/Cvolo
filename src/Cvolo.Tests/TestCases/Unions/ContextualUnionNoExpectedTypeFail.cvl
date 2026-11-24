@@ -1,0 +1,14 @@
+/// <summary>
+/// Verifies that a contextual initializer without an expected type is rejected.
+/// </summary>
+/// <remarks>
+/// Test: UnionsTests.Semantic_Rejections.
+/// Fixture Role: Missing-target-type rejection for contextual initialization.
+/// Compiler Target: Contextual initializer validation when ResolvedStructTypeName is absent.
+/// Expected: CVL4199 reports that an expected struct or union type is required.
+/// </remarks>
+int main()
+{
+    var x = (Number: 42);
+    return 0;
+}

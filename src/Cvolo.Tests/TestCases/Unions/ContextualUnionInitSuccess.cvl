@@ -1,0 +1,97 @@
+/// <summary>
+/// Verifies contextual '(Variant: value)' initialization of a tagged union nested in a struct.
+/// </summary>
+/// <remarks>
+/// Test: UnionsTests.Execution_Success.
+/// Fixture Role: Contextual tagged-union initialization with scalar, string, void and nested struct payloads.
+/// Compiler Target: Union-aware contextual validation and tag/payload emission.
+/// Expected: The program prints '42', 'Hello', 'None' and '5,10'.
+/// </remarks>
+using System;
+
+union Choice
+{
+    int Number;
+    string Text;
+    void None;
+}
+
+struct Wrapper
+{
+    Choice Value;
+}
+
+struct Point
+{
+    int X;
+    int Y;
+}
+
+union Location
+{
+    Point Coordinates;
+    int Index;
+}
+
+struct Container
+{
+    Location Value;
+}
+
+int main()
+{
+    var a = Wrapper
+    {
+        Value = (Number: 42)
+    };
+    var b = Wrapper
+    {
+        Value = (Text: "Hello")
+    };
+    var c = Wrapper
+    {
+        Value = (None: void)
+    };
+    var d = Container
+    {
+        Value = (Coordinates: (X: 5, Y: 10))
+    };
+
+    if (a.Value is Number number)
+    {
+        Console.WriteLine(number);
+    }
+    else
+    {
+        return 1;
+    }
+
+    if (b.Value is Text text)
+    {
+        Console.WriteLine(text);
+    }
+    else
+    {
+        return 2;
+    }
+
+    if (c.Value is None)
+    {
+        Console.WriteLine("None");
+    }
+    else
+    {
+        return 3;
+    }
+
+    if (d.Value is Coordinates point)
+    {
+        Console.WriteLine($"{point.X},{point.Y}");
+    }
+    else
+    {
+        return 4;
+    }
+
+    return 0;
+}

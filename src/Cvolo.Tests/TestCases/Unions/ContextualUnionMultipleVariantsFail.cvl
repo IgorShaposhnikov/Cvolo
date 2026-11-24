@@ -1,0 +1,30 @@
+/// <summary>
+/// Verifies that a contextual union initializer selects exactly one variant.
+/// </summary>
+/// <remarks>
+/// Test: UnionsTests.Semantic_Rejections.
+/// Fixture Role: Multiple-variant rejection for contextual union initialization.
+/// Compiler Target: Shared explicit/contextual union initializer count check.
+/// Expected: CVL4118 reports that exactly one variant is required.
+/// </remarks>
+using System;
+
+union Choice
+{
+    int Number;
+    string Text;
+}
+
+struct Wrapper
+{
+    Choice Value;
+}
+
+int main()
+{
+    var a = Wrapper
+    {
+        Value = (Number: 1, Text: "x")
+    };
+    return 0;
+}

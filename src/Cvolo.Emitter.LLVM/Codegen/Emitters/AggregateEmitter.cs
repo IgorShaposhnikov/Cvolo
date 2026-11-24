@@ -73,6 +73,93 @@ internal sealed class AggregateEmitter(
 	}
 
 	/// <summary>
+	/// Initializes an existing destination with one selected union variant, shared by explicit and
+	/// contextual union initializers.
+	/// </summary>
+	private void EmitUnionInitializationInPlace(UnionTypeSymbol unionType, MemberInitializerSyntax init, LLVMValueRef destPtr)
+	{
+		var unionLayout = codegen.Types.Lower(unionType);
+		var fieldIndex = codegen.AggregateLayout.GetFieldIndex(unionType, init.MemberName);
+		var field = unionType.Fields[fieldIndex];
+
+		if (unionType.IsUnsafe)
+		{
+			// Raw unions have no active-tag metadata.  Clear the whole backing object before
+			// writing the selected projection so smaller fields do not leave poison/garbage
+			// in the tail bytes that are copied when the union is later moved by value.
+			memory.ZeroMemory(destPtr, memory.GetStoreSize(unionLayout));
+
+			if (!field.IsVoidVariant)
+			{
+				var castPtr = coercion.SafeBitCast(destPtr, LLVMTypeRef.CreatePointer(codegen.Types.Lower(field.Type), 0), "raw_union_field");
+				EmitUnionPayload(init.Expression, castPtr);
+			}
+
+			return;
+		}
+
+		// Null-pointer optimization: the flat slot is the pointer. Some(x) stores the reference
+		// directly and None stores nullptr; no tag or payload aggregate exists.
+		if (unionType.IsNpoEligible)
+		{
+			if (field.IsVoidVariant)
+			{
+				Builder.BuildStore(LLVMValueRef.CreateConstPointerNull(unionLayout), destPtr);
+			}
+			else
+			{
+				var value = emitExpression(init.Expression);
+				Builder.BuildStore(value, destPtr);
+			}
+
+			return;
+		}
+
+		var tagPtr = Builder.BuildGEP2(unionLayout, destPtr, new LLVMValueRef[]
+		{
+			LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
+			LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0)
+		}, "union_tag_ptr");
+		Builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, (ulong)fieldIndex), tagPtr);
+
+		if (!field.IsVoidVariant)
+		{
+			var payloadPtr = Builder.BuildGEP2(unionLayout, destPtr, new LLVMValueRef[]
+			{
+				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
+				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1)
+			}, "union_payload_ptr");
+
+			var castPtr = Builder.BuildBitCast(
+				payloadPtr,
+				LLVMTypeRef.CreatePointer(codegen.Types.Lower(field.Type), 0),
+				"payload_cast_ptr");
+
+			EmitUnionPayload(init.Expression, castPtr);
+		}
+	}
+
+	/// <summary>
+	/// Writes a union payload, materializing aggregate payloads in place and storing scalars by value.
+	/// </summary>
+	private void EmitUnionPayload(ExpressionSyntax expression, LLVMValueRef payloadPtr)
+	{
+		if (expression is StructInitializationExpressionSyntax structVariant)
+		{
+			EmitStructInitializationInPlace(structVariant, payloadPtr);
+		}
+		else if (expression is ParenthesizedStructInitializerExpressionSyntax parenVariant)
+		{
+			EmitParenthesizedStructInitializationInPlace(parenVariant, payloadPtr);
+		}
+		else
+		{
+			var value = emitExpression(expression);
+			Builder.BuildStore(value, payloadPtr);
+		}
+	}
+
+	/// <summary>
 	/// Initializes an existing destination with a struct or union literal without creating another
 	/// aggregate temporary.
 	/// </summary>
@@ -82,92 +169,7 @@ internal sealed class AggregateEmitter(
 
 		if (typeSymbol is UnionTypeSymbol unionType)
 		{
-			var unionLayout = codegen.Types.Lower(unionType);
-			var init = expr.Initializers[0];
-			var fieldIndex = codegen.AggregateLayout.GetFieldIndex(unionType, init.MemberName);
-			var field = unionType.Fields[fieldIndex];
-
-			if (unionType.IsUnsafe)
-			{
-				// Raw unions have no active-tag metadata.  Clear the whole backing object before
-				// writing the selected projection so smaller fields do not leave poison/garbage
-				// in the tail bytes that are copied when the union is later moved by value.
-				memory.ZeroMemory(destPtr, memory.GetStoreSize(unionLayout));
-
-				if (!field.IsVoidVariant)
-				{
-					var castPtr = coercion.SafeBitCast(destPtr, LLVMTypeRef.CreatePointer(codegen.Types.Lower(field.Type), 0), "raw_union_field");
-					if (init.Expression is StructInitializationExpressionSyntax structVariant)
-					{
-						EmitStructInitializationInPlace(structVariant, castPtr);
-					}
-					else if (init.Expression is ParenthesizedStructInitializerExpressionSyntax parenVariant)
-					{
-						EmitParenthesizedStructInitializationInPlace(parenVariant, castPtr);
-					}
-					else
-					{
-						var value = emitExpression(init.Expression);
-						Builder.BuildStore(value, castPtr);
-					}
-				}
-
-				return;
-			}
-
-			// Null-pointer optimization: the flat slot is the pointer. Some(x) stores the reference
-			// directly and None stores nullptr; no tag or payload aggregate exists.
-			if (unionType.IsNpoEligible)
-			{
-				if (field.IsVoidVariant)
-				{
-					Builder.BuildStore(LLVMValueRef.CreateConstPointerNull(unionLayout), destPtr);
-				}
-				else
-				{
-					var value = emitExpression(init.Expression);
-					Builder.BuildStore(value, destPtr);
-				}
-
-				return;
-			}
-
-			var tagPtr = Builder.BuildGEP2(unionLayout, destPtr, new LLVMValueRef[]
-			{
-				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
-				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0)
-			}, "union_tag_ptr");
-			Builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int8, (ulong)fieldIndex), tagPtr);
-
-			if (!field.IsVoidVariant)
-			{
-				var payloadPtr = Builder.BuildGEP2(unionLayout, destPtr, new LLVMValueRef[]
-				{
-					LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
-					LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 1)
-				}, "union_payload_ptr");
-
-				var castPtr = Builder.BuildBitCast(
-					payloadPtr,
-					LLVMTypeRef.CreatePointer(codegen.Types.Lower(field.Type), 0),
-					"payload_cast_ptr");
-
-				// Aggregate variants are materialized in place; scalar variants are stored by value.
-				if (init.Expression is StructInitializationExpressionSyntax structVariant)
-				{
-					EmitStructInitializationInPlace(structVariant, castPtr);
-				}
-				else if (init.Expression is ParenthesizedStructInitializerExpressionSyntax parenVariant)
-				{
-					EmitParenthesizedStructInitializationInPlace(parenVariant, castPtr);
-				}
-				else
-				{
-					var value = emitExpression(init.Expression);
-					Builder.BuildStore(value, castPtr);
-				}
-			}
-
+			EmitUnionInitializationInPlace(unionType, expr.Initializers[0], destPtr);
 			return;
 		}
 
@@ -334,11 +336,24 @@ internal sealed class AggregateEmitter(
 	}
 
 	/// <summary>
-	/// Materializes a parenthesized struct initializer in temporary stack storage.
+	/// Materializes a parenthesized struct or union initializer in temporary stack storage.
 	/// </summary>
 	public LLVMValueRef EmitParenthesizedStructInitialization(ParenthesizedStructInitializerExpressionSyntax expr)
 	{
 		var typeSymbol = BindingContext.ResolveType(expr.ResolvedStructTypeName!);
+		if (typeSymbol is UnionTypeSymbol unionType)
+		{
+			var unionLayout = codegen.Types.Lower(unionType);
+			var unionTemp = memory.BuildEntryAlloca(unionLayout, "union_tmp");
+			EmitParenthesizedStructInitializationInPlace(expr, unionTemp);
+
+			// Mirror explicit union literals: NPO-eligible unions are represented by the scalar
+			// pointer value, while other unions are passed by their materialization address.
+			return unionType.IsNpoEligible
+				? Builder.BuildLoad2(unionLayout, unionTemp, $"union_val_{expr.ResolvedStructTypeName}")
+				: unionTemp;
+		}
+
 		var structLayout = codegen.Types.Lower(typeSymbol!);
 		var tempAlloc = memory.BuildEntryAlloca(structLayout, "struct_tmp");
 		EmitParenthesizedStructInitializationInPlace(expr, tempAlloc);
@@ -346,11 +361,19 @@ internal sealed class AggregateEmitter(
 	}
 
 	/// <summary>
-	/// Writes a parenthesized struct initializer directly into existing struct storage.
+	/// Writes a parenthesized struct or union initializer directly into existing storage.
 	/// </summary>
 	public void EmitParenthesizedStructInitializationInPlace(ParenthesizedStructInitializerExpressionSyntax expr, LLVMValueRef destPtr)
 	{
 		var typeSymbol = BindingContext.ResolveType(expr.ResolvedStructTypeName!);
+		if (typeSymbol is UnionTypeSymbol unionType)
+		{
+			// Semantic validation guarantees exactly one variant; stay defensive if binding failed.
+			if (expr.Initializers.Count == 1)
+				EmitUnionInitializationInPlace(unionType, expr.Initializers[0], destPtr);
+			return;
+		}
+
 		if (typeSymbol is not StructTypeSymbol structType)
 			return;
 		var structLayout = codegen.Types.Lower(structType);

@@ -1,0 +1,30 @@
+/// <summary>
+/// Verifies that a contextual union initializer rejects an unknown variant name.
+/// </summary>
+/// <remarks>
+/// Test: UnionsTests.Semantic_Rejections.
+/// Fixture Role: Unknown-variant rejection for contextual union initialization.
+/// Compiler Target: Union-aware contextual validation through UnionTypeSymbol.FindField.
+/// Expected: CVL4115 reports that 'Choice' does not contain variant 'Missing'.
+/// </remarks>
+using System;
+
+union Choice
+{
+    int Number;
+    string Text;
+}
+
+struct Wrapper
+{
+    Choice Value;
+}
+
+int main()
+{
+    var a = Wrapper
+    {
+        Value = (Missing: 1)
+    };
+    return 0;
+}

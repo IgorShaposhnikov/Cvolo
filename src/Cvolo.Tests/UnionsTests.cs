@@ -16,6 +16,10 @@ public sealed class UnionsTests : CompilerTestBase
 	[InlineData("ResultConstructorTag", "0")]
 	// A direct variant write retags the union, so reading that payload afterwards is legal.
 	[InlineData("VariantSelectionWriteSuccess", "2")]
+	// Contextual '(Variant: value)' initializers must select and emit the same tag as explicit literals.
+	[InlineData("ContextualUnionInitSuccess", "42\nHello\nNone\n5,10")]
+	[InlineData("ContextualGenericUnionInitSuccess", "42\n7")]
+	[InlineData("ContextualOwnedUnionInitSuccess", "some=7\nDone\nDropping: 7")]
 	public void Execution_Success(string caseName, string expected)
 	{
 		var fileName = $"Unions/{caseName}.cvl";
@@ -71,6 +75,12 @@ public sealed class UnionsTests : CompilerTestBase
 	[InlineData("InactiveVariantCompoundAssignFail", "Cannot read variant 'B' of union 'Choice': its active variant is 'A'.")]
 	// Taking a mutable reference exposes an otherwise inactive payload.
 	[InlineData("InactiveVariantRefFail", "Cannot read variant 'B' of union 'Choice': its active variant is 'A'.")]
+	// Contextual union initializers reuse the explicit literal validation rules.
+	[InlineData("ContextualUnionUnknownVariantFail", "Union 'Choice' does not contain variant 'Missing'")]
+	[InlineData("ContextualUnionPayloadTypeFail", "Cannot initialize field 'Number' of type 'int' with value of type 'string'")]
+	[InlineData("ContextualUnionMultipleVariantsFail", "Union initialization of 'Choice' must specify exactly one variant.")]
+	// A parenthesized initializer with no expected type cannot be bound to a union.
+	[InlineData("ContextualUnionNoExpectedTypeFail", "Contextual initializer '(Member: value)' requires an expected struct or union type.")]
 	public void Semantic_Rejections(string caseName, string expectedError)
 	{
 		var fileName = $"Unions/{caseName}.cvl";
