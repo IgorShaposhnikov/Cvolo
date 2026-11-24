@@ -28,6 +28,8 @@ public sealed class ProtocolsTests : CompilerTestBase
 	[InlineData("ProtocolRequires.cvl")]
 	[InlineData("ProtocolRequiresFail.cvl")]
 	[InlineData("ProtocolAmbiguityFail")]
+	[InlineData("GenericReorderedBase.cvl")]
+	[InlineData("GenericReorderedBaseWrongFail.cvl")]
 	public void Parser_Protocols_Should_Parse(string caseName)
 	{
 		var assemblyDir = Path.GetDirectoryName(typeof(ProtocolsTests).Assembly.Location)!;
@@ -98,6 +100,7 @@ public sealed class ProtocolsTests : CompilerTestBase
 	[Theory]
 	[InlineData("SelfConformingFail", "does not structurally conform to protocol 'IEquatable' for parameter 'e'")]
 	[InlineData("WidthLockFail", "Type 'IntBag' does not structurally conform to protocol 'IContainer<int>' for parameter 'c'")]
+	[InlineData("GenericReorderedBaseWrongFail", "Type 'ReversedPair<int, bool>' does not structurally conform to protocol 'IReversed<int, bool>' for parameter 'pair'")]
 	public void Protocols_RejectionsGeneric(string caseName, string expectedError)
 	{
 		var fileName = $"Protocols/{caseName}.cvl";
@@ -109,6 +112,7 @@ public sealed class ProtocolsTests : CompilerTestBase
 
 	[Theory]
 	[InlineData("GenericDispatch", "stored=13\nfinal=13\npoint=ok")]
+	[InlineData("GenericReorderedBase", "42")]
 	public void Protocols_GenericDispatch(string caseName, string expected)
 	{
 		var fileName = $"Protocols/{caseName}.cvl";

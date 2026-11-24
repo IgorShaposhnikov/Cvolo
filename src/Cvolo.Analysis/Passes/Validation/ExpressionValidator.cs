@@ -315,7 +315,12 @@ internal sealed class ExpressionValidator(
 										return;
 
 									if (typeArgs.All(static t => t is not null))
-										func = Generics.InstantiateGenericFunction(templateDecl, [.. typeArgs.Select(static t => t!)], scope);
+									{
+										var concreteTypeArgs = typeArgs.Select(static t => t!).ToList();
+										func = context.InterfaceFunctionTemplates.ContainsKey(templateName)
+											? Generics.InstantiateGenericInterfaceFunction(templateDecl, concreteTypeArgs, argTypes, templateName, call.Span)
+											: Generics.InstantiateGenericFunction(templateDecl, concreteTypeArgs, scope);
+									}
 								}
 							}
 						}

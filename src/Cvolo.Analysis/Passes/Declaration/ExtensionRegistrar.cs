@@ -494,6 +494,7 @@ internal sealed class ExtensionRegistrar(
 		var prevNs = context.CurrentNamespace;
 		context.CurrentUnit = context.SymbolUnits.TryGetValue(extendedType.Name, out var extUnit) ? extUnit : context.CurrentUnit;
 		context.CurrentNamespace = context.CurrentUnit?.NamespaceDeclaration?.Name;
+		var extensionUnit = context.CurrentUnit;
 
 		var interfaceType = context.ResolveType(extDecl.ConformsTo!);
 		context.CurrentUnit = prevUnit;
@@ -528,193 +529,13 @@ internal sealed class ExtensionRegistrar(
 			return;
 		}
 
-		// Record conformance: concrete type -> interface.
-		if (!context.Conformance.TryGetValue(extendedType.Name, out var interfaces))
-		{
-			interfaces = [];
-			context.Conformance[extendedType.Name] = interfaces;
-		}
+		// An open specialization belongs to a generic owner; it is materialized for each
+		// concrete owner by BindingContext.MonomorphizeExtensionsForType instead.
+		if (interfaceSymbol.Declaration?.GenericParameters.Count > 0 && !interfaceSymbol.IsClosed)
+			return;
 
-		interfaces.Add(interfaceSymbol.Name);
-
-		var interfaceDecl = context.InterfaceTemplates[interfaceSymbol.Name];
-
-		// Record transitive nominal ancestors (interface base clauses), so a
-		// conforming type implicitly satisfies the parent capability graph.
-		// Protocol bases are satisfied structurally elsewhere and stay nominal-free.
-		CollectInterfaceAncestors(interfaceDecl, interfaces);
-
-		// A conforming type must provide every required member of the effective
-		// interface (own members + base-clause closure). Associated functions are
-		// receiverless and can never satisfy an interface requirement.
-		var providedMethods = new HashSet<(string Name, string ReturnType, string Params)>();
-		foreach (var method in extDecl.Methods)
-		{
-			if (method.IsAssociated)
-				continue;
-
-			providedMethods.Add((method.Name, method.ReturnType, ParamsSignature(method.Parameters)));
-		}
-
-		foreach (var member in GetEffectiveInterfaceMembers(interfaceSymbol, new Dictionary<string, List<InterfaceMethodDeclarationSyntax>>(), new HashSet<string>()))
-		{
-			var requiredSig = (member.Name, member.ReturnType, ParamsSignature(member.Parameters));
-			if (!providedMethods.Contains(requiredSig))
-			{
-				var currentFileContext = context.FileContexts[context.CurrentUnit!];
-				context.Diagnostics.Report(currentFileContext, extDecl.Span,
-					$"Type '{extDecl.ExtendedTypeName}' does not implement member '{RequiredSigText(member)}' required by interface '{extDecl.ConformsTo}'.",
-					DiagnosticIds.ConformanceMissingMember);
-			}
-		}
-
-		// Interface `for ...` requires-clause (spec §7.B), enforced eagerly at the
-		// conformance site: the extended type must satisfy the named contract.
-		if (interfaceDecl.Constraint is not null)
-			EnforceInterfaceConstraint(interfaceDecl, extDecl, providedMethods);
+		// Members are validated before any evidence is published; the requires-clause is
+		// resolved later so forward-declared conformances are order-independent.
+		context.QueueInterfaceConformance(extendedType, interfaceSymbol, extDecl, extensionUnit, new Dictionary<string, TypeSymbol>());
 	}
-
-	/// <summary>
-	/// Records every transitive interface ancestor of <paramref name="iface"/> into
-	/// the concrete type's conformance set (interface base clauses only; protocol
-	/// bases are structural and are never recorded nominally).
-	/// </summary>
-	private void CollectInterfaceAncestors(InterfaceDeclarationSyntax iface, HashSet<string> interfaces)
-	{
-		foreach (var baseName in iface.Bases)
-		{
-			if (context.ResolveType(baseName) is not InterfaceTypeSymbol baseIface)
-				continue;
-
-			if (!interfaces.Add(baseIface.Name))
-				continue;
-
-			if (context.InterfaceTemplates.TryGetValue(baseIface.Name, out var baseDecl))
-				CollectInterfaceAncestors(baseDecl, interfaces);
-		}
-	}
-
-	/// <summary>
-	/// The effective member set of an interface: its own required members plus the
-	/// transitive closure of interface parents, plus protocol-parent members.
-	/// Child declarations override inherited members with identical signatures.
-	/// </summary>
-	private List<InterfaceMethodDeclarationSyntax> GetEffectiveInterfaceMembers(
-		InterfaceTypeSymbol iface, Dictionary<string, List<InterfaceMethodDeclarationSyntax>> cache, HashSet<string> visiting)
-	{
-		if (cache.TryGetValue(iface.Name, out var cached) || !visiting.Add(iface.Name))
-			return cached;
-
-		var decl = context.InterfaceTemplates[iface.Name];
-		var result = new List<InterfaceMethodDeclarationSyntax>();
-		foreach (var baseName in decl.Bases)
-		{
-			if (context.ResolveType(baseName) is InterfaceTypeSymbol baseIface)
-				result.AddRange(GetEffectiveInterfaceMembers(baseIface, cache, visiting));
-			else if (context.ResolveType(baseName) is ProtocolTypeSymbol baseProto
-				&& context.ProtocolTemplates.TryGetValue(baseProto.Name, out var protoDecl))
-			{
-				// A protocol parent contributes every required member of its own
-				// effective set (a protocol may itself aggregate other protocols).
-				IEnumerable<(string Owner, ProtocolMethodDeclarationSyntax Member)> protocolMembers =
-					context.ProtocolEffectiveMembers.TryGetValue(baseProto.Name, out var effective)
-						? effective
-						: protoDecl.Members.Select(m => (baseProto.Name, m));
-				foreach (var (_, member) in protocolMembers)
-					result.Add(new InterfaceMethodDeclarationSyntax(member.Span, member.ReturnType, member.Name, member.Parameters));
-			}
-		}
-
-		// Child overrides win: inherited members identical to an own member are dropped.
-		result.RemoveAll(m => decl.Members.Any(own =>
-			own.Name == m.Name && own.ReturnType == m.ReturnType && ParamsSignature(own.Parameters) == ParamsSignature(m.Parameters)));
-		result.AddRange(decl.Members);
-
-		visiting.Remove(iface.Name);
-		cache[iface.Name] = result;
-		return result;
-	}
-
-	/// <summary>
-	/// Aggressive enforcement of an interface's `for ...` requires-clause at the
-	/// conformance site. The extended type is checked against the named contract:
-	/// a nominal interface must be in the conformance set; a structural protocol
-	/// must be satisfied by the provided methods (name-level).
-	/// </summary>
-	private void EnforceInterfaceConstraint(InterfaceDeclarationSyntax interfaceDecl, ExtensionDeclarationSyntax extDecl, HashSet<(string Name, string ReturnType, string Params)> providedMethods)
-	{
-		var currentFileContext = context.FileContexts[context.CurrentUnit!];
-		var contract = ResolveContractType(interfaceDecl.Constraint, extDecl.ExtendedTypeName);
-
-		switch (contract)
-		{
-			case InterfaceTypeSymbol consIface:
-				{
-					if (!context.Conformance.TryGetValue(extDecl.ExtendedTypeName, out var ifaces) || !ifaces.Contains(consIface.Name))
-						context.Diagnostics.Report(currentFileContext, extDecl.Span,
-							$"Type '{extDecl.ExtendedTypeName}' does not satisfy the requires-clause '{interfaceDecl.Constraint}' of interface '{extDecl.ConformsTo}': it does not conform to interface '{consIface.Name}'.", DiagnosticIds.TypeDoesNotSatisfyTheRequiresClauseOfInterfaceItDoesNotConfo);
-					break;
-				}
-			case ProtocolTypeSymbol consProto:
-				{
-					var requiredNames = new HashSet<string>();
-					foreach (var member in GetProtocolRequirements(consProto.Name))
-						requiredNames.Add(member.Name);
-					var providedNames = new HashSet<string>(extDecl.Methods.Select(m => m.Name));
-					foreach (var required in requiredNames)
-					{
-						if (!providedNames.Contains(required))
-							context.Diagnostics.Report(currentFileContext, extDecl.Span,
-								$"Type '{extDecl.ExtendedTypeName}' does not satisfy the requires-clause '{interfaceDecl.Constraint}' of interface '{extDecl.ConformsTo}': missing protocol member '{required}'.", DiagnosticIds.TypeDoesNotSatisfyTheRequiresClauseOfInterfaceMissingProtoco);
-					}
-
-					break;
-				}
-			default:
-				context.Diagnostics.Report(currentFileContext, extDecl.Span,
-					$"Unknown contract '{interfaceDecl.Constraint}' in requires-clause of interface '{extDecl.ConformsTo}'.", DiagnosticIds.UnknownContractInRequiresClauseOfInterface);
-				break;
-		}
-	}
-
-	/// <summary>
-	/// Returns the effective structural requirements of a protocol, falling back to its directly declared members.
-	/// </summary>
-	private List<ProtocolMethodDeclarationSyntax> GetProtocolRequirements(string protoMangledName)
-	{
-		if (context.ProtocolTemplates.TryGetValue(protoMangledName, out var decl)
-			&& context.ProtocolEffectiveMembers.TryGetValue(protoMangledName, out var effective))
-			return [.. effective.Select(e => e.Member)];
-
-		// Fall back to the declared members if effective membership is unavailable.
-		return context.ProtocolTemplates.TryGetValue(protoMangledName, out var protoDecl)
-			? [.. protoDecl.Members]
-			: [];
-	}
-
-	/// <summary>
-	/// Resolves a requires-clause type in the context of the extended type.
-	/// Literal `Self` tokens are replaced with the concrete type name, and a
-	/// generic instantiation (e.g. `IComparable&lt;Self&gt;`) is stripped to its
-	/// base contract name (generic interfaces are not instantiable in this model).
-	/// </summary>
-	private TypeSymbol? ResolveContractType(string constraintText, string concreteName)
-	{
-		var substituted = constraintText.Replace("Self", concreteName);
-		var openBracket = substituted.IndexOf('<');
-		var baseName = (openBracket > 0 ? substituted[..openBracket] : substituted).Trim();
-		return context.ResolveType(baseName);
-	}
-
-	/// <summary>
-	/// Builds the parameter-type signature used to compare extension members with contract requirements.
-	/// </summary>
-	private static string ParamsSignature(IReadOnlyList<ParameterSyntax> parameters)
-		=> string.Join(",", parameters.Select(p => p.Type));
-
-	/// <summary>
-	/// Formats an interface requirement for declaration diagnostics.
-	/// </summary>
-	private static string RequiredSigText(InterfaceMethodDeclarationSyntax member)
-		=> $"{member.ReturnType} {member.Name}({ParamsSignature(member.Parameters)})";
 }

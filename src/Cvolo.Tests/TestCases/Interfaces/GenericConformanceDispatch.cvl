@@ -1,0 +1,52 @@
+/// <summary>
+/// Verifies that a generic owner can conform to a closed generic interface and that a static
+/// dispatch function receives the substituted concrete owner.
+/// </summary>
+/// <remarks>
+/// Test: InterfacesTests.Interfaces_Hierarchy.
+/// Fixture Role: §33.1 generic interface conformance and ref dispatch.
+/// Compiler Target: Canonical closed interface identity and staged generic-owner conformance.
+/// Expected: The program prints '42' and then '1'.
+/// </remarks>
+using System;
+
+interface IStorage<T>
+{
+    T Get();
+    void Set(T value);
+}
+
+struct Storage<T>
+{
+    T Value;
+}
+
+extension Storage<T> : IStorage<T>
+{
+    T Get()
+    {
+        return Value;
+    }
+
+    void Set(refvar this, T value)
+    {
+        Value = value;
+    }
+}
+
+void Update(refvar IStorage<int> storage)
+{
+    storage.Set(1);
+}
+
+int main()
+{
+    var store = Storage<int>
+    {
+        Value = 42
+    };
+    Console.WriteLine(store.Get());
+    Update(refvar store);
+    Console.WriteLine(store.Get());
+    return 0;
+}

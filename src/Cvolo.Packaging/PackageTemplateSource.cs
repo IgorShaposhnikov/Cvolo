@@ -114,6 +114,19 @@ public static class PackageTemplateSource
 			}
 		}
 
+		// An alias to a public contract must be recognized as a contract reference too; the
+		// alias is erased during binding, so consumers see the closed contract identity.
+		foreach (var unit in units)
+		{
+			var ns = unit.NamespaceDeclaration;
+			var members = ns is null ? unit.Members : ns.Members;
+			foreach (var member in members)
+			{
+				if (member is TypeAliasDeclarationSyntax alias && alias.GenericParameters.Count == 0 && ReferencesContract(alias.Type, names))
+					names.Add(alias.Name);
+			}
+		}
+
 		return names;
 	}
 
@@ -158,6 +171,10 @@ public static class PackageTemplateSource
 		var genericStart = text.IndexOf('<');
 		if (genericStart >= 0)
 			text = text[..genericStart].Trim();
+
+		var namespaceSeparator = text.LastIndexOf('.');
+		if (namespaceSeparator >= 0)
+			text = text[(namespaceSeparator + 1)..].Trim();
 
 		return contractNames.Contains(text);
 	}

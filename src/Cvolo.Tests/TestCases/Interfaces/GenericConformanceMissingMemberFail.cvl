@@ -1,0 +1,36 @@
+/// <summary>
+/// Verifies that a generic owner must supply every member of the closed interface it implements.
+/// </summary>
+/// <remarks>
+/// Test: InterfacesTests.Interfaces_Rejections.
+/// Fixture Role: §33.1 missing substituted member rejection.
+/// Compiler Target: Effective member validation before conformance publication.
+/// Expected: CVL reports the missing substituted 'void Set(int value)' member.
+/// </remarks>
+interface IStorage<T>
+{
+    T Get();
+    void Set(T value);
+}
+
+struct Storage<T>
+{
+    T Value;
+}
+
+extension Storage<T> : IStorage<T>
+{
+    T Get()
+    {
+        return Value;
+    }
+}
+
+int main()
+{
+    var store = Storage<int>
+    {
+        Value = 42
+    };
+    return store.Get();
+}

@@ -1,0 +1,53 @@
+/// <summary>
+/// Verifies that a concrete conformer must match the reordered protocol base, not its own order.
+/// </summary>
+/// <remarks>
+/// Test: ProtocolsTests.Protocols_RejectionsGeneric.
+/// Fixture Role: §33.4 negative protocol permutation case.
+/// Compiler Target: Structural width-lock validation through specialized protocol bases.
+/// Expected: CVL reports that ReversedPair&lt;int, bool&gt; does not structurally conform.
+/// </remarks>
+using System;
+
+protocol IPair<A, B>
+{
+    A First();
+    B Second();
+}
+
+protocol IReversed<A, B> : IPair<A, B>
+{
+}
+
+struct ReversedPair<A, B>
+{
+    int Value;
+}
+
+extension ReversedPair<A, B>
+{
+    bool First()
+    {
+        return true;
+    }
+
+    int Second()
+    {
+        return 42;
+    }
+}
+
+int ReadPair(IReversed<int, bool> pair)
+{
+    return pair.Second();
+}
+
+int main()
+{
+    var pair = ReversedPair<int, bool>
+    {
+        Value = 0
+    };
+    Console.WriteLine(ReadPair(pair));
+    return 0;
+}

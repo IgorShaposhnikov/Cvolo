@@ -1,0 +1,42 @@
+/// <summary>
+/// Verifies that a closed interface conformance cannot be used through a different specialization.
+/// </summary>
+/// <remarks>
+/// Test: InterfacesTests.Interfaces_Rejections.
+/// Fixture Role: §33.1 wrong specialization rejection.
+/// Compiler Target: Canonical closed interface identity in conformance evidence.
+/// Expected: CVL reports that Storage<int> does not conform to IStorage&lt;long&gt;.
+/// </remarks>
+using System;
+
+interface IStorage<T>
+{
+    T Get();
+}
+
+struct Storage<T>
+{
+    T Value;
+}
+
+extension Storage<T> : IStorage<T>
+{
+    T Get()
+    {
+        return Value;
+    }
+}
+
+void Update(refvar IStorage<long> storage)
+{
+}
+
+int main()
+{
+    var store = Storage<int>
+    {
+        Value = 42
+    };
+    Update(refvar store);
+    return 0;
+}

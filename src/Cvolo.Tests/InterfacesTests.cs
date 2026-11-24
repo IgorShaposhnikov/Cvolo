@@ -1,7 +1,7 @@
 using Cvolo.Core.Diagnostics;
 using Cvolo.Projects;
 using Cvolo.Syntax.Antlr;
-	using Cvolo.Tests.Core;
+using Cvolo.Tests.Core;
 
 namespace Cvolo.Tests;
 
@@ -23,6 +23,13 @@ public sealed class InterfacesTests : CompilerTestBase
 	[InlineData("InterfaceProtocolBase.cvl")]
 	[InlineData("InterfaceRequires.cvl")]
 	[InlineData("InterfaceRequiresFail.cvl")]
+	[InlineData("GenericConformanceDispatch.cvl")]
+	[InlineData("GenericInterfaceHierarchy.cvl")]
+	[InlineData("GenericInterfaceDispatchOwners.cvl")]
+	[InlineData("GenericConformanceWrongSpecializationFail.cvl")]
+	[InlineData("GenericInterfaceRequiresFail.cvl")]
+	[InlineData("GenericConstraintWrongSpecializationFail.cvl")]
+	[InlineData("GenericConformanceMissingMemberFail.cvl")]
 	public void Parser_Interfaces_Should_Parse(string caseName)
 	{
 		var assemblyDir = Path.GetDirectoryName(typeof(InterfacesTests).Assembly.Location)!;
@@ -52,6 +59,10 @@ public sealed class InterfacesTests : CompilerTestBase
 	// P7: requires-clause rejection — enforced eagerly when Btn registers IButton
 	// without also conforming to IWidget.
 	[InlineData("InterfaceRequiresFail", "does not satisfy the requires-clause 'IWidget' of interface 'IButton'")]
+	[InlineData("GenericConformanceWrongSpecializationFail", "Type 'Storage<int>' does not conform to interface 'IStorage<long>' for parameter 'storage'")]
+	[InlineData("GenericInterfaceRequiresFail", "Type 'Novel' does not satisfy the requires-clause 'ITagged<int>' of interface 'IBook<int>'")]
+	[InlineData("GenericConstraintWrongSpecializationFail", "Type 'Novel' does not satisfy required constraint 'IBook<int>' for type parameter 'B'")]
+	[InlineData("GenericConformanceMissingMemberFail", "Type 'Storage<int>' does not implement member 'void Set(int)' required by interface 'IStorage<int>'")]
 	public void Interfaces_Rejections(string caseName, string expectedError)
 	{
 		var fileName = $"Interfaces/{caseName}.cvl";
@@ -85,6 +96,25 @@ public sealed class InterfacesTests : CompilerTestBase
 	[InlineData("InterfaceProtocolBase", "key=42\nentry described")]
 	[InlineData("InterfaceRequires", "labeled")]
 	public void Interfaces_Hierarchy(string caseName, string expected)
+	{
+		var fileName = $"Interfaces/{caseName}.cvl";
+		var (exitCode, stdout, stderr) = RunCompiler(fileName);
+		AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
+
+		var (runCode, runStdout) = ExecuteBinary(caseName, "Interfaces");
+		Assert.Equal(0, runCode);
+		Assert.Equal(expected.Replace("\r\n", "\n").Trim(), runStdout.Replace("\r\n", "\n").Trim());
+	}
+
+	/// <summary>
+	/// Executes the fixed-arity generic-interface acceptance programs: closed conformance,
+	/// substituted inherited members and combined scalar/owner dispatch cache identity.
+	/// </summary>
+	[Theory]
+	[InlineData("GenericConformanceDispatch", "42\n1")]
+	[InlineData("GenericInterfaceHierarchy", "42\n142")]
+	[InlineData("GenericInterfaceDispatchOwners", "7\n107\n7")]
+	public void Interfaces_GenericContracts(string caseName, string expected)
 	{
 		var fileName = $"Interfaces/{caseName}.cvl";
 		var (exitCode, stdout, stderr) = RunCompiler(fileName);

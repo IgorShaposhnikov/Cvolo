@@ -1,0 +1,39 @@
+/// <summary>
+/// Verifies that generic struct constraints compare closed interface specializations exactly.
+/// </summary>
+/// <remarks>
+/// Test: InterfacesTests.Interfaces_Rejections.
+/// Fixture Role: §33.2 wrong generic constraint rejection.
+/// Compiler Target: Specialized interface identity in where-constraint checking.
+/// Expected: CVL reports that Novel does not satisfy the IBook&lt;int&gt; constraint.
+/// </remarks>
+interface IBook<T>
+{
+    int Read();
+}
+
+struct Novel
+{
+    int Pages;
+}
+
+extension Novel : IBook<long>
+{
+    int Read()
+    {
+        return 42;
+    }
+}
+
+struct Shelf<T, B> where B : IBook<T>
+{
+    B Book;
+}
+
+int main()
+{
+    var shelf = Shelf<int, Novel>
+    {
+    };
+    return 0;
+}

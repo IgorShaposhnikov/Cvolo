@@ -405,8 +405,24 @@ public sealed class BindingContext
 	public Dictionary<string, InterfaceDeclarationSyntax> InterfaceTemplates { get; } = [];
 	public Dictionary<string, InterfaceTypeSymbol> InterfaceTypes { get; } = [];
 
-	// Concrete type name (mangled) -> set of interface names (mangled) it conforms to.
+	// Concrete type name (mangled) -> set of canonical closed interface names it conforms to.
 	public Dictionary<string, HashSet<string>> Conformance { get; } = [];
+
+	// A conformance is only published after its members and requires-clause are validated.
+	// Records stay pending while a required contract may still be proved by a later extension.
+	private sealed record PendingInterfaceConformance(
+		TypeSymbol Owner,
+		InterfaceTypeSymbol Interface,
+		ExtensionDeclarationSyntax Extension,
+		CompilationUnitSyntax? Unit,
+		IReadOnlyDictionary<string, TypeSymbol> OwnerSubstitution);
+
+	private readonly List<PendingInterfaceConformance> _pendingInterfaceConformances = [];
+	private readonly HashSet<string> _pendingInterfaceConformanceKeys = [];
+	private readonly HashSet<string> _publishedInterfaceConformanceKeys = [];
+	public Dictionary<string, IReadOnlyList<InterfaceMethodDeclarationSyntax>> InterfaceEffectiveMembers { get; } = [];
+	private readonly HashSet<string> _interfaceMemberCycles = [];
+	private readonly HashSet<string> _interfaceAncestorCycles = [];
 
 	// Interface-parameterized function templates (implicit generics, e.g. void Draw(IWidget w)),
 	// keyed by the mangled base name. Monomorphized per call site with a concrete conforming type.
@@ -434,6 +450,10 @@ public sealed class BindingContext
 	// Built by DeclarationPass Pass 0b; used for conformance checks, dispatch
 	// templates, generic protocol instantiation, and default-implementation lookup.
 	public Dictionary<string, List<(string OwnerProtocol, ProtocolMethodDeclarationSyntax Member)>> ProtocolEffectiveMembers { get; } = [];
+
+	// Child protocol -> its declared base edges with the written type arguments, needed to
+	// rebind inherited members when a generic base reorders its parent's parameters.
+	public Dictionary<string, List<(string BaseProtocol, IReadOnlyList<string> Arguments)>> ProtocolBaseEdges { get; } = [];
 
 	/// <summary>
 	/// Stack of active generic type parameters currently in scope during binding/resolution.
@@ -1009,6 +1029,38 @@ public sealed class BindingContext
 				UnionTypes[name] = instantiatedType;
 				_typeCache[cacheKey] = instantiatedType;
 				return instantiatedType;
+			}
+			else if (baseType is InterfaceTypeSymbol baseInterface && InterfaceTemplates.TryGetValue(baseInterface.Name, out var interfaceDecl))
+			{
+				if (!TryResolveTypeArguments(argsPart, out var interfaceTypeArgs))
+					return null;
+				if (interfaceTypeArgs.Count != interfaceDecl.GenericParameters.Count)
+					return null;
+				if (HasRefTypeArgument(interfaceTypeArgs))
+				{
+					ReportUnallowedRefTypeArgument(baseInterface.Name, interfaceTypeArgs);
+					return null;
+				}
+
+				// An open spelling inside a generic declaration stays open until the owner is
+				// instantiated; concrete call sites then resolve the already-substituted name.
+				if (interfaceTypeArgs.Any(Cvolo.Analysis.Passes.Validation.ExpressionValidator.ContainsTypeParameter))
+					return baseInterface;
+
+				var canonicalInterfaceName = $"{baseInterface.Name}<{string.Join(", ", interfaceTypeArgs.Select(t => t.Name))}>";
+				if (InterfaceTypes.TryGetValue(canonicalInterfaceName, out var existingInterface))
+				{
+					_typeCache[cacheKey] = existingInterface;
+					return existingInterface;
+				}
+
+				var closedInterface = new InterfaceTypeSymbol(canonicalInterfaceName, interfaceDecl, interfaceTypeArgs, baseInterface.Name)
+				{
+					Visibility = baseInterface.Visibility
+				};
+				InterfaceTypes[canonicalInterfaceName] = closedInterface;
+				_typeCache[cacheKey] = closedInterface;
+				return closedInterface;
 			}
 			else if (baseType is ProtocolTypeSymbol baseProtocol && ProtocolTemplates.TryGetValue(baseProtocol.Name, out var protocolDecl))
 			{
@@ -1855,6 +1907,254 @@ public sealed class BindingContext
 		return result;
 	}
 
+	private InterfaceDeclarationSyntax? GetInterfaceDeclaration(InterfaceTypeSymbol iface)
+		=> iface.Declaration ?? (InterfaceTemplates.TryGetValue(iface.TemplateName, out var decl) ? decl : null);
+
+	private IReadOnlyDictionary<string, TypeSymbol> GetInterfaceSubstitution(InterfaceTypeSymbol iface)
+	{
+		var result = new Dictionary<string, TypeSymbol>();
+		var decl = GetInterfaceDeclaration(iface);
+		if (decl is null)
+			return result;
+
+		for (var i = 0; i < decl.GenericParameters.Count; i++)
+		{
+			var name = decl.GenericParameters[i];
+			result[name] = i < iface.TypeArguments.Count ? iface.TypeArguments[i] : new TypeParameterSymbol(name);
+		}
+
+		return result;
+	}
+
+	private TypeSymbol? ResolveDeclaredTypeInUnit(string typeName, CompilationUnitSyntax? unit)
+	{
+		var previousUnit = CurrentUnit;
+		var previousNamespace = CurrentNamespace;
+		try
+		{
+			if (unit is not null)
+			{
+				CurrentUnit = unit;
+				CurrentNamespace = unit.NamespaceDeclaration?.Name;
+			}
+
+			return ResolveType(typeName);
+		}
+		finally
+		{
+			CurrentUnit = previousUnit;
+			CurrentNamespace = previousNamespace;
+		}
+	}
+
+	/// <summary>
+	/// Effective required members of a closed interface. Interface bases are resolved through the
+	/// closed specialization's own arguments, so a base such as <c>IPair&lt;B,A&gt;</c> receives the
+	/// child's arguments in the declared order rather than the child's positional order.
+	/// </summary>
+	public IReadOnlyList<InterfaceMethodDeclarationSyntax> GetEffectiveInterfaceMembers(InterfaceTypeSymbol iface)
+	{
+		if (InterfaceEffectiveMembers.TryGetValue(iface.Name, out var cached))
+			return cached;
+		if (!_interfaceMemberCycles.Add(iface.Name))
+			return [];
+
+		var decl = GetInterfaceDeclaration(iface);
+		if (decl is null)
+		{
+			_interfaceMemberCycles.Remove(iface.Name);
+			return [];
+		}
+
+		var substitution = GetInterfaceSubstitution(iface);
+		var unit = SymbolUnits.TryGetValue(iface.TemplateName, out var declaredUnit) ? declaredUnit : CurrentUnit;
+		var result = new List<InterfaceMethodDeclarationSyntax>();
+
+		foreach (var baseName in decl.Bases)
+		{
+			if (ResolveDeclaredTypeInUnit(SubstituteTypeString(baseName, substitution), unit) is InterfaceTypeSymbol baseIface)
+			{
+				result.AddRange(GetEffectiveInterfaceMembers(baseIface));
+			}
+			else if (ResolveDeclaredTypeInUnit(SubstituteTypeString(baseName, substitution), unit) is ProtocolTypeSymbol baseProtocol)
+			{
+				foreach (var member in baseProtocol.Members)
+					result.Add(new InterfaceMethodDeclarationSyntax(member.Span, member.ReturnType, member.Name, member.Parameters));
+			}
+		}
+
+		// A child declaration overrides an inherited requirement with an identical signature.
+		var own = decl.Members.Select(m => new InterfaceMethodDeclarationSyntax(
+			m.Span,
+			SubstituteTypeString(m.ReturnType, substitution),
+			m.Name,
+			m.Parameters.Select(p => new ParameterSyntax(p.Span, SubstituteTypeString(p.Type, substitution), p.Name)).ToList())).ToList();
+		result.RemoveAll(m => own.Any(o => o.Name == m.Name
+			&& NormalizeGenericName(o.ReturnType) == NormalizeGenericName(m.ReturnType)
+			&& NormalizeGenericName(string.Join(",", o.Parameters.Select(p => p.Type))) == NormalizeGenericName(string.Join(",", m.Parameters.Select(p => p.Type)))));
+		result.AddRange(own);
+
+		_interfaceMemberCycles.Remove(iface.Name);
+		InterfaceEffectiveMembers[iface.Name] = result;
+		return result;
+	}
+
+	/// <summary>Canonical required signatures used for conformance member checking.</summary>
+	public IReadOnlyList<(string Name, string ReturnType, string Params)> GetRequiredInterfaceSignatures(InterfaceTypeSymbol iface)
+		=> GetEffectiveInterfaceMembers(iface).Select(m => (
+			m.Name,
+			NormalizeGenericName(m.ReturnType),
+			NormalizeGenericName(string.Join(",", m.Parameters.Select(p => p.Type))))).ToList();
+
+	/// <summary>All transitive closed interface ancestors, using the specialization's own bindings.</summary>
+	public HashSet<string> GetInterfaceAncestors(InterfaceTypeSymbol iface)
+	{
+		var result = new HashSet<string>();
+		CollectInterfaceAncestors(iface, result);
+		return result;
+	}
+
+	private void CollectInterfaceAncestors(InterfaceTypeSymbol iface, HashSet<string> result)
+	{
+		if (!_interfaceAncestorCycles.Add(iface.Name))
+			return;
+
+		var decl = GetInterfaceDeclaration(iface);
+		if (decl is not null)
+		{
+			var substitution = GetInterfaceSubstitution(iface);
+			var unit = SymbolUnits.TryGetValue(iface.TemplateName, out var declaredUnit) ? declaredUnit : CurrentUnit;
+			foreach (var baseName in decl.Bases)
+			{
+				if (ResolveDeclaredTypeInUnit(SubstituteTypeString(baseName, substitution), unit) is not InterfaceTypeSymbol baseIface)
+					continue;
+				if (result.Add(baseIface.Name))
+					CollectInterfaceAncestors(baseIface, result);
+			}
+		}
+
+		_interfaceAncestorCycles.Remove(iface.Name);
+	}
+
+	private static string ConformanceKey(TypeSymbol owner, InterfaceTypeSymbol iface) => $"{owner.Name}|{iface.Name}";
+
+	/// <summary>
+	/// Validates the members declared by an extension and stages its conformance. Evidence is
+	/// published only after every staged requires-clause has been proved, which makes extension
+	/// declaration order irrelevant and keeps failed conformances out of the global table.
+	/// </summary>
+	public void QueueInterfaceConformance(
+		TypeSymbol owner,
+		InterfaceTypeSymbol iface,
+		ExtensionDeclarationSyntax extDecl,
+		CompilationUnitSyntax? unit,
+		IReadOnlyDictionary<string, TypeSymbol> ownerSubstitution)
+	{
+		var key = ConformanceKey(owner, iface);
+		if (_publishedInterfaceConformanceKeys.Contains(key) || _pendingInterfaceConformanceKeys.Contains(key))
+			return;
+
+		var provided = extDecl.Methods
+			.Where(m => !m.IsAssociated)
+			.Select(m => (
+				m.Name,
+				NormalizeGenericName(SubstituteTypeString(m.ReturnType, ownerSubstitution)),
+				NormalizeGenericName(string.Join(",", m.Parameters.Select(p => SubstituteTypeString(p.Type, ownerSubstitution))))))
+			.ToHashSet();
+
+		var missing = GetRequiredInterfaceSignatures(iface).FirstOrDefault(r => !provided.Contains(r));
+		if (missing.Name is not null)
+		{
+			var fileContext = unit is not null && FileContexts.TryGetValue(unit, out var fc) ? fc : FileContexts[CurrentUnit!];
+			Diagnostics.Report(fileContext, extDecl.Span,
+				$"Type '{owner.Name}' does not implement member '{missing.ReturnType} {missing.Name}({missing.Params})' required by interface '{iface.Name}'.",
+				DiagnosticIds.ConformanceMissingMember);
+			return;
+		}
+
+		_pendingInterfaceConformanceKeys.Add(key);
+		_pendingInterfaceConformances.Add(new PendingInterfaceConformance(owner, iface, extDecl, unit, ownerSubstitution));
+	}
+
+	/// <summary>Resolves staged requires-clauses and publishes all conformance evidence that is now proved.</summary>
+	public void PublishPendingInterfaceConformances()
+	{
+		while (_pendingInterfaceConformances.Count > 0)
+		{
+			var progressed = false;
+			for (var i = _pendingInterfaceConformances.Count - 1; i >= 0; i--)
+			{
+				var pending = _pendingInterfaceConformances[i];
+				if (!InterfaceRequiresSatisfied(pending))
+					continue;
+
+				PublishInterfaceConformance(pending.Owner, pending.Interface);
+				_pendingInterfaceConformances.RemoveAt(i);
+				progressed = true;
+			}
+
+			if (!progressed)
+			{
+				foreach (var pending in _pendingInterfaceConformances)
+					ReportInterfaceRequiresFailure(pending);
+				return;
+			}
+		}
+	}
+
+	private bool InterfaceRequiresSatisfied(PendingInterfaceConformance pending)
+	{
+		var decl = GetInterfaceDeclaration(pending.Interface);
+		if (decl?.Constraint is null)
+			return true;
+
+		var substitution = new Dictionary<string, TypeSymbol>(GetInterfaceSubstitution(pending.Interface));
+		foreach (var kv in pending.OwnerSubstitution)
+			substitution[kv.Key] = kv.Value;
+
+		var constraintText = Regex.Replace(decl.Constraint, @"\bSelf\b", pending.Owner.Name);
+		constraintText = SubstituteTypeString(constraintText, substitution);
+		var unit = SymbolUnits.TryGetValue(pending.Interface.TemplateName, out var declaredUnit) ? declaredUnit : pending.Unit;
+		var contract = ResolveDeclaredTypeInUnit(constraintText, unit);
+
+		return contract switch
+		{
+			InterfaceTypeSymbol requiredInterface => Conformance.TryGetValue(pending.Owner.Name, out var ifaces)
+				&& ifaces.Contains(requiredInterface.Name),
+			ProtocolTypeSymbol requiredProtocol => TypeSatisfiesContract(pending.Owner, requiredProtocol),
+			_ => false
+		};
+	}
+
+	private void ReportInterfaceRequiresFailure(PendingInterfaceConformance pending)
+	{
+		var decl = GetInterfaceDeclaration(pending.Interface);
+		var constraintText = decl?.Constraint is null
+			? ""
+			: SubstituteTypeString(decl.Constraint, GetInterfaceSubstitution(pending.Interface));
+		var fileContext = pending.Unit is not null && FileContexts.TryGetValue(pending.Unit, out var fc) ? fc : FileContexts[CurrentUnit!];
+		Diagnostics.Report(fileContext, pending.Extension.Span,
+			$"Type '{pending.Owner.Name}' does not satisfy the requires-clause '{constraintText}' of interface '{pending.Interface.Name}'.",
+			DiagnosticIds.TypeDoesNotSatisfyTheRequiresClauseOfInterfaceItDoesNotConfo);
+	}
+
+	private void PublishInterfaceConformance(TypeSymbol owner, InterfaceTypeSymbol iface)
+	{
+		var key = ConformanceKey(owner, iface);
+		if (!_publishedInterfaceConformanceKeys.Add(key))
+			return;
+
+		if (!Conformance.TryGetValue(owner.Name, out var interfaces))
+		{
+			interfaces = [];
+			Conformance[owner.Name] = interfaces;
+		}
+
+		interfaces.Add(iface.Name);
+		foreach (var ancestor in GetInterfaceAncestors(iface))
+			interfaces.Add(ancestor);
+	}
+
 	public string NormalizeGenericName(string name)
 	{
 		// Remove all whitespace to ensure "Point<int>" matches "Point< int >"
@@ -2123,6 +2423,15 @@ public sealed class BindingContext
 			if (!ExtensionConstraintsSatisfied(extDecl, genericParams, typeArgs, substitutionMap, originalUnit))
 				continue;
 
+			// A generic owner conforms only for the closed interface produced by substituting
+			// the owner's arguments into the extension's conformance clause.
+			if (extDecl.ConformsTo is not null
+				&& ResolveSubstitutedType(extDecl.ConformsTo) is InterfaceTypeSymbol closedInterface
+				&& closedInterface.IsClosed)
+			{
+				QueueInterfaceConformance(instantiatedType, closedInterface, extDecl, originalUnit, substitutionMap);
+			}
+
 			// Monomorphize Methods & Destructors
 			foreach (var method in extDecl.Methods.Concat(extDecl.Destructors.Select(static d => d.ToFunctionDeclaration())))
 			{
@@ -2300,6 +2609,9 @@ public sealed class BindingContext
 
 			extensionResolutionUnit = null;
 		}
+
+		// Concrete-owner evidence can be proved as soon as every staged requires-clause is known.
+		PublishPendingInterfaceConformances();
 	}
 
 	private UnionTypeSymbol InstantiateGenericUnion(UnionDeclarationSyntax templateDecl, string templateMangledName, List<TypeSymbol> typeArgs)
@@ -2422,13 +2734,60 @@ public sealed class BindingContext
 				var ownerGenerics = ProtocolTemplates.TryGetValue(owner, out var ownerDecl)
 					? ownerDecl.GenericParameters
 					: fallbackDecl.GenericParameters;
-				canonical.Add(ProtocolCanonicalizer.BuildMemberToken(member, ownerGenerics, this, selfReplacement: null, concreteTypeArguments));
+				var ownerArguments = GetProtocolOwnerArguments(protoMangledName, owner, concreteTypeArguments);
+				canonical.Add(ProtocolCanonicalizer.BuildMemberToken(member, ownerGenerics, this, selfReplacement: null, ownerArguments));
 			}
 
 			return (effective.Select(e => e.Member).ToList(), canonical);
 		}
 
 		return (fallbackDecl.Members, ProtocolCanonicalizer.BuildCanonicalMembers(fallbackDecl, this, concreteTypeArguments));
+	}
+
+	/// <summary>
+	/// Rebinds a protocol owner's generic parameters through the child's base edges. A base written
+	/// as <c>IParent&lt;B,A&gt;</c> receives the child's arguments in that order, so instantiating the
+	/// child must not feed the parent the child's positional order.
+	/// </summary>
+	private IReadOnlyList<string> GetProtocolOwnerArguments(
+		string childName,
+		string ownerName,
+		IReadOnlyList<string> concreteArguments,
+		HashSet<string>? visiting = null)
+	{
+		if (childName == ownerName)
+			return concreteArguments;
+
+		visiting ??= [];
+		if (!visiting.Add(childName) || !ProtocolBaseEdges.TryGetValue(childName, out var edges))
+			return [];
+
+		var childParameters = ProtocolTemplates.TryGetValue(childName, out var childDecl)
+			? childDecl.GenericParameters
+			: [];
+		var bindings = new Dictionary<string, string>();
+		for (var i = 0; i < childParameters.Count && i < concreteArguments.Count; i++)
+			bindings[childParameters[i]] = concreteArguments[i];
+
+		foreach (var (baseProtocol, writtenArguments) in edges)
+		{
+			var bound = writtenArguments.Select(argument =>
+			{
+				var result = argument;
+				foreach (var kv in bindings)
+					result = Regex.Replace(result, $@"\b{Regex.Escape(kv.Key)}\b", kv.Value);
+				return result;
+			}).ToList();
+
+			if (baseProtocol == ownerName)
+				return bound;
+
+			var nested = GetProtocolOwnerArguments(baseProtocol, ownerName, bound, visiting);
+			if (nested.Count > 0)
+				return nested;
+		}
+
+		return [];
 	}
 
 	/// <summary>

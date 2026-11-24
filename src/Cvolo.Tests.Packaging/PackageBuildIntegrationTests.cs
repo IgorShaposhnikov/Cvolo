@@ -490,6 +490,137 @@ int main() {
 		}
 	}
 
+	/// <summary>
+	/// Verifies that a closed generic interface reference survives a real package round trip.
+	/// </summary>
+	[Fact]
+	public void Build_AppUsingGenericInterfacePackage_RehydratesClosedContract()
+	{
+		RequireClang();
+
+		var libraryDirectory = Path.Combine(_root, "libgenericcontracts");
+		Directory.CreateDirectory(libraryDirectory);
+		File.WriteAllText(Path.Combine(libraryDirectory, "GenericContracts.cvlproj"), """
+<Project Sdk="Cvolo.Sdk">
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <AssemblyName>GenericContracts</AssemblyName>
+    <PackageId>GenericContracts</PackageId>
+    <Version>1.0.0</Version>
+  </PropertyGroup>
+</Project>
+""");
+		File.WriteAllText(Path.Combine(libraryDirectory, "GenericContracts.cvl"), """
+namespace GenericContracts;
+
+public interface ISource<T>
+{
+    int Get();
+}
+
+public struct Source<T>
+{
+    public int N;
+}
+
+public extension Source<T> : ISource<T>
+{
+    public int Get()
+    {
+        return N;
+    }
+}
+
+public int ReadInt(ISource<int> source)
+{
+    return source.Get();
+}
+""");
+
+		var signingKey = Path.Combine(_root, "generic-contracts.key");
+		File.WriteAllBytes(signingKey, Enumerable.Range(64, 32).Select(i => (byte)i).ToArray());
+		var packagePath = Path.Combine(_root, "GenericContracts.1.0.0.cvlib");
+		PackPipeline.Execute(libraryDirectory, new PackOptions
+		{
+			OutputPath = packagePath,
+			SigningKeyPath = signingKey,
+			Targets = [TargetTriple.HostTriple()]
+		});
+
+		using (var archive = CvlArchiveReader.Read(packagePath))
+		{
+			var api = PackageApiMetadata.Read(archive);
+			var apiUnit = Assert.Single(api.Units);
+			Assert.Empty(apiUnit.Functions);
+
+			var templateUnits = PackageTemplateSource.Read(archive, "GenericContracts", "1.0.0");
+			var templateUnit = Assert.Single(templateUnits);
+			var members = templateUnit.NamespaceDeclaration!.Members;
+			Assert.Contains(members, member => member is InterfaceDeclarationSyntax { Name: "ISource" });
+			Assert.Contains(members, member => member is ExtensionDeclarationSyntax { ExtendedTypeName: "Source" });
+			Assert.Contains(members, member => member is FunctionDeclarationSyntax { Name: "ReadInt" });
+		}
+
+		var cache = new PackageCache(Path.Combine(_root, "generic-contracts-cache"));
+		new PackageInstaller(cache).InstallFromFile(packagePath);
+
+		var appDirectory = Path.Combine(_root, "generic-contracts-app");
+		Directory.CreateDirectory(appDirectory);
+		var projectPath = Path.Combine(appDirectory, "App.cvlproj");
+		File.WriteAllText(projectPath, """
+<Project Sdk="Cvolo.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>App</AssemblyName>
+    <PackageId>App</PackageId>
+    <Version>1.0.0</Version>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="GenericContracts" Version="1.0.0" />
+  </ItemGroup>
+</Project>
+""");
+		File.WriteAllText(Path.Combine(appDirectory, "Main.cvl"), """
+using GenericContracts;
+
+int main()
+{
+    Source<int> source = Source<int>
+    {
+        N = 42
+    };
+    return ReadInt(source) - 42;
+}
+""");
+
+		new LockFile
+		{
+			Sources = [],
+			Packages = new Dictionary<string, LockedPackage>(StringComparer.OrdinalIgnoreCase)
+			{
+				["GenericContracts"] = new("1.0.0", LocalFeed.ComputeHash(packagePath), new Dictionary<string, string>())
+			}
+		}.Write(Path.Combine(appDirectory, "cvolo.lock.json"));
+
+		var driverType = typeof(ICompilerDriver).Assembly.GetType("Cvolo.Drivers.CompilerDriver", throwOnError: true)!;
+		var driver = Assert.IsAssignableFrom<ICompilerDriver>(Activator.CreateInstance(driverType, cache));
+		var (exitCode, buildOutput) = CompileWithCapturedOutput(driver, projectPath);
+		Assert.True(exitCode == 0, buildOutput);
+
+		var executable = Path.Combine(appDirectory, "bin", "Debug", OperatingSystem.IsWindows() ? "App.exe" : "App");
+		Assert.True(File.Exists(executable));
+		using var process = Process.Start(new ProcessStartInfo
+		{
+			FileName = executable,
+			UseShellExecute = false,
+			RedirectStandardOutput = true,
+			RedirectStandardError = true
+		});
+		Assert.NotNull(process);
+		Assert.True(process!.WaitForExit(10_000), $"Compiled app '{executable}' did not exit within 10 seconds.");
+		Assert.Equal(0, process.ExitCode);
+	}
+
 	private static void RequireClang()
 	{
 		if (NativeToolchain.FindClang() is null)

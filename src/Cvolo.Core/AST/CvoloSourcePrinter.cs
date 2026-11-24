@@ -64,12 +64,13 @@ public sealed class CvoloSourcePrinter
 			case ExtensionDeclarationSyntax ext:
 				var extGenerics = Generics(ext.GenericParameters);
 				var extConform = ext.ConformsTo != null ? $" : {ext.ConformsTo}" : "";
+				var extWhere = WhereClauses(ext.GenericParameterConstraints);
 				var extConstructors = string.Join("\n", ext.Constructors.Select(c => Print(c, indent + 1)));
 				var extDestructors = string.Join("\n", ext.Destructors.Select(d => Print(d, indent + 1)));
 				var extOperators = string.Join("\n", ext.Operators.Select(o => Print(o, indent + 1)));
 				var extMethods = string.Join("\n", ext.Methods.Select(m => Print(m, indent + 1)));
 				var extAll = string.Join("\n", new[] { extConstructors, extDestructors, extMethods, extOperators }.Where(s => s.Length > 0));
-				return $"\n{ind}extension {ext.ExtendedTypeName}{extGenerics}{extConform} {{\n{extAll}\n{ind}}}";
+				return $"\n{ind}extension {ext.ExtendedTypeName}{extGenerics}{extConform}{extWhere} {{\n{extAll}\n{ind}}}";
 
 			case StructDeclarationSyntax st:
 				var stFields = string.Join("", st.Fields.Select(f => $"{ind}    {Print(f)}"));
@@ -77,11 +78,15 @@ public sealed class CvoloSourcePrinter
 
 			case ProtocolDeclarationSyntax proto:
 				var protoMembers = string.Join("", proto.Members.Select(pm => $"{ind}    {pm.ReturnType} {pm.Name}({string.Join(", ", pm.Parameters.Select(Print))});\n"));
-				return $"{PrintAttributes(proto.Attributes, indent)}\n{ind}protocol {proto.Name}{Generics(proto.GenericParameters)}{(proto.Bases is { Count: > 0 } ? $" : {string.Join(" & ", proto.Bases)}" : "")} {{\n{protoMembers}{ind}}}\n";
+				var protoBases = proto.Bases is { Count: > 0 } ? $" : {string.Join(", ", proto.Bases)}" : "";
+				var protoFor = proto.Constraint is not null ? $" for {proto.Constraint}" : "";
+				return $"{PrintAttributes(proto.Attributes, indent)}\n{ind}protocol {proto.Name}{Generics(proto.GenericParameters)}{protoBases}{protoFor} {{\n{protoMembers}{ind}}}\n";
 
 			case InterfaceDeclarationSyntax ifc:
 				var ifcMembers = string.Join("", ifc.Members.Select(im => $"{ind}    {im.ReturnType} {im.Name}({string.Join(", ", im.Parameters.Select(Print))});\n"));
-				return $"{PrintAttributes(ifc.Attributes, indent)}\n{ind}interface {ifc.Name}{Generics(ifc.GenericParameters)}{(ifc.Bases is { Count: > 0 } ? $" : {string.Join(" & ", ifc.Bases)}" : "")} {{\n{ifcMembers}{ind}}}\n";
+				var ifcBases = ifc.Bases is { Count: > 0 } ? $" : {string.Join(", ", ifc.Bases)}" : "";
+				var ifcFor = ifc.Constraint is not null ? $" for {ifc.Constraint}" : "";
+				return $"{PrintAttributes(ifc.Attributes, indent)}\n{ind}interface {ifc.Name}{Generics(ifc.GenericParameters)}{ifcBases}{ifcFor} {{\n{ifcMembers}{ind}}}\n";
 
 			case ProtocolMethodDeclarationSyntax pm:
 				return $"{pm.ReturnType} {pm.Name}({string.Join(", ", pm.Parameters.Select(Print))});\n";
@@ -398,5 +403,13 @@ public sealed class CvoloSourcePrinter
 	{
 		if (parameters is null || parameters.Count == 0) return "";
 		return $"<{string.Join(", ", parameters)}>";
+	}
+
+	private static string WhereClauses(IReadOnlyDictionary<string, List<string>> constraints)
+	{
+		if (constraints.Count == 0) return "";
+		return string.Join(" ", constraints
+			.Where(entry => entry.Value.Count > 0)
+			.Select(entry => $" where {entry.Key} : {string.Join(", ", entry.Value)}"));
 	}
 }

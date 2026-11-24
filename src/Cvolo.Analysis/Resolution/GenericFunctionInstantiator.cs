@@ -374,7 +374,10 @@ internal sealed class GenericFunctionInstantiator(
 		}
 
 		// Build the substitution map: each interface-typed parameter maps to its concrete arg type.
+		// Substitution keys are the written annotation spellings; canonical closed-contract identities
+		// are tracked separately so qualified/aliased references still enforce the same-owner policy.
 		var substitutionMap = new Dictionary<string, TypeSymbol>();
+		var ownerBindings = new Dictionary<string, TypeSymbol>();
 		for (var i = 0; i < templateDecl.Parameters.Count; i++)
 		{
 			var param = templateDecl.Parameters[i];
@@ -413,13 +416,18 @@ internal sealed class GenericFunctionInstantiator(
 				return null;
 			}
 
-			if (substitutionMap.TryGetValue(interfaceTypeName, out var existing) && existing.Name != concrete.Name)
+			// Same-owner enforcement uses canonical closed-contract identity so qualified and
+			// aliased references agree; rewriting still uses the written spelling because generic
+			// annotation keys are substituted by exact text match.
+			var canonicalKey = iface.Name;
+			if (ownerBindings.TryGetValue(canonicalKey, out var existing) && existing.Name != concrete.Name)
 			{
 				context.Diagnostics.Report(currentFileContext, call.Span,
 					$"Interface parameter '{param.Name}' requires a single concrete type, but both '{existing.Name}' and '{concrete.Name}' were passed", DiagnosticIds.InterfaceParameterRequiresASingleConcreteTypeButBothAndWereP);
 				return null;
 			}
 
+			ownerBindings[canonicalKey] = concrete;
 			substitutionMap[interfaceTypeName] = concrete;
 		}
 
@@ -427,6 +435,68 @@ internal sealed class GenericFunctionInstantiator(
 			return null;
 
 		return InstantiateInterfaceFunction(templateDecl, substitutionMap, scope);
+	}
+
+	/// <summary>
+	/// Instantiates a generic function that has both explicit scalar type arguments and
+	/// interface-typed parameters. The cache identity includes both sets so two owners satisfying
+	/// the same scalar specialization cannot share one monomorphized body.
+	/// </summary>
+	public FunctionSymbol? InstantiateGenericInterfaceFunction(
+		FunctionDeclarationSyntax templateDecl,
+		IReadOnlyList<TypeSymbol> scalarTypeArguments,
+		IReadOnlyList<TypeSymbol> argTypes,
+		string templateMangledName,
+		TextSpan callSpan)
+	{
+		var substitutionMap = new Dictionary<string, TypeSymbol>();
+		var ownerBindings = new Dictionary<string, TypeSymbol>();
+		for (var i = 0; i < templateDecl.GenericParameters.Count && i < scalarTypeArguments.Count; i++)
+			substitutionMap[templateDecl.GenericParameters[i]] = scalarTypeArguments[i];
+
+		var currentFileContext = context.FileContexts[context.CurrentUnit!];
+		for (var i = 0; i < templateDecl.Parameters.Count && i < argTypes.Count; i++)
+		{
+			var param = templateDecl.Parameters[i];
+			var annotation = SubstituteTypeName(param.Type, substitutionMap);
+			var isRefParam = annotation.StartsWith("refvar ", StringComparison.Ordinal)
+				|| annotation.StartsWith("ref ", StringComparison.Ordinal);
+			var interfaceTypeName = isRefParam
+				? (annotation.StartsWith("refvar ", StringComparison.Ordinal) ? annotation[7..] : annotation[4..])
+				: annotation;
+
+			if (context.ResolveType(interfaceTypeName) is not InterfaceTypeSymbol iface)
+				continue;
+
+			var concreteArg = argTypes[i];
+			var concrete = concreteArg is PointerTypeSymbol pointer ? pointer.ReferencedType : concreteArg;
+			if (concrete is InterfaceTypeSymbol)
+			{
+				context.Diagnostics.Report(currentFileContext, callSpan,
+					$"Interface parameter '{param.Name}' cannot be resolved to a concrete conforming type; argument is abstract interface type '{concrete.Name}'", DiagnosticIds.InterfaceParameterOfFunctionCannotBeResolvedToAConcreteConfo);
+				return null;
+			}
+
+			if (!interfaces.Conforms(concrete, iface))
+			{
+				context.Diagnostics.Report(currentFileContext, callSpan,
+					$"Type '{concrete.Name}' does not conform to interface '{iface.Name}' for parameter '{param.Name}'", DiagnosticIds.TypeDoesNotConformToInterfaceForParameter);
+				return null;
+			}
+
+			var canonicalKey = iface.Name;
+			if (ownerBindings.TryGetValue(canonicalKey, out var existing) && existing.Name != concrete.Name)
+			{
+				context.Diagnostics.Report(currentFileContext, callSpan,
+					$"Interface parameter '{param.Name}' requires a single concrete type, but both '{existing.Name}' and '{concrete.Name}' were passed", DiagnosticIds.InterfaceParameterRequiresASingleConcreteTypeButBothAndWereP);
+				return null;
+			}
+
+			ownerBindings[canonicalKey] = concrete;
+			substitutionMap[interfaceTypeName] = concrete;
+		}
+
+		return InstantiateDispatchFunction(templateDecl, substitutionMap, context.Globals, templateMangledName);
 	}
 
 	/// <summary>

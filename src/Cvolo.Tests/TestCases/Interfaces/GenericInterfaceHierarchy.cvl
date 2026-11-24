@@ -1,0 +1,71 @@
+/// <summary>
+/// Verifies specialized interface bases, requires-clauses and generic struct constraints.
+/// </summary>
+/// <remarks>
+/// Test: InterfacesTests.Interfaces_Hierarchy.
+/// Fixture Role: §33.2 generic interface inheritance and requires-clause.
+/// Compiler Target: Closed interface bases, per-edge substitution and staged requires validation.
+/// Expected: The program prints '42' and then '142'.
+/// </remarks>
+using System;
+
+protocol ITagged<T>
+{
+    T Tag();
+}
+
+interface IReader<T>
+{
+    T Read();
+}
+
+interface IBook<T> : IReader<T> for ITagged<T>
+{
+}
+
+struct Novel
+{
+    int Pages;
+}
+
+extension Novel : IBook<int>
+{
+    int Read()
+    {
+        return 42;
+    }
+}
+
+extension Novel
+{
+    int Tag()
+    {
+        return 7;
+    }
+}
+
+struct Shelf<T, B> where B : IBook<T>
+{
+    B Book;
+}
+
+int ReadValue(IBook<int> book)
+{
+    return book.Read();
+}
+
+int main()
+{
+    var novel = Novel
+    {
+        Pages = 10
+    };
+    Console.WriteLine(ReadValue(novel));
+
+    var shelf = Shelf<int, Novel>
+    {
+        Book = novel
+    };
+    Console.WriteLine(ReadValue(shelf.Book) + 100);
+    return 0;
+}

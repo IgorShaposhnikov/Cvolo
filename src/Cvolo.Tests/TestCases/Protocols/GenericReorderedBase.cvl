@@ -1,0 +1,53 @@
+/// <summary>
+/// Verifies that a generic protocol base reorders its parent's type arguments correctly.
+/// </summary>
+/// <remarks>
+/// Test: ProtocolsTests.Protocols_GenericDispatch.
+/// Fixture Role: §33.4 protocol base permutation.
+/// Compiler Target: Per-edge protocol argument rebinding.
+/// Expected: The program prints '42'.
+/// </remarks>
+using System;
+
+protocol IPair<A, B>
+{
+    A First();
+    B Second();
+}
+
+protocol IReversed<A, B> : IPair<B, A>
+{
+}
+
+struct ReversedPair<A, B>
+{
+    int Value;
+}
+
+extension ReversedPair<A, B>
+{
+    bool First()
+    {
+        return true;
+    }
+
+    int Second()
+    {
+        return 42;
+    }
+}
+
+int ReadPair(IReversed<int, bool> pair)
+{
+    return pair.Second();
+}
+
+int main()
+{
+    var pair = ReversedPair<int, bool>
+    {
+        Value = 0
+    };
+    Console.WriteLine(ReadPair(pair));
+    return 0;
+}

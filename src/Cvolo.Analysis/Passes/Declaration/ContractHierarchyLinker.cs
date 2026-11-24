@@ -38,6 +38,20 @@ internal sealed class ContractHierarchyLinker(BindingContext context)
 		}
 	}
 
+	/// <summary>Runs <paramref name="action"/> with a declaration's generic parameters in scope.</summary>
+	private void WithGenericScope(string kind, string name, IEnumerable<string> parameters, Action action)
+	{
+		context.PushGenericScope(kind, name, parameters);
+		try
+		{
+			action();
+		}
+		finally
+		{
+			context.PopGenericScope();
+		}
+	}
+
 	/// <summary>
 	/// Validates one protocol base clause graph and computes the protocol's effective transitive
 	/// member list with child declarations taking precedence over inherited members of the same name.
@@ -47,14 +61,17 @@ internal sealed class ContractHierarchyLinker(BindingContext context)
 		var mangledName = context.GetMangledName(protocolDecl.Name, context.CurrentNamespace);
 		var currentFileContext = context.FileContexts[context.CurrentUnit!];
 
-		foreach (var baseName in protocolDecl.Bases)
+		WithGenericScope("protocol", protocolDecl.Name, protocolDecl.GenericParameters, () =>
 		{
-			if (context.ResolveType(baseName) is not ProtocolTypeSymbol)
+			foreach (var baseName in protocolDecl.Bases)
 			{
-				context.Diagnostics.Report(currentFileContext, protocolDecl.Span,
-					$"Unknown protocol '{baseName}' in base clause of protocol '{protocolDecl.Name}'.", DiagnosticIds.UnknownProtocolInBaseClauseOfProtocol);
+				if (context.ResolveType(baseName) is not ProtocolTypeSymbol)
+				{
+					context.Diagnostics.Report(currentFileContext, protocolDecl.Span,
+						$"Unknown protocol '{baseName}' in base clause of protocol '{protocolDecl.Name}'.", DiagnosticIds.UnknownProtocolInBaseClauseOfProtocol);
+				}
 			}
-		}
+		});
 
 		var effective = new List<(string Owner, ProtocolMethodDeclarationSyntax Member)>();
 		effective.AddRange(protocolDecl.Members.Select(member => (mangledName, member)));
@@ -63,8 +80,11 @@ internal sealed class ContractHierarchyLinker(BindingContext context)
 		{
 			var visited = new HashSet<string>();
 			var stack = new HashSet<string>();
-			foreach (var baseName in protocolDecl.Bases)
-				CollectProtocolBaseMembers(baseName, visited, stack, effective, protocolDecl.Span);
+			WithGenericScope("protocol", protocolDecl.Name, protocolDecl.GenericParameters, () =>
+			{
+				foreach (var baseName in protocolDecl.Bases)
+					CollectProtocolBaseMembers(mangledName, baseName, visited, stack, effective, protocolDecl.Span);
+			});
 		}
 
 		context.ProtocolEffectiveMembers[mangledName] = effective;
@@ -96,6 +116,7 @@ internal sealed class ContractHierarchyLinker(BindingContext context)
 	/// duplicate traversal. Existing child/member names remain authoritative and suppress inherited copies.
 	/// </summary>
 	private void CollectProtocolBaseMembers(
+		string childMangledName,
 		string baseName,
 		HashSet<string> visited,
 		HashSet<string> stack,
@@ -104,6 +125,17 @@ internal sealed class ContractHierarchyLinker(BindingContext context)
 	{
 		if (context.ResolveType(baseName) is not ProtocolTypeSymbol protoBase)
 			return;
+
+		var openBracket = baseName.IndexOf('<');
+		var closeBracket = baseName.LastIndexOf('>');
+		var baseArguments = openBracket > 0 && closeBracket > openBracket
+			&& BindingContext.TrySplitTypeArguments(baseName[(openBracket + 1)..closeBracket], out var splitArguments)
+				? splitArguments
+				: [];
+		context.ProtocolBaseEdges.TryGetValue(childMangledName, out var childEdges);
+		childEdges ??= [];
+		childEdges.Add((protoBase.Name, baseArguments));
+		context.ProtocolBaseEdges[childMangledName] = childEdges;
 
 		if (!stack.Add(protoBase.Name))
 		{
@@ -117,7 +149,7 @@ internal sealed class ContractHierarchyLinker(BindingContext context)
 			if (context.ProtocolTemplates.TryGetValue(protoBase.Name, out var baseDecl))
 			{
 				foreach (var baseOfBase in baseDecl.Bases)
-					CollectProtocolBaseMembers(baseOfBase, visited, stack, effective, span);
+					CollectProtocolBaseMembers(protoBase.Name, baseOfBase, visited, stack, effective, span);
 
 				foreach (var member in baseDecl.Members)
 				{
@@ -139,14 +171,17 @@ internal sealed class ContractHierarchyLinker(BindingContext context)
 	private void LinkInterface(InterfaceDeclarationSyntax interfaceDecl)
 	{
 		var currentFileContext = context.FileContexts[context.CurrentUnit!];
-		foreach (var baseName in interfaceDecl.Bases)
+		WithGenericScope("interface", interfaceDecl.Name, interfaceDecl.GenericParameters, () =>
 		{
-			var baseType = context.ResolveType(baseName);
-			if (baseType is not (InterfaceTypeSymbol or ProtocolTypeSymbol))
+			foreach (var baseName in interfaceDecl.Bases)
 			{
-				context.Diagnostics.Report(currentFileContext, interfaceDecl.Span,
-					$"Unknown contract '{baseName}' in base clause of interface '{interfaceDecl.Name}'.", DiagnosticIds.UnknownContractInBaseClauseOfInterface);
+				var baseType = context.ResolveType(baseName);
+				if (baseType is not (InterfaceTypeSymbol or ProtocolTypeSymbol))
+				{
+					context.Diagnostics.Report(currentFileContext, interfaceDecl.Span,
+						$"Unknown contract '{baseName}' in base clause of interface '{interfaceDecl.Name}'.", DiagnosticIds.UnknownContractInBaseClauseOfInterface);
+				}
 			}
-		}
+		});
 	}
 }

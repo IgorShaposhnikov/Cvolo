@@ -56,7 +56,7 @@ public static class CompletionQuery
 		ArgumentNullException.ThrowIfNull(unit);
 		ArgumentOutOfRangeException.ThrowIfNegative(position);
 
-var previousUnit = context.CurrentUnit;
+		var previousUnit = context.CurrentUnit;
 		var previousNamespace = context.CurrentNamespace;
 		context.CurrentUnit = unit;
 		context.CurrentNamespace = unit.NamespaceDeclaration?.Name;
@@ -93,7 +93,7 @@ var previousUnit = context.CurrentUnit;
 			var visibleMap = BuildVisibleScopeMap(state);
 			return new CompletionQueryResult(contextKind, EnumerateIdentifierCandidates(state, visibleMap));
 		}
-finally
+		finally
 		{
 			context.CurrentUnit = previousUnit;
 			context.CurrentNamespace = previousNamespace;
@@ -735,8 +735,8 @@ finally
 
 		foreach (var (key, symbol) in state.Context.InterfaceTypes)
 		{
-			if (!key.Contains('<'))
-				types.Add((symbol, key));
+			// Closed specializations are valid conformance/dispatch targets, not just open templates.
+			types.Add((symbol, key));
 		}
 
 		foreach (var (key, symbol) in state.Context.ProtocolTypes)

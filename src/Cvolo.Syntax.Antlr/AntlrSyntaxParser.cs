@@ -3070,6 +3070,27 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		}
 	}
 
+	/// <summary>
+	/// Builds the spelling of a nominal contract reference, preserving generic arguments.
+	/// Contract references are stored as strings like other type names, but unlike a bare
+	/// qualifiedName they may carry a fixed-arity argument list.
+	/// </summary>
+	private string GetContractReferenceName(CvoloParser.ContractReferenceContext context)
+	{
+		if (context is null)
+			return string.Empty;
+
+		var name = context.qualifiedName().GetText();
+		if (context.typeList() is not { } typeList || typeList.type().Length == 0 || ContainsRecoveryError(context))
+			return name;
+
+		var args = typeList.type().Select(GetTypeName).ToArray();
+		if (args.Any(string.IsNullOrWhiteSpace))
+			return name;
+
+		return $"{name}<{string.Join(", ", args)}>";
+	}
+
 	private string GetTypeName(CvoloParser.TypeContext context)
 	{
 		if (context is null)
@@ -3727,10 +3748,10 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		var (defaults, constraints) = BuildWhereClauses(context.whereClause());
 
 		string? conformsTo = null;
-		if (context.qualifiedName() is { } conformsCtx)
-			conformsTo = conformsCtx.GetText();
+		if (context.contractReference() is { } conformsCtx)
+			conformsTo = GetContractReferenceName(conformsCtx);
 
-		return new ExtensionDeclarationSyntax(SpanOf(context), extendedTypeName, methods, destructors, constructors, generics, conformsTo, GetVisibilityModifier(context.visibilityModifier()), defaults, nameSpan: SpanOf(context.Identifier().Symbol), conformsToSpan: context.qualifiedName() is { } conformsSpanCtx ? SpanOf(conformsSpanCtx) : null, operators: operators, genericParameterConstraints: constraints);
+		return new ExtensionDeclarationSyntax(SpanOf(context), extendedTypeName, methods, destructors, constructors, generics, conformsTo, GetVisibilityModifier(context.visibilityModifier()), defaults, nameSpan: SpanOf(context.Identifier().Symbol), conformsToSpan: context.contractReference() is { } conformsSpanCtx ? SpanOf(conformsSpanCtx) : null, operators: operators, genericParameterConstraints: constraints);
 	}
 
 	/// <summary>
@@ -3824,7 +3845,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		}
 
 		var attributes = BuildAttributeList(context.attributeList());
-		var bases = context.qualifiedName().Select(q => q.GetText()).ToList();
+		var bases = context.contractReference().Select(GetContractReferenceName).ToList();
 		var constraint = context.FOR() is not null && context.type() is { } typeCtx ? GetTypeName(typeCtx) : null;
 		return new InterfaceDeclarationSyntax(SpanOf(context), name, generics, members, bases, constraint, attributes, GetVisibilityModifier(context.visibilityModifier()));
 	}
@@ -3865,7 +3886,7 @@ public sealed class AntlrSyntaxParser : ISyntaxParser
 		}
 
 		var attributes = BuildAttributeList(context.attributeList());
-		var bases = context.qualifiedName().Select(q => q.GetText()).ToList();
+		var bases = context.contractReference().Select(GetContractReferenceName).ToList();
 		var constraint = context.FOR() is not null && context.type() is { } typeCtx ? GetTypeName(typeCtx) : null;
 		return new ProtocolDeclarationSyntax(SpanOf(context), name, generics, members, bases, constraint, attributes, GetVisibilityModifier(context.visibilityModifier()));
 	}

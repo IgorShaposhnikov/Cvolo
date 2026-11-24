@@ -19,6 +19,13 @@ qualifiedName
 	: Identifier (DOT Identifier)*
 	;
 
+// A nominal contract target (interface conformance, contract bases, requires clauses).
+// This is deliberately separate from qualifiedName: namespaces, member paths, using and
+// call names must not acquire generic type syntax.
+contractReference
+	: qualifiedName (LT typeList GT)?
+	;
+
 declaration
 	: functionDeclaration
 	| externGlobalDeclaration
@@ -168,7 +175,7 @@ enumVariant
 	;
 
 extensionDeclaration
-	: visibilityModifier? EXTENSION Identifier (LT genericParameterList GT)? (COLON qualifiedName)? whereClause* LBRACE extensionMember* RBRACE SEMI?
+	: visibilityModifier? EXTENSION Identifier (LT genericParameterList GT)? (COLON contractReference)? whereClause* LBRACE extensionMember* RBRACE SEMI?
 	;
 
 extensionMember
@@ -210,7 +217,7 @@ extensionFunctionDeclaration
 	;
 
 interfaceDeclaration
-	: attributeList* visibilityModifier? INTERFACE Identifier (LT genericParameterList GT)? (COLON qualifiedName (COMMA qualifiedName)*)? (FOR type)? LBRACE interfaceMember* RBRACE SEMI?
+	: attributeList* visibilityModifier? INTERFACE Identifier (LT genericParameterList GT)? (COLON contractReference (COMMA contractReference)*)? (FOR type)? LBRACE interfaceMember* RBRACE SEMI?
 	;
 
 interfaceMember
@@ -218,7 +225,7 @@ interfaceMember
 	;
 
 protocolDeclaration
-	: attributeList* visibilityModifier? PROTOCOL Identifier (LT genericParameterList GT)? (COLON qualifiedName (COMMA qualifiedName)*)? (FOR type)? LBRACE protocolMember* RBRACE SEMI?
+	: attributeList* visibilityModifier? PROTOCOL Identifier (LT genericParameterList GT)? (COLON contractReference (COMMA contractReference)*)? (FOR type)? LBRACE protocolMember* RBRACE SEMI?
 	;
 
 protocolMember

@@ -1,7 +1,6 @@
 using Cvolo.Analysis.Passes.Declaration;
 using Cvolo.Core.AST.Base;
 using Cvolo.Core.AST.Declarations;
-using Cvolo.Core.Diagnostics;
 
 namespace Cvolo.Analysis.Passes;
 
@@ -113,6 +112,10 @@ public sealed class DeclarationPass(BindingContext context)
 					_globals.Declare(globalDecl);
 			}
 		}
+
+		// Pass 1.1: interface conformances are staged until every requires-clause can be proved
+		// against the complete set of extensions, independent of declaration order.
+		context.PublishPendingInterfaceConformances();
 
 		// Pass 1.25: namespace alias targets are now checkable against every registry. An imported
 		// namespace is frequently implied only by the symbols beneath it (a package-rehydrated

@@ -1,0 +1,63 @@
+/// <summary>
+/// Verifies that explicit scalar type arguments do not alias different concrete interface owners.
+/// </summary>
+/// <remarks>
+/// Test: InterfacesTests.Interfaces_Hierarchy.
+/// Fixture Role: §33.3 combined scalar and owner callable identity.
+/// Compiler Target: Generic interface dispatch cache identity.
+/// Expected: The program prints '7', '107' and '7'.
+/// </remarks>
+using System;
+
+interface IValue<T>
+{
+    T Get();
+}
+
+struct First
+{
+    int Value;
+}
+
+struct Second
+{
+    int Value;
+}
+
+extension First : IValue<int>
+{
+    int Get()
+    {
+        return 7;
+    }
+}
+
+extension Second : IValue<int>
+{
+    int Get()
+    {
+        return 107;
+    }
+}
+
+T Read<T>(IValue<T> value)
+{
+    return value.Get();
+}
+
+int main()
+{
+    var first = First
+    {
+        Value = 7
+    };
+    var second = Second
+    {
+        Value = 107
+    };
+
+    Console.WriteLine(Read<int>(first));
+    Console.WriteLine(Read<int>(second));
+    Console.WriteLine(Read<int>(first));
+    return 0;
+}

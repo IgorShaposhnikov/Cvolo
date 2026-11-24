@@ -98,6 +98,26 @@ internal sealed class FunctionDeclarationRegistrar(BindingContext context)
 			context.SymbolUnits[mangledName] = context.CurrentUnit!;
 
 			context.GenericFunctionTemplates[mangledName] = func;
+
+			// A generic template whose annotation is a specialized interface is also an interface
+			// dispatch template; it needs a concrete owner binding at each call before the scalar
+			// specialization can be cached or validated.
+			var hasInterfaceParameter = false;
+			context.PushGenericScope("function", func.Name, func.GenericParameters);
+			try
+			{
+				hasInterfaceParameter = func.Parameters.Any(p => IsInterfaceTypedParameter(p));
+			}
+			finally
+			{
+				context.PopGenericScope();
+			}
+
+			if (hasInterfaceParameter)
+			{
+				context.InterfaceFunctionTemplates[mangledName] = func;
+			}
+
 			return;
 		}
 

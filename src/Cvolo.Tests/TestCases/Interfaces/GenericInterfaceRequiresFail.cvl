@@ -1,0 +1,36 @@
+/// <summary>
+/// Verifies that a generic interface requires-clause is enforced against the closed contract.
+/// </summary>
+/// <remarks>
+/// Test: InterfacesTests.Interfaces_Rejections.
+/// Fixture Role: §33.2 unsatisfied requires-clause rejection.
+/// Compiler Target: Staged conformance publication after structural requires validation.
+/// Expected: CVL reports that Novel does not satisfy ITagged&lt;int&gt; required by IBook&lt;int&gt;.
+/// </remarks>
+protocol ITagged<T>
+{
+    T Tag();
+}
+
+interface IBook<T> for ITagged<T>
+{
+    int Read();
+}
+
+struct Novel
+{
+    int Pages;
+}
+
+extension Novel : IBook<int>
+{
+    int Read()
+    {
+        return 42;
+    }
+}
+
+int main()
+{
+    return 0;
+}
