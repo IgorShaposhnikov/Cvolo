@@ -1,0 +1,29 @@
+/// <summary>
+/// Verifies that exposing an inactive union payload through a mutable reference is rejected.
+/// </summary>
+/// <remarks>
+/// Test: UnionsTests.Semantic_Rejections.
+/// Fixture Role: Inactive-variant by-reference exposure rejection.
+/// Compiler Target: Active-variant checks on address-taking and borrow expressions.
+/// Expected: CVL1607 reports variant 'B' while 'A' is active.
+/// </remarks>
+union Choice
+{
+    int A;
+    int B;
+}
+
+void Touch(refvar int value)
+{
+    value = 9;
+}
+
+int main()
+{
+    var c = Choice
+    {
+        A = 1
+    };
+    Touch(refvar c.B);
+    return 0;
+}

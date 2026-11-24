@@ -1,0 +1,24 @@
+/// <summary>
+/// Verifies that reading a union payload with no proven active variant is rejected.
+/// </summary>
+/// <remarks>
+/// Test: UnionsTests.Semantic_Rejections.
+/// Fixture Role: Unknown-variant read rejection.
+/// Compiler Target: Flow-sensitive active-variant analysis for parameters.
+/// Expected: CVL1607 reports that the active variant is not known at that point.
+/// </remarks>
+union Choice
+{
+    int A;
+    int B;
+}
+
+int ReadA(Choice c)
+{
+    return c.A;
+}
+
+int main()
+{
+    return 0;
+}

@@ -10,5 +10,10 @@
 int main()
 {
     Option<int> value = Option<int>(42);
-    return value.Some == 42 ? 0 : 1;
+    if (value is Some payload)
+    {
+        return payload == 42 ? 0 : 1;
+    }
+
+    return 1;
 }

@@ -598,6 +598,9 @@ public static class DiagnosticIds
 	/// <summary>Unknown register in the clobber list.</summary>
 	public const string UnknownAsmClobberRegister = "CVL1606";
 
+	/// <summary>A tagged-union payload is read through a variant that is not provably active at that point.</summary>
+	public const string InactiveUnionVariantRead = "CVL1607";
+
 	// ── Compile-Time Operators (CVL21xx) ──
 
 	/// <summary>The symbol referenced by `nameof` could not be resolved in the current context.</summary>

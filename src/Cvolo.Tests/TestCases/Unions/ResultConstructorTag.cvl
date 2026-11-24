@@ -14,9 +14,9 @@ Result<int, TestError> Get()
 int Main()
 {
 	val result = Get();
-	if (result.IsOk())
+	if (result is Ok okValue)
 	{
-		Console.WriteLine(result.Ok);
+		Console.WriteLine(okValue);
 	}
 	else
 	{

@@ -17,13 +17,28 @@ union Failure
 Result<int, ErrorCodes> Divide(int a, int b)
 {
 	if (b == 0)
-		return Result<int, ErrorCodes> { Err: ErrorCodes.NotFound };
-	return Result<int, ErrorCodes> { Ok: a / b };
+	{
+		return Result<int, ErrorCodes>
+		{
+			Err = ErrorCodes.NotFound
+		};
+	}
+
+	return Result<int, ErrorCodes>
+	{
+		Ok = a / b
+	};
 }
 
 Result<int, Failure> ReadStuff(int a)
 {
-	return Result<int, Failure> { Err: Failure { Code: 7 } };
+	return Result<int, Failure>
+	{
+		Err = Failure
+		{
+			Code = 7
+		}
+	};
 }
 
 int main()
@@ -31,16 +46,19 @@ int main()
 	var int x = Divide(20, 4) catch 0;
 	Console.WriteLine(x);
 
-	var int y = 0;
+	var y = 0;
 
 	try
 	{
-		var int r = ReadStuff(1);
+		var r = ReadStuff(1);
 		y = r;
 	}
 	catch (Failure f)
 	{
-		y = f.Code;
+		if (f is Code code)
+		{
+			y = code;
+		}
 	}
 
 	Console.WriteLine(y);

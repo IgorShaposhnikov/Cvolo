@@ -1,8 +1,16 @@
 using System;
 
-int main() {
-    Option<int> opt = Option<int>(42);
-    var int x = opt.Some;
-    Console.WriteLine($"Some: {x}");
+int main()
+{
+    var opt = Option<int>(42);
+    if (opt is Some x)
+    {
+        Console.WriteLine($"Some: {x}");
+    }
+    else
+    {
+        return 1;
+    }
+
     return 0;
 }

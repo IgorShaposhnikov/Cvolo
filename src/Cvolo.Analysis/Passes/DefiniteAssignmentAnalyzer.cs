@@ -28,6 +28,10 @@ internal sealed class DefiniteAssignmentAnalyzer(BindingContext context)
 	// assignment re-walks a shared l-value node.
 	private readonly HashSet<(int Start, int End)> _reportedSpans = [];
 
+	// Separate from the DA guard: an inactive-variant read is a different diagnostic and must
+	// not be suppressed just because DA already reported an availability problem at that span.
+	private readonly HashSet<(int Start, int End)> _reportedVariantSpans = [];
+
 	// Innermost breakable/continuable constructs, used to route break/continue edge states.
 	private readonly List<FlowFrameBase> _frames = [];
 
@@ -41,6 +45,7 @@ internal sealed class DefiniteAssignmentAnalyzer(BindingContext context)
 
 		_referenceProvenance.Clear();
 		_reportedSpans.Clear();
+		_reportedVariantSpans.Clear();
 		_frames.Clear();
 
 		var scope = new SymbolTable(context.Globals);
@@ -129,7 +134,6 @@ internal sealed class DefiniteAssignmentAnalyzer(BindingContext context)
 			// Deferred and try/catch bodies run on edges that this pass does not model; their
 			// effects are conservatively ignored so they neither hide nor invent assignments.
 			case DeferStatementSyntax:
-			case TryStatementSyntax:
 				return state;
 
 			default:
@@ -167,7 +171,12 @@ internal sealed class DefiniteAssignmentAnalyzer(BindingContext context)
 			return state;
 		}
 
-		return AddAssigned(state, new MovePath(symbol.Name));
+		var path = new MovePath(symbol.Name);
+		state = AddAssigned(state, path);
+
+		// A tagged union is initialized when one variant is written. Track that variant here;
+		// DA intentionally treats the root as a single unit and does not imply any per-variant fact.
+		return ApplyWholeUnionValue(state, path, v.Initializer, scope);
 	}
 
 	private State? AnalyzeIf(IfStatementSyntax i, SymbolTable scope, State state)
@@ -193,8 +202,13 @@ internal sealed class DefiniteAssignmentAnalyzer(BindingContext context)
 		_frames.RemoveAt(_frames.Count - 1);
 
 		// Zero-iteration exit plus every 'break' edge. The backedge is not iterated: a variable
-		// assigned only inside the body is not considered assigned after the loop.
-		return Join(exitIn, JoinAll(frame.Breaks));
+		// assigned only inside the body is not considered assigned after the loop. Active-variant
+		// facts are different: a backedge may change a tag, so any fact whose storage the body can
+		// write must not survive into the exit state.
+		if (exitIn != null)
+			exitIn = InvalidateFactsWrittenIn(w.Body, exitIn);
+		var breaks = frame.Breaks.Select(b => InvalidateFactsWrittenIn(w.Body, b));
+		return Join(exitIn, JoinAll(breaks));
 	}
 
 	private State? AnalyzeFor(ForStatementSyntax f, SymbolTable scope, State state)
@@ -214,7 +228,14 @@ internal sealed class DefiniteAssignmentAnalyzer(BindingContext context)
 
 		_frames.RemoveAt(_frames.Count - 1);
 
-		return Join(exitIn, JoinAll(frame.Breaks));
+		if (exitIn != null)
+		{
+			exitIn = InvalidateFactsWrittenIn(f.Body, exitIn);
+			exitIn = InvalidateFactsWrittenIn(f.Increment, exitIn);
+		}
+
+		var breaks = frame.Breaks.Select(b => InvalidateFactsWrittenIn(f.Increment, InvalidateFactsWrittenIn(f.Body, b)));
+		return Join(exitIn, JoinAll(breaks));
 	}
 
 	private State? AnalyzeForEach(ForEachStatementSyntax fe, SymbolTable scope, State state)
@@ -231,12 +252,16 @@ internal sealed class DefiniteAssignmentAnalyzer(BindingContext context)
 		AnalyzeBlock(fe.Body, bodyScope, entry);
 		_frames.RemoveAt(_frames.Count - 1);
 
-		return Join(entry, JoinAll(frame.Breaks));
+		var exit = InvalidateFactsWrittenIn(fe.Body, entry);
+		var breaks = frame.Breaks.Select(b => InvalidateFactsWrittenIn(fe.Body, b));
+		return Join(exit, JoinAll(breaks));
 	}
 
 	private State? AnalyzeSwitch(SwitchStatementSyntax s, SymbolTable scope, State state)
 	{
 		var afterExpr = AnalyzeExpression(s.Expression, scope, state);
+		var switchUnion = GetTaggedUnionType(s.Expression, scope);
+		var switchPath = switchUnion is not null ? ResolveMovePath(s.Expression) : null;
 
 		var frame = new SwitchFrame();
 		_frames.Add(frame);
@@ -250,7 +275,28 @@ internal sealed class DefiniteAssignmentAnalyzer(BindingContext context)
 				caseScope.Declare(new VariableSymbol(@case.VariableName, variantType, isMutable: false) { IsInitialized = true });
 			}
 
-			var bodyOut = AnalyzeBlock(new BlockStatementSyntax(@case.Span, @case.Body), caseScope, afterExpr);
+			// Reuse the branch fact that pattern matching already establishes. A case that
+			// contradicts an already-proven fact is unreachable, so it must not overwrite that
+			// fact; this keeps a known variant stable across an exhaustive switch.
+			var caseState = afterExpr;
+			if (switchPath is not null)
+			{
+				var known = afterExpr.ActiveVariants.TryGetValue(switchPath, out var existing) ? existing : null;
+				if (known is not null && known != @case.VariantName)
+				{
+					caseState = afterExpr;
+				}
+				else if (switchUnion?.FindField(@case.VariantName) is not null)
+				{
+					caseState = SetActiveVariant(afterExpr, switchPath, @case.VariantName);
+				}
+				else
+				{
+					caseState = ClearActiveVariant(afterExpr, switchPath);
+				}
+			}
+
+			var bodyOut = AnalyzeBlock(new BlockStatementSyntax(@case.Span, @case.Body), caseScope, caseState);
 			if (bodyOut != null)
 				exits.Add(bodyOut);
 		}
@@ -278,17 +324,23 @@ internal sealed class DefiniteAssignmentAnalyzer(BindingContext context)
 				return AnalyzeAssignment(assign, scope, state);
 
 			case BinaryExpressionSyntax { Operator: "&&" or "||" } lazy:
-			{
-				var (t, f) = AnalyzeCondition(lazy, scope, state);
-				return Join(t, f) ?? state;
-			}
+				{
+					var (t, f) = AnalyzeCondition(lazy, scope, state);
+					return Join(t, f) ?? state;
+				}
 
 			case BinaryExpressionSyntax bin:
 				state = AnalyzeExpression(bin.Left, scope, state);
 				return AnalyzeExpression(bin.Right, scope, state);
 
 			case MemberAccessExpressionSyntax m:
-				return AnalyzeMemberRead(m, scope, state);
+				{
+					// Every dotted projection is a potential payload read, including nested projections
+					// (x.A.Field) and reads hidden in operands of other expressions. This check is kept
+					// separate from DA's availability check so an uninitialized root keeps its own error.
+					CheckUnionVariantReads(m, scope, state);
+					return AnalyzeMemberRead(m, scope, state);
+				}
 
 			case IndexExpressionSyntax idx:
 				return AnalyzeIndexRead(idx, scope, state);
@@ -300,33 +352,34 @@ internal sealed class DefiniteAssignmentAnalyzer(BindingContext context)
 				return AnalyzeUnary(u, scope, state);
 
 			case BorrowExpressionSyntax b:
-				// Taking a reference does not read the referenced value.
-				AnalyzeLValueAddress(b.Expression, scope, state);
+				// A borrow of a union payload exposes its storage even when it does not load a
+				// value, so it is guarded like a read.
+				AnalyzeLValueAddress(b.Expression, scope, state, isVariantSelectionTarget: false);
 				return state;
 
 			case TernaryExpressionSyntax tern:
-			{
-				var (t, f) = AnalyzeCondition(tern.Condition, scope, state);
-				var thenOut = t != null ? AnalyzeExpression(tern.ThenExpression, scope, t) : null;
-				var elseOut = f != null ? AnalyzeExpression(tern.ElseExpression, scope, f) : null;
-				return Join(thenOut, elseOut) ?? state;
-			}
+				{
+					var (t, f) = AnalyzeCondition(tern.Condition, scope, state);
+					var thenOut = t != null ? AnalyzeExpression(tern.ThenExpression, scope, t) : null;
+					var elseOut = f != null ? AnalyzeExpression(tern.ElseExpression, scope, f) : null;
+					return Join(thenOut, elseOut) ?? state;
+				}
 
 			case CoalesceExpressionSyntax co:
-			{
-				var afterLeft = AnalyzeExpression(co.Left, scope, state);
-				var afterRight = AnalyzeExpression(co.Right, scope, afterLeft);
-				return Join(afterLeft, afterRight) ?? afterLeft;
-			}
+				{
+					var afterLeft = AnalyzeExpression(co.Left, scope, state);
+					var afterRight = AnalyzeExpression(co.Right, scope, afterLeft);
+					return Join(afterLeft, afterRight) ?? afterLeft;
+				}
 
 			case OptionalChainExpressionSyntax oc:
 				return AnalyzeOptionalChain(oc, scope, state);
 
 			case IsPatternExpressionSyntax ip:
-			{
-				var (t, f) = AnalyzeCondition(ip, scope, state);
-				return Join(t, f) ?? state;
-			}
+				{
+					var (t, f) = AnalyzeCondition(ip, scope, state);
+					return Join(t, f) ?? state;
+				}
 
 			case StructInitializationExpressionSyntax si:
 				foreach (var init in si.Initializers)
@@ -388,13 +441,15 @@ internal sealed class DefiniteAssignmentAnalyzer(BindingContext context)
 				return MarkAssigned(u.Operand, scope, state) ?? state;
 
 			case "!":
-			{
-				var (t, f) = AnalyzeCondition(u, scope, state);
-				return Join(t, f) ?? state;
-			}
+				{
+					var (t, f) = AnalyzeCondition(u, scope, state);
+					return Join(t, f) ?? state;
+				}
 
 			case "&":
-				AnalyzeLValueAddress(u.Operand, scope, state);
+				// A reference to a union payload exposes its storage, so it is a read of that
+				// variant even though no value is loaded here.
+				AnalyzeLValueAddress(u.Operand, scope, state, isVariantSelectionTarget: false);
 				return state;
 
 			case "*":
@@ -460,7 +515,11 @@ internal sealed class DefiniteAssignmentAnalyzer(BindingContext context)
 			{
 				// A mutable reference argument is an address, not a value read. It is also not
 				// treated as initializing the source: callees never make a local definite.
-				AnalyzeLValueAddress(argument, scope, state);
+				AnalyzeLValueAddress(argument, scope, state, isVariantSelectionTarget: false);
+				if (ResolveMovePath(argument) is { } mutablePath)
+				{
+					state = InvalidateActiveFacts(state, mutablePath);
+				}
 			}
 			else
 			{
@@ -468,7 +527,9 @@ internal sealed class DefiniteAssignmentAnalyzer(BindingContext context)
 			}
 		}
 
-		return state;
+		// A callee may also mutate any global union storage; locals passed by value cannot be
+		// changed by the call and keep their proven facts.
+		return InvalidateGlobalActiveFacts(state, scope);
 	}
 
 	private State AnalyzeOptionalChain(OptionalChainExpressionSyntax oc, SymbolTable scope, State state)
@@ -492,7 +553,7 @@ internal sealed class DefiniteAssignmentAnalyzer(BindingContext context)
 		// then record the assignment. The destination's own value is not read by a plain '='.
 		AnalyzeLValueAddress(bin.Left, scope, state);
 		state = AnalyzeExpression(bin.Right, scope, state);
-		return MarkAssigned(bin.Left, scope, state) ?? state;
+		return MarkAssigned(bin.Left, scope, state, bin.Right) ?? state;
 	}
 
 	// Lazy boolean conditions
@@ -510,44 +571,57 @@ internal sealed class DefiniteAssignmentAnalyzer(BindingContext context)
 				return b.Value ? (state, null) : (null, state);
 
 			case UnaryExpressionSyntax { Operator: "!" } not:
-			{
-				var (t, f) = AnalyzeCondition(not.Operand, scope, state);
-				return (f, t);
-			}
+				{
+					var (t, f) = AnalyzeCondition(not.Operand, scope, state);
+					return (f, t);
+				}
 
 			case BinaryExpressionSyntax { Operator: "&&" } and:
-			{
-				var (leftTrue, leftFalse) = AnalyzeCondition(and.Left, scope, state);
-				State? rightTrue = null;
-				State? rightFalse = null;
-				if (leftTrue != null)
-					(rightTrue, rightFalse) = AnalyzeCondition(and.Right, scope, leftTrue);
-				return (rightTrue, Join(leftFalse, rightFalse));
-			}
+				{
+					var (leftTrue, leftFalse) = AnalyzeCondition(and.Left, scope, state);
+					State? rightTrue = null;
+					State? rightFalse = null;
+					if (leftTrue != null)
+						(rightTrue, rightFalse) = AnalyzeCondition(and.Right, scope, leftTrue);
+					return (rightTrue, Join(leftFalse, rightFalse));
+				}
 
 			case BinaryExpressionSyntax { Operator: "||" } or:
-			{
-				var (leftTrue, leftFalse) = AnalyzeCondition(or.Left, scope, state);
-				State? rightTrue = null;
-				State? rightFalse = null;
-				if (leftFalse != null)
-					(rightTrue, rightFalse) = AnalyzeCondition(or.Right, scope, leftFalse);
-				return (Join(leftTrue, rightTrue), rightFalse);
-			}
+				{
+					var (leftTrue, leftFalse) = AnalyzeCondition(or.Left, scope, state);
+					State? rightTrue = null;
+					State? rightFalse = null;
+					if (leftFalse != null)
+						(rightTrue, rightFalse) = AnalyzeCondition(or.Right, scope, leftFalse);
+					return (Join(leftTrue, rightTrue), rightFalse);
+				}
 
 			case IsPatternExpressionSyntax ip:
-			{
-				var evaluated = AnalyzeExpression(ip.Operand, scope, state);
-				if (ip.BoundName != null)
-					return (AddAssigned(evaluated, new MovePath(ip.BoundName)), evaluated);
-				return (evaluated, evaluated);
-			}
+				{
+					var evaluated = AnalyzeExpression(ip.Operand, scope, state);
+					var testedUnion = GetTaggedUnionType(ip.Operand, scope);
+					var testedPath = testedUnion is not null ? ResolveMovePath(ip.Operand) : null;
+					if (testedPath is not null && testedUnion?.FindField(ip.VariantName) is not null)
+					{
+						// The true edge proves the tested variant; the false edge only rules it out,
+						// leaving an already-known different variant intact.
+						var trueState = SetActiveVariant(evaluated, testedPath, ip.VariantName);
+						var falseState = ExcludeActiveVariant(evaluated, testedPath, ip.VariantName);
+						if (ip.BoundName != null)
+							trueState = AddAssigned(trueState, new MovePath(ip.BoundName));
+						return (trueState, falseState);
+					}
+
+					if (ip.BoundName != null)
+						return (AddAssigned(evaluated, new MovePath(ip.BoundName)), evaluated);
+					return (evaluated, evaluated);
+				}
 
 			default:
-			{
-				var evaluated = AnalyzeExpression(expr, scope, state);
-				return (evaluated, evaluated);
-			}
+				{
+					var evaluated = AnalyzeExpression(expr, scope, state);
+					return (evaluated, evaluated);
+				}
 		}
 	}
 
@@ -569,7 +643,7 @@ internal sealed class DefiniteAssignmentAnalyzer(BindingContext context)
 	/// index expressions are evaluated (their index is a real read) and a raw-pointer dereference
 	/// reads the pointer.
 	/// </summary>
-	private void AnalyzeLValueAddress(ExpressionSyntax lvalue, SymbolTable scope, State state)
+	private void AnalyzeLValueAddress(ExpressionSyntax lvalue, SymbolTable scope, State state, bool isVariantSelectionTarget = true)
 	{
 		switch (lvalue)
 		{
@@ -577,7 +651,17 @@ internal sealed class DefiniteAssignmentAnalyzer(BindingContext context)
 				return;
 
 			case MemberAccessExpressionSyntax m:
-				AnalyzeLValueAddress(m.Expression, scope, state);
+				// `x.A = value` selects the variant and is not a read of the old payload. Any
+				// projection inside its receiver (and every other l-value use) still is.
+				if (!isVariantSelectionTarget)
+				{
+					CheckUnionVariantReads(m, scope, state);
+				}
+				else
+				{
+					CheckUnionVariantReads(m.Expression, scope, state);
+				}
+				AnalyzeLValueAddress(m.Expression, scope, state, isVariantSelectionTarget: false);
 				return;
 
 			case IndexExpressionSyntax idx:
@@ -590,7 +674,7 @@ internal sealed class DefiniteAssignmentAnalyzer(BindingContext context)
 				return;
 
 			case BorrowExpressionSyntax b:
-				AnalyzeLValueAddress(b.Expression, scope, state);
+				AnalyzeLValueAddress(b.Expression, scope, state, isVariantSelectionTarget);
 				return;
 
 			default:
@@ -599,19 +683,30 @@ internal sealed class DefiniteAssignmentAnalyzer(BindingContext context)
 		}
 	}
 
-	private State? MarkAssigned(ExpressionSyntax lvalue, SymbolTable scope, State state)
+	private State? MarkAssigned(ExpressionSyntax lvalue, SymbolTable scope, State state, ExpressionSyntax? source = null)
 	{
 		// Writing a union variant initializes the whole union value; the discriminant makes any
 		// per-variant tracking unsound, so the union root is the unit of assignment (§16).
-		if (lvalue is MemberAccessExpressionSyntax { Expression: var receiver }
-			&& ResolveType(receiver, scope) is UnionTypeSymbol
-			&& ResolveMovePath(receiver) is { } unionRoot)
+		if (lvalue is MemberAccessExpressionSyntax member
+			&& GetTaggedUnionType(member.Expression, scope) is { } union
+			&& ResolveMovePath(member.Expression) is { } unionRoot
+			&& union.FindField(member.MemberName) is not null)
 		{
-			return AddAssigned(state, unionRoot);
+			state = AddAssigned(state, unionRoot);
+			return SetActiveVariant(state, unionRoot, member.MemberName);
 		}
 
 		var path = ResolveMovePath(lvalue);
-		return path != null ? AddAssigned(state, path) : null;
+		if (path is null)
+			return null;
+
+		state = AddAssigned(state, path);
+
+		// A whole-union store carries the source's active variant when we can see it, and makes
+		// the destination unknown otherwise. Payload writes leave the tag unchanged.
+		return GetTaggedUnionType(lvalue, scope) is null
+			? state
+			: ApplyWholeUnionValue(state, path, source, scope);
 	}
 
 	private bool IsDefinitelyAssigned(MovePath path, TypeSymbol? type, State state)
@@ -684,6 +779,238 @@ internal sealed class DefiniteAssignmentAnalyzer(BindingContext context)
 			EnumTypeSymbol enumType => enumType.StorageType,
 			_ => null
 		};
+
+	// Active variant facts
+	//
+	// These facts intentionally live beside definite assignment: both are flow-sensitive
+	// properties of a canonical storage path. They answer a different question, though — DA says
+	// whether the root can be read at all; these facts say which tagged-union variant it holds.
+
+	/// <summary>
+	/// Returns the tagged union type of an expression, or null for values without a tag
+	/// (including raw <c>unsafe union</c>, whose projection rules are unchanged).
+	/// </summary>
+	private UnionTypeSymbol? GetTaggedUnionType(ExpressionSyntax expr, SymbolTable scope)
+	{
+		var type = ResolveType(expr, scope);
+		if (type is PointerTypeSymbol pointer)
+			type = pointer.ReferencedType;
+		return type is UnionTypeSymbol { IsUnsafe: false } union ? union : null;
+	}
+
+	/// <summary>
+	/// Returns the variant a union value is known to hold, from either a flow fact or a visible
+	/// aggregate initializer. Null means unknown and is never treated as proof of any variant.
+	/// </summary>
+	private string? TryGetKnownActiveVariant(ExpressionSyntax expr, SymbolTable scope, State state)
+	{
+		if (TryGetInitializerVariant(expr, out var initializerVariant))
+			return initializerVariant;
+
+		var path = ResolveMovePath(expr);
+		return path is not null && state.ActiveVariants.TryGetValue(path, out var active)
+			? active
+			: null;
+	}
+
+	private bool TryGetInitializerVariant(ExpressionSyntax expr, out string? variant)
+	{
+		variant = null;
+		IReadOnlyList<MemberInitializerSyntax>? initializers = expr switch
+		{
+			StructInitializationExpressionSyntax si => si.Initializers,
+			ParenthesizedStructInitializerExpressionSyntax paren => paren.Initializers,
+			_ => null
+		};
+
+		if (initializers is null || initializers.Count != 1)
+			return false;
+
+		var typeName = expr switch
+		{
+			StructInitializationExpressionSyntax si => si.StructTypeName,
+			ParenthesizedStructInitializerExpressionSyntax { ResolvedStructTypeName: { } name } => name,
+			_ => null
+		};
+
+		if (typeName is null || context.ResolveType(typeName) is not UnionTypeSymbol { IsUnsafe: false } union)
+			return false;
+		if (union.FindField(initializers[0].MemberName) is null)
+			return false;
+
+		variant = initializers[0].MemberName;
+		return true;
+	}
+
+	/// <summary>
+	/// Applies the active-variant effects of a value assigned to a union storage path. Nested
+	/// aggregate literals are walked as well, so <c>Holder { Root: Option { Some: ... } }</c>
+	/// establishes the fact for <c>holder.Root</c>.
+	/// </summary>
+	private State ApplyWholeUnionValue(State state, MovePath path, ExpressionSyntax? value, SymbolTable scope)
+	{
+		if (GetTaggedUnionTypeForPath(path, scope) is not null)
+		{
+			var known = value is not null ? TryGetKnownActiveVariant(value, scope, state) : null;
+			return known is not null
+				? SetActiveVariant(state, path, known)
+				: ClearActiveVariant(state, path);
+		}
+
+		if (value is not (StructInitializationExpressionSyntax or ParenthesizedStructInitializerExpressionSyntax))
+			return state;
+
+		var initializers = value is StructInitializationExpressionSyntax si
+			? si.Initializers
+			: ((ParenthesizedStructInitializerExpressionSyntax)value).Initializers;
+		foreach (var initializer in initializers)
+		{
+			var fieldPath = path.Append(ProjectionStep.Field(initializer.MemberName));
+			state = ApplyWholeUnionValue(state, fieldPath, initializer.Expression, scope);
+		}
+
+		return state;
+	}
+
+	private UnionTypeSymbol? GetTaggedUnionTypeForPath(MovePath path, SymbolTable scope)
+		=> ResolvePathType(path, scope) is UnionTypeSymbol { IsUnsafe: false } union ? union : null;
+
+	/// <summary>
+	/// Rejects every dotted projection of a tagged union whose variant is not proven active.
+	/// The syntax walk is what makes <c>x.A.Field</c> report the <c>x.A</c> access itself rather
+	/// than only the outer struct field.
+	/// </summary>
+	private void CheckUnionVariantReads(ExpressionSyntax expr, SymbolTable scope, State state)
+	{
+		if (expr is not MemberAccessExpressionSyntax member)
+			return;
+
+		CheckUnionVariantReads(member.Expression, scope, state);
+
+		if (GetTaggedUnionType(member.Expression, scope) is not { } unionType)
+			return;
+		if (unionType.FindField(member.MemberName) is null)
+			return; // The validator already reports unknown variants.
+
+		var unionPath = ResolveMovePath(member.Expression);
+		if (unionPath is not null
+			&& !IsRootInitialized(unionPath.Root, scope)
+			&& !IsDefinitelyAssigned(unionPath, unionType, state))
+			return; // Root availability is DA's diagnostic, not an inactive-variant error.
+
+		var active = TryGetKnownActiveVariant(member.Expression, scope, state);
+		if (string.Equals(active, member.MemberName, StringComparison.Ordinal))
+			return;
+
+		ReportInactiveVariantRead(member, unionType, active);
+	}
+
+	private void ReportInactiveVariantRead(MemberAccessExpressionSyntax member, UnionTypeSymbol unionType, string? active)
+	{
+		// Try/catch lowering creates payload projections with an empty synthetic span. They are
+		// compiler-internal reads with no user source to point at and are already tag-checked by
+		// the lowering; they must not produce editor diagnostics at file position 1:1.
+		if (member.Span.Length == 0)
+			return;
+		if (!_reportedVariantSpans.Add((member.Span.Start, member.Span.End)))
+			return;
+		if (context.CurrentUnit is not { } unit)
+			return;
+
+		var message = active is null
+			? $"Cannot read variant '{member.MemberName}' of union '{unionType.Name}': the active variant is not known at this point. Use 'is' or 'switch'."
+			: $"Cannot read variant '{member.MemberName}' of union '{unionType.Name}': its active variant is '{active}'. Use 'is' or 'switch' to check the variant.";
+		context.Diagnostics.Report(context.FileContexts[unit], member.Span, message, DiagnosticIds.InactiveUnionVariantRead);
+	}
+
+	private static State SetActiveVariant(State state, MovePath path, string variant)
+	{
+		// A tag change also invalidates any facts about storage nested inside the old payload.
+		var variants = new Dictionary<MovePath, string>(state.ActiveVariants);
+		foreach (var tracked in variants.Keys.Where(path.IsPrefixOf).ToList())
+			variants.Remove(tracked);
+		variants[path] = variant;
+		return WithVariants(state, variants);
+	}
+
+	private static State ClearActiveVariant(State state, MovePath path)
+	{
+		return InvalidateActiveFacts(state, path);
+	}
+
+	private static State ExcludeActiveVariant(State state, MovePath path, string variant)
+	{
+		return state.ActiveVariants.TryGetValue(path, out var active) && active == variant
+				? InvalidateActiveFacts(state, path)
+				: state;
+	}
+
+	/// <summary>
+	/// Invalidates facts for the written path and every path that contains it (in either
+	/// direction), because a write to a payload can change the tag of its union ancestor.
+	/// </summary>
+	private static State InvalidateActiveFacts(State state, MovePath path)
+	{
+		var variants = new Dictionary<MovePath, string>(state.ActiveVariants);
+		foreach (var tracked in variants.Keys
+			.Where(key => key.IsPrefixOf(path) || path.IsPrefixOf(key))
+			.ToList())
+			variants.Remove(tracked);
+		return WithVariants(state, variants);
+	}
+
+	private State InvalidateGlobalActiveFacts(State state, SymbolTable scope)
+	{
+		var globals = state.ActiveVariants.Keys
+			.Where(path => context.ResolveGlobalReference(path.Root, out _) is not null
+				|| scope.Lookup(path.Root) is VariableSymbol { Origin: OriginKind.Global })
+			.ToList();
+		if (globals.Count == 0)
+			return state;
+
+		var variants = new Dictionary<MovePath, string>(state.ActiveVariants);
+		foreach (var path in globals)
+			variants.Remove(path);
+		return WithVariants(state, variants);
+	}
+
+	/// <summary>
+	/// Loop backedges may change tags, so no fact about storage written in the loop body may
+	/// survive to the loop exit. Assignment state is deliberately not iterated; only the facts
+	/// need this invalidation.
+	/// </summary>
+	private State InvalidateFactsWrittenIn(SyntaxNode body, State state)
+	{
+		var paths = new List<MovePath>();
+		CollectAssignedPaths(body, paths);
+		foreach (var path in paths)
+			state = InvalidateActiveFacts(state, path);
+		return state;
+	}
+
+	private void CollectAssignedPaths(SyntaxNode node, List<MovePath> paths)
+	{
+		switch (node)
+		{
+			case BinaryExpressionSyntax { Operator: "=" } assign
+				when ResolveMovePath(assign.Left) is { } assigned:
+				paths.Add(assigned);
+				break;
+			case UnaryExpressionSyntax u when u.Operator.StartsWith("++", StringComparison.Ordinal)
+				|| u.Operator.StartsWith("--", StringComparison.Ordinal):
+				if (ResolveMovePath(u.Operand) is { } incremented)
+					paths.Add(incremented);
+				break;
+		}
+
+		foreach (var child in node.GetChildren())
+			CollectAssignedPaths(child, paths);
+	}
+
+	private static State WithVariants(State state, Dictionary<MovePath, string> variants)
+	{
+		return new([.. state.Assigned], variants);
+	}
 
 	// Move paths and types
 
@@ -803,7 +1130,7 @@ internal sealed class DefiniteAssignmentAnalyzer(BindingContext context)
 	private static State AddAssigned(State state, MovePath path)
 	{
 		var assigned = new HashSet<MovePath>(state.Assigned) { path };
-		return new State(assigned);
+		return new State(assigned, new Dictionary<MovePath, string>(state.ActiveVariants));
 	}
 
 	/// <summary>
@@ -820,7 +1147,18 @@ internal sealed class DefiniteAssignmentAnalyzer(BindingContext context)
 
 		var assigned = new HashSet<MovePath>(a.Assigned);
 		assigned.IntersectWith(b.Assigned);
-		return new State(assigned);
+
+		// Keep a variant fact only when every reachable predecessor agrees on it.
+		var variants = new Dictionary<MovePath, string>(a.ActiveVariants);
+		foreach (var (path, variant) in variants.ToList())
+		{
+			if (!b.ActiveVariants.TryGetValue(path, out var other) || other != variant)
+			{
+				variants.Remove(path);
+			}
+		}
+
+		return new State(assigned, variants);
 	}
 
 	private static State? JoinAll(IEnumerable<State?> states)
@@ -860,11 +1198,17 @@ internal sealed class DefiniteAssignmentAnalyzer(BindingContext context)
 		public List<State> Breaks { get; } = [];
 	}
 
-	/// <summary>An immutable set of definitely assigned projections.</summary>
-	private sealed class State(HashSet<MovePath> assigned)
+	/// <summary>
+	/// Immutable flow state: definitely assigned projections plus the known active variant for
+	/// each tagged-union storage location. Both are intersected at control-flow joins.
+	/// </summary>
+	private sealed class State(HashSet<MovePath> assigned, Dictionary<MovePath, string> activeVariants)
 	{
 		public HashSet<MovePath> Assigned { get; } = assigned;
 
-		public State() : this([]) { }
+		/// <summary>Path to a tagged union -> name of its definitely active variant.</summary>
+		public IReadOnlyDictionary<MovePath, string> ActiveVariants { get; } = activeVariants;
+
+		public State() : this([], []) { }
 	}
 }

@@ -1,0 +1,27 @@
+/// <summary>
+/// Verifies that assigning a variant payload retags the union and makes that payload readable.
+/// </summary>
+/// <remarks>
+/// Test: UnionsTests.Execution_Success.
+/// Fixture Role: Legal variant-selection write.
+/// Compiler Target: Active-variant facts updated by direct union member assignment.
+/// Expected: The program prints '2'.
+/// </remarks>
+using System;
+
+union Choice
+{
+    int A;
+    int B;
+}
+
+int main()
+{
+    var c = Choice
+    {
+        A = 1
+    };
+    c.B = 2;
+    Console.WriteLine(c.B);
+    return 0;
+}

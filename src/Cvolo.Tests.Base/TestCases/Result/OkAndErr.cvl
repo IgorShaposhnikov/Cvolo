@@ -18,22 +18,49 @@ int main()
 {
     val ok = Result<int, TestError>(42);
     if (!ok.IsOk())
+    {
         return 1;
-    if (ok.IsErr())
-        return 2;
-    if (ok.Ok != 42)
-        return 3;
+    }
 
-    val error = TestError {
-        Code: 7
+    if (ok.IsErr())
+    {
+        return 2;
+    }
+
+    if (!(ok is Ok okValue))
+    {
+        return 3;
+    }
+
+    if (okValue != 42)
+    {
+        return 3;
+    }
+
+    val error = TestError
+    {
+        Code = 7
     };
     val err = Result<int, TestError>(error);
     if (err.IsOk())
+    {
         return 4;
+    }
+
     if (!err.IsErr())
+    {
         return 5;
-    if (err.Err.Code != 7)
+    }
+
+    if (!(err is Err errValue))
+    {
         return 6;
+    }
+
+    if (errValue.Code != 7)
+    {
+        return 6;
+    }
 
     return 0;
 }

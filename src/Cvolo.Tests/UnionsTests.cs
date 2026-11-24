@@ -10,7 +10,12 @@ public sealed class UnionsTests : CompilerTestBase
 	[InlineData("UnionExtension", "Some: 100, IsSome: 1\nEmpty option created.")]
 	[InlineData("OptionSwitchPromotion", "Some: 99")]
 	[InlineData("NullOption", "Safe Option null initialized successfully.\nRaw pointer is null as expected.")]
+	/// <summary>
+	/// Runs union fixtures that must compile and produce the expected output.
+	/// </summary>
 	[InlineData("ResultConstructorTag", "0")]
+	// A direct variant write retags the union, so reading that payload afterwards is legal.
+	[InlineData("VariantSelectionWriteSuccess", "2")]
 	public void Execution_Success(string caseName, string expected)
 	{
 		var fileName = $"Unions/{caseName}.cvl";
@@ -48,11 +53,24 @@ public sealed class UnionsTests : CompilerTestBase
 		Assert.Contains(expected.Replace("\r\n", "\n").Trim(), runStdout.Replace("\r\n", "\n").Trim());
 	}
 
+	/// <summary>
+	/// Verifies that invalid union usage is rejected with the expected diagnostic.
+	/// </summary>
 	[Theory]
 	[InlineData("UnionDuplicateFieldFail", "Duplicate field 'Active'")]
 	[InlineData("UnionFieldAccessFail", "does not contain variant 'Missing'")]
 	[InlineData("UnionSwitchBorrowLockFail", "Cannot reassign 'opt' while a field borrow is still active")] // Fixed "stil" to "still active"
 	[InlineData("UnionSwitchExhaustiveFail", "Switch statement is not exhaustive. Missing case for variant 'B'")]
+	// A literal initializer fixes the active variant; the other payload must not be readable.
+	[InlineData("InactiveVariantReadFail", "Cannot read variant 'B' of union 'Choice': its active variant is 'A'.")]
+	// A parameter has no proven active variant, so any payload read must be rejected.
+	[InlineData("UnknownVariantReadFail", "Cannot read variant 'A' of union 'Choice': the active variant is not known at this point.")]
+	// Nested writes are guarded by the same active-variant proof as direct reads.
+	[InlineData("NestedInactiveWriteFail", "Cannot read variant 'B' of union 'Box': its active variant is 'A'.")]
+	// Compound assignment reads the target before writing it.
+	[InlineData("InactiveVariantCompoundAssignFail", "Cannot read variant 'B' of union 'Choice': its active variant is 'A'.")]
+	// Taking a mutable reference exposes an otherwise inactive payload.
+	[InlineData("InactiveVariantRefFail", "Cannot read variant 'B' of union 'Choice': its active variant is 'A'.")]
 	public void Semantic_Rejections(string caseName, string expectedError)
 	{
 		var fileName = $"Unions/{caseName}.cvl";
