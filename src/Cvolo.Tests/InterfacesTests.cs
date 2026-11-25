@@ -30,6 +30,11 @@ public sealed class InterfacesTests : CompilerTestBase
 	[InlineData("GenericInterfaceRequiresFail.cvl")]
 	[InlineData("GenericConstraintWrongSpecializationFail.cvl")]
 	[InlineData("GenericConformanceMissingMemberFail.cvl")]
+	[InlineData("GenericInterfaceDispatchConstraintPass.cvl")]
+	[InlineData("GenericInterfaceDispatchConstraintFail.cvl")]
+	[InlineData("GenericInterfaceRequiresWrongSignatureFail.cvl")]
+	[InlineData("GenericOwnerNonGenericInterface.cvl")]
+	[InlineData("GenericInterfaceRequiresIndependentBindings.cvl")]
 	public void Parser_Interfaces_Should_Parse(string caseName)
 	{
 		var assemblyDir = Path.GetDirectoryName(typeof(InterfacesTests).Assembly.Location)!;
@@ -63,6 +68,8 @@ public sealed class InterfacesTests : CompilerTestBase
 	[InlineData("GenericInterfaceRequiresFail", "Type 'Novel' does not satisfy the requires-clause 'ITagged<int>' of interface 'IBook<int>'")]
 	[InlineData("GenericConstraintWrongSpecializationFail", "Type 'Novel' does not satisfy required constraint 'IBook<int>' for type parameter 'B'")]
 	[InlineData("GenericConformanceMissingMemberFail", "Type 'Storage<int>' does not implement member 'void Set(int)' required by interface 'IStorage<int>'")]
+	[InlineData("GenericInterfaceDispatchConstraintFail", "Type 'Other' does not satisfy required constraint 'IValue<int>' for type parameter 'B'")]
+	[InlineData("GenericInterfaceRequiresWrongSignatureFail", "Type 'Novel' does not satisfy the requires-clause 'ITagged<int>' of interface 'IBook<int>'")]
 	public void Interfaces_Rejections(string caseName, string expectedError)
 	{
 		var fileName = $"Interfaces/{caseName}.cvl";
@@ -114,6 +121,9 @@ public sealed class InterfacesTests : CompilerTestBase
 	[InlineData("GenericConformanceDispatch", "42\n1")]
 	[InlineData("GenericInterfaceHierarchy", "42\n142")]
 	[InlineData("GenericInterfaceDispatchOwners", "7\n107\n7")]
+	[InlineData("GenericInterfaceDispatchConstraintPass", "42")]
+	[InlineData("GenericOwnerNonGenericInterface", "42")]
+	[InlineData("GenericInterfaceRequiresIndependentBindings", "42")]
 	public void Interfaces_GenericContracts(string caseName, string expected)
 	{
 		var fileName = $"Interfaces/{caseName}.cvl";

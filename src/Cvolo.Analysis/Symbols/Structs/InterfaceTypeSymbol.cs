@@ -30,6 +30,6 @@ public sealed class InterfaceTypeSymbol(
 	/// <summary>Name of the open declaration, used to find its template and base edges.</summary>
 	public string TemplateName { get; } = templateName ?? name;
 
-	/// <summary>Whether this symbol is a fixed-arity closed specialization.</summary>
-	public bool IsClosed => TypeArguments.Count > 0;
+	/// <summary>Whether all declared parameters are bound, including a non-generic interface.</summary>
+	public bool IsClosed => Declaration is not null && Declaration.GenericParameters.Count == TypeArguments.Count;
 }

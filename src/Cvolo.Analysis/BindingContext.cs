@@ -2108,12 +2108,10 @@ public sealed class BindingContext
 		if (decl?.Constraint is null)
 			return true;
 
-		var substitution = new Dictionary<string, TypeSymbol>(GetInterfaceSubstitution(pending.Interface));
-		foreach (var kv in pending.OwnerSubstitution)
-			substitution[kv.Key] = kv.Value;
-
-		var constraintText = Regex.Replace(decl.Constraint, @"\bSelf\b", pending.Owner.Name);
-		constraintText = SubstituteTypeString(constraintText, substitution);
+		// The requires clause belongs to the interface's scope, not the owner's.
+		// Identically named owner and interface parameters can bind different types.
+		var constraintText = SubstituteTypeString(decl.Constraint, GetInterfaceSubstitution(pending.Interface));
+		constraintText = Regex.Replace(constraintText, @"\bSelf\b", _ => pending.Owner.Name);
 		var unit = SymbolUnits.TryGetValue(pending.Interface.TemplateName, out var declaredUnit) ? declaredUnit : pending.Unit;
 		var contract = ResolveDeclaredTypeInUnit(constraintText, unit);
 
@@ -2121,7 +2119,13 @@ public sealed class BindingContext
 		{
 			InterfaceTypeSymbol requiredInterface => Conformance.TryGetValue(pending.Owner.Name, out var ifaces)
 				&& ifaces.Contains(requiredInterface.Name),
-			ProtocolTypeSymbol requiredProtocol => TypeSatisfiesContract(pending.Owner, requiredProtocol),
+			// A generic structural requirement is a capability proof, not a direct
+			// protocol dispatch slot. Preserve legacy non-generic requires semantics;
+			// constructed requirements must check substituted signatures without width-lock.
+			ProtocolTypeSymbol requiredProtocol when requiredProtocol.GenericTypeArguments is not null
+				=> SatisfiesConstraintConformance(pending.Owner, requiredProtocol),
+			ProtocolTypeSymbol requiredProtocol when requiredProtocol.GenericParameters.Count == 0
+				=> TypeSatisfiesContract(pending.Owner, requiredProtocol),
 			_ => false
 		};
 	}

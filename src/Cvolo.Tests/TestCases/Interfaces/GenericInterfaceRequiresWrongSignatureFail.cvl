@@ -1,0 +1,35 @@
+protocol ITagged<T>
+{
+    T Tag();
+}
+
+interface IBook<T> for ITagged<T>
+{
+    int Read();
+}
+
+struct Novel
+{
+    int Pages;
+}
+
+extension Novel : IBook<int>
+{
+    int Read()
+    {
+        return Pages;
+    }
+}
+
+extension Novel
+{
+    bool Tag()
+    {
+        return true;
+    }
+}
+
+int main()
+{
+    return 0;
+}

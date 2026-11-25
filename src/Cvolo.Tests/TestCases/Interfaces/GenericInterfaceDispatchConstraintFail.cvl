@@ -1,0 +1,40 @@
+interface IValue<T>
+{
+    T Get();
+}
+
+struct Book
+{
+    int Value;
+}
+
+extension Book : IValue<int>
+{
+    int Get()
+    {
+        return Value;
+    }
+}
+
+struct Other
+{
+    int Value;
+}
+
+T Read<T, B>(IValue<T> book, B evidence) where B : IValue<T>
+{
+    return book.Get();
+}
+
+int main()
+{
+    var book = Book
+    {
+        Value = 42
+    };
+    var other = Other
+    {
+        Value = 7
+    };
+    return Read<int, Other>(book, other);
+}

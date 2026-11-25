@@ -1,0 +1,44 @@
+using System;
+
+protocol ITagged<T>
+{
+    T Tag();
+}
+
+interface IBook<T> for ITagged<T>
+{
+    int Read();
+}
+
+struct Book<T>
+{
+    T Value;
+}
+
+extension Book<T> : IBook<int>
+{
+    int Read()
+    {
+        return 42;
+    }
+
+    int Tag()
+    {
+        return 7;
+    }
+}
+
+int Read(IBook<int> book)
+{
+    return book.Read();
+}
+
+int main()
+{
+    var book = Book<bool>
+    {
+        Value = true
+    };
+    Console.WriteLine(Read(book));
+    return 0;
+}

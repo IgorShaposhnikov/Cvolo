@@ -71,13 +71,14 @@ internal sealed class ProtocolConformance(BindingContext context, InterfaceConfo
 	/// Nominal interface constraints use the registered interface-conformance relation, while
 	/// protocol constraints recursively use structural conformance. Unknown contracts fail closed.
 	/// </remarks>
-	public bool SatisfiesConstraint(TypeSymbol concrete, string constraintText)
+	public bool SatisfiesConstraint(TypeSymbol concrete, string constraintText, ProtocolTypeSymbol? requiringProtocol = null)
 	{
-		var contract = ResolveContractBase(constraintText, concrete.Name);
+		var contract = ResolveRequiredContract(constraintText, concrete.Name, requiringProtocol);
 		return contract switch
 		{
-			ProtocolTypeSymbol protocol => Conforms(concrete, protocol),
-			InterfaceTypeSymbol interfaceType => interfaces.Conforms(concrete, interfaceType),
+			ProtocolTypeSymbol protocol when protocol.GenericParameters.Count == 0 || protocol.GenericTypeArguments is not null
+				=> Conforms(concrete, protocol),
+			InterfaceTypeSymbol interfaceType when interfaceType.IsClosed => interfaces.Conforms(concrete, interfaceType),
 			_ => false,
 		};
 	}
@@ -307,14 +308,39 @@ internal sealed class ProtocolConformance(BindingContext context, InterfaceConfo
 	}
 
 	/// <summary>
-	/// Resolves a requires-clause contract after substituting <c>Self</c> and stripping generic
-	/// arguments from the contract name, matching the previous validation behavior.
+	/// Resolves the entire requires-clause reference in the requiring protocol's declaration
+	/// context, substituting Self and its concrete generic arguments in one pass.
 	/// </summary>
-	private TypeSymbol? ResolveContractBase(string constraintText, string concreteName)
+	private TypeSymbol? ResolveRequiredContract(string constraintText, string concreteName, ProtocolTypeSymbol? requiringProtocol)
 	{
-		var substituted = constraintText.Replace("Self", concreteName);
-		var openBracket = substituted.IndexOf('<');
-		var baseName = (openBracket > 0 ? substituted[..openBracket] : substituted).Trim();
-		return context.ResolveType(baseName);
+		var bindings = new Dictionary<string, string> { ["Self"] = concreteName };
+		if (requiringProtocol?.GenericTypeArguments is { } arguments)
+		{
+			for (var i = 0; i < requiringProtocol.GenericParameters.Count; i++)
+				bindings[requiringProtocol.GenericParameters[i]] = arguments[i];
+		}
+
+		var substituted = System.Text.RegularExpressions.Regex.Replace(constraintText, @"\b\w+\b",
+			match => bindings.TryGetValue(match.Value, out var value) ? value : match.Value);
+		var previousUnit = context.CurrentUnit;
+		var previousNamespace = context.CurrentNamespace;
+		try
+		{
+			if (requiringProtocol is not null)
+			{
+				var templateName = requiringProtocol.Name.Split('<')[0];
+				if (context.SymbolUnits.TryGetValue(templateName, out var unit))
+				{
+					context.CurrentUnit = unit;
+					context.CurrentNamespace = unit.NamespaceDeclaration?.Name;
+				}
+			}
+			return context.ResolveType(substituted);
+		}
+		finally
+		{
+			context.CurrentUnit = previousUnit;
+			context.CurrentNamespace = previousNamespace;
+		}
 	}
 }

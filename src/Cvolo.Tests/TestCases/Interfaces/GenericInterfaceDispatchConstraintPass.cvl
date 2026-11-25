@@ -1,0 +1,34 @@
+using System;
+
+interface IValue<T>
+{
+    T Get();
+}
+
+struct Book
+{
+    int Value;
+}
+
+extension Book : IValue<int>
+{
+    int Get()
+    {
+        return Value;
+    }
+}
+
+T Read<T, B>(IValue<T> book, B evidence) where B : IValue<T>
+{
+    return book.Get();
+}
+
+int main()
+{
+    var book = Book
+    {
+        Value = 42
+    };
+    Console.WriteLine(Read<int, Book>(book, book));
+    return 0;
+}

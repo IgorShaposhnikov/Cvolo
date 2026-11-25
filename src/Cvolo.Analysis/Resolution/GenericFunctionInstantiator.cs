@@ -496,7 +496,7 @@ internal sealed class GenericFunctionInstantiator(
 			substitutionMap[interfaceTypeName] = concrete;
 		}
 
-		return InstantiateDispatchFunction(templateDecl, substitutionMap, context.Globals, templateMangledName);
+		return InstantiateDispatchFunction(templateDecl, substitutionMap, context.Globals, templateMangledName, scalarTypeArguments);
 	}
 
 	/// <summary>
@@ -550,7 +550,7 @@ internal sealed class GenericFunctionInstantiator(
 	/// </summary>
 	private FunctionSymbol InstantiateDispatchFunction(
 		FunctionDeclarationSyntax templateDecl, Dictionary<string, TypeSymbol> substitutionMap, SymbolTable scope,
-	string templateMangledName)
+	string templateMangledName, IReadOnlyList<TypeSymbol>? scalarTypeArguments = null)
 	{
 		var identity = MonomorphizationIdentity.For(templateMangledName, substitutionMap.Values.Select(t => t.Name));
 		var instName = context.NormalizeGenericName(identity.CanonicalKey);
@@ -628,6 +628,16 @@ internal sealed class GenericFunctionInstantiator(
 			}
 
 			var errorsBefore = context.Diagnostics.Diagnostics.Count(d => d.Severity == DiagnosticSeverity.Error);
+			// Bounds use only declared scalar bindings, never the interface-to-owner rewrite.
+			// Otherwise a bound such as IValue<T> could be rewritten to the concrete owner.
+			if (scalarTypeArguments is not null)
+			{
+				var scalarBindings = new Dictionary<string, TypeSymbol>();
+				for (var i = 0; i < templateDecl.GenericParameters.Count; i++)
+					scalarBindings[templateDecl.GenericParameters[i]] = scalarTypeArguments[i];
+				context.ValidateGenericConstraints(templateDecl.GenericParameters, templateDecl.GenericParameterConstraints,
+					scalarTypeArguments, scalarBindings, templateDecl.Span);
+			}
 			validateBlock(instBody, localScope, instDecl);
 			// Complete the transaction for the dispatch specialization.
 			context.MonomorphizationStates[instName] =
@@ -744,7 +754,7 @@ internal sealed class GenericFunctionInstantiator(
 			// Protocol `for ...` requires-clause (lazy, at the dispatch call site):
 			// the concrete type must itself satisfy the named contract. Missing or
 			// unresolvable constraints are treated conservatively as non-conforming.
-			if (proto.Constraint is not null && !protocols.SatisfiesConstraint(concrete, proto.Constraint))
+			if (proto.Constraint is not null && !protocols.SatisfiesConstraint(concrete, proto.Constraint, proto))
 			{
 				context.Diagnostics.Report(currentFileContext, call.Span,
 					$"Type '{concrete.Name}' does not satisfy the requires-clause '{proto.Constraint}' of protocol '{proto.Name}'.", DiagnosticIds.TypeDoesNotSatisfyTheRequiresClauseOfProtocol);

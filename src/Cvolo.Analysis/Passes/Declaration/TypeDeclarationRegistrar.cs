@@ -721,7 +721,7 @@ internal sealed class TypeDeclarationRegistrar(BindingContext context)
 
 		context.SymbolUnits[mangledName] = context.CurrentUnit!;
 		context.InterfaceTemplates[mangledName] = interfaceDecl;
-		context.InterfaceTypes[mangledName] = new InterfaceTypeSymbol(mangledName)
+		context.InterfaceTypes[mangledName] = new InterfaceTypeSymbol(mangledName, interfaceDecl)
 		{
 			Visibility = interfaceDecl.Visibility
 		};

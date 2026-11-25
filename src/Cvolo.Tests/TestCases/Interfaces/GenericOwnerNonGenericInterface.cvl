@@ -1,0 +1,34 @@
+using System;
+
+interface ISize
+{
+    int Size();
+}
+
+struct Storage<T>
+{
+    T Value;
+}
+
+extension Storage<T> : ISize
+{
+    int Size()
+    {
+        return 42;
+    }
+}
+
+int Read(ISize storage)
+{
+    return storage.Size();
+}
+
+int main()
+{
+    var storage = Storage<int>
+    {
+        Value = 7
+    };
+    Console.WriteLine(Read(storage));
+    return 0;
+}
