@@ -1,3 +1,6 @@
+﻿// Result<int, TestError>(0) is the Ok constructor: it tags the value as Ok and stores 0.
+// The is Ok binding succeeds, so the program prints 0 instead of "false".
+
 using System;
 
 [Error]

@@ -1,3 +1,7 @@
+﻿// Generic Maybe<T> has Some(T) and None variants. The extension method is attached to
+// the union type and reads the active payload. The second Maybe<string> uses the void
+// None variant. Expected output: Some: 100, IsSome: 1 / Empty option created.
+
 using System;
 
 union Maybe<T>

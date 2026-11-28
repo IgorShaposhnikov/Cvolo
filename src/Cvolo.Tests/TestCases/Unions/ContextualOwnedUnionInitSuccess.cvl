@@ -1,12 +1,9 @@
-/// <summary>
-/// Verifies that contextual union initialization moves an owning payload and destroys it once.
-/// </summary>
-/// <remarks>
-/// Test: UnionsTests.Execution_Success.
-/// Fixture Role: Ownership and destructor parity with explicit union construction.
-/// Compiler Target: Payload emission through a contextual Option field.
-/// Expected: The program prints 'some=7', 'Done' and 'Dropping: 7' in that order.
-/// </remarks>
+﻿// Owner.Value holds Option<Resource>. The contextual (Some: Resource { ... }) initializer
+// builds the Some payload directly inside that field and moves the new Resource into it.
+// Switching with `ref owner.Value is Some resource` binds the payload without copying it,
+// so the destructor runs once at scope exit, after "Done" is printed.
+// Expected output: some=7 / Done / Dropping: 7.
+
 using System;
 
 struct Resource
@@ -31,12 +28,14 @@ int main()
 {
     var owner = Owner
     {
+        // The field type supplies the union, so this builds a Some payload in place.
         Value = (Some: Resource
         {
             Handle = 7
         })
     };
 
+    // Bind by reference: no copy is made, so the Resource is destroyed only at scope exit.
     if (ref owner.Value is Some resource)
     {
         Console.WriteLine($"some={resource.Handle}");

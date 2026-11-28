@@ -1,3 +1,7 @@
+﻿// Option<int>(42) is the Some constructor: it tags the value as Some and stores 42.
+// The is Some binding reads that payload; the else branch would exit with 1 if the tag
+// were wrong. Expected output: Some: 42.
+
 using System;
 
 int main()

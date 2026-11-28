@@ -1,3 +1,6 @@
+﻿// Resource has a destructor, so Option<Resource> owns its payload. Passing opt1 to
+// Consume by value moves it; copying opt1 afterwards is a use-after-move and must fail.
+
 using System;
 
 struct Resource {

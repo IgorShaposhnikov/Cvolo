@@ -1,12 +1,6 @@
-/// <summary>
-/// Verifies that a contextual union initializer selects exactly one variant.
-/// </summary>
-/// <remarks>
-/// Test: UnionsTests.Semantic_Rejections.
-/// Fixture Role: Multiple-variant rejection for contextual union initialization.
-/// Compiler Target: Shared explicit/contextual union initializer count check.
-/// Expected: CVL4118 reports that exactly one variant is required.
-/// </remarks>
+﻿// A union holds exactly one payload. This initializer names both Number and Text, so
+// validation must stop it before any tag or payload is emitted. Expected: CVL4118.
+
 using System;
 
 union Choice

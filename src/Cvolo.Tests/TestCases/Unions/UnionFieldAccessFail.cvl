@@ -1,3 +1,5 @@
+﻿// u has only a Some variant, so u.Missing does not exist. The member access is rejected.
+
 union MyUnion {
     int Some;
 }

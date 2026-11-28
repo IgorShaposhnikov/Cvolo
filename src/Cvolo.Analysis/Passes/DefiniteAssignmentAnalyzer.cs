@@ -50,15 +50,28 @@ internal sealed class DefiniteAssignmentAnalyzer(BindingContext context)
 
 		var scope = new SymbolTable(context.Globals);
 
-		// Parameters are initialized on function entry.
-		foreach (var param in func.Parameters)
-		{
-			var type = context.ResolveType(param.Type);
-			if (type != null)
-				scope.Declare(new VariableSymbol(param.Name, type, false) { IsInitialized = true, Origin = OriginKind.Parameter });
-		}
+		// Template bodies reference their own type parameters; resolve them as placeholders so
+		// flow analysis can inspect concrete union operations without reporting bogus unknown types.
+		if (func.GenericParameters.Count > 0)
+			context.PushGenericScope("Function", func.Name, func.GenericParameters);
 
-		AnalyzeBlock(func.Body, scope, new State());
+		try
+		{
+			// Parameters are initialized on function entry.
+			foreach (var param in func.Parameters)
+			{
+				var type = context.ResolveType(param.Type);
+				if (type != null)
+					scope.Declare(new VariableSymbol(param.Name, type, false) { IsInitialized = true, Origin = OriginKind.Parameter });
+			}
+
+			AnalyzeBlock(func.Body, scope, new State());
+		}
+		finally
+		{
+			if (func.GenericParameters.Count > 0)
+				context.PopGenericScope();
+		}
 	}
 
 	// Statement flow
@@ -424,10 +437,53 @@ internal sealed class DefiniteAssignmentAnalyzer(BindingContext context)
 						state = AnalyzeExpression(operand.Expression, scope, state);
 				return state;
 
-			// nameof/typeof/sizeof/alignof/offsetof name symbols rather than values, and lambda
-			// bodies execute on an unrelated edge; none contribute reads on this path.
+			case LambdaExpressionSyntax lambda:
+				AnalyzeLambda(lambda, scope, state);
+				return state;
+
+			// nameof/typeof/sizeof/alignof/offsetof name symbols rather than values.
 			default:
 				return state;
+		}
+	}
+
+	/// <summary>
+	/// Analyzes a lambda body on its own flow edge. Captured storage keeps its definite
+	/// assignment but no active-variant facts proved at the definition site: the body can run
+	/// later, after a tag-changing write through an alias.
+	/// </summary>
+	private void AnalyzeLambda(LambdaExpressionSyntax lambda, SymbolTable scope, State state)
+	{
+		var lambdaScope = new SymbolTable(scope);
+		var delegateType = context.ResolvedLambdas.TryGetValue(lambda, out var binding) ? binding.Delegate : null;
+
+		for (var i = 0; i < lambda.Parameters.Count; i++)
+		{
+			var param = lambda.Parameters[i];
+			var type = delegateType is not null && i < delegateType.Parameters.Count
+				? delegateType.Parameters[i].Type
+				: param.ExplicitType is not null ? context.ResolveType(param.ExplicitType) : null;
+
+			if (type is not null)
+			{
+				lambdaScope.Declare(new VariableSymbol(param.Name, type, false)
+				{
+					IsInitialized = true,
+					Origin = OriginKind.Parameter
+				});
+			}
+		}
+
+		// Copy the assigned set so lambda-local declarations do not flow back to the enclosing
+		// function, and drop every active-variant fact that might be invalidated before invocation.
+		var lambdaState = new State([.. state.Assigned], []);
+		if (lambda.BodyKind == LambdaBodyKind.Expression && lambda.ExpressionBody is { } bodyExpr)
+		{
+			AnalyzeExpression(bodyExpr, lambdaScope, lambdaState);
+		}
+		else if (lambda.BlockBody is { } bodyBlock)
+		{
+			AnalyzeBlock(bodyBlock, lambdaScope, lambdaState);
 		}
 	}
 

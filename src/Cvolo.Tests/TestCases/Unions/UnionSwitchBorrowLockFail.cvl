@@ -1,3 +1,6 @@
+﻿// Switching on `refvar opt` binds x as a borrow of the Some payload. Reassigning the
+// whole opt while x is still live would invalidate that borrow, so it is rejected.
+
 int main() {
     var Option<int> opt = Option<int> { Some: 42 };
     switch (refvar opt) {

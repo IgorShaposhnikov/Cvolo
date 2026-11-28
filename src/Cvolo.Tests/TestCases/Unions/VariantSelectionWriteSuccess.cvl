@@ -1,12 +1,6 @@
-/// <summary>
-/// Verifies that assigning a variant payload retags the union and makes that payload readable.
-/// </summary>
-/// <remarks>
-/// Test: UnionsTests.Execution_Success.
-/// Fixture Role: Legal variant-selection write.
-/// Compiler Target: Active-variant facts updated by direct union member assignment.
-/// Expected: The program prints '2'.
-/// </remarks>
+﻿// c starts with A active, then `c.B = 2` is a direct write to B. That write retags the
+// union, so the following c.B read is legal and prints 2.
+
 using System;
 
 union Choice

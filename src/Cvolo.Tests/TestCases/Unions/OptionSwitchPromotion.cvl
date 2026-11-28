@@ -1,3 +1,6 @@
+﻿// Switching on `refvar opt` binds x as a mutable reference to the Some payload. Writing
+// 99 through x mutates opt in place, so the later opt.Some read prints 99.
+
 using System;
 
 int main() {

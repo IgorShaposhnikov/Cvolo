@@ -1,13 +1,6 @@
-/// <summary>
-/// Verifies that compound assignment reads its target before writing it, so an inactive variant
-/// target is rejected.
-/// </summary>
-/// <remarks>
-/// Test: UnionsTests.Semantic_Rejections.
-/// Fixture Role: Inactive-variant compound assignment rejection.
-/// Compiler Target: Active-variant checks on read-modify-write targets.
-/// Expected: CVL1607 reports variant 'B' while 'A' is active.
-/// </remarks>
+﻿// c is initialized with A active. `c.B += 2` reads B before adding, so the write cannot
+// make that read legal. Expected: CVL1607.
+
 union Choice
 {
     int A;

@@ -1,12 +1,8 @@
-/// <summary>
-/// Verifies contextual '(Variant: value)' initialization of a tagged union nested in a struct.
-/// </summary>
-/// <remarks>
-/// Test: UnionsTests.Execution_Success.
-/// Fixture Role: Contextual tagged-union initialization with scalar, string, void and nested struct payloads.
-/// Compiler Target: Union-aware contextual validation and tag/payload emission.
-/// Expected: The program prints '42', 'Hello', 'None' and '5,10'.
-/// </remarks>
+﻿// Every struct here holds a union field. The (Variant: value) syntax gets the expected
+// union type from that field, so the compiler writes the tag and payload in place. The
+// four values cover int, string, void and a nested struct payload; the is bindings read
+// them back. Expected output: 42 / Hello / None / 5,10.
+
 using System;
 
 union Choice
@@ -40,18 +36,22 @@ struct Container
 
 int main()
 {
+    // int payload for the Number variant.
     var a = Wrapper
     {
         Value = (Number: 42)
     };
+    // string payload for the Text variant.
     var b = Wrapper
     {
         Value = (Text: "Hello")
     };
+    // void variant: only the tag is written.
     var c = Wrapper
     {
         Value = (None: void)
     };
+    // nested struct payload; the inner (X: ..., Y: ...) targets Point.
     var d = Container
     {
         Value = (Coordinates: (X: 5, Y: 10))

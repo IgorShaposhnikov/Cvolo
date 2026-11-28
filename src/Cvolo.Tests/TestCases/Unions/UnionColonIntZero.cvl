@@ -1,0 +1,17 @@
+﻿// Colon form of the union literal. Te's later s variant is selected and stores 0.
+// Reading te.s must print 0, not the address of a temporary. Expected output: 0.
+
+using System;
+
+union Te
+{
+    string Result;
+    int s;
+}
+
+int main()
+{
+    val te = Te { s: 0 };
+    Console.WriteLine(te.s);
+    return 0;
+}

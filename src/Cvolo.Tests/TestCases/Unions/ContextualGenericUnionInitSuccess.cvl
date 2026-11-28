@@ -1,12 +1,8 @@
-/// <summary>
-/// Verifies contextual tagged-union initialization for generic Option and Result fields.
-/// </summary>
-/// <remarks>
-/// Test: UnionsTests.Execution_Success.
-/// Fixture Role: Generic specialization parity for contextual union initialization.
-/// Compiler Target: ResolvedStructTypeName resolution through specialized union field types.
-/// Expected: The program prints '42' and '7'.
-/// </remarks>
+﻿// GenericCase has an Option<int> field and a Result<int, TestError> field. The contextual
+// (Some: 42) and (Ok: 7) initializers take the union type from those fields, so the
+// compiler can choose the right tag after generic specialization. The is bindings read
+// the payloads back. Expected output: 42 / 7.
+
 using System;
 
 [Error]

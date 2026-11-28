@@ -1,13 +1,7 @@
-/// <summary>
-/// Verifies that nested writes are guarded by the proven active variant while a direct variant
-/// selection write remains legal.
-/// </summary>
-/// <remarks>
-/// Test: UnionsTests.Semantic_Rejections.
-/// Fixture Role: Nested inactive-variant write rejection.
-/// Compiler Target: Active-variant facts through nested member projections.
-/// Expected: CVL1607 rejects 'b.B.Value' while 'A' is active.
-/// </remarks>
+﻿// Box is initialized with A active. Writing b.A.Value is legal because A is proven,
+// but writing b.B.Value would write through the inactive B variant. Expected: CVL1607
+// on the second write.
+
 struct Item
 {
     int Value;

@@ -1,0 +1,57 @@
+﻿// Flow has an int variant A and a string variant B. The program walks through every way the
+// analysis can prove which variant is active: literal init, a direct write to B, whole-union
+// replacement, a join where both branches write A, an `is A` check, and a switch binding.
+// Every read below is legal only because a proof exists at that point.
+// Expected output: 1 / two / 3 / 4 / 4 / 4.
+
+using System;
+
+union Flow
+{
+    int A;
+    string B;
+}
+
+int main()
+{
+    // The literal makes A the active variant.
+    var u = Flow { A = 1 };
+    Console.WriteLine(u.A);
+
+    // A direct payload write retags the union to B.
+    u.B = "two";
+    Console.WriteLine(u.B);
+
+    // A whole-union literal replaces the value and sets A again.
+    u = Flow { A = 3 };
+    Console.WriteLine(u.A);
+
+    var flag = true;
+
+	// Both branches write A, so A is still active after the join.
+	if (flag)
+	{
+		u.A = 4;
+	}
+	else
+	{
+		u.A = 5;
+	}
+
+	Console.WriteLine(u.A);
+
+    // The is check proves A inside the true branch.
+    if (u is A)
+	{
+		Console.WriteLine(u.A);
+	}
+
+    // The switch binding also proves A for the payload variable.
+    switch (u)
+    {
+        case A a: Console.WriteLine(a);
+        default:
+    }
+
+    return 0;
+}

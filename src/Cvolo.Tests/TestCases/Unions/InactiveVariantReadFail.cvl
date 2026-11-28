@@ -1,12 +1,6 @@
-/// <summary>
-/// Verifies that reading a union payload that is not the literal's active variant is rejected.
-/// </summary>
-/// <remarks>
-/// Test: UnionsTests.Semantic_Rejections.
-/// Fixture Role: Inactive-variant read rejection.
-/// Compiler Target: Flow-sensitive active-variant analysis.
-/// Expected: CVL1607 reports variant 'B' while 'A' is active.
-/// </remarks>
+﻿// The literal makes A active. Reading c.B would interpret the A payload bytes as B, so
+// the compiler rejects this dotted read. Expected: CVL1607.
+
 using System;
 
 union Choice

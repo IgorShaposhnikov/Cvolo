@@ -1,0 +1,19 @@
+﻿// Here the union is a local with an explicit type instead of a struct field. `(s: 6)` must
+// build the Te value in the local's own storage; storing the temporary's address instead
+// would make te.s read pointer bytes. Expected output: 6.
+
+using System;
+
+union Te
+{
+    string Result;
+    int s;
+}
+
+int main()
+{
+    // Construct the Te value directly in te; do not store the temporary's address.
+    Te te = (s: 6);
+    Console.WriteLine(te.s);
+    return 0;
+}

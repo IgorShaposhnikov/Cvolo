@@ -1,3 +1,6 @@
+﻿// Safe Options use an explicit None variant instead of a null pointer. The unsafe block
+// only checks that a raw int* can be null; it does not change the Option representation.
+
 using System;
 
 unsafe void CheckRawPointerNull(int* p) {

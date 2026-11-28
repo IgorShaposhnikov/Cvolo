@@ -1,0 +1,25 @@
+﻿// u starts with A active, but Mutate takes it by refvar and writes B. After that call
+// the caller can no longer claim A is active, so u.A is rejected. Expected: CVL1607.
+
+using System;
+
+union Flow
+{
+    int A;
+    string B;
+}
+
+void Mutate(refvar Flow u)
+{
+    u.B = "x";
+}
+
+int main()
+{
+    var u = Flow { A = 1 };
+    // The callee can retag u to B, so the proof about A no longer holds.
+    Mutate(refvar u);
+    // ERROR: A is not provably active after the call.
+    Console.WriteLine(u.A);
+    return 0;
+}

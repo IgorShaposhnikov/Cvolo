@@ -1,0 +1,31 @@
+﻿// One branch writes A and the other writes B. After the join neither variant is
+// provably active, so reading u.A must be rejected. Expected: CVL1607.
+
+using System;
+
+union Flow
+{
+    int A;
+    string B;
+}
+
+int main()
+{
+    var u = Flow { A = 1 };
+    var flag = true;
+
+    // Different tags on each branch: no single variant is active after the join.
+    if (flag)
+	{
+		u.A = 2;
+	}
+	else
+	{
+		u.B = "x";
+	}
+
+	// ERROR: neither A nor B can be assumed here.
+	Console.WriteLine(u.A);
+
+	return 0;
+}

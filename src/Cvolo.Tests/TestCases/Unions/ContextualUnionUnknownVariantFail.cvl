@@ -1,12 +1,6 @@
-/// <summary>
-/// Verifies that a contextual union initializer rejects an unknown variant name.
-/// </summary>
-/// <remarks>
-/// Test: UnionsTests.Semantic_Rejections.
-/// Fixture Role: Unknown-variant rejection for contextual union initialization.
-/// Compiler Target: Union-aware contextual validation through UnionTypeSymbol.FindField.
-/// Expected: CVL4115 reports that 'Choice' does not contain variant 'Missing'.
-/// </remarks>
+﻿// Choice has Number and Text but no Missing variant. Naming Missing here must fail just
+// as it would in an explicit union literal. Expected: CVL4115.
+
 using System;
 
 union Choice

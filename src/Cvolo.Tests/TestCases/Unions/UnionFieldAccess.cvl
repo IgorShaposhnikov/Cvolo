@@ -1,3 +1,5 @@
+﻿// Generic LocalResult<int> is initialized with its Ok variant. Reading res.Ok prints 42.
+
 using System;
 
 union LocalResult<T> {

@@ -1,3 +1,6 @@
+﻿// MyUnion has A and B. The switch handles only A, so it must be rejected as
+// non-exhaustive rather than falling through an uninitialized B payload.
+
 union MyUnion {
     int A;
     double B;

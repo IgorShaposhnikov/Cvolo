@@ -1,0 +1,17 @@
+﻿// Single-variant union initialized with the colon form. The string payload "100" must
+// be copied into te; before the fix this crashed with an access violation.
+// Expected output: 100.
+
+using System;
+
+union Te
+{
+    string Result;
+}
+
+int main()
+{
+    val te = Te { Result: "100" };
+    Console.WriteLine(te.Result);
+    return 0;
+}

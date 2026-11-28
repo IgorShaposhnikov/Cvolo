@@ -1,0 +1,23 @@
+﻿// Read<T> takes Flow by value, so no variant is known to be active at function entry.
+// Reading u.A without an is/switch check must be rejected even though this generic
+// template is never instantiated in the file. Expected: CVL1607.
+
+using System;
+
+union Flow
+{
+    int A;
+    string B;
+}
+
+// No call site supplies a tag, and the template is never instantiated here.
+int Read<T>(Flow u)
+{
+    // ERROR: u.A is not provably active.
+    return u.A;
+}
+
+int main()
+{
+    return 0;
+}

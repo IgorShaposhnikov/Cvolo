@@ -1,12 +1,6 @@
-/// <summary>
-/// Verifies that a contextual union initializer type-checks its payload against the variant type.
-/// </summary>
-/// <remarks>
-/// Test: UnionsTests.Semantic_Rejections.
-/// Fixture Role: Payload type mismatch rejection for contextual union initialization.
-/// Compiler Target: Shared explicit/contextual union validation.
-/// Expected: CVL4019 reports that field 'Number' of type 'int' cannot hold a 'string'.
-/// </remarks>
+﻿// Number is an int variant, but this initializer supplies a string. The contextual form
+// must run the same payload type check as an explicit union literal. Expected: CVL4019.
+
 using System;
 
 union Choice

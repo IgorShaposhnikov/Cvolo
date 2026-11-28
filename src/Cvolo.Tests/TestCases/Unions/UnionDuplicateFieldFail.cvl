@@ -1,3 +1,6 @@
+﻿// Two variants are both named Active, which makes the union layout ambiguous. The
+// declaration itself must be rejected. Expected: duplicate field diagnostic.
+
 union Duplicate {
     int Active;
     double Active; // Fail: Duplicate field 'Active'

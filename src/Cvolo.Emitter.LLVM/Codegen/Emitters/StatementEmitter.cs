@@ -461,6 +461,10 @@ internal sealed class StatementEmitter(
 				{
 					aggregates.EmitStructInitializationInPlace(structInit, alloca);
 				}
+				else if (varDecl.Initializer is ParenthesizedStructInitializerExpressionSyntax contextualInit)
+				{
+					aggregates.EmitParenthesizedStructInitializationInPlace(contextualInit, alloca);
+				}
 				else if (varDecl.Initializer is ArrayInitializationExpressionSyntax arrInit)
 				{
 					aggregates.EmitArrayInitializationInPlace(arrInit, alloca, (typeSymbol as ArrayTypeSymbol)!);
@@ -539,7 +543,11 @@ internal sealed class StatementEmitter(
 				calls.Emit(ctorCall, alloca);
 			}
 			// Register Forwarding: If the aggregate is already allocated on the stack, forward its address
-			else if (valTy is StructTypeSymbol || valTy is ArrayTypeSymbol || valTy is UnionTypeSymbol { IsUnsafe: true })
+			// Safe tagged unions (like structs and raw unions) are emitted into a stack
+			// temporary and represented by its address. Forward that address instead of
+			// storing the pointer into the union slot; only NPO-eligible options lower to
+			// a flat scalar value that must be stored directly.
+			else if (valTy is StructTypeSymbol || valTy is ArrayTypeSymbol || valTy is UnionTypeSymbol { IsNpoEligible: false })
 			{
 				var val = emitExpression(varDecl.Initializer!);
 				if (val.TypeOf.Kind == LLVMTypeKind.LLVMPointerTypeKind)

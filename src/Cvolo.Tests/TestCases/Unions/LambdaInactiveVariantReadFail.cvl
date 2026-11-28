@@ -1,0 +1,26 @@
+﻿// The lambda creates a Flow with B active and then reads A. Lambda bodies are checked
+// on their own flow edge, so this inactive read is rejected instead of skipped.
+// Expected: CVL1607.
+
+using System;
+
+union Flow
+{
+    int A;
+    string B;
+}
+
+delegate int Reader();
+
+int main()
+{
+    Reader r = () =>
+    {
+        // This literal makes B active.
+        var u = Flow { B = "x" };
+        // ERROR: reading the inactive A payload is checked even inside a lambda.
+        return u.A;
+    };
+
+    return r();
+}

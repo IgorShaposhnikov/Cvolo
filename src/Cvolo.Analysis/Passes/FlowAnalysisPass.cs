@@ -23,12 +23,20 @@ public sealed class FlowAnalysisPass(BindingContext context)
 
 			foreach (var member in members)
 			{
-				if (member is FunctionDeclarationSyntax func && func.GenericParameters.Count == 0)
+				// Generic bodies are analyzed once as templates. Their concrete specializations are
+				// synthesized later from the same spans, so skipping templates would leave active-
+				// variant diagnostics unemitted for generic functions.
+				if (member is FunctionDeclarationSyntax func)
+				{
 					_definiteAssignment.Analyze(func);
+				}
 				else if (member is ExposeExternBlockSyntax exportBlock)
+				{
 					foreach (var exportFunc in exportBlock.Functions)
-						if (exportFunc.GenericParameters.Count == 0)
-							_definiteAssignment.Analyze(exportFunc);
+					{
+						_definiteAssignment.Analyze(exportFunc);
+					}
+				}
 			}
 		}
 	}
