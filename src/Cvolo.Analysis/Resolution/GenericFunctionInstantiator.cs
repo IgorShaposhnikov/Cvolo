@@ -71,6 +71,10 @@ internal sealed class GenericFunctionInstantiator(
 		if (context.MonomorphizedFunctions.TryGetValue(instName, out var existing))
 			return existing;
 
+		// Capture the diagnostic baseline before signature/constraint work so every failure in
+		// this specialization is accounted for before it can be promoted to Ready.
+		var errorsBefore = context.Diagnostics.Diagnostics.Count(d => d.Severity == DiagnosticSeverity.Error);
+
 		var substitutionMap = new Dictionary<string, TypeSymbol>();
 		for (var i = 0; i < templateDecl.GenericParameters.Count; i++)
 		{
@@ -153,7 +157,10 @@ internal sealed class GenericFunctionInstantiator(
 			// The body may demand further specializations. Bound that demand (§4.5) so an
 			// expanding identity chain stops with a diagnostic instead of a stack overflow.
 			if (!context.TryEnterGenericBodyInstantiation(instName, templateDecl.Span))
+			{
+				context.MonomorphizationStates[instName] = MonomorphizationState.Rejected;
 				return instSymbol;
+			}
 
 			try
 			{
@@ -163,7 +170,6 @@ internal sealed class GenericFunctionInstantiator(
 					localScope.Declare(new VariableSymbol(p.Name, p.Type, p.Type is PointerTypeSymbol { IsMutable: true }) { IsInitialized = true, Origin = OriginKind.Parameter });
 				}
 
-				var errorsBefore = context.Diagnostics.Diagnostics.Count(d => d.Severity == DiagnosticSeverity.Error);
 				validateBlock(instBody, localScope, instDecl);
 				// Complete the transaction. A body whose substituted default sites (or
 				// any other rule) produced new errors is rejected; otherwise the specialization is Ready
@@ -180,6 +186,8 @@ internal sealed class GenericFunctionInstantiator(
 		}
 		finally
 		{
+			if (context.MonomorphizationStates[instName] == MonomorphizationState.Pending)
+				context.MonomorphizationStates[instName] = MonomorphizationState.Rejected;
 			context.CurrentUnit = previousUnit;
 			context.CurrentNamespace = previousNamespace;
 		}
@@ -567,11 +575,26 @@ internal sealed class GenericFunctionInstantiator(
 		FunctionDeclarationSyntax templateDecl, Dictionary<string, TypeSymbol> substitutionMap, SymbolTable scope,
 	string templateMangledName, IReadOnlyList<TypeSymbol>? scalarTypeArguments = null)
 	{
-		var identity = MonomorphizationIdentity.For(templateMangledName, substitutionMap.Values.Select(t => t.Name));
+		// Substitution maps are built in different orders by the pure-interface and
+		// combined scalar/interface paths. Key the specialization by ordered scalar
+		// parameters followed by sorted owner annotations so the same logical binding
+		// always has one canonical identity.
+		var orderedIdentityArguments = templateDecl.GenericParameters
+			.Where(substitutionMap.ContainsKey)
+			.Select(p => substitutionMap[p].Name)
+			.Concat(substitutionMap
+				.Where(kv => !templateDecl.GenericParameters.Contains(kv.Key))
+				.OrderBy(kv => kv.Key, StringComparer.Ordinal)
+				.Select(kv => kv.Value.Name));
+		var identity = MonomorphizationIdentity.For(templateMangledName, orderedIdentityArguments);
 		var instName = context.NormalizeGenericName(identity.CanonicalKey);
 
 		if (context.MonomorphizedFunctions.TryGetValue(instName, out var existing))
 			return existing;
+
+		// Capture the diagnostic baseline before signature/body work so failed dispatch
+		// specializations are never promoted to Ready.
+		var errorsBefore = context.Diagnostics.Diagnostics.Count(d => d.Severity == DiagnosticSeverity.Error);
 
 		// Resolves one dispatch signature type after applying the current substitution map.
 		TypeSymbol ResolveSubstitutedType(string typeName)
@@ -636,34 +659,33 @@ internal sealed class GenericFunctionInstantiator(
 
 		try
 		{
-			// Dispatch bodies can demand further specializations through their calls.
+			// Constraint validation and the dispatch body can both demand further
+			// specializations. Use one balanced budget frame for the whole transaction.
 			if (!context.TryEnterGenericBodyInstantiation(instName, templateDecl.Span))
-				return instSymbol;
-
-			var localScope = new SymbolTable(context.Globals);
-			foreach (var p in parameters)
 			{
-				localScope.Declare(new VariableSymbol(p.Name, p.Type, p.Type is PointerTypeSymbol { IsMutable: true }) { IsInitialized = true, Origin = OriginKind.Parameter });
-			}
-
-			var errorsBefore = context.Diagnostics.Diagnostics.Count(d => d.Severity == DiagnosticSeverity.Error);
-			// Bounds use only declared scalar bindings, never the interface-to-owner rewrite.
-			// Otherwise a bound such as IValue<T> could be rewritten to the concrete owner.
-			if (scalarTypeArguments is not null)
-			{
-				var scalarBindings = new Dictionary<string, TypeSymbol>();
-				for (var i = 0; i < templateDecl.GenericParameters.Count && i < scalarTypeArguments.Count; i++)
-					scalarBindings[templateDecl.GenericParameters[i]] = scalarTypeArguments[i];
-				context.ValidateGenericConstraints(templateDecl.GenericParameters, templateDecl.GenericParameterConstraints,
-					scalarTypeArguments, scalarBindings, templateDecl.Span);
-			}
-
-			// Dispatch bodies can demand further specializations through their calls.
-			if (!context.TryEnterGenericBodyInstantiation(instName, templateDecl.Span))
+				context.MonomorphizationStates[instName] = MonomorphizationState.Rejected;
 				return instSymbol;
+			}
 
 			try
 			{
+				var localScope = new SymbolTable(context.Globals);
+				foreach (var p in parameters)
+				{
+					localScope.Declare(new VariableSymbol(p.Name, p.Type, p.Type is PointerTypeSymbol { IsMutable: true }) { IsInitialized = true, Origin = OriginKind.Parameter });
+				}
+
+				// Bounds use only declared scalar bindings, never the interface-to-owner rewrite.
+				// Otherwise a bound such as IValue<T> could be rewritten to the concrete owner.
+				if (scalarTypeArguments is not null)
+				{
+					var scalarBindings = new Dictionary<string, TypeSymbol>();
+					for (var i = 0; i < templateDecl.GenericParameters.Count && i < scalarTypeArguments.Count; i++)
+						scalarBindings[templateDecl.GenericParameters[i]] = scalarTypeArguments[i];
+					context.ValidateGenericConstraints(templateDecl.GenericParameters, templateDecl.GenericParameterConstraints,
+						scalarTypeArguments, scalarBindings, templateDecl.Span);
+				}
+
 				validateBlock(instBody, localScope, instDecl);
 				// Complete the transaction for the dispatch specialization.
 				context.MonomorphizationStates[instName] =
@@ -678,6 +700,8 @@ internal sealed class GenericFunctionInstantiator(
 		}
 		finally
 		{
+			if (context.MonomorphizationStates[instName] == MonomorphizationState.Pending)
+				context.MonomorphizationStates[instName] = MonomorphizationState.Rejected;
 			context.CurrentUnit = previousUnit;
 			context.CurrentNamespace = previousNamespace;
 		}

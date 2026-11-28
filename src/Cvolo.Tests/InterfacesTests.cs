@@ -134,4 +134,30 @@ public sealed class InterfacesTests : CompilerTestBase
 		Assert.Equal(0, runCode);
 		Assert.Equal(expected.Replace("\r\n", "\n").Trim(), runStdout.Replace("\r\n", "\n").Trim());
 	}
+
+	/// <summary>
+	/// Sixty-four independent dispatch specializations and one repeated request must all
+	/// bind and produce the exact expected owner values at both optimization levels.
+	/// </summary>
+	[Fact]
+	public void GenericDispatchStress_SixtyFourIndependentSpecializations()
+	{
+		var expected = string.Join("\n", Enumerable.Range(0, 64).Select(i => i.ToString()).Append("0"));
+		foreach (var optimization in new[] { "-O0", "-O3" })
+		{
+			var fileName = "Interfaces/GenericDispatchStress.cvl";
+			var (exitCode, stdout, stderr) = RunCompiler(fileName, optimization);
+			AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
+
+			var (runCode, runStdout) = ExecuteBinary("GenericDispatchStress", "Interfaces");
+			Assert.Equal(0, runCode);
+			Assert.Equal(expected, runStdout.Replace("\r\n", "\n").Trim());
+			Assert.Equal(expected, runStdout.Replace("\r\n", "\n").Trim());
+		}
+
+		var (_, context) = AnalyzeProject("Interfaces/GenericDispatchStress.cvl");
+		var dispatchKeys = context.MonomorphizedFunctions.Keys.Where(k => k.StartsWith("Read<")).ToList();
+		Assert.Equal(64, dispatchKeys.Count);
+		Assert.All(dispatchKeys, key => Assert.Equal(Cvolo.Analysis.MonomorphizationState.Ready, context.MonomorphizationStates[key]));
+	}
 }

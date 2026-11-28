@@ -82,6 +82,34 @@ public sealed class GenericsTests : CompilerTestBase
 		}
 	}
 
+	/// <summary>
+	/// Explicit and defaulted trailing generic arguments must share one canonical key.
+	/// </summary>
+	[Fact]
+	public void FunctionGenericDefaults_ProduceOneCanonicalSpecialization()
+	{
+		var (_, context) = AnalyzeProject("Generics/FunctionGenericDefaultCall.cvl");
+		var identityKeys = context.MonomorphizedFunctions.Keys.Where(k => k.StartsWith("Identity<")).ToList();
+
+		Assert.Single(identityKeys);
+		Assert.Contains("MallocAllocator", identityKeys[0]);
+		Assert.Equal(Cvolo.Analysis.MonomorphizationState.Ready, context.MonomorphizationStates[identityKeys[0]]);
+	}
+
+	/// <summary>
+	/// A rejected expanding demand must not poison a later valid generic specialization.
+	/// </summary>
+	[Fact]
+	public void GenericDemandBudget_FailureDoesNotPoisonLaterSpecializations()
+	{
+		var (_, context) = AnalyzeProject("Generics/GenericDemandRecovery.cvl");
+		var errors = context.Diagnostics.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error).ToList();
+
+		Assert.Contains(errors, d => d.Id == DiagnosticIds.GenericSpecializationBudgetExceeded);
+		var identityKey = Assert.Single(context.MonomorphizedFunctions.Keys.Where(k => k.StartsWith("Identity<")));
+		Assert.Equal(Cvolo.Analysis.MonomorphizationState.Ready, context.MonomorphizationStates[identityKey]);
+	}
+
 	[Theory]
 	[InlineData("GenericConstructorDefensiveFail", "does not initialize field 'Weight'")]
 	[InlineData("DefaultGenericParamsBadDefault", "Default value for generic parameter 'A' must be a Trivial Copy Type")]

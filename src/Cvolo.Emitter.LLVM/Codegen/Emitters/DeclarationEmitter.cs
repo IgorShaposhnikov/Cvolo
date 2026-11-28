@@ -241,9 +241,9 @@ internal sealed class DeclarationEmitter(
 	{
 		foreach (var instDecl in BindingContext.MonomorphizedFunctionDecls)
 		{
-			// a rejected/invalidated specialization is not declared.
+			// Only a validated Ready specialization is declared; pending/failed work is skipped.
 			if (BindingContext.MonomorphizationStates.TryGetValue(instDecl.Name, out var literalState)
-				&& literalState is MonomorphizationState.Rejected or MonomorphizationState.Invalidated)
+				&& literalState is not MonomorphizationState.Ready)
 				continue;
 
 			var baseMangledName = instDecl.Name.Split('<')[0];

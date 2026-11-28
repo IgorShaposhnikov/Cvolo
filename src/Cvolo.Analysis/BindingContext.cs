@@ -106,9 +106,11 @@ public sealed class BindingContext
 	// levels, while an expanding pointee/body chain materializes a fresh specialization
 	// at every level and must stop with a diagnostic instead of exhausting the stack.
 	private const int MaxGenericDemandDepth = 32;
-	private int _genericTypeResolutionDepth;
-	private int _genericBodyInstantiationDepth;
-	private bool _genericDemandBudgetExceeded;
+	private int _genericDemandDepth;
+	private string? _genericDemandRoot;
+	private bool _genericDemandRootRejected;
+	private readonly HashSet<string> _rejectedGenericDemandRoots = new(StringComparer.Ordinal);
+	private readonly HashSet<string> _reportedGenericDemandFailures = new(StringComparer.Ordinal);
 
 	public Dictionary<string, CompilationUnitSyntax> SymbolUnits { get; } = [];
 	public Dictionary<string, List<FunctionSymbol>> OverloadedFunctions { get; } = [];
@@ -760,13 +762,13 @@ public sealed class BindingContext
 
 	/// <summary>
 	/// Reports a deterministic diagnostic when demanded generic specializations expand without bound.
+	/// Only the failing demand chain is rejected; unrelated later requests remain usable.
 	/// </summary>
 	private void ReportGenericDemandExceeded(string name, TextSpan span = default)
 	{
-		if (_genericDemandBudgetExceeded)
+		var root = _genericDemandRoot ?? name;
+		if (!_reportedGenericDemandFailures.Add(root))
 			return;
-
-		_genericDemandBudgetExceeded = true;
 
 		var fileContext = CurrentUnit is not null && FileContexts.TryGetValue(CurrentUnit, out var ctx)
 			? ctx
@@ -785,36 +787,56 @@ public sealed class BindingContext
 	}
 
 	/// <summary>
+	/// Enters one nested generic demand. Depth is per active chain rather than cumulative work, so
+	/// independent sequential specializations are not punished by an earlier expanded chain.
+	/// </summary>
+	private bool TryEnterGenericDemand(string kind, string name, TextSpan span = default)
+	{
+		var root = kind + ":" + name;
+		if (_genericDemandDepth == 0)
+		{
+			_genericDemandRoot = root;
+			_genericDemandRootRejected = _rejectedGenericDemandRoots.Contains(root);
+		}
+
+		if (_genericDemandRootRejected)
+			return false;
+
+		if (++_genericDemandDepth <= MaxGenericDemandDepth)
+			return true;
+
+		_genericDemandDepth--;
+		_genericDemandRootRejected = true;
+		_rejectedGenericDemandRoots.Add(_genericDemandRoot ?? root);
+		ReportGenericDemandExceeded(name, span);
+		return false;
+	}
+
+	/// <summary>
 	/// Enters one nested generic type resolution, enforcing the per-compilation work budget.
 	/// </summary>
 	private bool TryEnterGenericTypeResolution(string name)
-	{
-		if (_genericDemandBudgetExceeded)
-			return false;
-		if (++_genericTypeResolutionDepth <= MaxGenericDemandDepth)
-			return true;
-
-		_genericTypeResolutionDepth--;
-		ReportGenericDemandExceeded(name);
-		return false;
-	}
+		=> TryEnterGenericDemand("type", name);
 
 	/// <summary>
 	/// Enters one demanded generic function/method body instantiation, enforcing the same work budget.
 	/// </summary>
 	internal bool TryEnterGenericBodyInstantiation(string name, TextSpan span)
-	{
-		if (_genericDemandBudgetExceeded)
-			return false;
-		if (++_genericBodyInstantiationDepth <= MaxGenericDemandDepth)
-			return true;
+		=> TryEnterGenericDemand("body", name, span);
 
-		_genericBodyInstantiationDepth--;
-		ReportGenericDemandExceeded(name, span);
-		return false;
+	internal void ExitGenericDemand()
+	{
+		if (_genericDemandDepth == 0)
+			return;
+
+		if (--_genericDemandDepth == 0)
+		{
+			_genericDemandRoot = null;
+			_genericDemandRootRejected = false;
+		}
 	}
 
-	internal void ExitGenericBodyInstantiation() => _genericBodyInstantiationDepth--;
+	internal void ExitGenericBodyInstantiation() => ExitGenericDemand();
 
 	/// <summary>
 	/// Resolves a string type name to its canonical, immutable TypeSymbol object. Generic
@@ -837,7 +859,7 @@ public sealed class BindingContext
 		}
 		finally
 		{
-			_genericTypeResolutionDepth--;
+			ExitGenericDemand();
 		}
 	}
 

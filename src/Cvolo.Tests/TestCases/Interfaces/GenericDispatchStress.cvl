@@ -1,0 +1,1179 @@
+﻿/// <summary>
+/// GS01/GS18: sixty-four independent generic interface dispatch specializations,
+/// followed by a repeated request for the first specialization.
+/// </summary>
+/// <remarks>
+/// Each owner produces a different concrete dispatch key even though the scalar
+/// argument and interface template are shared. The repeated call must reuse the
+/// first key instead of creating a sixty-fifth specialization.
+/// </remarks>
+using System;
+
+interface IValue<T>
+{
+    T Get();
+}
+
+T Read<T>(IValue<T> value)
+{
+    return value.Get();
+}
+
+struct Owner0
+{
+    int Marker;
+}
+
+struct Owner1
+{
+    int Marker;
+}
+
+struct Owner2
+{
+    int Marker;
+}
+
+struct Owner3
+{
+    int Marker;
+}
+
+struct Owner4
+{
+    int Marker;
+}
+
+struct Owner5
+{
+    int Marker;
+}
+
+struct Owner6
+{
+    int Marker;
+}
+
+struct Owner7
+{
+    int Marker;
+}
+
+struct Owner8
+{
+    int Marker;
+}
+
+struct Owner9
+{
+    int Marker;
+}
+
+struct Owner10
+{
+    int Marker;
+}
+
+struct Owner11
+{
+    int Marker;
+}
+
+struct Owner12
+{
+    int Marker;
+}
+
+struct Owner13
+{
+    int Marker;
+}
+
+struct Owner14
+{
+    int Marker;
+}
+
+struct Owner15
+{
+    int Marker;
+}
+
+struct Owner16
+{
+    int Marker;
+}
+
+struct Owner17
+{
+    int Marker;
+}
+
+struct Owner18
+{
+    int Marker;
+}
+
+struct Owner19
+{
+    int Marker;
+}
+
+struct Owner20
+{
+    int Marker;
+}
+
+struct Owner21
+{
+    int Marker;
+}
+
+struct Owner22
+{
+    int Marker;
+}
+
+struct Owner23
+{
+    int Marker;
+}
+
+struct Owner24
+{
+    int Marker;
+}
+
+struct Owner25
+{
+    int Marker;
+}
+
+struct Owner26
+{
+    int Marker;
+}
+
+struct Owner27
+{
+    int Marker;
+}
+
+struct Owner28
+{
+    int Marker;
+}
+
+struct Owner29
+{
+    int Marker;
+}
+
+struct Owner30
+{
+    int Marker;
+}
+
+struct Owner31
+{
+    int Marker;
+}
+
+struct Owner32
+{
+    int Marker;
+}
+
+struct Owner33
+{
+    int Marker;
+}
+
+struct Owner34
+{
+    int Marker;
+}
+
+struct Owner35
+{
+    int Marker;
+}
+
+struct Owner36
+{
+    int Marker;
+}
+
+struct Owner37
+{
+    int Marker;
+}
+
+struct Owner38
+{
+    int Marker;
+}
+
+struct Owner39
+{
+    int Marker;
+}
+
+struct Owner40
+{
+    int Marker;
+}
+
+struct Owner41
+{
+    int Marker;
+}
+
+struct Owner42
+{
+    int Marker;
+}
+
+struct Owner43
+{
+    int Marker;
+}
+
+struct Owner44
+{
+    int Marker;
+}
+
+struct Owner45
+{
+    int Marker;
+}
+
+struct Owner46
+{
+    int Marker;
+}
+
+struct Owner47
+{
+    int Marker;
+}
+
+struct Owner48
+{
+    int Marker;
+}
+
+struct Owner49
+{
+    int Marker;
+}
+
+struct Owner50
+{
+    int Marker;
+}
+
+struct Owner51
+{
+    int Marker;
+}
+
+struct Owner52
+{
+    int Marker;
+}
+
+struct Owner53
+{
+    int Marker;
+}
+
+struct Owner54
+{
+    int Marker;
+}
+
+struct Owner55
+{
+    int Marker;
+}
+
+struct Owner56
+{
+    int Marker;
+}
+
+struct Owner57
+{
+    int Marker;
+}
+
+struct Owner58
+{
+    int Marker;
+}
+
+struct Owner59
+{
+    int Marker;
+}
+
+struct Owner60
+{
+    int Marker;
+}
+
+struct Owner61
+{
+    int Marker;
+}
+
+struct Owner62
+{
+    int Marker;
+}
+
+struct Owner63
+{
+    int Marker;
+}
+
+extension Owner0 : IValue<int>
+{
+    int Get()
+    {
+        return 0;
+    }
+}
+
+extension Owner1 : IValue<int>
+{
+    int Get()
+    {
+        return 1;
+    }
+}
+
+extension Owner2 : IValue<int>
+{
+    int Get()
+    {
+        return 2;
+    }
+}
+
+extension Owner3 : IValue<int>
+{
+    int Get()
+    {
+        return 3;
+    }
+}
+
+extension Owner4 : IValue<int>
+{
+    int Get()
+    {
+        return 4;
+    }
+}
+
+extension Owner5 : IValue<int>
+{
+    int Get()
+    {
+        return 5;
+    }
+}
+
+extension Owner6 : IValue<int>
+{
+    int Get()
+    {
+        return 6;
+    }
+}
+
+extension Owner7 : IValue<int>
+{
+    int Get()
+    {
+        return 7;
+    }
+}
+
+extension Owner8 : IValue<int>
+{
+    int Get()
+    {
+        return 8;
+    }
+}
+
+extension Owner9 : IValue<int>
+{
+    int Get()
+    {
+        return 9;
+    }
+}
+
+extension Owner10 : IValue<int>
+{
+    int Get()
+    {
+        return 10;
+    }
+}
+
+extension Owner11 : IValue<int>
+{
+    int Get()
+    {
+        return 11;
+    }
+}
+
+extension Owner12 : IValue<int>
+{
+    int Get()
+    {
+        return 12;
+    }
+}
+
+extension Owner13 : IValue<int>
+{
+    int Get()
+    {
+        return 13;
+    }
+}
+
+extension Owner14 : IValue<int>
+{
+    int Get()
+    {
+        return 14;
+    }
+}
+
+extension Owner15 : IValue<int>
+{
+    int Get()
+    {
+        return 15;
+    }
+}
+
+extension Owner16 : IValue<int>
+{
+    int Get()
+    {
+        return 16;
+    }
+}
+
+extension Owner17 : IValue<int>
+{
+    int Get()
+    {
+        return 17;
+    }
+}
+
+extension Owner18 : IValue<int>
+{
+    int Get()
+    {
+        return 18;
+    }
+}
+
+extension Owner19 : IValue<int>
+{
+    int Get()
+    {
+        return 19;
+    }
+}
+
+extension Owner20 : IValue<int>
+{
+    int Get()
+    {
+        return 20;
+    }
+}
+
+extension Owner21 : IValue<int>
+{
+    int Get()
+    {
+        return 21;
+    }
+}
+
+extension Owner22 : IValue<int>
+{
+    int Get()
+    {
+        return 22;
+    }
+}
+
+extension Owner23 : IValue<int>
+{
+    int Get()
+    {
+        return 23;
+    }
+}
+
+extension Owner24 : IValue<int>
+{
+    int Get()
+    {
+        return 24;
+    }
+}
+
+extension Owner25 : IValue<int>
+{
+    int Get()
+    {
+        return 25;
+    }
+}
+
+extension Owner26 : IValue<int>
+{
+    int Get()
+    {
+        return 26;
+    }
+}
+
+extension Owner27 : IValue<int>
+{
+    int Get()
+    {
+        return 27;
+    }
+}
+
+extension Owner28 : IValue<int>
+{
+    int Get()
+    {
+        return 28;
+    }
+}
+
+extension Owner29 : IValue<int>
+{
+    int Get()
+    {
+        return 29;
+    }
+}
+
+extension Owner30 : IValue<int>
+{
+    int Get()
+    {
+        return 30;
+    }
+}
+
+extension Owner31 : IValue<int>
+{
+    int Get()
+    {
+        return 31;
+    }
+}
+
+extension Owner32 : IValue<int>
+{
+    int Get()
+    {
+        return 32;
+    }
+}
+
+extension Owner33 : IValue<int>
+{
+    int Get()
+    {
+        return 33;
+    }
+}
+
+extension Owner34 : IValue<int>
+{
+    int Get()
+    {
+        return 34;
+    }
+}
+
+extension Owner35 : IValue<int>
+{
+    int Get()
+    {
+        return 35;
+    }
+}
+
+extension Owner36 : IValue<int>
+{
+    int Get()
+    {
+        return 36;
+    }
+}
+
+extension Owner37 : IValue<int>
+{
+    int Get()
+    {
+        return 37;
+    }
+}
+
+extension Owner38 : IValue<int>
+{
+    int Get()
+    {
+        return 38;
+    }
+}
+
+extension Owner39 : IValue<int>
+{
+    int Get()
+    {
+        return 39;
+    }
+}
+
+extension Owner40 : IValue<int>
+{
+    int Get()
+    {
+        return 40;
+    }
+}
+
+extension Owner41 : IValue<int>
+{
+    int Get()
+    {
+        return 41;
+    }
+}
+
+extension Owner42 : IValue<int>
+{
+    int Get()
+    {
+        return 42;
+    }
+}
+
+extension Owner43 : IValue<int>
+{
+    int Get()
+    {
+        return 43;
+    }
+}
+
+extension Owner44 : IValue<int>
+{
+    int Get()
+    {
+        return 44;
+    }
+}
+
+extension Owner45 : IValue<int>
+{
+    int Get()
+    {
+        return 45;
+    }
+}
+
+extension Owner46 : IValue<int>
+{
+    int Get()
+    {
+        return 46;
+    }
+}
+
+extension Owner47 : IValue<int>
+{
+    int Get()
+    {
+        return 47;
+    }
+}
+
+extension Owner48 : IValue<int>
+{
+    int Get()
+    {
+        return 48;
+    }
+}
+
+extension Owner49 : IValue<int>
+{
+    int Get()
+    {
+        return 49;
+    }
+}
+
+extension Owner50 : IValue<int>
+{
+    int Get()
+    {
+        return 50;
+    }
+}
+
+extension Owner51 : IValue<int>
+{
+    int Get()
+    {
+        return 51;
+    }
+}
+
+extension Owner52 : IValue<int>
+{
+    int Get()
+    {
+        return 52;
+    }
+}
+
+extension Owner53 : IValue<int>
+{
+    int Get()
+    {
+        return 53;
+    }
+}
+
+extension Owner54 : IValue<int>
+{
+    int Get()
+    {
+        return 54;
+    }
+}
+
+extension Owner55 : IValue<int>
+{
+    int Get()
+    {
+        return 55;
+    }
+}
+
+extension Owner56 : IValue<int>
+{
+    int Get()
+    {
+        return 56;
+    }
+}
+
+extension Owner57 : IValue<int>
+{
+    int Get()
+    {
+        return 57;
+    }
+}
+
+extension Owner58 : IValue<int>
+{
+    int Get()
+    {
+        return 58;
+    }
+}
+
+extension Owner59 : IValue<int>
+{
+    int Get()
+    {
+        return 59;
+    }
+}
+
+extension Owner60 : IValue<int>
+{
+    int Get()
+    {
+        return 60;
+    }
+}
+
+extension Owner61 : IValue<int>
+{
+    int Get()
+    {
+        return 61;
+    }
+}
+
+extension Owner62 : IValue<int>
+{
+    int Get()
+    {
+        return 62;
+    }
+}
+
+extension Owner63 : IValue<int>
+{
+    int Get()
+    {
+        return 63;
+    }
+}
+
+int main()
+{
+    var owner0 = Owner0
+    {
+        Marker = 0
+    };
+    var owner1 = Owner1
+    {
+        Marker = 1
+    };
+    var owner2 = Owner2
+    {
+        Marker = 2
+    };
+    var owner3 = Owner3
+    {
+        Marker = 3
+    };
+    var owner4 = Owner4
+    {
+        Marker = 4
+    };
+    var owner5 = Owner5
+    {
+        Marker = 5
+    };
+    var owner6 = Owner6
+    {
+        Marker = 6
+    };
+    var owner7 = Owner7
+    {
+        Marker = 7
+    };
+    var owner8 = Owner8
+    {
+        Marker = 8
+    };
+    var owner9 = Owner9
+    {
+        Marker = 9
+    };
+    var owner10 = Owner10
+    {
+        Marker = 10
+    };
+    var owner11 = Owner11
+    {
+        Marker = 11
+    };
+    var owner12 = Owner12
+    {
+        Marker = 12
+    };
+    var owner13 = Owner13
+    {
+        Marker = 13
+    };
+    var owner14 = Owner14
+    {
+        Marker = 14
+    };
+    var owner15 = Owner15
+    {
+        Marker = 15
+    };
+    var owner16 = Owner16
+    {
+        Marker = 16
+    };
+    var owner17 = Owner17
+    {
+        Marker = 17
+    };
+    var owner18 = Owner18
+    {
+        Marker = 18
+    };
+    var owner19 = Owner19
+    {
+        Marker = 19
+    };
+    var owner20 = Owner20
+    {
+        Marker = 20
+    };
+    var owner21 = Owner21
+    {
+        Marker = 21
+    };
+    var owner22 = Owner22
+    {
+        Marker = 22
+    };
+    var owner23 = Owner23
+    {
+        Marker = 23
+    };
+    var owner24 = Owner24
+    {
+        Marker = 24
+    };
+    var owner25 = Owner25
+    {
+        Marker = 25
+    };
+    var owner26 = Owner26
+    {
+        Marker = 26
+    };
+    var owner27 = Owner27
+    {
+        Marker = 27
+    };
+    var owner28 = Owner28
+    {
+        Marker = 28
+    };
+    var owner29 = Owner29
+    {
+        Marker = 29
+    };
+    var owner30 = Owner30
+    {
+        Marker = 30
+    };
+    var owner31 = Owner31
+    {
+        Marker = 31
+    };
+    var owner32 = Owner32
+    {
+        Marker = 32
+    };
+    var owner33 = Owner33
+    {
+        Marker = 33
+    };
+    var owner34 = Owner34
+    {
+        Marker = 34
+    };
+    var owner35 = Owner35
+    {
+        Marker = 35
+    };
+    var owner36 = Owner36
+    {
+        Marker = 36
+    };
+    var owner37 = Owner37
+    {
+        Marker = 37
+    };
+    var owner38 = Owner38
+    {
+        Marker = 38
+    };
+    var owner39 = Owner39
+    {
+        Marker = 39
+    };
+    var owner40 = Owner40
+    {
+        Marker = 40
+    };
+    var owner41 = Owner41
+    {
+        Marker = 41
+    };
+    var owner42 = Owner42
+    {
+        Marker = 42
+    };
+    var owner43 = Owner43
+    {
+        Marker = 43
+    };
+    var owner44 = Owner44
+    {
+        Marker = 44
+    };
+    var owner45 = Owner45
+    {
+        Marker = 45
+    };
+    var owner46 = Owner46
+    {
+        Marker = 46
+    };
+    var owner47 = Owner47
+    {
+        Marker = 47
+    };
+    var owner48 = Owner48
+    {
+        Marker = 48
+    };
+    var owner49 = Owner49
+    {
+        Marker = 49
+    };
+    var owner50 = Owner50
+    {
+        Marker = 50
+    };
+    var owner51 = Owner51
+    {
+        Marker = 51
+    };
+    var owner52 = Owner52
+    {
+        Marker = 52
+    };
+    var owner53 = Owner53
+    {
+        Marker = 53
+    };
+    var owner54 = Owner54
+    {
+        Marker = 54
+    };
+    var owner55 = Owner55
+    {
+        Marker = 55
+    };
+    var owner56 = Owner56
+    {
+        Marker = 56
+    };
+    var owner57 = Owner57
+    {
+        Marker = 57
+    };
+    var owner58 = Owner58
+    {
+        Marker = 58
+    };
+    var owner59 = Owner59
+    {
+        Marker = 59
+    };
+    var owner60 = Owner60
+    {
+        Marker = 60
+    };
+    var owner61 = Owner61
+    {
+        Marker = 61
+    };
+    var owner62 = Owner62
+    {
+        Marker = 62
+    };
+    var owner63 = Owner63
+    {
+        Marker = 63
+    };
+
+    Console.WriteLine(Read<int>(owner0));
+    Console.WriteLine(Read<int>(owner1));
+    Console.WriteLine(Read<int>(owner2));
+    Console.WriteLine(Read<int>(owner3));
+    Console.WriteLine(Read<int>(owner4));
+    Console.WriteLine(Read<int>(owner5));
+    Console.WriteLine(Read<int>(owner6));
+    Console.WriteLine(Read<int>(owner7));
+    Console.WriteLine(Read<int>(owner8));
+    Console.WriteLine(Read<int>(owner9));
+    Console.WriteLine(Read<int>(owner10));
+    Console.WriteLine(Read<int>(owner11));
+    Console.WriteLine(Read<int>(owner12));
+    Console.WriteLine(Read<int>(owner13));
+    Console.WriteLine(Read<int>(owner14));
+    Console.WriteLine(Read<int>(owner15));
+    Console.WriteLine(Read<int>(owner16));
+    Console.WriteLine(Read<int>(owner17));
+    Console.WriteLine(Read<int>(owner18));
+    Console.WriteLine(Read<int>(owner19));
+    Console.WriteLine(Read<int>(owner20));
+    Console.WriteLine(Read<int>(owner21));
+    Console.WriteLine(Read<int>(owner22));
+    Console.WriteLine(Read<int>(owner23));
+    Console.WriteLine(Read<int>(owner24));
+    Console.WriteLine(Read<int>(owner25));
+    Console.WriteLine(Read<int>(owner26));
+    Console.WriteLine(Read<int>(owner27));
+    Console.WriteLine(Read<int>(owner28));
+    Console.WriteLine(Read<int>(owner29));
+    Console.WriteLine(Read<int>(owner30));
+    Console.WriteLine(Read<int>(owner31));
+    Console.WriteLine(Read<int>(owner32));
+    Console.WriteLine(Read<int>(owner33));
+    Console.WriteLine(Read<int>(owner34));
+    Console.WriteLine(Read<int>(owner35));
+    Console.WriteLine(Read<int>(owner36));
+    Console.WriteLine(Read<int>(owner37));
+    Console.WriteLine(Read<int>(owner38));
+    Console.WriteLine(Read<int>(owner39));
+    Console.WriteLine(Read<int>(owner40));
+    Console.WriteLine(Read<int>(owner41));
+    Console.WriteLine(Read<int>(owner42));
+    Console.WriteLine(Read<int>(owner43));
+    Console.WriteLine(Read<int>(owner44));
+    Console.WriteLine(Read<int>(owner45));
+    Console.WriteLine(Read<int>(owner46));
+    Console.WriteLine(Read<int>(owner47));
+    Console.WriteLine(Read<int>(owner48));
+    Console.WriteLine(Read<int>(owner49));
+    Console.WriteLine(Read<int>(owner50));
+    Console.WriteLine(Read<int>(owner51));
+    Console.WriteLine(Read<int>(owner52));
+    Console.WriteLine(Read<int>(owner53));
+    Console.WriteLine(Read<int>(owner54));
+    Console.WriteLine(Read<int>(owner55));
+    Console.WriteLine(Read<int>(owner56));
+    Console.WriteLine(Read<int>(owner57));
+    Console.WriteLine(Read<int>(owner58));
+    Console.WriteLine(Read<int>(owner59));
+    Console.WriteLine(Read<int>(owner60));
+    Console.WriteLine(Read<int>(owner61));
+    Console.WriteLine(Read<int>(owner62));
+    Console.WriteLine(Read<int>(owner63));
+    Console.WriteLine(Read<int>(owner0));
+    return 0;
+}
