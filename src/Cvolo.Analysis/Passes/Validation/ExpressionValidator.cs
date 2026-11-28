@@ -1194,9 +1194,22 @@ internal sealed class ExpressionValidator(
 		if (receiverSymbol is null)
 			return false;
 
-		var receiverType = receiverSymbol.Type is PointerTypeSymbol pointer
-			? pointer.ReferencedType
-			: receiverSymbol.Type;
+		// Runtime element flags exist only for directly owned local fixed arrays. Globals,
+		// reference aliases, and pointer receivers have no frame-local flag storage and must
+		// fail closed instead of producing an unbacked proof.
+		if (receiverSymbol.IsGlobal
+			|| receiverSymbol.Type is PointerTypeSymbol
+			|| !receiverSymbol.IsMutable
+			|| receiverSymbol.IsMoved
+			|| receiverSymbol.Origin != OriginKind.Local)
+		{
+			context.Diagnostics.Report(context.FileContexts[context.CurrentUnit!], call.ArgumentListSpan,
+				$"IsLive requires a directly owned local fixed array receiver, but '{receiverName}' is not one.",
+				DiagnosticIds.InvalidIsLiveQuery);
+			return true;
+		}
+
+		var receiverType = receiverSymbol.Type;
 		if (receiverType is not ArrayTypeSymbol)
 			return false;
 
@@ -1204,6 +1217,17 @@ internal sealed class ExpressionValidator(
 		{
 			context.Diagnostics.Report(context.FileContexts[context.CurrentUnit!], call.ArgumentListSpan,
 				$"IsLive expects exactly one integer index for array '{receiverName}'.", DiagnosticIds.InvalidIsLiveQuery);
+			return true;
+		}
+
+		// A proof is only meaningful for an index whose canonical identity is stable. Calls,
+		// increments, and other effectful expressions can differ between query and use.
+		if (MovePathBuilder.TryBuild(call.Arguments[0]) is null
+			&& !MovePathBuilder.TryGetConstantIndex(call.Arguments[0], out _))
+		{
+			context.Diagnostics.Report(context.FileContexts[context.CurrentUnit!], call.ArgumentListSpan,
+				$"IsLive index for array '{receiverName}' must be a stable local, field, or literal index.",
+				DiagnosticIds.InvalidIsLiveQuery);
 			return true;
 		}
 

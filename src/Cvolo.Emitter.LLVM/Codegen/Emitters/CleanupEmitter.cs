@@ -52,7 +52,7 @@ internal sealed class CleanupEmitter(CodegenContext codegen, MemoryEmitter memor
 		// Flags must be allocated in the function entry block: first use may occur inside a
 		// conditional or loop body, where a local alloca would be re-executed and reset ownership.
 		var flag = memory.BuildEntryAlloca(LLVMTypeRef.Int1, $"live_{SanitizeFlagName(path)}");
-		Builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int1, 0), flag);
+		memory.BuildEntryStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int1, 0), flag);
 		function.LiveFlags[path] = flag;
 		return flag;
 	}
@@ -101,16 +101,9 @@ internal sealed class CleanupEmitter(CodegenContext codegen, MemoryEmitter memor
 
 		var flagsType = LLVMTypeRef.CreateArray(LLVMTypeRef.Int1, (uint)size);
 		var flags = memory.BuildEntryAlloca(flagsType, $"live_{SanitizeFlagName(root)}_elems");
-		for (var i = 0; i < size; i++)
-		{
-			var slot = Builder.BuildGEP2(flagsType, flags, new LLVMValueRef[]
-			{
-				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
-				LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (ulong)i)
-			}, $"live_elem_init_{i}");
-			Builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int1, 0), slot);
-		}
-
+		// Zero the whole array in the entry block. Element GEPs built at the lazy use site would
+		// not dominate an entry store, and per-iteration stores would erase accumulated flags.
+		memory.BuildEntryStore(LLVMValueRef.CreateConstNull(flagsType), flags);
 		function.ElementLiveFlagArrays[root] = flags;
 		return flags;
 	}
@@ -135,7 +128,7 @@ internal sealed class CleanupEmitter(CodegenContext codegen, MemoryEmitter memor
 		return Builder.BuildGEP2(LLVMTypeRef.CreateArray(LLVMTypeRef.Int1, (uint)size), flags, new LLVMValueRef[]
 		{
 			LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
-			index
+			IndexNormalizer.ToI32AfterBoundsCheck(Builder, index)
 		}, name);
 	}
 
@@ -212,71 +205,71 @@ internal sealed class CleanupEmitter(CodegenContext codegen, MemoryEmitter memor
 
 	private void EmitScopeDestruction(FunctionCodegenContext function, string name, LLVMValueRef ptrAlloc, TypeSymbol type, bool isHeap, bool skipHeapFree)
 	{
-			// Call the type's destructor only for owned structs. A struct without its own
-			// destructor still drops resource-owning fields transitively.
-			if (type is StructTypeSymbol structType)
+		// Call the type's destructor only for owned structs. A struct without its own
+		// destructor still drops resource-owning fields transitively.
+		if (type is StructTypeSymbol structType)
+		{
+			var disposeBaseName = $"{structType.Name}.~{structType.Name}";
+
+			LLVMValueRef thisPtr;
+			if (function.HeapAllocatedVars.Contains(name))
 			{
-				var disposeBaseName = $"{structType.Name}.~{structType.Name}";
-
-				LLVMValueRef thisPtr;
-				if (function.HeapAllocatedVars.Contains(name))
-				{
-					thisPtr = Builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), ptrAlloc, "this_ptr");
-				}
-				else
-				{
-					thisPtr = ptrAlloc;
-				}
-
-				if (BindingContext.OverloadedFunctions.TryGetValue(disposeBaseName, out var candidates) && candidates.Count > 0)
-				{
-					var disposeSymbol = candidates[0];
-					var callee = codegen.Globals[disposeSymbol.Name];
-					var funcType = codegen.FunctionTypes[disposeSymbol.Name];
-
-					Builder.BuildCall2(funcType, callee, new LLVMValueRef[] { thisPtr }, "");
-				}
-				else
-				{
-					EmitNestedFieldDestruction(thisPtr, structType, name, name, function);
-				}
+				thisPtr = Builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), ptrAlloc, "this_ptr");
+			}
+			else
+			{
+				thisPtr = ptrAlloc;
 			}
 
-			// Resource-owning unions require tag-checked destruction of the active payload.
-			if (type is UnionTypeSymbol unionType)
+			if (BindingContext.OverloadedFunctions.TryGetValue(disposeBaseName, out var candidates) && candidates.Count > 0)
 			{
-				EmitUnionTagCheckedCleanup(name, ptrAlloc, unionType);
-			}
+				var disposeSymbol = candidates[0];
+				var callee = codegen.Globals[disposeSymbol.Name];
+				var funcType = codegen.FunctionTypes[disposeSymbol.Name];
 
-			// Static arrays destroy resource-owning elements in reverse index order.
-			if (type is ArrayTypeSymbol arrayType)
-			{
-				EmitArrayDestructorLoop(ptrAlloc, arrayType, name, function);
+				Builder.BuildCall2(funcType, callee, new LLVMValueRef[] { thisPtr }, "");
 			}
-
-			// Heap storage is released after value destruction unless the caller requested the
-			// existing ownership-transfer cleanup behavior.
-			if (function.HeapAllocatedVars.Contains(name) && !skipHeapFree)
+			else
 			{
-				LLVMValueRef actualHeapPtr;
-				if (type is SliceTypeSymbol sliceType)
-				{
-					var sliceLayout = codegen.Types.Lower(sliceType);
-					var ptrField = Builder.BuildGEP2(sliceLayout, ptrAlloc, new LLVMValueRef[] {
+				EmitNestedFieldDestruction(thisPtr, structType, name, name, function);
+			}
+		}
+
+		// Resource-owning unions require tag-checked destruction of the active payload.
+		if (type is UnionTypeSymbol unionType)
+		{
+			EmitUnionTagCheckedCleanup(name, ptrAlloc, unionType);
+		}
+
+		// Static arrays destroy resource-owning elements in reverse index order.
+		if (type is ArrayTypeSymbol arrayType)
+		{
+			EmitArrayDestructorLoop(ptrAlloc, arrayType, name, function);
+		}
+
+		// Heap storage is released after value destruction unless the caller requested the
+		// existing ownership-transfer cleanup behavior.
+		if (function.HeapAllocatedVars.Contains(name) && !skipHeapFree)
+		{
+			LLVMValueRef actualHeapPtr;
+			if (type is SliceTypeSymbol sliceType)
+			{
+				var sliceLayout = codegen.Types.Lower(sliceType);
+				var ptrField = Builder.BuildGEP2(sliceLayout, ptrAlloc, new LLVMValueRef[] {
 						LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
 						LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0)
 					}, "slice_ptr_field");
-					actualHeapPtr = Builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), ptrField, "heap_ptr");
-				}
-				else
-				{
-					actualHeapPtr = Builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), ptrAlloc, "heap_ptr");
-				}
-
-				var freeFunc = codegen.Globals["free"];
-				var freeType = codegen.FunctionTypes["free"];
-				Builder.BuildCall2(freeType, freeFunc, new LLVMValueRef[] { actualHeapPtr }, "");
+				actualHeapPtr = Builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), ptrField, "heap_ptr");
 			}
+			else
+			{
+				actualHeapPtr = Builder.BuildLoad2(LLVMTypeRef.CreatePointer(LLVMTypeRef.Int8, 0), ptrAlloc, "heap_ptr");
+			}
+
+			var freeFunc = codegen.Globals["free"];
+			var freeType = codegen.FunctionTypes["free"];
+			Builder.BuildCall2(freeType, freeFunc, new LLVMValueRef[] { actualHeapPtr }, "");
+		}
 	}
 
 	/// <summary>

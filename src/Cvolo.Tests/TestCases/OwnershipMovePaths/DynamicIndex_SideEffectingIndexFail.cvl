@@ -1,0 +1,29 @@
+using System;
+
+struct Resource { int Id; }
+
+extension Resource
+{
+    ~Resource()
+    {
+        Console.WriteLine($"drop={Id}");
+    }
+}
+
+void Consume(Resource r)
+{
+    Console.WriteLine($"consume={r.Id}");
+}
+
+int main()
+{
+    var Resource[2] values;
+    int i = 0;
+    values[i] = Resource { Id: 7 };
+    if (values.IsLive(i))
+    {
+        i++;
+        Consume(values[i]);
+    }
+    return 0;
+}

@@ -1,0 +1,23 @@
+using System;
+
+struct Resource { int Id; }
+
+extension Resource
+{
+    ~Resource()
+    {
+        Console.WriteLine($"drop={Id}");
+    }
+}
+
+int main()
+{
+    var Resource[4] values;
+    val byte b = 1;
+    val short s = 1;
+    val uint u = 1;
+    val long l = 1;
+    values[b] = Resource { Id: 7 };
+    Console.WriteLine($"b={values.IsLive(b)} s={values.IsLive(s)} u={values.IsLive(u)} l={values.IsLive(l)}");
+    return 0;
+}

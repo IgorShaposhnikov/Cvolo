@@ -83,8 +83,11 @@ internal sealed class CallEmitter(
 		var flags = cleanup.GetOrCreateElementFlags(Function, query.ArrayName, arrayType.Size);
 		var flagsType = LLVMTypeRef.CreateArray(LLVMTypeRef.Int1, (uint)arrayType.Size);
 		var index = emitExpression(query.Index);
-		var size = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (ulong)arrayType.Size);
+		// Compare in the index's own LLVM width. A narrow comparison against i32 is invalid IR,
+		// and widening before the comparison would let oversized values alias small slots.
+		var size = LLVMValueRef.CreateConstInt(index.TypeOf, (ulong)arrayType.Size);
 		var inBounds = Builder.BuildICmp(LLVMIntPredicate.LLVMIntULT, index, size, "islive_in_bounds");
+		var normalizedIndex = IndexNormalizer.ToI32AfterBoundsCheck(Builder, index);
 
 		var result = memory.BuildEntryAlloca(LLVMTypeRef.Int1, "islive_result");
 		Builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int1, 0UL), result);
@@ -98,7 +101,7 @@ internal sealed class CallEmitter(
 		var slot = Builder.BuildGEP2(flagsType, flags, new[]
 		{
 			LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0UL),
-			index
+			normalizedIndex
 		}, "islive_slot");
 		var flag = Builder.BuildLoad2(LLVMTypeRef.Int1, slot, "islive_flag");
 		Builder.BuildStore(flag, result);
@@ -334,30 +337,9 @@ internal sealed class CallEmitter(
 				val = emitExpression(argExpr);
 			}
 
-			// Contextual null for a native delegate is the zero function-pointer value, not
-			// a generic data-pointer null. Materialize it directly in the expected LLVM type.
-			if (argExpr is NullLiteralExpressionSyntax && paramTy is DelegateTypeSymbol { IsNative: true })
-			{
-				val = LLVMValueRef.CreateConstPointerNull(codegen.Types.Lower(paramTy));
-				valTy = paramTy;
-			}
-
-			var semanticParamIndex = i + actualParamOffset;
-			var nativeValuePlan = nativePlan is not null && semanticParamIndex < nativePlan.Parameters.Count
-				? nativePlan.Parameters[semanticParamIndex]
-				: null;
-			if (nativeValuePlan is { Kind: NativeAbiValuePassKind.DirectIntegerAggregate })
-			{
-				args.Add(_nativeAggregates.PackDirectAggregate(Builder, nativeValuePlan, val, "native_arg" + semanticParamIndex));
-				continue;
-			}
-
-			if (nativeValuePlan is { Kind: NativeAbiValuePassKind.IndirectAggregate })
-			{
-				args.Add(_nativeAggregates.PrepareIndirectArgument(Builder, nativeValuePlan, val, "native_arg" + semanticParamIndex));
-				continue;
-			}
-
+			// Ownership transfers are recorded immediately after the payload is loaded and before
+			// native ABI packing. Native aggregate packing paths `continue` below; clearing the flag
+			// after that point would leave the moved-from slot live and destroy it twice.
 			if (paramTy is not null
 				&& valTy is PointerTypeSymbol ptrTy
 				&& val.TypeOf.Kind == LLVMTypeKind.LLVMPointerTypeKind
@@ -381,9 +363,6 @@ internal sealed class CallEmitter(
 				cleanup.SetLiveFlag(Function, moveArg.Name, false);
 			}
 
-			// A resource-owning value passed by value out of a struct projection moves only that
-			// projection. Record the dotted path so projection-aware cleanup skips it and the moved
-			// resource is not destroyed a second time at scope exit.
 			if (paramTy is not null
 				&& paramTy is not PointerTypeSymbol
 				&& argExpr is MemberAccessExpressionSyntax
@@ -395,21 +374,21 @@ internal sealed class CallEmitter(
 			}
 
 			if (paramTy is not null
-			&& paramTy is not PointerTypeSymbol
-			&& argExpr is IndexExpressionSyntax elemArg
-			&& elemArg.Left is IdentifierExpressionSyntax elemArrId
-			&& expressionTypes.Resolve(elemArrId) is ArrayTypeSymbol elemArrTy
-			&& Cvolo.Analysis.Ownership.MovePathBuilder.TryGetConstantIndex(elemArg.Index, out var elemMoveIndex))
-		{
-			cleanup.SetElementFlag(Function, elemArrId.Name, elemArrTy.Size, elemMoveIndex, false);
-		}
+				&& paramTy is not PointerTypeSymbol
+				&& argExpr is IndexExpressionSyntax elemArg
+				&& elemArg.Left is IdentifierExpressionSyntax elemArrId
+				&& expressionTypes.Resolve(elemArrId) is ArrayTypeSymbol elemArrTy
+				&& MovePathBuilder.TryGetConstantIndex(elemArg.Index, out var elemMoveIndex))
+			{
+				cleanup.SetElementFlag(Function, elemArrId.Name, elemArrTy.Size, elemMoveIndex, false);
+			}
 
-		if (dynamicMoveIndex is not null && dynamicMoveArrayName is not null && dynamicMoveArrayType is not null)
-		{
-			cleanup.SetElementFlagByValue(Function, dynamicMoveArrayName, dynamicMoveArrayType.Size, dynamicMoveIndex.Value, false);
-		}
+			if (dynamicMoveIndex is not null && dynamicMoveArrayName is not null && dynamicMoveArrayType is not null)
+			{
+				cleanup.SetElementFlagByValue(
+					Function, dynamicMoveArrayName, dynamicMoveArrayType.Size, dynamicMoveIndex.Value, false);
+			}
 
-		// A whole resource-owning local passed by value transfers ownership out of this frame.
 			if (paramTy is not null
 				&& paramTy is not PointerTypeSymbol
 				&& argExpr is IdentifierExpressionSyntax wholeMoveArg
@@ -417,6 +396,30 @@ internal sealed class CallEmitter(
 				&& cleanup.TypeRequiresDestruction(wholeMoveTy))
 			{
 				cleanup.SetLiveFlag(Function, wholeMoveArg.Name, false);
+			}
+
+			// Contextual null for a native delegate is the zero function-pointer value, not
+			// a generic data-pointer null. Materialize it directly in the expected LLVM type.
+			if (argExpr is NullLiteralExpressionSyntax && paramTy is DelegateTypeSymbol { IsNative: true })
+			{
+				val = LLVMValueRef.CreateConstPointerNull(codegen.Types.Lower(paramTy));
+				valTy = paramTy;
+			}
+
+			var semanticParamIndex = i + actualParamOffset;
+			var nativeValuePlan = nativePlan is not null && semanticParamIndex < nativePlan.Parameters.Count
+				? nativePlan.Parameters[semanticParamIndex]
+				: null;
+			if (nativeValuePlan is { Kind: NativeAbiValuePassKind.DirectIntegerAggregate })
+			{
+				args.Add(_nativeAggregates.PackDirectAggregate(Builder, nativeValuePlan, val, "native_arg" + semanticParamIndex));
+				continue;
+			}
+
+			if (nativeValuePlan is { Kind: NativeAbiValuePassKind.IndirectAggregate })
+			{
+				args.Add(_nativeAggregates.PrepareIndirectArgument(Builder, nativeValuePlan, val, "native_arg" + semanticParamIndex));
+				continue;
 			}
 
 			var isVariadic = (astExterns.TryGetValue(emitName, out var ext) && ext.IsVariadic)

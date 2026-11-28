@@ -82,6 +82,27 @@ internal sealed class MemoryEmitter(CodegenContext codegen)
 	}
 
 	/// <summary>
+	/// Emits a store in the function entry block and restores the builder's original insertion
+	/// point. Used for lazy ownership-flag initialization so the zero stores dominate every use
+	/// and are not re-executed on loop backedges.
+	/// </summary>
+	public void BuildEntryStore(LLVMValueRef value, LLVMValueRef pointer)
+	{
+		var currentBlock = Builder.InsertBlock;
+		var entryBlock = currentBlock.Parent.EntryBasicBlock;
+		var restoreInsertionPoint = currentBlock.Handle != entryBlock.Handle;
+		var terminator = entryBlock.Terminator;
+		if (terminator.Handle != IntPtr.Zero)
+			Builder.PositionBefore(terminator);
+		else
+			Builder.PositionAtEnd(entryBlock);
+
+		Builder.BuildStore(value, pointer);
+		if (restoreInsertionPoint)
+			Builder.PositionAtEnd(currentBlock);
+	}
+
+	/// <summary>
 	/// Clears a contiguous storage region through the module's existing runtime <c>memset</c>
 	/// declaration.
 	/// </summary>

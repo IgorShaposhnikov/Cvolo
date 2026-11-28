@@ -431,58 +431,58 @@ internal sealed class AggregateEmitter(
 		switch (type)
 		{
 			case ArrayTypeSymbol arrayType:
-			{
-				var arrayLayout = codegen.Types.Lower(arrayType);
-				for (var i = 0; i < arrayType.Size; i++)
 				{
-					var elementPtr = Builder.BuildGEP2(arrayLayout, destPtr, new LLVMValueRef[]
+					var arrayLayout = codegen.Types.Lower(arrayType);
+					for (var i = 0; i < arrayType.Size; i++)
 					{
+						var elementPtr = Builder.BuildGEP2(arrayLayout, destPtr, new LLVMValueRef[]
+						{
 						LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
 						LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)i)
-					}, "zero_el");
-					EmitDefaultAggregate(elementPtr, arrayType.ElementType);
-				}
+						}, "zero_el");
+						EmitDefaultAggregate(elementPtr, arrayType.ElementType);
+					}
 
-				return;
-			}
-			case StructTypeSymbol structType:
-			{
-				var structLayout = codegen.Types.Lower(structType);
-				for (var i = 0; i < structType.Fields.Count; i++)
-				{
-					var fieldPtr = Builder.BuildGEP2(structLayout, destPtr, new LLVMValueRef[]
-					{
-						LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
-						LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)i)
-					}, "zero_field");
-					EmitDefaultAggregate(fieldPtr, structType.Fields[i].Type);
-				}
-
-				return;
-			}
-			case UnionTypeSymbol unionEl:
-			{
-				var unionLayout = codegen.Types.Lower(unionEl);
-				if (unionEl.IsUnsafe)
-				{
-					Builder.BuildStore(LLVMValueRef.CreateConstNull(unionLayout), destPtr);
 					return;
 				}
-
-				// Tagged Option-like union: seed the active None tag. Clear the inactive payload bytes
-				// so no stale storage is observed across a later None -> Some transition.
-				memory.ZeroMemory(destPtr, memory.GetStoreSize(unionLayout));
-				var tagPtr = Builder.BuildGEP2(unionLayout, destPtr, new LLVMValueRef[]
+			case StructTypeSymbol structType:
 				{
+					var structLayout = codegen.Types.Lower(structType);
+					for (var i = 0; i < structType.Fields.Count; i++)
+					{
+						var fieldPtr = Builder.BuildGEP2(structLayout, destPtr, new LLVMValueRef[]
+						{
+						LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
+						LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (uint)i)
+						}, "zero_field");
+						EmitDefaultAggregate(fieldPtr, structType.Fields[i].Type);
+					}
+
+					return;
+				}
+			case UnionTypeSymbol unionEl:
+				{
+					var unionLayout = codegen.Types.Lower(unionEl);
+					if (unionEl.IsUnsafe)
+					{
+						Builder.BuildStore(LLVMValueRef.CreateConstNull(unionLayout), destPtr);
+						return;
+					}
+
+					// Tagged Option-like union: seed the active None tag. Clear the inactive payload bytes
+					// so no stale storage is observed across a later None -> Some transition.
+					memory.ZeroMemory(destPtr, memory.GetStoreSize(unionLayout));
+					var tagPtr = Builder.BuildGEP2(unionLayout, destPtr, new LLVMValueRef[]
+					{
 					LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
 					LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0)
-				}, "zero_tag");
-				var noneTag = LLVMValueRef.CreateConstInt(
-					LLVMTypeRef.Int8,
-					(ulong)codegen.AggregateLayout.GetFieldIndex(unionEl, unionEl.NoneVariant.Name));
-				Builder.BuildStore(noneTag, tagPtr);
-				return;
-			}
+					}, "zero_tag");
+					var noneTag = LLVMValueRef.CreateConstInt(
+						LLVMTypeRef.Int8,
+						(ulong)codegen.AggregateLayout.GetFieldIndex(unionEl, unionEl.NoneVariant.Name));
+					Builder.BuildStore(noneTag, tagPtr);
+					return;
+				}
 			default:
 				memory.ZeroMemory(destPtr, memory.GetStoreSize(codegen.Types.Lower(type)));
 				return;
@@ -746,7 +746,7 @@ internal sealed class AggregateEmitter(
 			if (expressionTypes.Resolve(indexExpression.Left) is RawPointerTypeSymbol rawPointer)
 			{
 				var basePointerValue = emitExpression(indexExpression.Left);
-				var rawIndexVal = emitExpression(indexExpression.Index);
+				var rawIndexVal = precomputedIndex ?? emitExpression(indexExpression.Index);
 				var rawElementType = rawPointer.ElementType;
 				// Mirrors canonical raw-pointer stepping exactly: the accepted integer index is
 				// handed to GEP unchanged, with no separate index-conversion table.
@@ -776,8 +776,9 @@ internal sealed class AggregateEmitter(
 				}, "len_field");
 				var lengthReg = Builder.BuildLoad2(LLVMTypeRef.Int32, lenPtrField, "len_val");
 				InjectBoundsCheck(indexExpression, indexVal, lengthReg);
+				var checkedIndex = IndexNormalizer.ToI32AfterBoundsCheck(Builder, indexVal);
 				var elementLlvmTy = codegen.Types.Lower(sliceType.ElementType);
-				var elementPtr = Builder.BuildGEP2(elementLlvmTy, arrayPtr, new LLVMValueRef[] { indexVal }, "element_ptr");
+				var elementPtr = Builder.BuildGEP2(elementLlvmTy, arrayPtr, new LLVMValueRef[] { checkedIndex }, "element_ptr");
 				return (elementPtr, sliceType.ElementType, false, null);
 			}
 
@@ -786,9 +787,10 @@ internal sealed class AggregateEmitter(
 				var arrayLayout = codegen.Types.Lower(arrayType);
 				var limit = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (ulong)arrayType.Size);
 				InjectBoundsCheck(indexExpression, indexVal, limit);
+				var checkedIndex = IndexNormalizer.ToI32AfterBoundsCheck(Builder, indexVal);
 				var elementPtr = Builder.BuildGEP2(arrayLayout, parentPtr, new LLVMValueRef[]
 				{
-					LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0), indexVal
+					LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0), checkedIndex
 				}, "element_ptr");
 				return (elementPtr, arrayType.ElementType, false, null);
 			}
@@ -1021,7 +1023,16 @@ internal sealed class AggregateEmitter(
 		var currentFunc = Builder.InsertBlock.Parent;
 		var safeBlock = currentFunc.AppendBasicBlock("bounds_safe");
 		var panicBlock = currentFunc.AppendBasicBlock("bounds_panic");
-		var comparison = Builder.BuildICmp(LLVMIntPredicate.LLVMIntULT, indexValue, limitValue, "is_in_bounds");
+		// Widen both operands to i64 before comparing. The AST accepts every integer index width,
+		// while array/slice limits are i32 constants or values; a direct mixed-width icmp is
+		// invalid IR. Zero-extension keeps signed negative values out of range.
+		var index64 = indexValue.TypeOf.IntWidth == 64
+			? indexValue
+			: Builder.BuildZExt(indexValue, LLVMTypeRef.Int64, "index_i64");
+		var limit64 = limitValue.TypeOf.IntWidth == 64
+			? limitValue
+			: Builder.BuildZExt(limitValue, LLVMTypeRef.Int64, "limit_i64");
+		var comparison = Builder.BuildICmp(LLVMIntPredicate.LLVMIntULT, index64, limit64, "is_in_bounds");
 		Builder.BuildCondBr(comparison, safeBlock, panicBlock);
 		Builder.PositionAtEnd(panicBlock);
 		EmitPanicRoutine(indexExpression);

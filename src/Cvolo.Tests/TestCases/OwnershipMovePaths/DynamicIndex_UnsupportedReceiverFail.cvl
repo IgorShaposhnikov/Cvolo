@@ -1,0 +1,12 @@
+using System;
+
+struct Resource { int Id; }
+
+global Resource[2] values;
+
+int main()
+{
+    int i = 0;
+    Console.WriteLine($"{values.IsLive(i)}");
+    return 0;
+}

@@ -34,7 +34,14 @@ internal sealed class OwnershipAnalyzer(BindingContext context)
 	// can mutate the array through an alias, removes the affected proofs conservatively.
 	private readonly Dictionary<CallExpressionSyntax, IsLiveProof> _liveProofs = new();
 
-	private sealed record IsLiveProof(string ArrayName, string IndexKey, string IndexRoot);
+	// Dynamic-indexed elements have no statically stable MovePath. This is the analysis-side
+	// counterpart of the runtime element flag, keyed by the same canonical place/index used by
+	// an IsLive proof, so a successful move can invalidate later proofs for that exact slot.
+	private readonly Dictionary<string, OwnershipState> _dynamicSlotStates = new();
+
+	private sealed record IsLiveProof(CallExpressionSyntax Call, string ArrayName, string IndexKey, string IndexRoot);
+
+	private static string DynamicSlotKey(string arrayName, string indexKey) => $"{arrayName}|{indexKey}";
 
 	public void Analyze(FunctionDeclarationSyntax func)
 	{
@@ -44,6 +51,7 @@ internal sealed class OwnershipAnalyzer(BindingContext context)
 		_state.Clear();
 		_referenceProvenance.Clear();
 		_parameterReferenceNames.Clear();
+		_dynamicSlotStates.Clear();
 		var scope = new SymbolTable(context.Globals);
 
 		foreach (var param in func.Parameters)
@@ -79,39 +87,39 @@ internal sealed class OwnershipAnalyzer(BindingContext context)
 				break;
 
 			case IfStatementSyntax i:
-			{
-				AnalyzeExpression(i.Condition, scope);
-				var proof = AddTrueEdgeProof(i.Condition);
-				// Preserve the existing MVP sequential branch model. The true-edge proof is
-				// scoped to the then-branch only; a branch join has no proof.
-				AnalyzeStatement(i.ThenStatement, scope);
-				RemoveProof(proof);
-				if (i.ElseClause is not null)
-					AnalyzeStatement(i.ElseClause.Body, scope);
-				break;
-			}
+				{
+					AnalyzeExpression(i.Condition, scope);
+					var proof = AddTrueEdgeProof(i.Condition);
+					// Preserve the existing MVP sequential branch model. The true-edge proof is
+					// scoped to the then-branch only; a branch join has no proof.
+					AnalyzeStatement(i.ThenStatement, scope);
+					RemoveProof(proof);
+					if (i.ElseClause is not null)
+						AnalyzeStatement(i.ElseClause.Body, scope);
+					break;
+				}
 
 			case WhileStatementSyntax w:
-			{
-				InvalidateAllProofs();
-				AnalyzeExpression(w.Condition, scope);
-				var proof = AddTrueEdgeProof(w.Condition);
-				AnalyzeStatement(w.Body, scope);
-				RemoveProof(proof);
-				break;
-			}
+				{
+					InvalidateAllProofs();
+					AnalyzeExpression(w.Condition, scope);
+					var proof = AddTrueEdgeProof(w.Condition);
+					AnalyzeStatement(w.Body, scope);
+					RemoveProof(proof);
+					break;
+				}
 
 			case ForStatementSyntax f:
-			{
-				InvalidateAllProofs();
-				AnalyzeDeclaration(f.Initializer, scope);
-				AnalyzeExpression(f.Condition, scope);
-				var proof = AddTrueEdgeProof(f.Condition);
-				AnalyzeStatement(f.Body, scope);
-				AnalyzeExpression(f.Increment, scope);
-				RemoveProof(proof);
-				break;
-			}
+				{
+					InvalidateAllProofs();
+					AnalyzeDeclaration(f.Initializer, scope);
+					AnalyzeExpression(f.Condition, scope);
+					var proof = AddTrueEdgeProof(f.Condition);
+					AnalyzeStatement(f.Body, scope);
+					AnalyzeExpression(f.Increment, scope);
+					RemoveProof(proof);
+					break;
+				}
 
 			case ForEachStatementSyntax fe:
 				InvalidateAllProofs();
@@ -125,7 +133,13 @@ internal sealed class OwnershipAnalyzer(BindingContext context)
 
 			case ReturnStatementSyntax r:
 				if (r.Expression is not null)
+				{
 					AnalyzeExpression(r.Expression, scope);
+					if (r.Expression is IndexExpressionSyntax returnedIndex
+						&& ResolveType(returnedIndex, scope) is { } returnedType
+						&& OwnershipTypeFacts.NeedsDestruction(returnedType, context))
+						MarkDynamicSlotMoved(returnedIndex, scope);
+				}
 				break;
 
 			case BlockStatementSyntax b:
@@ -145,10 +159,13 @@ internal sealed class OwnershipAnalyzer(BindingContext context)
 			return null;
 
 		var indexPath = MovePathBuilder.TryBuild(query.Index);
-		var proof = new IsLiveProof(query.ArrayName,
-			indexPath?.ToString() ?? query.Index.ToString() ?? string.Empty,
-			indexPath?.Root ?? string.Empty);
+		var indexKey = indexPath?.ToString() ?? query.Index.ToString() ?? string.Empty;
+		var proof = new IsLiveProof(call, query.ArrayName, indexKey, indexPath?.Root ?? string.Empty);
 		_liveProofs[call] = proof;
+		// The true edge is positive evidence that the selected slot currently owns a value,
+		// even if a previous guarded transfer left it unavailable. A later reinitialization
+		// can therefore be observed by querying again.
+		_dynamicSlotStates[DynamicSlotKey(query.ArrayName, indexKey)] = OwnershipState.Live;
 		return proof;
 	}
 
@@ -157,23 +174,48 @@ internal sealed class OwnershipAnalyzer(BindingContext context)
 		if (proof is null)
 			return;
 
-		foreach (var pair in _liveProofs.Where(p => p.Value == proof).ToList())
-			_liveProofs.Remove(pair.Key);
+		// Remove only the proof introduced by this exact query node. Equal-looking nested
+		// queries must not silently cancel an outer proof.
+		_liveProofs.Remove(proof.Call);
 	}
 
 	private static string CanonicalIndex(ExpressionSyntax index)
 		=> MovePathBuilder.TryBuild(index)?.ToString() ?? index.ToString() ?? string.Empty;
 
 	private bool HasLiveProof(string arrayName, string indexKey)
-		=> _liveProofs.Values.Any(p => p.ArrayName == arrayName && p.IndexKey == indexKey);
-
-	private void InvalidateProofsFor(string name)
 	{
-		foreach (var pair in _liveProofs.Where(p => p.Value.ArrayName == name || p.Value.IndexRoot == name).ToList())
+		if (!_liveProofs.Values.Any(p => p.ArrayName == arrayName && p.IndexKey == indexKey))
+			return false;
+
+		return !_dynamicSlotStates.TryGetValue(DynamicSlotKey(arrayName, indexKey), out var state)
+			|| state != OwnershipState.Moved;
+	}
+
+	private void InvalidateProofsForSlot(string arrayName, string indexKey)
+	{
+		foreach (var pair in _liveProofs.Where(p => p.Value.ArrayName == arrayName && p.Value.IndexKey == indexKey).ToList())
 			_liveProofs.Remove(pair.Key);
 	}
 
-	private void InvalidateAllProofs() => _liveProofs.Clear();
+	private void InvalidateProofsFor(string name)
+	{
+		// A write through a reference alias invalidates the underlying place, not the alias
+		// spelling used by an earlier IsLive proof.
+		if (_referenceProvenance.TryGetValue(name, out var target))
+			name = target.Root;
+
+		foreach (var pair in _liveProofs.Where(p => p.Value.ArrayName == name || p.Value.IndexRoot == name).ToList())
+			_liveProofs.Remove(pair.Key);
+
+		foreach (var key in _dynamicSlotStates.Keys.Where(k => k == name || k.StartsWith($"{name}|", StringComparison.Ordinal)).ToList())
+			_dynamicSlotStates.Remove(key);
+	}
+
+	private void InvalidateAllProofs()
+	{
+		_liveProofs.Clear();
+		_dynamicSlotStates.Clear();
+	}
 
 	private bool TryGetDynamicIndexedElement(IndexExpressionSyntax idx, SymbolTable scope, out string arrayName, out string indexKey)
 	{
@@ -200,6 +242,48 @@ internal sealed class OwnershipAnalyzer(BindingContext context)
 
 		Report(idx, $"Cannot access element '{arrayName}[{indexKey}]': its liveness is not proven by an IsLive true branch.",
 			DiagnosticIds.InactiveArrayElementAccess);
+	}
+
+	/// <summary>
+	/// Records an ownership-consuming read of one runtime-selected element. The exact IsLive proof
+	/// is invalidated, so a second transfer from the same place/index requires fresh evidence, and
+	/// the emitter is told to clear that element's runtime live flag after loading the payload.
+	/// </summary>
+	private bool MarkDynamicSlotMoved(IndexExpressionSyntax idx, SymbolTable scope)
+	{
+		if (!TryGetDynamicIndexedElement(idx, scope, out var arrayName, out var indexKey)
+			|| ResolveType(idx.Left, scope) is not ArrayTypeSymbol array)
+			return false;
+
+		_dynamicSlotStates[DynamicSlotKey(arrayName, indexKey)] = OwnershipState.Moved;
+		InvalidateProofsForSlot(arrayName, indexKey);
+		context.ResolvedDynamicMoves[idx] = new DynamicOwnershipMove(arrayName, idx.Index, array.Size, idx.Span);
+		return true;
+	}
+
+	private static bool ContainsDynamicReadFromArray(ExpressionSyntax expression, string arrayRoot)
+	{
+		if (expression is IndexExpressionSyntax { Left: IdentifierExpressionSyntax sourceId }
+			&& sourceId.Name == arrayRoot)
+			return true;
+
+		foreach (var child in expression.GetChildren().OfType<ExpressionSyntax>())
+		{
+			if (ContainsDynamicReadFromArray(child, arrayRoot))
+				return true;
+		}
+
+		return false;
+	}
+
+	private void MarkDynamicSlotLive(IndexExpressionSyntax idx, SymbolTable scope)
+	{
+		if (!TryGetDynamicIndexedElement(idx, scope, out var arrayName, out var indexKey))
+			return;
+
+		_dynamicSlotStates[DynamicSlotKey(arrayName, indexKey)] = OwnershipState.Live;
+		InvalidateProofsForSlot(arrayName, indexKey);
+		context.ResolvedDynamicMoves.Remove(idx);
 	}
 
 	private void AnalyzeDeclaration(VariableDeclarationSyntax v, SymbolTable scope)
@@ -245,8 +329,29 @@ internal sealed class OwnershipAnalyzer(BindingContext context)
 			return;
 		}
 
-		// Initializing an owned local from an owned source path transfers ownership (a move).
+		// Element liveness metadata is frame-local and keyed by one root name. Copying a whole
+		// tracked array would alias storage without copying those flags, so fail closed rather
+		// than silently producing a second owner with stale metadata.
+		if (ResolveType(v.Initializer, scope) is ArrayTypeSymbol { } wholeArraySource
+			&& OwnershipTypeFacts.NeedsDestruction(wholeArraySource.ElementType, context))
+		{
+			Report(v.Initializer, "Whole-array ownership transfer of tracked elements is not supported.",
+				DiagnosticIds.DynamicIndexOwnershipUnsupported);
+			return;
+		}
+
+		// Initializing an owned local from a runtime-selected array element transfers ownership
+		// out of that element even though no static MovePath exists.
 		var sourcePath = ResolveMovePath(v.Initializer);
+		if (sourcePath is null
+			&& v.Initializer is IndexExpressionSyntax sourceIndex
+			&& ResolveType(sourceIndex, scope) is { } sourceElementType
+			&& OwnershipTypeFacts.NeedsDestruction(sourceElementType, context))
+		{
+			MarkDynamicSlotMoved(sourceIndex, scope);
+		}
+
+		// Initializing an owned local from an owned source path transfers ownership (a move).
 		if (sourcePath is not null && OwnsDestructibleValue(sourcePath, scope))
 		{
 			if (HasDestructorAncestor(v.Initializer, scope))
@@ -257,6 +362,7 @@ internal sealed class OwnershipAnalyzer(BindingContext context)
 			else
 			{
 				MarkMoved(sourcePath);
+				InvalidateProofsFor(sourcePath.Root);
 				if (sourcePath.Depth > 0)
 					context.ResolvedDeclarationMoves[v] = sourcePath;
 			}
@@ -295,10 +401,32 @@ internal sealed class OwnershipAnalyzer(BindingContext context)
 			case UnaryExpressionSyntax u:
 				if (u.Operand is not null)
 					AnalyzeExpression(u.Operand, scope);
+				if ((u.Operator.StartsWith("++", StringComparison.Ordinal)
+						|| u.Operator.StartsWith("--", StringComparison.Ordinal))
+					&& u.Operand is IdentifierExpressionSyntax incrementedId)
+					InvalidateProofsFor(incrementedId.Name);
 				break;
 
 			case BorrowExpressionSyntax b:
 				AnalyzeExpression(b.Expression, scope);
+				break;
+
+			default:
+				if (expr is BinaryExpressionSyntax compound
+					&& compound.Operator != "="
+					&& ResolveType(compound.Left, scope) is { } compoundTargetType
+					&& OwnershipTypeFacts.NeedsDestruction(compoundTargetType, context))
+				{
+					Report(compound.Left, "Compound assignment to an owned value is not supported.",
+						DiagnosticIds.DynamicIndexOwnershipUnsupported);
+					break;
+				}
+
+				// Ternaries, coalesce, aggregate initializers, array literals, interpolation, and
+				// patterns can all contain owned element reads. Walk their expression children so
+				// those reads cannot bypass IsLive proof validation.
+				foreach (var child in expr.GetChildren().OfType<ExpressionSyntax>())
+					AnalyzeExpression(child, scope);
 				break;
 		}
 	}
@@ -355,8 +483,20 @@ internal sealed class OwnershipAnalyzer(BindingContext context)
 			return;
 		}
 
+		if (ResolveType(bin.Right, scope) is ArrayTypeSymbol { } wholeArrayAssignSource
+			&& OwnershipTypeFacts.NeedsDestruction(wholeArrayAssignSource.ElementType, context))
+		{
+			Report(bin.Right, "Whole-array ownership transfer of tracked elements is not supported.",
+				DiagnosticIds.DynamicIndexOwnershipUnsupported);
+			return;
+		}
+
 		var sourcePath = ResolveMovePath(bin.Right);
 		var sourceIsMove = sourcePath is not null && OwnsDestructibleValue(sourcePath, scope);
+		var sourceDynamicIndex = sourcePath is null ? bin.Right as IndexExpressionSyntax : null;
+		var sourceDynamicMove = sourceDynamicIndex is not null
+			&& ResolveType(sourceDynamicIndex, scope) is { } sourceElementType
+			&& OwnershipTypeFacts.NeedsDestruction(sourceElementType, context);
 
 		// Dynamic-index destination: a non-constant index into a local fixed array of owned
 		// elements relies on the runtime per-element live flag. Any element is either Live or
@@ -389,6 +529,14 @@ internal sealed class OwnershipAnalyzer(BindingContext context)
 			}
 
 			destinationRegion = new DynamicDestinationRegion(arrayPath, dynamicIndex.Index, dynamicArray.Size);
+			if (ContainsDynamicReadFromArray(bin.Right, arrayPath.Root))
+			{
+				Report(bin, "A dynamic element write cannot overlap an owned element read from the same array.",
+					DiagnosticIds.DynamicIndexOwnershipUnsupported);
+				return;
+			}
+
+			MarkDynamicSlotLive(dynamicIndex, scope);
 		}
 
 		var destState = destinationRegion is not null
@@ -431,28 +579,43 @@ internal sealed class OwnershipAnalyzer(BindingContext context)
 		// permit reads of slots that were never initialized.
 
 		if (sourceIsMove && sourcePath is not null)
+		{
 			MarkMoved(sourcePath);
+			InvalidateProofsFor(sourcePath.Root);
+		}
+		else if (sourceDynamicMove && sourceDynamicIndex is not null)
+			MarkDynamicSlotMoved(sourceDynamicIndex, scope);
 	}
 
 	private void AnalyzeCall(CallExpressionSyntax call, SymbolTable scope)
 	{
 		context.ResolvedCalls.TryGetValue(call, out var func);
 
-		// A call that mentions a tracked array or index path may mutate it through an alias.
-		// The query itself is pure; every other call invalidates the affected proofs.
-		if (!context.ResolvedIsLiveQueries.ContainsKey(call))
-		{
-			foreach (var argument in call.Arguments)
-			{
-				var root = MovePathBuilder.TryBuild(argument)?.Root;
-				if (root is not null)
-					InvalidateProofsFor(root);
-			}
-		}
-
+		// Call arguments are checked while the caller's proof is still active. After the call,
+		// any non-query call may have mutated tracked state through aliases, so all proofs are
+		// conservatively dropped at the call edge.
 		for (var i = 0; i < call.Arguments.Count; i++)
 		{
 			var argument = call.Arguments[i];
+
+			// Delegate parameter by-ref information is not exposed through the direct-call binding.
+			// A resource-owning dynamic element must not be assumed to transfer through a delegate
+			// call, because a by-ref parameter would leave the source flag live.
+			if (context.ResolvedDelegateCalls.ContainsKey(call)
+				&& argument is IndexExpressionSyntax delegateIndex
+				&& ResolveType(delegateIndex, scope) is { } delegateElementType
+				&& OwnershipTypeFacts.NeedsDestruction(delegateElementType, context))
+			{
+				Report(delegateIndex, "Owned dynamic elements cannot be passed to delegate calls.",
+					DiagnosticIds.DynamicIndexOwnershipUnsupported);
+				AnalyzeExpression(argument, scope);
+				continue;
+			}
+
+			// Validate the argument while the caller's proof is still active. Transfer bookkeeping
+			// below consumes that proof, so it must run only after the read has been checked.
+			AnalyzeExpression(argument, scope);
+
 			if (func is not null && i < func.Parameters.Count)
 			{
 				var parameter = func.Parameters[i];
@@ -464,17 +627,37 @@ internal sealed class OwnershipAnalyzer(BindingContext context)
 				{
 					Report(argument, "Cannot move a resource out of an untracked raw-pointer dereference.",
 						DiagnosticIds.UnknownAliasedMoveAssignment);
-					AnalyzeExpression(argument, scope);
 					continue;
 				}
 
 				var path = byValue ? ResolveMovePath(argument) : null;
 				if (path is not null && OwnsDestructibleValue(path, scope))
+				{
 					MarkMoved(path);
+					InvalidateProofsFor(path.Root);
+				}
+				else if (byValue && path is null && argument is IndexExpressionSyntax argumentIndex
+					&& ResolveType(argumentIndex, scope) is { } argumentElementType
+					&& OwnershipTypeFacts.NeedsDestruction(argumentElementType, context))
+					MarkDynamicSlotMoved(argumentIndex, scope);
 			}
-
-			AnalyzeExpression(argument, scope);
 		}
+
+		if (!context.ResolvedIsLiveQueries.ContainsKey(call) && !IsKnownPureCall(call))
+			InvalidateAllProofs();
+	}
+
+	/// <summary>
+	/// Output and math helpers cannot mutate tracked array places; treating them as mutation
+	/// barriers would incorrectly discard an outer IsLive proof inside nested guarded blocks.
+	/// </summary>
+	private static bool IsKnownPureCall(CallExpressionSyntax call)
+	{
+		var name = call.FunctionName;
+		return name.StartsWith("Console.", StringComparison.Ordinal)
+			|| name.StartsWith("Math.", StringComparison.Ordinal)
+			|| name.StartsWith("Convert.", StringComparison.Ordinal)
+			|| name.StartsWith("String.", StringComparison.Ordinal);
 	}
 
 	/// <summary>

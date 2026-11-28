@@ -1,0 +1,22 @@
+using System;
+
+struct Inner { int Id; }
+struct Outer { Inner Value; }
+
+extension Inner
+{
+    ~Inner()
+    {
+        Console.WriteLine($"drop={Id}");
+    }
+}
+
+int main()
+{
+    var Outer[2] values;
+    int i = 0;
+    values[i] = Outer { Value: Inner { Id: 7 } };
+    if (values.IsLive(i))
+        Console.WriteLine($"id={values[i].Value.Id}");
+    return 0;
+}

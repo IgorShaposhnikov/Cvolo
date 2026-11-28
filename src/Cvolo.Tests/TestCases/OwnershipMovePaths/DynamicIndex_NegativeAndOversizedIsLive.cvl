@@ -1,0 +1,20 @@
+using System;
+
+struct Resource { int Id; }
+
+extension Resource
+{
+    ~Resource()
+    {
+        Console.WriteLine($"drop={Id}");
+    }
+}
+
+int main()
+{
+    var Resource[2] values;
+    int negative = -1;
+    val ulong oversized = 4294967296;
+    Console.WriteLine($"neg={values.IsLive(negative)} big={values.IsLive(oversized)}");
+    return 0;
+}

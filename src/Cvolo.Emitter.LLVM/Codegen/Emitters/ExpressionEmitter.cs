@@ -355,9 +355,21 @@ internal sealed class ExpressionEmitter(
 				}
 			case IndexExpressionSyntax idx:
 				{
-					var (ptr, type, _, tbaa) = aggregates.GetFieldPointer(idx);
+					// An ownership-consuming read from a runtime-selected element must clear the
+					// exact element flag after the payload load. The index is emitted once and reused
+					// for both addressing and metadata; re-emitting it here would double side effects.
+					LLVMValueRef? moveIndex = null;
+					DynamicOwnershipMove? move = null;
+					if (BindingContext.ResolvedDynamicMoves.TryGetValue(idx, out move))
+						moveIndex = Emit(move.Index);
+
+					var (ptr, type, _, tbaa) = aggregates.GetFieldPointer(idx, moveIndex);
 					var instr = Builder.BuildLoad2(LowerType(type), ptr, "index_val");
 					aggregates.ApplyTbaa(tbaa, instr);
+
+					if (move is not null && moveIndex is not null)
+						cleanup.SetElementFlagByValue(Function, move.ArrayName, move.ArraySize, moveIndex.Value, false);
+
 					return instr;
 				}
 			case BorrowExpressionSyntax b:
@@ -995,7 +1007,22 @@ internal sealed class ExpressionEmitter(
 			}
 			else if (bin.Left is IndexExpressionSyntax idx)
 			{
-				var (elementPtr, elementCtorType, _, _) = aggregates.GetFieldPointer(idx);
+				IdentifierExpressionSyntax? dynamicCtorArrayId = null;
+				ArrayTypeSymbol? dynamicCtorArrayType = null;
+				LLVMValueRef? dynamicCtorIndex = null;
+				if (idx.Left is IdentifierExpressionSyntax candidateCtorArrayId
+					&& expressionTypes.Resolve(idx.Left) is ArrayTypeSymbol candidateCtorArrayType
+					&& !MovePathBuilder.TryGetConstantIndex(idx.Index, out _)
+					&& cleanup.TypeRequiresDestruction(candidateCtorArrayType.ElementType))
+				{
+					dynamicCtorArrayId = candidateCtorArrayId;
+					dynamicCtorArrayType = candidateCtorArrayType;
+					dynamicCtorIndex = Emit(idx.Index);
+				}
+
+				var (elementPtr, elementCtorType, _, _) = dynamicCtorIndex is not null
+					? aggregates.GetFieldPointer(idx, dynamicCtorIndex.Value)
+					: aggregates.GetFieldPointer(idx);
 				if (idx.Left is IdentifierExpressionSyntax ctorArrayId
 					&& expressionTypes.Resolve(idx.Left) is ArrayTypeSymbol ctorArrayType
 					&& MovePathBuilder.TryGetConstantIndex(idx.Index, out var ctorElementIndex))
@@ -1011,6 +1038,17 @@ internal sealed class ExpressionEmitter(
 					cleanup.EmitGuardedByCondition(ctorElementLive, () => cleanup.EmitDestructionAt(elementPtr, elementCtorType, "elem"));
 					calls.Emit(ctorCall, elementPtr);
 					cleanup.SetElementFlag(Function, ctorArrayId.Name, ctorArrayType.Size, ctorElementIndex, true);
+					return elementPtr;
+				}
+				if (dynamicCtorArrayId is not null && dynamicCtorArrayType is not null && dynamicCtorIndex is not null)
+				{
+					var dynamicCtorLive = cleanup.LoadElementFlag(
+						Function, dynamicCtorArrayId.Name, dynamicCtorArrayType.Size, dynamicCtorIndex.Value);
+					cleanup.EmitGuardedByCondition(dynamicCtorLive,
+						() => cleanup.EmitDestructionAt(elementPtr, elementCtorType, "elem"));
+					calls.Emit(ctorCall, elementPtr);
+					cleanup.SetElementFlagByValue(
+						Function, dynamicCtorArrayId.Name, dynamicCtorArrayType.Size, dynamicCtorIndex.Value, true);
 					return elementPtr;
 				}
 				EmitOwnershipPreStoreCleanup(bin, elementPtr, expressionTypes.Resolve(bin.Left), "elem");

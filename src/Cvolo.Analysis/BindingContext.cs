@@ -134,6 +134,13 @@ public sealed class BindingContext
 	public Dictionary<CallExpressionSyntax, IsLiveQuery> ResolvedIsLiveQueries { get; } = [];
 
 	/// <summary>
+	/// Ownership-consuming reads from runtime-selected elements of tracked local fixed arrays,
+	/// keyed by the source index expression so emission can clear the exact selected element flag
+	/// after the payload load.
+	/// </summary>
+	public Dictionary<IndexExpressionSyntax, DynamicOwnershipMove> ResolvedDynamicMoves { get; } = [];
+
+	/// <summary>
 	/// Canonical formatting operations bound for formatting-context calls (Console.Write/WriteLine
 	/// falls back and formatter.Write values with no applicable ordinary overload). Populated by
 	/// validation; the emitter consumes these descriptors instead of re-running conformance checks.
