@@ -1,0 +1,34 @@
+// The IsLive proof is tied to the query's index value. Changing that index inside the true
+// branch invalidates the proof, so the read must be rejected with CVL4221.
+using System;
+
+struct Resource
+{
+    int Id;
+}
+
+extension Resource
+{
+    ~Resource()
+    {
+        Console.WriteLine($"drop={Id}");
+    }
+}
+
+void Consume(Resource value)
+{
+    Console.WriteLine($"consume={value.Id}");
+}
+
+int main()
+{
+    var Resource[2] values;
+    var i = 0;
+    values[i] = Resource { Id: 7 };
+    if (values.IsLive(i))
+    {
+        i = 1;
+        Consume(values[i]);
+    }
+    return 0;
+}

@@ -1,6 +1,11 @@
+// A dynamic write into a never-initialized element only installs ownership. No destructor runs
+// for the old (unavailable) slot; scope exit drops the installed resource exactly once.
 using System;
 
-struct Resource { int Id; }
+struct Resource
+{
+    int Id;
+}
 
 extension Resource
 {

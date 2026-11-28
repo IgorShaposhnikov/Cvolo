@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using Cvolo.Analysis.Contracts;
+using Cvolo.Analysis.Ownership;
 using Cvolo.Analysis.Passes;
 using Cvolo.Analysis.Passes.Validation;
 using Cvolo.Analysis.Semantics;
@@ -122,6 +123,13 @@ public sealed class BindingContext
 	public Dictionary<string, List<FunctionSymbol>> AssociatedFunctions { get; } = [];
 
 	public Dictionary<CallExpressionSyntax, FunctionSymbol> ResolvedCalls { get; } = [];
+
+	/// <summary>
+	/// Synthesized `array.IsLive(index)` queries bound during validation. The emitter lowers the
+	/// runtime flag load directly; the ownership analyzer uses these bindings to add an exact,
+	/// invalidatable true-edge proof for the queried element.
+	/// </summary>
+	public Dictionary<CallExpressionSyntax, IsLiveQuery> ResolvedIsLiveQueries { get; } = [];
 
 	/// <summary>
 	/// Canonical formatting operations bound for formatting-context calls (Console.Write/WriteLine

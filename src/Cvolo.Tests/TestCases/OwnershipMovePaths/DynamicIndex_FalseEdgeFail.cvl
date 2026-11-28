@@ -1,0 +1,33 @@
+// A false IsLive edge only says the selected slot is not proven live. It never proves a valid
+// dead slot that may be consumed, so this read must be rejected with CVL4221.
+using System;
+
+struct Resource
+{
+    int Id;
+}
+
+extension Resource
+{
+    ~Resource()
+    {
+        Console.WriteLine($"drop={Id}");
+    }
+}
+
+void Consume(Resource value)
+{
+    Console.WriteLine($"consume={value.Id}");
+}
+
+int main()
+{
+    var Resource[2] values;
+    int i = 0;
+    values[i] = Resource { Id: 7 };
+    if (!values.IsLive(i))
+    {
+        Consume(values[i]);
+    }
+    return 0;
+}

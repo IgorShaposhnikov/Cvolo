@@ -569,7 +569,8 @@ internal sealed class AggregateEmitter(
 	/// Resolves writable/readable storage for identifiers, members, indices, borrows, safe enum casts,
 	/// and aggregate-returning calls while preserving the existing value-provenance and TBAA behavior.
 	/// </summary>
-	public (LLVMValueRef ptr, TypeSymbol type, bool valueProvenance, LLVMValueRef? tbaa) GetFieldPointer(ExpressionSyntax expr)
+	public (LLVMValueRef ptr, TypeSymbol type, bool valueProvenance, LLVMValueRef? tbaa) GetFieldPointer(
+		ExpressionSyntax expr, LLVMValueRef? precomputedIndex = null)
 	{
 		if (expr is IdentifierExpressionSyntax id)
 		{
@@ -758,7 +759,7 @@ internal sealed class AggregateEmitter(
 			}
 
 			var (parentPtr, parentType, _, _) = GetFieldPointer(indexExpression.Left);
-			var indexVal = emitExpression(indexExpression.Index);
+			var indexVal = precomputedIndex ?? emitExpression(indexExpression.Index);
 			if (parentType is SliceTypeSymbol sliceType)
 			{
 				var sliceLayout = codegen.Types.Lower(sliceType);

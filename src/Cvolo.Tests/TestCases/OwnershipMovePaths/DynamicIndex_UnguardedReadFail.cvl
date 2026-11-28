@@ -1,0 +1,30 @@
+// Invalid twin of the guarded move: without an IsLive true branch the element may be
+// unavailable, so consuming it must be rejected with CVL4221.
+using System;
+
+struct Resource
+{
+    int Id;
+}
+
+extension Resource
+{
+    ~Resource()
+    {
+        Console.WriteLine($"drop={Id}");
+    }
+}
+
+void Consume(Resource value)
+{
+    Console.WriteLine($"consume={value.Id}");
+}
+
+int main()
+{
+    var Resource[2] values;
+    int i = 0;
+    values[i] = Resource { Id: 7 };
+    Consume(values[i]);
+    return 0;
+}

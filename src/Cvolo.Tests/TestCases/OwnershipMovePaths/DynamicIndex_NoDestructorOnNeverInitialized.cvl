@@ -1,0 +1,24 @@
+// Only the dynamically initialized slot has a live flag. The other elements must never be
+// passed to the destructor, even though their storage exists in the same local array.
+using System;
+
+struct Resource
+{
+    int Id;
+}
+
+extension Resource
+{
+    ~Resource()
+    {
+        Console.WriteLine($"drop={Id}");
+    }
+}
+
+int main()
+{
+    var Resource[3] values;
+    int i = 2;
+    values[i] = Resource { Id: 5 };
+    return 0;
+}

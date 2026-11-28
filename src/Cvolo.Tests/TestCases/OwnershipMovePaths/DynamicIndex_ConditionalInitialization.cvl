@@ -1,0 +1,31 @@
+// The false edge of IsLive does not prove that a slot is dead, but writes accept both Live and
+// Unavailable slots. Either branch installs exactly one owned value, dropped once at cleanup.
+using System;
+
+struct Resource
+{
+    int Id;
+}
+
+extension Resource
+{
+    ~Resource()
+    {
+        Console.WriteLine($"drop={Id}");
+    }
+}
+
+int main()
+{
+    var Resource[2] values;
+    int i = 0;
+    if (values.IsLive(i))
+    {
+        values[i] = Resource { Id: 1 };
+    }
+    else
+    {
+        values[i] = Resource { Id: 2 };
+    }
+    return 0;
+}

@@ -1,0 +1,18 @@
+// Invalid twin for the synthesized query: IsLive requires exactly one integer index. A missing
+// index must be rejected as CVL4222 instead of being treated as an ordinary call.
+using System;
+
+struct Resource
+{
+    int Id;
+}
+
+int main()
+{
+    var Resource[2] values;
+    if (values.IsLive())
+    {
+        Console.WriteLine("live");
+    }
+    return 0;
+}

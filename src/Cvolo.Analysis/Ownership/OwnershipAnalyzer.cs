@@ -28,6 +28,14 @@ internal sealed class OwnershipAnalyzer(BindingContext context)
 	private readonly Dictionary<string, MovePath> _referenceProvenance = new();
 	private readonly HashSet<string> _parameterReferenceNames = new();
 
+	// True-edge proofs produced by compiler-owned `array.IsLive(index)` queries. A proof is
+	// keyed by the bound query AST node and is only valid for the exact canonical array place
+	// and index path used by that query. Every operation that can change either one, or that
+	// can mutate the array through an alias, removes the affected proofs conservatively.
+	private readonly Dictionary<CallExpressionSyntax, IsLiveProof> _liveProofs = new();
+
+	private sealed record IsLiveProof(string ArrayName, string IndexKey, string IndexRoot);
+
 	public void Analyze(FunctionDeclarationSyntax func)
 	{
 		if (!func.HasBody)
@@ -71,11 +79,44 @@ internal sealed class OwnershipAnalyzer(BindingContext context)
 				break;
 
 			case IfStatementSyntax i:
+			{
 				AnalyzeExpression(i.Condition, scope);
-				// Preserve the existing MVP sequential branch model.
+				var proof = AddTrueEdgeProof(i.Condition);
+				// Preserve the existing MVP sequential branch model. The true-edge proof is
+				// scoped to the then-branch only; a branch join has no proof.
 				AnalyzeStatement(i.ThenStatement, scope);
+				RemoveProof(proof);
 				if (i.ElseClause is not null)
 					AnalyzeStatement(i.ElseClause.Body, scope);
+				break;
+			}
+
+			case WhileStatementSyntax w:
+			{
+				InvalidateAllProofs();
+				AnalyzeExpression(w.Condition, scope);
+				var proof = AddTrueEdgeProof(w.Condition);
+				AnalyzeStatement(w.Body, scope);
+				RemoveProof(proof);
+				break;
+			}
+
+			case ForStatementSyntax f:
+			{
+				InvalidateAllProofs();
+				AnalyzeDeclaration(f.Initializer, scope);
+				AnalyzeExpression(f.Condition, scope);
+				var proof = AddTrueEdgeProof(f.Condition);
+				AnalyzeStatement(f.Body, scope);
+				AnalyzeExpression(f.Increment, scope);
+				RemoveProof(proof);
+				break;
+			}
+
+			case ForEachStatementSyntax fe:
+				InvalidateAllProofs();
+				AnalyzeExpression(fe.Collection, scope);
+				AnalyzeStatement(fe.Body, scope);
 				break;
 
 			case ExpressionStatementSyntax e:
@@ -95,6 +136,70 @@ internal sealed class OwnershipAnalyzer(BindingContext context)
 				AnalyzeBlock(lb.Body, new SymbolTable(scope));
 				break;
 		}
+	}
+
+	private IsLiveProof? AddTrueEdgeProof(ExpressionSyntax condition)
+	{
+		if (condition is not CallExpressionSyntax call
+			|| !context.ResolvedIsLiveQueries.TryGetValue(call, out var query))
+			return null;
+
+		var indexPath = MovePathBuilder.TryBuild(query.Index);
+		var proof = new IsLiveProof(query.ArrayName,
+			indexPath?.ToString() ?? query.Index.ToString() ?? string.Empty,
+			indexPath?.Root ?? string.Empty);
+		_liveProofs[call] = proof;
+		return proof;
+	}
+
+	private void RemoveProof(IsLiveProof? proof)
+	{
+		if (proof is null)
+			return;
+
+		foreach (var pair in _liveProofs.Where(p => p.Value == proof).ToList())
+			_liveProofs.Remove(pair.Key);
+	}
+
+	private static string CanonicalIndex(ExpressionSyntax index)
+		=> MovePathBuilder.TryBuild(index)?.ToString() ?? index.ToString() ?? string.Empty;
+
+	private bool HasLiveProof(string arrayName, string indexKey)
+		=> _liveProofs.Values.Any(p => p.ArrayName == arrayName && p.IndexKey == indexKey);
+
+	private void InvalidateProofsFor(string name)
+	{
+		foreach (var pair in _liveProofs.Where(p => p.Value.ArrayName == name || p.Value.IndexRoot == name).ToList())
+			_liveProofs.Remove(pair.Key);
+	}
+
+	private void InvalidateAllProofs() => _liveProofs.Clear();
+
+	private bool TryGetDynamicIndexedElement(IndexExpressionSyntax idx, SymbolTable scope, out string arrayName, out string indexKey)
+	{
+		arrayName = string.Empty;
+		indexKey = string.Empty;
+		if (MovePathBuilder.TryGetConstantIndex(idx.Index, out _))
+			return false;
+
+		var root = MovePathBuilder.TryBuild(idx.Left);
+		if (root is null || ResolveType(idx.Left, scope) is not ArrayTypeSymbol array
+			|| !OwnershipTypeFacts.NeedsDestruction(array.ElementType, context))
+			return false;
+
+		arrayName = root.ToString();
+		indexKey = CanonicalIndex(idx.Index);
+		return true;
+	}
+
+	private void RequireIndexedElementLive(IndexExpressionSyntax idx, SymbolTable scope)
+	{
+		if (!TryGetDynamicIndexedElement(idx, scope, out var arrayName, out var indexKey)
+			|| HasLiveProof(arrayName, indexKey))
+			return;
+
+		Report(idx, $"Cannot access element '{arrayName}[{indexKey}]': its liveness is not proven by an IsLive true branch.",
+			DiagnosticIds.InactiveArrayElementAccess);
 	}
 
 	private void AnalyzeDeclaration(VariableDeclarationSyntax v, SymbolTable scope)
@@ -182,6 +287,7 @@ internal sealed class OwnershipAnalyzer(BindingContext context)
 				break;
 
 			case IndexExpressionSyntax idx:
+				RequireIndexedElementLive(idx, scope);
 				AnalyzeExpression(idx.Left, scope);
 				AnalyzeExpression(idx.Index, scope);
 				break;
@@ -200,6 +306,11 @@ internal sealed class OwnershipAnalyzer(BindingContext context)
 	private void AnalyzeAssignment(BinaryExpressionSyntax bin, SymbolTable scope)
 	{
 		AnalyzeExpression(bin.Right, scope);
+
+		// A write can change the tracked array place or the index value used by an earlier
+		// IsLive proof. Both are invalidated before the new state is established.
+		if (bin.Left is IdentifierExpressionSyntax assignedId)
+			InvalidateProofsFor(assignedId.Name);
 
 		// Rebinding a borrowed 'ref'/'refvar' local to another reference is a pointer reassignment,
 		// not an ownership transfer; it just retargets the provenance. Parameters are not
@@ -247,17 +358,30 @@ internal sealed class OwnershipAnalyzer(BindingContext context)
 		var sourcePath = ResolveMovePath(bin.Right);
 		var sourceIsMove = sourcePath is not null && OwnsDestructibleValue(sourcePath, scope);
 
-		// Dynamic-index destination: a non-constant index into an array of owned elements has no
-		// stable element identity. It is legal only when region analysis proves every possible
-		// selected element is Live and pre-store evaluation cannot invalidate a candidate.
+		// Dynamic-index destination: a non-constant index into a local fixed array of owned
+		// elements relies on the runtime per-element live flag. Any element is either Live or
+		// Unavailable, so both initialization and replacement are legal; the emitter destroys the
+		// old value only when that flag is set. Source/destination overlap remains forbidden.
 		DynamicDestinationRegion? destinationRegion = null;
 		if (destPath is null && bin.Left is IndexExpressionSyntax dynamicIndex
+			&& dynamicIndex.Left is IdentifierExpressionSyntax dynamicArrayId
 			&& ResolveType(dynamicIndex.Left, scope) is ArrayTypeSymbol dynamicArray
 			&& !MovePathBuilder.TryGetConstantIndex(dynamicIndex.Index, out _))
 		{
-			var arrayPath = MovePathBuilder.TryBuild(dynamicIndex.Left);
-			var sourceMayAliasCandidate = arrayPath is not null && sourcePath is not null && sourcePath.Root == arrayPath.Root;
-			if (arrayPath is null || sourceMayAliasCandidate || !AllCandidateElementsLive(arrayPath, dynamicArray))
+			// Runtime element flags are attached to local fixed-array roots only; a field
+			// projection has no independent flag storage and remains outside this feature.
+			var arrayPath = new MovePath(dynamicArrayId.Name);
+			var sourceMayAliasCandidate = sourcePath is not null && sourcePath.Root == arrayPath.Root
+				|| bin.Right is IndexExpressionSyntax sourceIndex
+					&& sourceIndex.Left is IdentifierExpressionSyntax sourceArrayId
+					&& sourceArrayId.Name == dynamicArrayId.Name;
+			var arraySymbol = scope.Lookup(dynamicArrayId.Name) as VariableSymbol;
+			// Only a local `var Resource[N] values;` declaration allocates the storage that the
+			// runtime element flags describe. A bare typed declaration is not an owning local.
+			var isTrackedLocalArray = arraySymbol is { IsMutable: true, IsGlobal: false, IsMoved: false, Origin: OriginKind.Local };
+			var arrayWasMoved = _state.TryGetValue(arrayPath, out var arrayState)
+				&& arrayState is OwnershipState.Moved or OwnershipState.Disposed;
+			if (!isTrackedLocalArray || sourceMayAliasCandidate || arrayWasMoved)
 			{
 				Report(bin, "Dynamic-index ownership assignment is not supported: the target element is not statically identifiable.",
 					DiagnosticIds.DynamicIndexOwnershipUnsupported);
@@ -302,38 +426,29 @@ internal sealed class OwnershipAnalyzer(BindingContext context)
 
 		if (destPath is not null)
 			_state[destPath] = OwnershipState.Live;
-		else if (destinationRegion is not null)
-			foreach (var candidate in destinationRegion.EnumerateCandidatePaths())
-				_state[candidate] = OwnershipState.Live;
+		// A dynamic destination intentionally leaves static per-element state untouched: the
+		// runtime flag is authoritative for that slot, and claiming all candidates Live would
+		// permit reads of slots that were never initialized.
 
 		if (sourceIsMove && sourcePath is not null)
 			MarkMoved(sourcePath);
 	}
 
-	/// <summary>
-	/// True when every element of a fixed array candidate region is currently Live.
-	/// Only direct whole-array liveness or direct per-element liveness counts; missing
-	/// per-element entries are unavailable and must not inherit liveness from the root,
-	/// otherwise a partially initialized array would masquerade as uniformly Live.
-	/// </summary>
-	private bool AllCandidateElementsLive(MovePath arrayPath, ArrayTypeSymbol arrayType)
-	{
-		var rootIsLive = _state.TryGetValue(arrayPath, out var rootState) && rootState == OwnershipState.Live;
-
-		for (var i = 0; i < arrayType.Size; i++)
-		{
-			var element = arrayPath.Append(ProjectionStep.FixedIndex(i));
-			var elementIsLive = _state.TryGetValue(element, out var elementState) && elementState == OwnershipState.Live;
-			if (!rootIsLive && !elementIsLive)
-				return false;
-		}
-
-		return true;
-	}
-
 	private void AnalyzeCall(CallExpressionSyntax call, SymbolTable scope)
 	{
 		context.ResolvedCalls.TryGetValue(call, out var func);
+
+		// A call that mentions a tracked array or index path may mutate it through an alias.
+		// The query itself is pure; every other call invalidates the affected proofs.
+		if (!context.ResolvedIsLiveQueries.ContainsKey(call))
+		{
+			foreach (var argument in call.Arguments)
+			{
+				var root = MovePathBuilder.TryBuild(argument)?.Root;
+				if (root is not null)
+					InvalidateProofsFor(root);
+			}
+		}
 
 		for (var i = 0; i < call.Arguments.Count; i++)
 		{

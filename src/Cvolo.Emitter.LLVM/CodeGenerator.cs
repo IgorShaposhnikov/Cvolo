@@ -63,8 +63,8 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		_codegen = new CodegenContext(llvmContext, module, builder, targetLayout, _debug);
 		_declarations = new DeclarationEmitter(_codegen, GetFFIType, definedGlobalNames);
 		_globalEmitter = new GlobalEmitter(_codegen, definedGlobalNames);
-		_cleanup = new CleanupEmitter(_codegen);
 		_memory = new MemoryEmitter(_codegen);
+		_cleanup = new CleanupEmitter(_codegen, _memory);
 		_coercion = new ValueCoercion(_codegen);
 		_expressionTypes = new ExpressionTypeResolver(_codegen, () => _function);
 		_aggregates = new AggregateEmitter(
@@ -81,6 +81,7 @@ public sealed class CodeGenerator : IEmitter, IDisposable
 		_calls = new CallEmitter(
 			_codegen,
 			_cleanup,
+			_memory,
 			_aggregates,
 			() => _function,
 			EmitExpression,

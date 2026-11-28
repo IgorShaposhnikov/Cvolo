@@ -1,4 +1,5 @@
 using Cvolo.Analysis.Formatting;
+using Cvolo.Analysis.Ownership;
 using Cvolo.Analysis.Resolution;
 using Cvolo.Analysis.Semantics;
 using Cvolo.Analysis.Symbols;
@@ -251,6 +252,10 @@ internal sealed class ExpressionValidator(
 					// overloads (they are the printf backend) and falls back to the pipeline only when
 					// ordinary resolution finds nothing (§7.2 in the Func-is-null block below).
 					if (TryBindFormatterValueCall(call, scope, argTypes))
+						return;
+
+					// Synthesized compiler-owned ownership query: it has no user-declared overload.
+					if (TryBindIsLiveQuery(call, scope, argTypes))
 						return;
 
 					FunctionSymbol? func = null;
@@ -1166,6 +1171,44 @@ internal sealed class ExpressionValidator(
 		}
 
 		context.ResolvedFormattingOperations[call] = operation with { Context = kind };
+		return true;
+	}
+
+	/// <summary>
+	/// Binds the synthesized compiler-owned <c>array.IsLive(index)</c> query. It is intentionally
+	/// not a user extension or overload: the receiver must be a local fixed array and the single
+	/// argument an integer index. The ownership analyzer consumes the same binding for flow proof.
+	/// </summary>
+	private bool TryBindIsLiveQuery(CallExpressionSyntax call, SymbolTable scope, IReadOnlyList<TypeSymbol> argTypes)
+	{
+		const string member = ".IsLive";
+		if (!call.FunctionName.EndsWith(member, StringComparison.Ordinal))
+			return false;
+
+		var receiverName = call.FunctionName[..^member.Length];
+		if (receiverName.Length == 0 || receiverName.Contains('.'))
+			return false;
+
+		var receiverSymbol = scope.Lookup(receiverName) as VariableSymbol
+			?? context.ResolveGlobalReference(receiverName, out _) as VariableSymbol;
+		if (receiverSymbol is null)
+			return false;
+
+		var receiverType = receiverSymbol.Type is PointerTypeSymbol pointer
+			? pointer.ReferencedType
+			: receiverSymbol.Type;
+		if (receiverType is not ArrayTypeSymbol)
+			return false;
+
+		if (call.Arguments.Count != 1 || argTypes.Count != 1 || !TypeSymbol.IsIntegerType(argTypes[0]))
+		{
+			context.Diagnostics.Report(context.FileContexts[context.CurrentUnit!], call.ArgumentListSpan,
+				$"IsLive expects exactly one integer index for array '{receiverName}'.", DiagnosticIds.InvalidIsLiveQuery);
+			return true;
+		}
+
+		context.ResolvedIsLiveQueries[call] = new IsLiveQuery(receiverName, call.Arguments[0], call.Span);
+		context.ResolvedCalls[call] = new FunctionSymbol($"$IsLive${receiverName}", TypeSymbol.Bool, []);
 		return true;
 	}
 

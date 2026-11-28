@@ -1,0 +1,25 @@
+// Replacing a live element through a runtime index destroys the old value once before the new
+// value is installed; the replacement is still dropped at scope exit.
+using System;
+
+struct Resource
+{
+    int Id;
+}
+
+extension Resource
+{
+    ~Resource()
+    {
+        Console.WriteLine($"drop={Id}");
+    }
+}
+
+int main()
+{
+    var Resource[2] values;
+    int i = 0;
+    values[i] = Resource { Id: 1 };
+    values[i] = Resource { Id: 9 };
+    return 0;
+}

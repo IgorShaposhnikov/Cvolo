@@ -1254,7 +1254,25 @@ internal sealed class ExpressionEmitter(
 		}
 		else if (bin.Left is IndexExpressionSyntax idx)
 		{
-			var (elementPtr, elementType, _, tbaa) = aggregates.GetFieldPointer(idx);
+			// A dynamic index into a local owned fixed array is lowered with the same runtime
+			// per-element flags used by fixed-index writes and scope cleanup. Evaluate the index
+			// once and hand it to the aggregate emitter so the bounds check and GEP agree.
+			IdentifierExpressionSyntax? dynamicArrayId = null;
+			ArrayTypeSymbol? dynamicArrayType = null;
+			LLVMValueRef? dynamicIndexValue = null;
+			if (idx.Left is IdentifierExpressionSyntax candidateDynamicId
+				&& expressionTypes.Resolve(idx.Left) is ArrayTypeSymbol candidateDynamicArray
+				&& !MovePathBuilder.TryGetConstantIndex(idx.Index, out _)
+				&& cleanup.TypeRequiresDestruction(candidateDynamicArray.ElementType))
+			{
+				dynamicArrayId = candidateDynamicId;
+				dynamicArrayType = candidateDynamicArray;
+				dynamicIndexValue = Emit(idx.Index);
+			}
+
+			var (elementPtr, elementType, _, tbaa) = dynamicIndexValue is not null
+				? aggregates.GetFieldPointer(idx, dynamicIndexValue.Value)
+				: aggregates.GetFieldPointer(idx);
 
 			// Fixed-index elements of an owned array carry per-element liveness. The static analyzer
 			// reports such elements as Unavailable, so the runtime element flag is the authority for
@@ -1270,7 +1288,12 @@ internal sealed class ExpressionEmitter(
 				elementArrayType = candidateArrayType;
 			}
 
-			if (elementArrayId is not null && elementArrayType is not null)
+			if (dynamicArrayId is not null && dynamicArrayType is not null && dynamicIndexValue is not null)
+			{
+				var dynamicLive = cleanup.LoadElementFlag(Function, dynamicArrayId.Name, dynamicArrayType.Size, dynamicIndexValue.Value);
+				cleanup.EmitGuardedByCondition(dynamicLive, () => cleanup.EmitDestructionAt(elementPtr, elementType, "elem"));
+			}
+			else if (elementArrayId is not null && elementArrayType is not null)
 			{
 				var elementFlags = cleanup.GetOrCreateElementFlags(Function, elementArrayId.Name, elementArrayType.Size);
 				var elementFlagsType = LLVMTypeRef.CreateArray(LLVMTypeRef.Int1, (uint)elementArrayType.Size);
@@ -1300,7 +1323,9 @@ internal sealed class ExpressionEmitter(
 				aggregates.ApplyTbaa(tbaa, elemStore);
 			}
 
-			if (elementArrayId is not null && elementArrayType is not null)
+			if (dynamicArrayId is not null && dynamicArrayType is not null && dynamicIndexValue is not null)
+				cleanup.SetElementFlagByValue(Function, dynamicArrayId.Name, dynamicArrayType.Size, dynamicIndexValue.Value, true);
+			else if (elementArrayId is not null && elementArrayType is not null)
 			{
 				cleanup.SetElementFlag(Function, elementArrayId.Name, elementArrayType.Size, elementIndex, true);
 			}

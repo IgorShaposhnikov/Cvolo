@@ -1,0 +1,28 @@
+// Element flags are allocated once in the function entry block. Initializing different slots on
+// successive loop iterations must accumulate liveness instead of resetting the flag array.
+using System;
+
+struct Resource
+{
+    int Id;
+}
+
+extension Resource
+{
+    ~Resource()
+    {
+        Console.WriteLine($"drop={Id}");
+    }
+}
+
+int main()
+{
+    var Resource[2] values;
+    var i = 0;
+    while (i < 2)
+    {
+        values[i] = Resource { Id: 10 + i };
+        i = i + 1;
+    }
+    return 0;
+}

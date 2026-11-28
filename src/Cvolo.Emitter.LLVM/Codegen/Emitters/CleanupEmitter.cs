@@ -19,7 +19,7 @@ namespace Cvolo.Emitter.LLVM.Codegen.Emitters;
 /// <remarks>
 /// Creates a cleanup emitter backed by the module-lifetime code generation context.
 /// </remarks>
-internal sealed class CleanupEmitter(CodegenContext codegen)
+internal sealed class CleanupEmitter(CodegenContext codegen, MemoryEmitter memory)
 {
 	private LLVMBuilderRef Builder => codegen.Builder;
 	private BindingContext BindingContext => codegen.BindingContext ?? throw new InvalidOperationException("Cleanup emission requires an active binding context.");
@@ -49,7 +49,9 @@ internal sealed class CleanupEmitter(CodegenContext codegen)
 			return existing;
 		}
 
-		var flag = Builder.BuildAlloca(LLVMTypeRef.Int1, $"live_{SanitizeFlagName(path)}");
+		// Flags must be allocated in the function entry block: first use may occur inside a
+		// conditional or loop body, where a local alloca would be re-executed and reset ownership.
+		var flag = memory.BuildEntryAlloca(LLVMTypeRef.Int1, $"live_{SanitizeFlagName(path)}");
 		Builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int1, 0), flag);
 		function.LiveFlags[path] = flag;
 		return flag;
@@ -98,7 +100,7 @@ internal sealed class CleanupEmitter(CodegenContext codegen)
 			return existing;
 
 		var flagsType = LLVMTypeRef.CreateArray(LLVMTypeRef.Int1, (uint)size);
-		var flags = Builder.BuildAlloca(flagsType, $"live_{SanitizeFlagName(root)}_elems");
+		var flags = memory.BuildEntryAlloca(flagsType, $"live_{SanitizeFlagName(root)}_elems");
 		for (var i = 0; i < size; i++)
 		{
 			var slot = Builder.BuildGEP2(flagsType, flags, new LLVMValueRef[]
@@ -122,6 +124,34 @@ internal sealed class CleanupEmitter(CodegenContext codegen)
 			LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
 			LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (ulong)index)
 		}, $"live_elem_set_{index}");
+		Builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int1, live ? 1UL : 0UL), slot);
+	}
+
+	/// <summary>Returns the address of one element liveness flag using an already-evaluated index.</summary>
+	public LLVMValueRef GetElementFlagPointer(
+		FunctionCodegenContext function, string root, int size, LLVMValueRef index, string name = "live_elem_ptr")
+	{
+		var flags = GetOrCreateElementFlags(function, root, size);
+		return Builder.BuildGEP2(LLVMTypeRef.CreateArray(LLVMTypeRef.Int1, (uint)size), flags, new LLVMValueRef[]
+		{
+			LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0),
+			index
+		}, name);
+	}
+
+	/// <summary>Loads one element liveness flag using an already-evaluated index.</summary>
+	public LLVMValueRef LoadElementFlag(
+		FunctionCodegenContext function, string root, int size, LLVMValueRef index)
+	{
+		var slot = GetElementFlagPointer(function, root, size, index, "elem_live_flag");
+		return Builder.BuildLoad2(LLVMTypeRef.Int1, slot, "elem_live");
+	}
+
+	/// <summary>Sets one element liveness flag using an already-evaluated index.</summary>
+	public void SetElementFlagByValue(
+		FunctionCodegenContext function, string root, int size, LLVMValueRef index, bool live)
+	{
+		var slot = GetElementFlagPointer(function, root, size, index, "live_elem_set");
 		Builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int1, live ? 1UL : 0UL), slot);
 	}
 

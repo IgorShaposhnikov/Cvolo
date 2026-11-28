@@ -1,0 +1,39 @@
+// RI01: distinct runtime indices i=1 and j=3. Replace i, guarded-move j, reinitialize j, and
+// query a never-initialized slot plus an out-of-range index. Exact drop ordering is asserted.
+using System;
+
+struct Resource
+{
+    int Id;
+}
+
+extension Resource
+{
+    ~Resource()
+    {
+        Console.WriteLine($"drop={Id}");
+    }
+}
+
+void Consume(Resource value)
+{
+    Console.WriteLine($"consume={value.Id}");
+}
+
+int main()
+{
+    var Resource[4] values;
+    int i = 1;
+    int j = 3;
+    values[i] = Resource { Id: 10 };
+    values[j] = Resource { Id: 20 };
+    values[i] = Resource { Id: 30 };
+    if (values.IsLive(j))
+    {
+        Consume(values[j]);
+    }
+    values[j] = Resource { Id: 40 };
+    Console.WriteLine($"q0={values.IsLive(0)} q1={values.IsLive(i)} q3={values.IsLive(j)}");
+    Console.WriteLine($"oob={values.IsLive(9)}");
+    return 0;
+}

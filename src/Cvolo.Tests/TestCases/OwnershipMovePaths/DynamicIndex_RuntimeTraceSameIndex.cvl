@@ -1,0 +1,37 @@
+// RI01 twin with i == j: replacement, guarded move, and reinitialization all target the same
+// runtime-selected slot. This proves the operations follow the flag, not distinct-index assumptions.
+using System;
+
+struct Resource
+{
+    int Id;
+}
+
+extension Resource
+{
+    ~Resource()
+    {
+        Console.WriteLine($"drop={Id}");
+    }
+}
+
+void Consume(Resource value)
+{
+    Console.WriteLine($"consume={value.Id}");
+}
+
+int main()
+{
+    var Resource[2] values;
+    int i = 0;
+    int j = 0;
+    values[i] = Resource { Id: 10 };
+    values[j] = Resource { Id: 30 };
+    if (values.IsLive(j))
+    {
+        Consume(values[j]);
+    }
+    values[i] = Resource { Id: 40 };
+    Console.WriteLine($"q={values.IsLive(i)}");
+    return 0;
+}

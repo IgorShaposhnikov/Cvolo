@@ -1,0 +1,33 @@
+// A guarded move transfers ownership into the consumer. The slot flag is cleared before array
+// cleanup, so the consumer is the only place where the resource is destroyed.
+using System;
+
+struct Resource
+{
+    int Id;
+}
+
+extension Resource
+{
+    ~Resource()
+    {
+        Console.WriteLine($"drop={Id}");
+    }
+}
+
+void Consume(Resource value)
+{
+    Console.WriteLine($"consume={value.Id}");
+}
+
+int main()
+{
+    var Resource[2] values;
+    int i = 1;
+    values[i] = Resource { Id: 6 };
+    if (values.IsLive(i))
+    {
+        Consume(values[i]);
+    }
+    return 0;
+}

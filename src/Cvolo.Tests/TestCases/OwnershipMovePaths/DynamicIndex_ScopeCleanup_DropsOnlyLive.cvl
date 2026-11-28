@@ -1,0 +1,35 @@
+// Cleanup visits only slots whose runtime flag is still Live: one never-initialized slot is
+// skipped, one moved slot is skipped, and the remaining live slot is dropped once.
+using System;
+
+struct Resource
+{
+    int Id;
+}
+
+extension Resource
+{
+    ~Resource()
+    {
+        Console.WriteLine($"drop={Id}");
+    }
+}
+
+void Consume(Resource value)
+{
+    Console.WriteLine($"consume={value.Id}");
+}
+
+int main()
+{
+    var Resource[3] values;
+    values[0] = Resource { Id: 1 };
+    int i = 2;
+    values[i] = Resource { Id: 2 };
+    int moved = 0;
+    if (values.IsLive(moved))
+    {
+        Consume(values[moved]);
+    }
+    return 0;
+}

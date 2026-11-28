@@ -1,0 +1,25 @@
+// RI22: a None-valued Option<Resource> still owns the slot (IsLive true), while an untouched
+// slot is unavailable (IsLive false). No payload destructor runs for either case.
+using System;
+
+struct Resource
+{
+    int Id;
+}
+
+extension Resource
+{
+    ~Resource()
+    {
+        Console.WriteLine($"drop={Id}");
+    }
+}
+
+int main()
+{
+    var Option<Resource>[2] values;
+    int i = 0;
+    values[i] = Option<Resource> { None: void };
+    Console.WriteLine($"q0={values.IsLive(0)} q1={values.IsLive(1)}");
+    return 0;
+}

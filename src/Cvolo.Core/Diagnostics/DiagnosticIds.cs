@@ -1429,4 +1429,10 @@ public static class DiagnosticIds
 
 	/// <summary>A local variable cannot have the valueless void type.</summary>
 	public const string VoidVariableType = "CVL4220";
+
+	/// <summary>An owned array element was read, moved or borrowed without a live IsLive proof.</summary>
+	public const string InactiveArrayElementAccess = "CVL4221";
+
+	/// <summary>The synthesized IsLive query was applied to an unsupported receiver or index.</summary>
+	public const string InvalidIsLiveQuery = "CVL4222";
 }

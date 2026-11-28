@@ -1,0 +1,34 @@
+// After a guarded move clears the element flag, the same runtime index can be initialized again.
+// Only the moved value's consumer and the new value's scope cleanup destroy resources.
+using System;
+
+struct Resource
+{
+    int Id;
+}
+
+extension Resource
+{
+    ~Resource()
+    {
+        Console.WriteLine($"drop={Id}");
+    }
+}
+
+void Consume(Resource value)
+{
+    Console.WriteLine($"consume={value.Id}");
+}
+
+int main()
+{
+    var Resource[2] values;
+    int i = 0;
+    values[i] = Resource { Id: 7 };
+    if (values.IsLive(i))
+    {
+        Consume(values[i]);
+    }
+    values[i] = Resource { Id: 8 };
+    return 0;
+}

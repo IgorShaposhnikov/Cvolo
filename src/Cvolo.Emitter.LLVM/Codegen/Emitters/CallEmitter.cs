@@ -1,4 +1,5 @@
 using Cvolo.Analysis;
+using Cvolo.Analysis.Ownership;
 using Cvolo.Analysis.Symbols;
 using Cvolo.Analysis.Symbols.Base;
 using Cvolo.Analysis.Symbols.Collections;
@@ -29,6 +30,7 @@ namespace Cvolo.Emitter.LLVM.Codegen.Emitters;
 internal sealed class CallEmitter(
 	CodegenContext codegen,
 	CleanupEmitter cleanup,
+	MemoryEmitter memory,
 	AggregateEmitter aggregates,
 	Func<FunctionCodegenContext> getFunction,
 	Func<ExpressionSyntax, LLVMValueRef> emitExpression,
@@ -70,6 +72,42 @@ internal sealed class CallEmitter(
 		}
 	}
 
+	private LLVMValueRef EmitIsLiveQuery(IsLiveQuery query)
+	{
+		if (!Function.VariableTypes.TryGetValue(query.ArrayName, out var receiverType)
+			|| receiverType is not ArrayTypeSymbol arrayType)
+		{
+			return LLVMValueRef.CreateConstInt(LLVMTypeRef.Int1, 0UL);
+		}
+
+		var flags = cleanup.GetOrCreateElementFlags(Function, query.ArrayName, arrayType.Size);
+		var flagsType = LLVMTypeRef.CreateArray(LLVMTypeRef.Int1, (uint)arrayType.Size);
+		var index = emitExpression(query.Index);
+		var size = LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, (ulong)arrayType.Size);
+		var inBounds = Builder.BuildICmp(LLVMIntPredicate.LLVMIntULT, index, size, "islive_in_bounds");
+
+		var result = memory.BuildEntryAlloca(LLVMTypeRef.Int1, "islive_result");
+		Builder.BuildStore(LLVMValueRef.CreateConstInt(LLVMTypeRef.Int1, 0UL), result);
+
+		var currentFunction = Builder.InsertBlock.Parent;
+		var inBoundsBlock = currentFunction.AppendBasicBlock("islive_in_bounds_block");
+		var afterBlock = currentFunction.AppendBasicBlock("islive_after");
+		Builder.BuildCondBr(inBounds, inBoundsBlock, afterBlock);
+
+		Builder.PositionAtEnd(inBoundsBlock);
+		var slot = Builder.BuildGEP2(flagsType, flags, new[]
+		{
+			LLVMValueRef.CreateConstInt(LLVMTypeRef.Int32, 0UL),
+			index
+		}, "islive_slot");
+		var flag = Builder.BuildLoad2(LLVMTypeRef.Int1, slot, "islive_flag");
+		Builder.BuildStore(flag, result);
+		Builder.BuildBr(afterBlock);
+
+		Builder.PositionAtEnd(afterBlock);
+		return Builder.BuildLoad2(LLVMTypeRef.Int1, result, "islive_value");
+	}
+
 	private LLVMValueRef EmitCore(CallExpressionSyntax call, LLVMValueRef? implicitThisPtr, int paramOffset)
 	{
 		// Formatting-bound calls are consumed by the formatter pipeline before any ordinary call
@@ -77,6 +115,12 @@ internal sealed class CallEmitter(
 		// formatting-bound; no resolution or conformance work is repeated here.
 		if (_formatting.TryEmit(call))
 			return default;
+
+		// The compiler-owned IsLive query has no callable symbol. It reads the runtime
+		// per-element ownership flag attached to the receiver's storage, yielding false
+		// for an out-of-range index instead of reading metadata outside the flag array.
+		if (BindingContext.ResolvedIsLiveQueries.TryGetValue(call, out var isLiveQuery))
+			return EmitIsLiveQuery(isLiveQuery);
 
 		// Safe delegates are represented as { invoke thunk, context }. Invocation is uniform
 		// regardless of whether the value originated from a free function, bound method, or closure.
@@ -253,6 +297,13 @@ internal sealed class CallEmitter(
 			var isArgArray = valTy is ArrayTypeSymbol
 				|| (valTy is PointerTypeSymbol aPtr && aPtr.ReferencedType is ArrayTypeSymbol);
 
+			// A dynamic index into a local owned fixed array transfers only the selected slot.
+			// Keep the emitted index value so the slot's live flag is cleared with that exact
+			// value; evaluating the index expression twice would violate single evaluation.
+			LLVMValueRef? dynamicMoveIndex = null;
+			string? dynamicMoveArrayName = null;
+			ArrayTypeSymbol? dynamicMoveArrayType = null;
+
 			if (targetSlice is not null && isArgArray)
 			{
 				LLVMValueRef arrayPtr;
@@ -262,6 +313,21 @@ internal sealed class CallEmitter(
 					(arrayPtr, _, _, _) = aggregates.GetFieldPointer(argExpr);
 
 				val = coercion.CoerceArrayToSlice(arrayPtr, valTy, targetSlice);
+			}
+			else if (argExpr is IndexExpressionSyntax dynamicElemArg
+				&& dynamicElemArg.Left is IdentifierExpressionSyntax dynamicElemArrId
+				&& expressionTypes.Resolve(dynamicElemArrId) is ArrayTypeSymbol dynamicElemArrTy
+				&& paramTy is not PointerTypeSymbol
+				&& !Cvolo.Analysis.Ownership.MovePathBuilder.TryGetConstantIndex(dynamicElemArg.Index, out _)
+				&& cleanup.TypeRequiresDestruction(dynamicElemArrTy.ElementType))
+			{
+				dynamicMoveIndex = emitExpression(dynamicElemArg.Index);
+				var (dynamicElemPtr, dynamicElemTy, _, dynamicElemTbaa) =
+					aggregates.GetFieldPointer(dynamicElemArg, dynamicMoveIndex.Value);
+				val = Builder.BuildLoad2(codegen.Types.Lower(dynamicElemTy), dynamicElemPtr, "index_val");
+				aggregates.ApplyTbaa(dynamicElemTbaa, val);
+				dynamicMoveArrayName = dynamicElemArrId.Name;
+				dynamicMoveArrayType = dynamicElemArrTy;
 			}
 			else
 			{
@@ -336,6 +402,11 @@ internal sealed class CallEmitter(
 			&& Cvolo.Analysis.Ownership.MovePathBuilder.TryGetConstantIndex(elemArg.Index, out var elemMoveIndex))
 		{
 			cleanup.SetElementFlag(Function, elemArrId.Name, elemArrTy.Size, elemMoveIndex, false);
+		}
+
+		if (dynamicMoveIndex is not null && dynamicMoveArrayName is not null && dynamicMoveArrayType is not null)
+		{
+			cleanup.SetElementFlagByValue(Function, dynamicMoveArrayName, dynamicMoveArrayType.Size, dynamicMoveIndex.Value, false);
 		}
 
 		// A whole resource-owning local passed by value transfers ownership out of this frame.

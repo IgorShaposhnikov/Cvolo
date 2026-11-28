@@ -1,0 +1,25 @@
+// Different runtime indices may hold Live and Unavailable elements in the same array. Each
+// write only guards its own slot, and cleanup drops every Live slot exactly once.
+using System;
+
+struct Resource
+{
+    int Id;
+}
+
+extension Resource
+{
+    ~Resource()
+    {
+        Console.WriteLine($"drop={Id}");
+    }
+}
+
+int main()
+{
+    var Resource[2] values;
+    values[0] = Resource { Id: 1 };
+    int i = 1;
+    values[i] = Resource { Id: 2 };
+    return 0;
+}

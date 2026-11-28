@@ -1,0 +1,30 @@
+// Runtime flags do not relax source/destination overlap. Both operands select elements of the
+// same owned array, so the assignment stays rejected under the v10 aliasing rule.
+using System;
+
+struct Resource
+{
+    int Id;
+}
+
+extension Resource
+{
+    ~Resource()
+    {
+        Console.WriteLine($"drop={Id}");
+    }
+}
+
+int main()
+{
+    var Resource[2] values;
+    int i = 0;
+    int j = 1;
+    values[i] = Resource { Id: 1 };
+    values[j] = Resource { Id: 2 };
+    if (values.IsLive(i) && values.IsLive(j))
+    {
+        values[i] = values[j];
+    }
+    return 0;
+}
