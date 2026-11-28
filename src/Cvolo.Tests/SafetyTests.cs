@@ -31,6 +31,7 @@ public sealed class SafetyTests : CompilerTestBase
 
 	[Theory]
 	[InlineData("LifetimeConstrainedReturnFail", "Cannot return 'w' by value: reference field 'p' targets local variable")]
+	[InlineData("NestedRefHolderVariableEscapeFail", "Cannot return 'h' by value: reference field 'Next' targets local variable")]
 	[InlineData("GlobalLifetimeAssignFail", "only global-origin references may be stored in globals")]
 	[InlineData("CycleCutSelfRef")]
 	[InlineData("CycleCutTransitive")]

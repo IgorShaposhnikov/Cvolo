@@ -1,0 +1,36 @@
+/// <summary>
+/// GS13: a local borrow nested inside an Option field cannot escape via a returned variable.
+/// </summary>
+/// <remarks>
+/// The inline literal form is already rejected; returning a variable requires the
+/// same provenance check through struct and union/Option fields.
+/// Expected: dangling-reference error naming field 'Next'.
+/// </remarks>
+using System;
+
+struct Holder<T>
+{
+    T Value;
+    Option<ref T> Next;
+}
+
+Holder<int> Make()
+{
+    int local = 7;
+    var Holder<int> h = Holder<int>
+    {
+        Value = 1,
+        Next = Option<ref int>
+        {
+            Some: ref local
+        }
+    };
+    return h;
+}
+
+int main()
+{
+    var h = Make();
+    Console.WriteLine(h.Value);
+    return 0;
+}

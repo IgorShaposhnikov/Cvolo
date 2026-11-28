@@ -1,0 +1,26 @@
+/// <summary>
+/// GS16: omitted trailing generic argument on a free-function call.
+/// </summary>
+/// <remarks>
+/// The second type parameter has a default; a call that supplies only T must resolve
+/// to the same concrete specialization as an explicitly written allocator argument.
+/// </remarks>
+using System;
+
+struct MallocAllocator
+{
+}
+
+/// <summary>Identity with a defaulted allocator parameter.</summary>
+int Identity<T, A>(T value)
+    where default A : MallocAllocator
+{
+    return value;
+}
+
+int main()
+{
+    Console.WriteLine(Identity<int>(42));
+    Console.WriteLine(Identity<int, MallocAllocator>(42));
+    return 0;
+}

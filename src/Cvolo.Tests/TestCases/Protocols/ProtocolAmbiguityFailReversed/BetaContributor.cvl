@@ -1,0 +1,18 @@
+/// <summary>
+/// GS11: first contributor in the reversed-order ambiguity fixture.
+/// </summary>
+/// <remarks>
+/// Same Point.DoWork() contribution as Beta in the original fixture.
+/// </remarks>
+using System;
+
+namespace Beta
+{
+    extension Point
+    {
+        void DoWork()
+        {
+            Console.WriteLine("beta work");
+        }
+    }
+}

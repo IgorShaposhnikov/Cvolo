@@ -60,13 +60,15 @@ internal sealed class AggregateReturnLifetimeValidator(
 
 	/// <summary>
 	/// Collects base identifiers for reference payloads reachable from an expression of the supplied type.
+	/// Shared with struct provenance tracking so a reference nested in a union/Option field is
+	/// visible to both inline-return and variable-return lifetime checks.
 	/// </summary>
-	private void CollectPointerPayloadBases(ExpressionSyntax expr, TypeSymbol type, SymbolTable scope,
-		HashSet<string> targets, HashSet<string> visited)
+	internal static void CollectReferenceBases(ExpressionSyntax expr, TypeSymbol type,
+		Func<ExpressionSyntax, string?> getBaseIdentifierName, HashSet<string> targets, HashSet<string> visited)
 	{
 		if (type is PointerTypeSymbol)
 		{
-			var baseId = _getBaseIdentifierName(expr);
+			var baseId = getBaseIdentifierName(expr);
 			if (baseId != null)
 				targets.Add(baseId);
 			return;
@@ -83,16 +85,7 @@ internal sealed class AggregateReturnLifetimeValidator(
 					var field = st.FindField(memberInit.MemberName);
 					if (field == null)
 						continue;
-					if (field.Type is PointerTypeSymbol)
-					{
-						var baseId = _getBaseIdentifierName(memberInit.Expression);
-						if (baseId != null)
-							targets.Add(baseId);
-					}
-					else if (field.Type is StructTypeSymbol or UnionTypeSymbol)
-					{
-						CollectPointerPayloadBases(memberInit.Expression, field.Type, scope, targets, visited);
-					}
+					CollectReferenceBases(memberInit.Expression, field.Type, getBaseIdentifierName, targets, visited);
 				}
 			}
 			else if (type is UnionTypeSymbol ut && init.Initializers.Count == 1)
@@ -100,16 +93,7 @@ internal sealed class AggregateReturnLifetimeValidator(
 				var variant = ut.FindField(init.Initializers[0].MemberName);
 				if (variant == null || variant.IsVoidVariant)
 					return;
-				if (variant.Type is PointerTypeSymbol)
-				{
-					var baseId2 = _getBaseIdentifierName(init.Initializers[0].Expression);
-					if (baseId2 != null)
-						targets.Add(baseId2);
-				}
-				else if (variant.Type is StructTypeSymbol or UnionTypeSymbol)
-				{
-					CollectPointerPayloadBases(init.Initializers[0].Expression, variant.Type, scope, targets, visited);
-				}
+				CollectReferenceBases(init.Initializers[0].Expression, variant.Type, getBaseIdentifierName, targets, visited);
 			}
 
 			return;
@@ -117,8 +101,16 @@ internal sealed class AggregateReturnLifetimeValidator(
 
 		// Non-literal pointer-bearing expression (reference-field member access, graph-handle call, or
 		// a reference/option variable): fall back to the base identifier; chains resolve via reference provenance.
-		var baseId3 = _getBaseIdentifierName(expr);
+		var baseId3 = getBaseIdentifierName(expr);
 		if (baseId3 != null)
 			targets.Add(baseId3);
+	}
+
+	/// <summary>
+	/// Instance wrapper using this validator's base-identifier resolver.
+	/// </summary>
+	private void CollectPointerPayloadBases(ExpressionSyntax expr, TypeSymbol type, SymbolTable scope, HashSet<string> targets, HashSet<string> visited)
+	{
+		CollectReferenceBases(expr, type, _getBaseIdentifierName, targets, visited);
 	}
 }

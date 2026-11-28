@@ -1,0 +1,34 @@
+/// <summary>
+/// GS11: the same protocol dispatch ambiguity must be reported regardless of contributor file order.
+/// </summary>
+/// <remarks>
+/// This variant loads the Beta contributor before Alpha; no candidate may win by traversal order.
+/// </remarks>
+using System;
+using Alpha;
+using Beta;
+
+struct Point
+{
+    int X;
+}
+
+protocol IWorker
+{
+    void DoWork();
+}
+
+void Use(IWorker w)
+{
+    w.DoWork();
+}
+
+int main()
+{
+    Point p = Point
+    {
+        X: 1
+    };
+    Use(p);
+    return 0;
+}

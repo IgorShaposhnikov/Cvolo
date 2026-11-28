@@ -1,0 +1,19 @@
+/// <summary>
+/// GS11: second contributor in the reversed-order ambiguity fixture.
+/// </summary>
+/// <remarks>
+/// Same Point.DoWork() contribution as Alpha in the original fixture. The
+/// Z prefix keeps this file after BetaContributor in sorted enumeration.
+/// </remarks>
+using System;
+
+namespace Alpha
+{
+    extension Point
+    {
+        void DoWork()
+        {
+            Console.WriteLine("alpha work");
+        }
+    }
+}

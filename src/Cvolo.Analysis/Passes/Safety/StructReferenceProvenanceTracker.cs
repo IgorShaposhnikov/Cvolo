@@ -53,8 +53,7 @@ internal sealed class StructReferenceProvenanceTracker(
 	/// <summary>
 	/// Collects tracked reference targets from a struct initializer or a resolved call result.
 	/// </summary>
-	private void CollectRefTargets(StructTypeSymbol structType, ExpressionSyntax expr, SymbolTable scope,
-		HashSet<string> targets, HashSet<string> visited)
+	private void CollectRefTargets(StructTypeSymbol structType, ExpressionSyntax expr, SymbolTable scope, HashSet<string> targets, HashSet<string> visited)
 	{
 		if (!visited.Add(structType.Name))
 			return; // cycle-cut
@@ -64,17 +63,28 @@ internal sealed class StructReferenceProvenanceTracker(
 			foreach (var memberInit in init.Initializers)
 			{
 				var field = structType.FindField(memberInit.MemberName);
-				if (field == null || field.Type is not PointerTypeSymbol ptrType)
+				if (field is null)
 					continue;
 
-				var fieldExpr = memberInit.Expression;
-				var borrowedName = _getBaseIdentifierName(fieldExpr);
-				if (borrowedName != null)
-					targets.Add(borrowedName);
+				if (field.Type is PointerTypeSymbol ptrType)
+				{
+					var fieldExpr = memberInit.Expression;
+					var borrowedName = _getBaseIdentifierName(fieldExpr);
+					if (borrowedName != null)
+						targets.Add(borrowedName);
 
-				// Recurse into nested struct fields
-				if (ptrType.ReferencedType is StructTypeSymbol innerStruct && fieldExpr is StructInitializationExpressionSyntax innerInit)
-					CollectRefTargets(innerStruct, innerInit, scope, targets, visited);
+					// Recurse into nested struct fields
+					if (ptrType.ReferencedType is StructTypeSymbol innerStruct && fieldExpr is StructInitializationExpressionSyntax innerInit)
+						CollectRefTargets(innerStruct, innerInit, scope, targets, visited);
+				}
+				else if (AggregateReturnLifetimeValidator.TypeTransitivelyHasRefs(field.Type))
+				{
+					// Option<ref T> and other value aggregates can carry a borrow one or more fields
+					// deep. Track their payload bases too, otherwise returning the holder variable
+					// bypasses the inline-aggregate lifetime check.
+					AggregateReturnLifetimeValidator.CollectReferenceBases(
+						memberInit.Expression, field.Type, _getBaseIdentifierName, targets, visited);
+				}
 			}
 		}
 		else if (expr is CallExpressionSyntax call && context.ResolvedCalls.TryGetValue(call, out var callee))

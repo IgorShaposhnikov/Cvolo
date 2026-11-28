@@ -1,0 +1,49 @@
+/// <summary>
+/// GS10/GS21: scalar where constraints survive combined interface dispatch.
+/// </summary>
+/// <remarks>
+/// First implements IValue&lt;int&gt; but not IRequired&lt;int&gt;. Taking the
+/// interface-typed dispatch path must not discard the scalar constraint on T.
+/// Expected: CVL4105 for type int and constraint IRequired&lt;int&gt;.
+/// </remarks>
+using System;
+
+interface IValue<T>
+{
+    T Get();
+}
+
+interface IRequired<T>
+{
+    int Mark();
+}
+
+struct First
+{
+    int Value;
+}
+
+extension First : IValue<int>
+{
+    int Get()
+    {
+        return 7;
+    }
+}
+
+T Read<T>(IValue<T> value) where T : IRequired<int>
+{
+    return value.Get();
+}
+
+int main()
+{
+    First first = First
+    {
+        Value = 7
+    };
+
+    Console.WriteLine(Read<int>(first));
+
+	return 0;
+}

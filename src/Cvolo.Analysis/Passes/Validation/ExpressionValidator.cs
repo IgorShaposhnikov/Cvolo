@@ -277,15 +277,46 @@ internal sealed class ExpressionValidator(
 						}
 						else
 						{
+							// A generic function template may declare trailing defaults (`where default A : ...`).
+							// Fill them at the call site before monomorphizing; otherwise the instantiation indexes
+							// past the supplied arguments and crashes instead of resolving the concrete signature.
+							var writtenTypeArgs = call.TypeArguments.ToList();
+							var templateName = Generics.ResolveFunctionTemplateName(call.FunctionName, scope);
+							FunctionDeclarationSyntax? declaringTemplate = null;
+							if (templateName is not null)
+							{
+								if (context.GenericFunctionTemplates.TryGetValue(templateName, out var genericTemplateDecl))
+									declaringTemplate = genericTemplateDecl;
+								else if (context.InterfaceFunctionTemplates.TryGetValue(templateName, out var interfaceTemplateDecl))
+									declaringTemplate = interfaceTemplateDecl;
+								else if (context.ProtocolFunctionTemplates.TryGetValue(templateName, out var protocolTemplateDecl))
+									declaringTemplate = protocolTemplateDecl;
+							}
+							if (declaringTemplate is not null
+								&& writtenTypeArgs.Count < declaringTemplate.GenericParameters.Count)
+							{
+								for (var i = writtenTypeArgs.Count; i < declaringTemplate.GenericParameters.Count; i++)
+								{
+									var paramName = declaringTemplate.GenericParameters[i];
+									if (declaringTemplate.GenericParameterDefaults.TryGetValue(paramName, out var defaultTypeName))
+										writtenTypeArgs.Add(defaultTypeName);
+									else
+									{
+										context.Diagnostics.Report(context.FileContexts[context.CurrentUnit!], call.Span,
+											$"Generic parameter '{paramName}' does not have a default value and must be specified",
+											DiagnosticIds.GenericParameterDoesNotHaveADefaultValueAndMustBeSpecified);
+										return;
+									}
+								}
+							}
+
 							// Open generic template binding must not materialize a concrete owner specialization.
 							// `Result<T, E>(value)` inside `extension Result<T, E>` is valid template syntax, but
 							// constructing a synthetic `Result<T,E>` runtime type here would enqueue bodies whose T/E
 							// cease to exist after the template scope is popped. Defer the constructor target until the
 							// enclosing owner is monomorphized with concrete arguments.
-							var writtenTypeArgs = call.TypeArguments
-								.Select(context.ResolveType)
-								.ToList();
-							var hasOpenTypeArgument = writtenTypeArgs.Any(t => t is not null && ContainsTypeParameter(t));
+							var resolvedWrittenTypeArgs = writtenTypeArgs.Select(context.ResolveType).ToList();
+							var hasOpenTypeArgument = resolvedWrittenTypeArgs.Any(t => t is not null && ContainsTypeParameter(t));
 							var openOwner = hasOpenTypeArgument ? context.ResolveType(call.FunctionName) : null;
 							var isOpenGenericConstructor = openOwner is not null
 								&& (context.GenericStructTemplates.ContainsKey(openOwner.Name)
@@ -295,7 +326,7 @@ internal sealed class ExpressionValidator(
 								return;
 
 							// Reconstruct and resolve the struct/union instantiation name to check if this is a generic constructor call
-							var structNameWithArgs = $"{call.FunctionName}<{string.Join(", ", call.TypeArguments)}>";
+							var structNameWithArgs = $"{call.FunctionName}<{string.Join(", ", writtenTypeArgs)}>";
 							var resolvedType = context.ResolveType(structNameWithArgs);
 
 							if (resolvedType is StructTypeSymbol or UnionTypeSymbol)
@@ -303,24 +334,28 @@ internal sealed class ExpressionValidator(
 								// This is a generic constructor call! Use the fully qualified resolved type name for overload resolution
 								func = Overloads.Resolve(resolvedType.Name, argTypes, scope, call);
 							}
-							else
+							else if (templateName != null && context.GenericFunctionTemplates.TryGetValue(templateName, out var templateDecl))
 							{
 								// Fallback to standard generic function monomorphization. An open T/E/... argument is
 								// deferred for the same reason as an open generic constructor above.
-								var templateName = Generics.ResolveFunctionTemplateName(call.FunctionName, scope);
-								if (templateName != null && context.GenericFunctionTemplates.TryGetValue(templateName, out var templateDecl))
-								{
-									var typeArgs = call.TypeArguments.Select(context.ResolveType).ToList();
-									if (typeArgs.Any(t => t is not null && ContainsTypeParameter(t)))
-										return;
+								var typeArgs = writtenTypeArgs.Select(context.ResolveType).ToList();
+								if (typeArgs.Any(t => t is not null && ContainsTypeParameter(t)))
+									return;
 
-									if (typeArgs.All(static t => t is not null))
-									{
-										var concreteTypeArgs = typeArgs.Select(static t => t!).ToList();
-										func = context.InterfaceFunctionTemplates.ContainsKey(templateName)
-											? Generics.InstantiateGenericInterfaceFunction(templateDecl, concreteTypeArgs, argTypes, templateName, call.Span)
-											: Generics.InstantiateGenericFunction(templateDecl, concreteTypeArgs, scope);
-									}
+								if (typeArgs.Count != templateDecl.GenericParameters.Count)
+								{
+									context.Diagnostics.Report(context.FileContexts[context.CurrentUnit!], call.Span,
+										$"Function '{call.FunctionName}' expects {templateDecl.GenericParameters.Count} type argument(s) but received {typeArgs.Count}",
+										DiagnosticIds.FunctionExpectsArgumentSButReceived);
+									return;
+								}
+
+								if (typeArgs.All(static t => t is not null))
+								{
+									var concreteTypeArgs = typeArgs.Select(static t => t!).ToList();
+									func = context.InterfaceFunctionTemplates.ContainsKey(templateName)
+										? Generics.InstantiateGenericInterfaceFunction(templateDecl, concreteTypeArgs, argTypes, templateName, call.Span)
+										: Generics.InstantiateGenericFunction(templateDecl, concreteTypeArgs, scope);
 								}
 							}
 						}
@@ -993,25 +1028,30 @@ internal sealed class ExpressionValidator(
 		_ => null,
 	};
 
-	internal static bool ContainsTypeParameter(TypeSymbol type) => ContainsTypeParameter(type, []);
+	internal static bool ContainsTypeParameter(TypeSymbol type) => ContainsTypeParameter(type, [], 0);
 
-	private static bool ContainsTypeParameter(TypeSymbol type, HashSet<TypeSymbol> active)
+	private static bool ContainsTypeParameter(TypeSymbol type, HashSet<string> active, int depth)
 	{
+		// Expanding generic fields produce fresh symbols at every level, so cycle-cutting alone
+		// cannot stop an unbounded identity chain. Treat it as open so the caller defers the
+		// specialization; the demand budget reports the diagnostic before emission.
+		if (depth > 32)
+			return true;
 		if (type is TypeParameterSymbol)
 			return true;
-		if (!active.Add(type))
+		if (!active.Add(type.Name))
 			return false;
 
 		return type switch
 		{
-			StructTypeSymbol structType => structType.Fields.Any(field => ContainsTypeParameter(field.Type, active)),
-			UnionTypeSymbol unionType => unionType.Fields.Any(field => ContainsTypeParameter(field.Type, active)),
-			ArrayTypeSymbol arrayType => ContainsTypeParameter(arrayType.ElementType, active),
-			SliceTypeSymbol sliceType => ContainsTypeParameter(sliceType.ElementType, active),
-			PointerTypeSymbol pointerType => ContainsTypeParameter(pointerType.ReferencedType, active),
-			RawPointerTypeSymbol rawPointerType => ContainsTypeParameter(rawPointerType.ElementType, active),
-			DelegateTypeSymbol delegateType => delegateType.Parameters.Any(parameter => ContainsTypeParameter(parameter.Type, active))
-				|| ContainsTypeParameter(delegateType.ReturnType, active),
+			StructTypeSymbol structType => structType.Fields.Any(field => ContainsTypeParameter(field.Type, active, depth + 1)),
+			UnionTypeSymbol unionType => unionType.Fields.Any(field => ContainsTypeParameter(field.Type, active, depth + 1)),
+			ArrayTypeSymbol arrayType => ContainsTypeParameter(arrayType.ElementType, active, depth + 1),
+			SliceTypeSymbol sliceType => ContainsTypeParameter(sliceType.ElementType, active, depth + 1),
+			PointerTypeSymbol pointerType => ContainsTypeParameter(pointerType.ReferencedType, active, depth + 1),
+			RawPointerTypeSymbol rawPointerType => ContainsTypeParameter(rawPointerType.ElementType, active, depth + 1),
+			DelegateTypeSymbol delegateType => delegateType.Parameters.Any(parameter => ContainsTypeParameter(parameter.Type, active, depth + 1))
+				|| ContainsTypeParameter(delegateType.ReturnType, active, depth + 1),
 			_ => false,
 		};
 	}

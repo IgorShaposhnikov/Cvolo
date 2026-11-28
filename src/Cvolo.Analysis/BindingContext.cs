@@ -99,6 +99,16 @@ public sealed class BindingContext
 
 	// Canonical Type Cache (Phase 3: Ensuring structural equality)
 	private readonly Dictionary<string, TypeSymbol> _typeCache = [];
+
+	// Per-compilation work budget for expanding specialization demands. The limit is a
+	// resource guard (not a language nesting limit): finite nesting is a handful of
+	// levels, while an expanding pointee/body chain materializes a fresh specialization
+	// at every level and must stop with a diagnostic instead of exhausting the stack.
+	private const int MaxGenericDemandDepth = 32;
+	private int _genericTypeResolutionDepth;
+	private int _genericBodyInstantiationDepth;
+	private bool _genericDemandBudgetExceeded;
+
 	public Dictionary<string, CompilationUnitSyntax> SymbolUnits { get; } = [];
 	public Dictionary<string, List<FunctionSymbol>> OverloadedFunctions { get; } = [];
 
@@ -741,12 +751,92 @@ public sealed class BindingContext
 	}
 
 	/// <summary>
-	/// Resolves a string type name to its canonical, immutable TypeSymbol object.
+	/// Reports a deterministic diagnostic when demanded generic specializations expand without bound.
 	/// </summary>
+	private void ReportGenericDemandExceeded(string name, TextSpan span = default)
+	{
+		if (_genericDemandBudgetExceeded)
+			return;
+
+		_genericDemandBudgetExceeded = true;
+
+		var fileContext = CurrentUnit is not null && FileContexts.TryGetValue(CurrentUnit, out var ctx)
+			? ctx
+			: FileContexts.Values.FirstOrDefault();
+
+		if (fileContext is null)
+			return;
+
+		// Type resolution has no call-site syntax node; anchor the diagnostic at the
+		// compilation unit currently demanding the specialization so CLI and LSP show
+		// the same source location.
+		var reportSpan = span.Start == 0 && span.Length == 0 && CurrentUnit is not null ? CurrentUnit.Span : span;
+		Diagnostics.Report(fileContext, reportSpan,
+			$"Generic specialization demand for '{name}' exceeded the compiler work budget; the required type arguments expand without a finite concrete specialization.",
+			DiagnosticIds.GenericSpecializationBudgetExceeded);
+	}
+
 	/// <summary>
-	/// Resolves a string type name to its canonical, immutable TypeSymbol object.
+	/// Enters one nested generic type resolution, enforcing the per-compilation work budget.
+	/// </summary>
+	private bool TryEnterGenericTypeResolution(string name)
+	{
+		if (_genericDemandBudgetExceeded)
+			return false;
+		if (++_genericTypeResolutionDepth <= MaxGenericDemandDepth)
+			return true;
+
+		_genericTypeResolutionDepth--;
+		ReportGenericDemandExceeded(name);
+		return false;
+	}
+
+	/// <summary>
+	/// Enters one demanded generic function/method body instantiation, enforcing the same work budget.
+	/// </summary>
+	internal bool TryEnterGenericBodyInstantiation(string name, TextSpan span)
+	{
+		if (_genericDemandBudgetExceeded)
+			return false;
+		if (++_genericBodyInstantiationDepth <= MaxGenericDemandDepth)
+			return true;
+
+		_genericBodyInstantiationDepth--;
+		ReportGenericDemandExceeded(name, span);
+		return false;
+	}
+
+	internal void ExitGenericBodyInstantiation() => _genericBodyInstantiationDepth--;
+
+	/// <summary>
+	/// Resolves a string type name to its canonical, immutable TypeSymbol object. Generic
+	/// instantiations are depth-budgeted so expanding demands fail deterministically.
 	/// </summary>
 	public TypeSymbol? ResolveType(string name)
+	{
+		if (string.IsNullOrEmpty(name))
+			return null;
+
+		if (!name.Contains('<'))
+			return ResolveTypeCore(name);
+
+		if (!TryEnterGenericTypeResolution(name))
+			return null;
+
+		try
+		{
+			return ResolveTypeCore(name);
+		}
+		finally
+		{
+			_genericTypeResolutionDepth--;
+		}
+	}
+
+	/// <summary>
+	/// Resolves a string type name without the generic demand budget; call through <see cref="ResolveType"/>.
+	/// </summary>
+	private TypeSymbol? ResolveTypeCore(string name)
 	{
 		if (string.IsNullOrEmpty(name))
 			return null;

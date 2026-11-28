@@ -62,10 +62,32 @@ public sealed class GenericsTests : CompilerTestBase
 		Assert.Contains(expected.Replace("\r\n", "\n").Trim(), runStdout.Replace("\r\n", "\n").Trim());
 	}
 
+	/// <summary>
+	/// Checks exact stdout for specialization cases at both optimization levels.
+	/// </summary>
+	[Theory]
+	[InlineData("FunctionGenericDefaultCall", "42\n42")]
+	[InlineData("NestedGenericSpecialization", "42")]
+	public void Specialization_ExactOutput(string caseName, string expected)
+	{
+		foreach (var optimization in new[] { "-O0", "-O3" })
+		{
+			var fileName = $"Generics/{caseName}.cvl";
+			var (exitCode, stdout, stderr) = RunCompiler(fileName, optimization);
+			AssertCompilationSucceeded(exitCode, stdout, stderr, fileName);
+
+			var (runCode, runStdout) = ExecuteBinary(caseName, "Generics");
+			Assert.Equal(0, runCode);
+			Assert.Equal(expected, runStdout.Replace("\r\n", "\n").Trim());
+		}
+	}
+
 	[Theory]
 	[InlineData("GenericConstructorDefensiveFail", "does not initialize field 'Weight'")]
 	[InlineData("DefaultGenericParamsBadDefault", "Default value for generic parameter 'A' must be a Trivial Copy Type")]
 	[InlineData("DefaultGenericParamsMissingDefault", "Generic parameter 'A' does not have a default value and must be specified")]
+	[InlineData("CombinedConstraintDispatchFail", "does not satisfy required constraint 'IRequired<int>' for type parameter 'T'")]
+	[InlineData("ExpandingGenericDemandFail", "CVL4200")]
 	[InlineData("ConstructorChainingCycleFail", "cannot call itself (cyclic delegation)")]
 	public void Generics_Rejections(string caseName, string expectedError)
 	{

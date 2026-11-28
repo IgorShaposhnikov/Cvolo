@@ -59,6 +59,7 @@ public sealed class ProtocolsTests : CompilerTestBase
 	[InlineData("ProtocolRequiresFail", "does not satisfy the requires-clause 'IRecordId' of protocol 'ISorter'")]
 	// P7: ambiguity — two matching extension methods make dispatch non-deterministic.
 	[InlineData("ProtocolAmbiguityFail", "Ambiguous implementation of 'DoWork' for protocol 'IWorker' on type 'Point'")]
+	[InlineData("ProtocolAmbiguityFailReversed", "Ambiguous implementation of 'DoWork' for protocol 'IWorker' on type 'Point'")]
 	public void Protocols_Rejections(string caseName, string expectedError)
 	{
 		var assemblyDir = Path.GetDirectoryName(typeof(ProtocolsTests).Assembly.Location)!;

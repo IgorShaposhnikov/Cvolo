@@ -1368,6 +1368,11 @@ public static class DiagnosticIds
 	public const string ContextualInitializerRequiresExpectedType = "CVL4199";
 
 	/// <summary>
+	/// Demanded generic specializations expand without a finite concrete type/body (§4.4/§4.5).
+	/// </summary>
+	public const string GenericSpecializationBudgetExceeded = "CVL4200";
+
+	/// <summary>
 	/// A division or remainder by a statically known zero divisor is rejected before code generation.
 	/// </summary>
 	public const string DivisionByZeroConstant = "CVL4210";

@@ -1,0 +1,24 @@
+/// <summary>
+/// GS06/GS07: expanding generic pointee identity must stop with a deterministic budget diagnostic.
+/// </summary>
+/// <remarks>
+/// Node&lt;T&gt; names Node&lt;Node&lt;T&gt;&gt;*; resolving the pointee grows the type
+/// without bound. The compiler must report CVL4200 instead of overflowing the stack.
+/// </remarks>
+using System;
+
+struct Node<T>
+{
+    T Value;
+    Node<Node<T>>* Next;
+}
+
+int main()
+{
+    Node<int> n = Node<int>
+    {
+        Value = 1
+    };
+    Console.WriteLine(n.Value);
+    return 0;
+}

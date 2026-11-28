@@ -32,42 +32,46 @@ internal sealed class StructReturnLifetimeValidator(
 		if (!visited.Add(structType.Name))
 			return; // cycle-cut: already visited this type, stop recursion
 
+		string? FindDanglingTarget()
+		{
+			return _structRefTargets.TryGetValue(varName, out var targets)
+				? targets.FirstOrDefault(t => _isDanglingTarget(t, scope))
+				: null;
+		}
+
 		foreach (var field in structType.Fields)
 		{
 			if (field.IsCycleCut)
 				continue;
 
-			if (field.Type is PointerTypeSymbol ptr && ptr.ReferencedType is StructTypeSymbol innerStruct)
-			{
-				// Ref field pointing to a struct: recurse into that struct's fields
-				if (_structRefTargets.TryGetValue(varName, out var targets))
-				{
-					foreach (var target in targets)
-					{
-						if (_isDanglingTarget(target, scope))
-						{
-							context.Diagnostics.Report(context.CurrentUnit!.Context, span,
-								$"Cannot return '{varName}' by value: reference field '{field.Name}' targets local variable '{target}' (dangling reference)", DiagnosticIds.CannotReturnByValueReferenceFieldTargetsLocalVariableDanglin);
-							return;
-						}
-					}
-				}
+			var danglingTarget = AggregateReturnLifetimeValidator.TypeTransitivelyHasRefs(field.Type)
+				? FindDanglingTarget()
+				: null;
 
+			if (danglingTarget is not null)
+			{
+				context.Diagnostics.Report(context.CurrentUnit!.Context, span,
+					$"Cannot return '{varName}' by value: reference field '{field.Name}' targets local variable '{danglingTarget}' (dangling reference)",
+					DiagnosticIds.CannotReturnByValueReferenceFieldTargetsLocalVariableDanglin);
+
+				return;
+			}
+
+			if (field.Type is PointerTypeSymbol { ReferencedType: StructTypeSymbol innerStruct })
+			{
 				VerifyStructByValueReturnCore(innerStruct, varName, span, visited, scope);
 			}
-			else if (field.Type is PointerTypeSymbol ptrScalar && ptrScalar.ReferencedType is not StructTypeSymbol)
+			else if (field.Type is StructTypeSymbol nestedStruct)
 			{
-				// Ref field pointing to a scalar: check tracked targets
-				if (_structRefTargets.TryGetValue(varName, out var targets))
+				VerifyStructByValueReturnCore(nestedStruct, varName, span, visited, scope);
+			}
+			else if (field.Type is UnionTypeSymbol union)
+			{
+				foreach (var variant in union.Fields)
 				{
-					foreach (var target in targets)
+					if (!variant.IsVoidVariant && variant.Type is StructTypeSymbol variantStruct)
 					{
-						if (_isDanglingTarget(target, scope))
-						{
-							context.Diagnostics.Report(context.CurrentUnit!.Context, span,
-								$"Cannot return '{varName}' by value: reference field '{field.Name}' targets local variable '{target}' (dangling reference)", DiagnosticIds.CannotReturnByValueReferenceFieldTargetsLocalVariableDanglin);
-							return;
-						}
+						VerifyStructByValueReturnCore(variantStruct, varName, span, visited, scope);
 					}
 				}
 			}

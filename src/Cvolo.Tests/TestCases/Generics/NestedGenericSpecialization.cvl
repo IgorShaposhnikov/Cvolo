@@ -1,0 +1,26 @@
+/// <summary>
+/// GS03: finite nesting is legal and keeps each Box specialization distinct.
+/// </summary>
+/// <remarks>
+/// The inner Box&lt;int&gt; and outer Box&lt;Box&lt;int&gt;&gt; are two concrete layouts;
+/// reading through both levels must produce the innermost value.
+/// </remarks>
+using System;
+
+struct Box<T>
+{
+    public T Value;
+}
+
+int main()
+{
+    Box<Box<int>> outer = Box<Box<int>>
+    {
+        Value = Box<int>
+        {
+            Value = 42
+        }
+    };
+    Console.WriteLine(outer.Value.Value);
+    return 0;
+}
